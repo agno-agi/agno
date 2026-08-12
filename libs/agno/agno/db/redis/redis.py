@@ -1,9 +1,11 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from agno.db.schemas.jobs import QueueWriteOutcome
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
@@ -40,7 +42,7 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -2590,3 +2592,704 @@ class RedisDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    # -- Job queue (durable background runs) --------------------------------
+    # The queue contract, matching the Postgres adapters method-for-method
+    # (see agno.job_queue.store.InMemoryQueueStore for the reference). Sync,
+    # like every other method on this adapter; the queue worker wraps sync
+    # stores in a thread adapter. Claims and fenced writes use optimistic
+    # WATCH/MULTI on the job key - the SKIP LOCKED equivalent.
+    #
+    # Durability caveat: Redis acceptance durability depends on persistence
+    # configuration (use AOF appendfsync everysec/always for Postgres-grade
+    # guarantees; default RDB snapshotting can lose recently accepted jobs).
+
+    def _q_key(self, suffix: str) -> str:
+        return f"{self.db_prefix}:jobs:{suffix}"
+
+    def _q_job_key(self, job_id: str) -> str:
+        return self._q_key(f"job:{job_id}")
+
+    def _q_server_now(self) -> int:
+        """Redis server time as an integer epoch, for LEASE math.
+
+        Lease decisions must be anchored to ONE clock (the Postgres store
+        anchors to the database's NOW() for exactly this reason). With
+        worker wall clocks, a replica whose clock runs fast sees healthy
+        leases as expired and sweeps live runs - and since the sweep steals
+        the lock, the victim's own completion is fenced out and its run is
+        reported failed despite having finished; with multi-attempt budgets
+        that skew-triggered false sweep means duplicate side-effect
+        execution. TIME is the Redis server's clock, identical for every
+        worker on the shared store, so claim/heartbeat/sweep all agree.
+
+        Not applied to queue_stats' age arithmetic or the retention
+        cleanup cutoff; those only shift reporting/retention by the skew,
+        never ownership (mirroring the Postgres store's scope).
+        """
+        seconds, _microseconds = self.redis_client.time()
+        return int(seconds)
+
+    def _q_idem_key(self, user_id: Optional[str], idempotency_key: str) -> str:
+        """Collision-free dedup key for the (user, idempotency-key) tuple.
+
+        The user segment is length-prefixed so the tuple boundary is
+        unambiguous: (user="a", key="b:c") encodes to "u1:a:b:c" while
+        (user="a:b", key="c") encodes to "u3:a:b:c" - a plain ':' join
+        aliases both. Anonymous submits encode as "u0::{key}", which no
+        literal user id (including "-") can produce."""
+        user = user_id or ""
+        return self._q_key(f"idem:u{len(user)}:{user}:{idempotency_key}")
+
+    def _q_load_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        raw = self.redis_client.get(self._q_job_key(job_id))
+        if raw is None:
+            return None
+        return json.loads(raw if isinstance(raw, str) else raw.decode())
+
+    def _q_save_job_in_pipe(self, pipe: Any, job: Dict[str, Any]) -> None:
+        pipe.set(self._q_job_key(job["id"]), json.dumps(job))
+
+    def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+        """Insert an accepted run job (idempotency-first, then depth gate).
+
+        The idempotency key and the job document commit in ONE MULTI under
+        WATCH: a crash can no longer leave a dangling key that 409-wedges the
+        idempotency key until its TTL. A dangling key from a pre-fix crash is
+        self-healed: a key whose job document is missing is treated as
+        orphaned and taken over (WATCH arbitrates racing takeovers)."""
+        from redis.exceptions import WatchError
+
+        # Falsy ("" or None) means no dedup - matching the Postgres store, which
+        # treats an empty header as no key (an "" key would otherwise wedge
+        # every later empty-header submit onto one job). The STORED document
+        # normalizes too (Postgres parity: the column reads NULL, never '')
+        # so get_job consumers need no per-store knowledge.
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
+        idem = job.get("idempotency_key")
+        # user_id scopes the dedup namespace (cross-tenant key reuse must not
+        # attach to another tenant's run) - mirrors the Postgres index
+        idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
+
+        job_key = self._q_job_key(job["id"])
+
+        for _ in range(10):
+            with self.redis_client.pipeline() as pipe:
+                try:
+                    # The job key is always WATCHed: the MULTI below SETs it,
+                    # and a racing enqueue of the same id must not silently
+                    # overwrite (see the existence check further down).
+                    if idem_key is not None:
+                        pipe.watch(job_key, idem_key)
+                        existing_id = pipe.get(idem_key)
+                        if existing_id is not None:
+                            existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
+                            existing = self._q_load_job(existing_id)
+                            if existing is not None and existing.get("user_id") == job.get("user_id"):
+                                pipe.unwatch()
+                                return {"accepted": False, "reason": "duplicate", "job": existing}
+                            # Orphaned key (dual-write crash before this fix)
+                            # OR a legacy/aliased key pointing at another
+                            # tenant's job (defense-in-depth: a duplicate
+                            # attach hands the caller that job's identifiers
+                            # and live event stream) - never attach; fall
+                            # through and take the key over inside the MULTI
+                    else:
+                        pipe.watch(job_key)
+
+                    if max_depth and max_depth > 0:
+                        queued = int(self.redis_client.zcard(self._q_key("queued")))
+                        if queued >= max_depth:
+                            pipe.unwatch()
+                            return {"accepted": False, "reason": "queue_full", "job": None}
+
+                    # Existing document under this id: mirror Postgres, where
+                    # id is the primary key - a collision is a programming
+                    # error (ids are server-minted uuid4), never a client
+                    # dedup. Silently SETting would reset a live ticket to
+                    # queued/attempt-0 - two executors, the first one's
+                    # completion fenced out.
+                    if pipe.exists(job_key):
+                        pipe.unwatch()
+                        raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
+
+                    pipe.multi()
+                    if idem_key is not None:
+                        pipe.set(idem_key, job["id"])
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job["id"]: job["available_at"]})
+                    pipe.zadd(self._q_key("all"), {job["id"]: job["created_at"]})
+                    pipe.execute()
+                    return {"accepted": True, "reason": None, "job": dict(job)}
+                except WatchError:
+                    continue  # another submitter raced this key; re-evaluate
+        raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
+
+    def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the oldest executable job (queued, or stale-running
+        within the attempt budget). WATCH/MULTI CAS; a raced claim moves on.
+        Deployment affinity filters BOTH branches (a reclaim executes too):
+        NULL rides anywhere, stamped jobs only on matching workers;
+        deployment_id=None degenerates to claiming only unstamped jobs.
+
+        The scan PAGES past affinity mismatches: a fixed window would let a
+        head of foreign-deployment jobs starve matching jobs sitting behind
+        them indefinitely (foreign entries stay queued at the front). Each
+        page is pre-filtered with one pipelined MGET; the CAS inside
+        _q_try_claim remains the only authority."""
+        now = self._q_server_now()
+        stale = now - lock_grace_seconds
+
+        job = self._q_scan_claim(
+            self._q_key("queued"), now, worker_id, now, expect_status="queued", deployment_id=deployment_id
+        )
+        if job is not None:
+            return job
+        return self._q_scan_claim(
+            self._q_key("running"),
+            stale,
+            worker_id,
+            now,
+            expect_status="running",
+            stale_before=stale,
+            deployment_id=deployment_id,
+        )
+
+    def _q_scan_claim(
+        self,
+        zset_key: str,
+        max_score: int,
+        worker_id: str,
+        now: int,
+        expect_status: str,
+        stale_before: Optional[int] = None,
+        deployment_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Page through ready jobs oldest-first, cheaply pre-filter each page
+        by deployment affinity (MGET, advisory only), and CAS-claim the first
+        match. Ends when a page comes back empty - worst case one MGET per
+        page of foreign jobs, the same order of work as Postgres's index
+        scan over the same rows.
+
+        Offset pagination under concurrent claimers can skip entries whose
+        rank shifted mid-scan (a peer claimed something on an earlier page).
+        That only ends THIS burst early - every poll tick rescans from rank
+        0, so a skipped job is picked up next tick; no starvation."""
+        page_size = 64
+        offset = 0
+        while True:
+            raw_ids = self.redis_client.zrangebyscore(zset_key, "-inf", max_score, start=offset, num=page_size)
+            if not raw_ids:
+                return None
+            job_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
+            raw_jobs = self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids])
+            for job_id, raw in zip(job_ids, raw_jobs):
+                if raw is None:
+                    continue
+                try:
+                    candidate = json.loads(raw if isinstance(raw, str) else raw.decode())
+                except (ValueError, AttributeError):
+                    continue
+                if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
+                    continue
+                job = self._q_try_claim(
+                    job_id,
+                    worker_id,
+                    now,
+                    expect_status=expect_status,
+                    stale_before=stale_before,
+                    deployment_id=deployment_id,
+                )
+                if job is not None:
+                    return job
+            offset += page_size
+
+    def _q_try_claim(
+        self,
+        job_id: str,
+        worker_id: str,
+        now: int,
+        expect_status: str,
+        stale_before: Optional[int] = None,
+        deployment_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return None
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                claimable = (
+                    job["status"] == expect_status
+                    and job["available_at"] <= now
+                    and (job.get("deployment_id") is None or job.get("deployment_id") == deployment_id)
+                    and (
+                        expect_status == "queued"
+                        or (
+                            job.get("locked_at") is not None
+                            and stale_before is not None
+                            and job["locked_at"] <= stale_before
+                            and job["attempt"] < job["max_attempts"]
+                        )
+                    )
+                )
+                if not claimable:
+                    pipe.unwatch()
+                    return None
+                job.update(
+                    status="running", locked_by=worker_id, locked_at=now, attempt=job["attempt"] + 1, updated_at=now
+                )
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("queued"), job_id)
+                pipe.zadd(self._q_key("running"), {job_id: now})
+                pipe.execute()
+                return job
+        except WatchError:
+            return None
+
+    def _q_fenced_update(
+        self, job_id: str, worker_id: str, attempt: int, mutate: Any
+    ) -> Tuple["QueueWriteOutcome", Optional[Dict[str, Any]]]:
+        """CAS update allowed only for the claim holder of this attempt.
+
+        WatchError means the record changed under us - a CONCURRENT WRITER,
+        not a verdict. The single-shot version returned "no" for it, which is
+        indistinguishable from a fence rejection: a final heartbeat racing the
+        completion could make the completion look fenced, leaving the ticket
+        RUNNING with the worker convinced it had settled. Retry the read-CAS
+        a bounded number of times and report what actually happened.
+        """
+        from redis.exceptions import WatchError
+
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        job_key = self._q_job_key(job_id)
+        for _ in range(10):
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return QueueWriteOutcome.MISSING, None
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if job.get("locked_by") != worker_id or job["attempt"] != attempt or job["status"] != "running":
+                        pipe.unwatch()
+                        return QueueWriteOutcome.FENCED, job
+                    mutate(job)
+                    pipe.multi()
+                    self._q_save_job_in_pipe(pipe, job)
+                    # Zset membership is decided ENTIRELY inside this MULTI from
+                    # the post-mutate status. A running job keeps (or refreshes)
+                    # its running-zset entry in the same transaction - the old
+                    # post-EXEC zadd left a crash window where a heartbeaten job
+                    # was status="running" but in NO zset: invisible to reclaim
+                    # and sweep alike, a permanent zombie.
+                    if job["status"] == "running":
+                        pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or self._q_server_now()})
+                    else:
+                        pipe.zrem(self._q_key("running"), job_id)
+                    if job["status"] == "queued":
+                        pipe.zadd(self._q_key("queued"), {job_id: job["available_at"]})
+                    pipe.execute()
+                    return QueueWriteOutcome.APPLIED, job
+            except WatchError:
+                continue  # the record changed under us; re-read and re-evaluate
+        log_warning(f"Job queue: fenced update for job {job_id} did not settle after 10 attempts (contention)")
+        return QueueWriteOutcome.CONTENDED, None
+
+    def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        count = 0
+        now = self._q_server_now()
+        for job_id in job_ids:
+            job = self._q_load_job(job_id)
+            if job is None:
+                continue
+
+            def _beat(j: Dict[str, Any]) -> None:
+                j["locked_at"] = now
+
+            outcome, _ = self._q_fenced_update(job_id, worker_id, job["attempt"], _beat)
+            if outcome == QueueWriteOutcome.APPLIED:
+                count += 1
+        return count
+
+    def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        now = self._q_server_now()
+
+        def _complete(job: Dict[str, Any]) -> None:
+            job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+
+        outcome, _ = self._q_fenced_update(job_id, worker_id, attempt, _complete)
+        return outcome == QueueWriteOutcome.APPLIED
+
+    def retry_or_fail_job(
+        self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
+    ) -> Optional[str]:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        now = self._q_server_now()
+        outcome_status: Dict[str, str] = {}
+
+        def _retry(job: Dict[str, Any]) -> None:
+            if job["attempt"] < job["max_attempts"]:
+                job.update(
+                    status="queued",
+                    error=error,
+                    locked_by=None,
+                    locked_at=None,
+                    available_at=now + retry_delay_seconds,
+                    updated_at=now,
+                )
+                outcome_status["status"] = "queued"
+            else:
+                job.update(
+                    status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now
+                )
+                outcome_status["status"] = "failed"
+
+        outcome, _ = self._q_fenced_update(job_id, worker_id, attempt, _retry)
+        return outcome_status.get("status") if outcome == QueueWriteOutcome.APPLIED else None
+
+    def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). WATCH/MULTI CAS on
+        status='paused'; a queued/claimed continuation owns the ticket and is
+        never clobbered. (Paused jobs are in no queued/running zset.)"""
+        from redis.exceptions import WatchError
+
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] != "paused":
+                    pipe.unwatch()
+                    return False
+                job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def cancel_job(self, job_id: str) -> bool:
+        # Paused tickets count as waiting: nothing is executing them, and
+        # without this a cancelled paused run stayed a paused ticket forever,
+        # resurrectable by a later continue. (Paused jobs are in no
+        # queued/running zset; the zrem below is a harmless no-op for them.)
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] not in ("queued", "paused"):
+                    pipe.unwatch()
+                    return False
+                job.update(status="cancelled", completed_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("queued"), job_id)
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+        stale = self._q_server_now() - lock_grace_seconds
+        exhausted: List[Dict[str, Any]] = []
+        for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=limit * 2):
+            job = self._q_load_job(_q_to_str(raw_id))
+            if (
+                job is not None
+                and job["status"] == "running"
+                and job.get("locked_at") is not None
+                and job["locked_at"] <= stale
+                and job["attempt"] >= job["max_attempts"]
+            ):
+                exhausted.append(job)
+                if len(exhausted) >= limit:
+                    break
+        return exhausted
+
+    def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        """Take ownership of a stale, budget-exhausted running job BEFORE any
+        run-row write (WATCH/MULTI CAS). A live heartbeat between the sweep's
+        scan and this acquisition wins here, with the run row still
+        untouched. Refreshing locked_at doubles as the retry backoff for a
+        failing terminalization."""
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        stale = now - lock_grace_seconds
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if (
+                    job["status"] != "running"
+                    or job.get("locked_at") is None
+                    or job["locked_at"] > stale
+                    or job["attempt"] < job["max_attempts"]
+                ):
+                    pipe.unwatch()
+                    return False
+                job.update(locked_by=worker_id, locked_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                # Keep running-zset membership in the same transaction with
+                # the refreshed score (the sweep scan keys on this score)
+                pipe.zadd(self._q_key("running"), {job_id: now})
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the sweeper - see the in-memory store's
+        docstring: the sweep reconciles the ticket with what the run row
+        says (completed/cancelled/paused/failed), never blind-fails it."""
+        from redis.exceptions import WatchError
+
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] != "running" or job.get("locked_by") != worker_id:
+                    pipe.unwatch()
+                    return False
+                job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("running"), job_id)
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket. strict=True demands failure-propagating
+        semantics for fail-closed consumers (see the in-memory store's
+        docstring); this load propagates Redis errors in both modes."""
+        return self._q_load_job(job_id)
+
+    def count_queued_jobs(self) -> int:
+        return int(self.redis_client.zcard(self._q_key("queued")))
+
+    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Newest-first job listing. With a status filter, pages through the
+        FULL index in chunks until the limit is satisfied - a fixed window
+        would hide older matches behind newer non-matching jobs (e.g. failed
+        jobs older than a burst of completed ones)."""
+        jobs: List[Dict[str, Any]] = []
+        chunk = max(limit * 4, 100)
+        offset = 0
+        while True:
+            raw_ids = self.redis_client.zrevrange(self._q_key("all"), offset, offset + chunk - 1)
+            if not raw_ids:
+                return jobs
+            for raw_id in raw_ids:
+                job = self._q_load_job(_q_to_str(raw_id))
+                if job is not None and (status is None or job["status"] == status):
+                    jobs.append(job)
+                    if len(jobs) >= limit:
+                        return jobs
+            offset += chunk
+
+    def requeue_job(self, job_id: str) -> bool:
+        """Operator requeue for a terminally failed/cancelled job: grants
+        exactly one more execution by raising max_attempts to attempt + 1."""
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] not in ("failed", "cancelled"):
+                    pipe.unwatch()
+                    return False
+                job.update(
+                    status="queued",
+                    max_attempts=job["attempt"] + 1,
+                    available_at=now,
+                    locked_by=None,
+                    locked_at=None,
+                    completed_at=None,
+                    updated_at=now,
+                )
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zadd(self._q_key("queued"), {job_id: now})
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's WATCH/MULTI transition. No new rows, ever -
+        id == run_id is load-bearing. Submit-time payload fields are kept;
+        payload["continue"] is REPLACED WHOLESALE with this continue's inputs
+        (never accumulated across pause cycles). Budget grant: max_attempts =
+        attempt + 1 - exactly one more execution, regardless of the configured
+        retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        A WatchError means the ticket changed under us (e.g. the raced
+        double-click's CAS won): re-evaluate rather than failing, so the
+        second click resolves to attach. Exceptions propagate (like
+        enqueue_job): this CAS is the durable acceptance of the continue.
+        """
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        for _ in range(10):
+            now = self._q_server_now()
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return {"outcome": "conflict", "job": None}
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if job["status"] in ("completed", "failed", "cancelled"):
+                        pipe.unwatch()
+                        return {"outcome": "conflict", "job": job}
+                    if job["status"] in ("queued", "running"):
+                        pipe.unwatch()
+                        return {"outcome": "attach", "job": job}
+                    payload = dict(job.get("payload") or {})
+                    payload["continue"] = dict(continue_payload)
+                    job.update(
+                        status="queued",
+                        payload=payload,
+                        max_attempts=job["attempt"] + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                    pipe.multi()
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job_id: now})
+                    pipe.execute()
+                    return {"outcome": "queued", "job": job}
+            except WatchError:
+                continue  # ticket changed under us; re-evaluate its new status
+        raise RuntimeError("continue_job: ticket contention did not settle after 10 attempts")
+
+    def queue_stats(self) -> Dict[str, Any]:
+        now = int(time.time())
+        counts: Dict[str, int] = {}
+        oldest_queued: Optional[int] = None
+        for raw_id in self.redis_client.zrange(self._q_key("all"), 0, -1):
+            job = self._q_load_job(_q_to_str(raw_id))
+            if job is None:
+                continue
+            counts[job["status"]] = counts.get(job["status"], 0) + 1
+            if job["status"] == "queued":
+                age = now - job["created_at"]
+                oldest_queued = age if oldest_queued is None else max(oldest_queued, age)
+        return {"counts": counts, "oldest_queued_age_seconds": oldest_queued}
+
+    def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Retention sweep. The delete is CAS-guarded: an operator requeue can
+        flip failed->queued between our read and the delete, and an
+        unconditional delete would silently vanish the requeued (accepted!)
+        run. WATCH + re-check inside the transaction = Postgres's atomic
+        DELETE ... WHERE status IN (terminal). Paused tickets are deliberately
+        EXEMPT: they must outlive arbitrary human latency to stay continuable;
+        cancelling the run is the remedy for abandoned ones."""
+        from redis.exceptions import WatchError
+
+        cutoff = int(time.time()) - older_than_seconds
+        removed = 0
+        for raw_id in self.redis_client.zrange(self._q_key("all"), 0, -1):
+            job_id = _q_to_str(raw_id)
+            job_key = self._q_job_key(job_id)
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        continue
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if not (
+                        job["status"] in ("completed", "failed", "cancelled")
+                        and job.get("completed_at") is not None
+                        and job["completed_at"] <= cutoff
+                    ):
+                        pipe.unwatch()
+                        continue
+                    pipe.multi()
+                    pipe.delete(job_key)
+                    # Dedup key dies with the job record (Postgres parity: the
+                    # partial-unique index lives exactly as long as the row)
+                    if job.get("idempotency_key"):
+                        pipe.delete(self._q_idem_key(job.get("user_id"), job["idempotency_key"]))
+                    pipe.zrem(self._q_key("all"), job_id)
+                    pipe.zrem(self._q_key("queued"), job_id)
+                    pipe.zrem(self._q_key("running"), job_id)
+                    pipe.execute()
+                    removed += 1
+            except WatchError:
+                continue  # job changed under us (e.g. requeued): leave it alone
+        return removed
+
+
+def _q_to_str(value: Any) -> str:
+    return value.decode() if isinstance(value, bytes) else str(value)

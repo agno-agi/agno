@@ -110,7 +110,7 @@ def test_workflow_offloads_media_and_keeps_db_small():
         # persisted run rows carry a reference, not a base64 blob (runs live in
         # the runs table since the sessions-table denormalization)
         con = sqlite3.connect(f"{tmp}/wf.db")
-        rows = con.execute("SELECT run_data FROM agno_runs WHERE session_id='s1'").fetchall()
+        rows = con.execute("SELECT run_data FROM wf_sessions_runs WHERE session_id='s1'").fetchall()
         con.close()
         assert rows
         assert any("media_reference" in row[0] for row in rows)
@@ -161,7 +161,7 @@ def test_workflow_offloads_media_nested_in_container_steps(container):
         wf.run(input="hi", session_id="s1")
 
         con = sqlite3.connect(f"{tmp}/wf.db")
-        rows = con.execute("SELECT run_data FROM agno_runs WHERE session_id='s1'").fetchall()
+        rows = con.execute("SELECT run_data FROM wf_sessions_runs WHERE session_id='s1'").fetchall()
         con.close()
         assert rows
         for (run_data,) in rows:
@@ -184,7 +184,7 @@ def test_workflow_scrubs_media_nested_in_container_steps(container):
         out = wf.run(input="hi", session_id="s1")
 
         con = sqlite3.connect(f"{tmp}/wf.db")
-        rows = con.execute("SELECT run_data FROM agno_runs WHERE session_id='s1'").fetchall()
+        rows = con.execute("SELECT run_data FROM wf_sessions_runs WHERE session_id='s1'").fetchall()
         con.close()
         assert rows
         for (run_data,) in rows:
@@ -247,7 +247,7 @@ async def test_async_workflow_offloads_with_async_storage_on_sync_db():
 
         assert [f for f in Path(media_dir).iterdir() if not f.name.endswith(".meta.json")]
         con = sqlite3.connect(f"{tmp}/wf.db")
-        rows = con.execute("SELECT run_data FROM agno_runs WHERE session_id='s1'").fetchall()
+        rows = con.execute("SELECT run_data FROM wf_sessions_runs WHERE session_id='s1'").fetchall()
         con.close()
         assert rows
         assert "media_reference" in rows[0][0]
@@ -309,7 +309,7 @@ def test_workflow_uploads_once_on_an_adapter_without_a_runs_table():
         con = sqlite3.connect(f"{tmp}/wf.db")
         tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
         con.close()
-        assert "agno_runs" not in tables
+        assert "wf_sessions_runs" not in tables
 
 
 def test_session_pass_follows_upsert_run_support(monkeypatch):

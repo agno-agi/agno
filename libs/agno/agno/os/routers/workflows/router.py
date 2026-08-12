@@ -1,5 +1,7 @@
 import asyncio
+import contextlib
 import json
+import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 from uuid import uuid4
@@ -18,14 +20,26 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.db.schemas.jobs import QueuedJob
+from agno.exceptions import ComponentRehydrationError, InputCheckError, OutputCheckError
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     get_auth_token_from_request,
     get_authentication_dependency,
     require_resource_access,
 )
-from agno.os.managers import event_buffer, websocket_manager
+from agno.os.event_streams import get_event_stream
+from agno.os.job_queue import (
+    acontinue_via_queue,
+    aprepare_accepted_or_abort,
+    araise_if_ticket_owns_continue,
+    aticket_poll_fallback,
+    ensure_duplicate_matches_component,
+    normalize_idempotency_key,
+    payload_is_queueable,
+    ticket_status_to_api,
+    validate_seam_input,
+)
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
@@ -47,16 +61,22 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    afinalize_continue_stream,
+    amark_continue_stream_running,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_workflow_by_id,
     get_workflow_by_id_async,
+    queued_run_tail_streamer,
+    replayed_payload_to_sse,
     resolve_workflow,
+    sse_error_frame,
+    stored_event_replay_dicts,
 )
 from agno.run.base import RunStatus
-from agno.run.workflow import WorkflowErrorEvent
-from agno.utils.log import log_debug, log_warning, logger
+from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.utils.serialize import json_serializer
 from agno.workflow.factory import WorkflowFactory
 from agno.workflow.remote import RemoteWorkflow
@@ -64,6 +84,74 @@ from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
+
+_ws_tail_pumps: "weakref.WeakKeyDictionary[WebSocket, asyncio.Task]" = weakref.WeakKeyDictionary()
+
+
+def _stream_payload_to_dict(payload: Any, ev_index: int, run_id: str) -> Dict[str, Any]:
+    """Normalize an event-stream payload to the WS wire dict.
+
+    In-memory streams hand back structured events; distributed streams hand
+    back SSE-formatted strings whose data JSON already embeds event_index and
+    run_id. Either way the socket sends one flat JSON object."""
+    if isinstance(payload, str):
+        for line in payload.split("\n"):
+            if line.startswith("data: "):
+                try:
+                    d = json.loads(line[6:])
+                    d.setdefault("event_index", ev_index)
+                    d.setdefault("run_id", run_id)
+                    return d
+                except Exception:
+                    break
+        return {"event": "unknown", "raw": payload, "event_index": ev_index, "run_id": run_id}
+    d = payload.model_dump() if hasattr(payload, "model_dump") else payload.to_dict()
+    d["event_index"] = ev_index
+    if "run_id" not in d:
+        d["run_id"] = run_id
+    return d
+
+
+async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, from_index: Optional[int]) -> None:
+    """Forward live events from the event stream to a subscribed socket.
+
+    This is what makes WS reconnects replica-independent: the socket lives
+    wherever the client connected, the events come from wherever the run
+    executes, and tail() bridges the two."""
+    event_stream = get_event_stream()
+    try:
+        async for ev_index, sse_data in event_stream.tail(run_id, last_event_index=from_index):
+            await websocket.send_text(
+                json.dumps(_stream_payload_to_dict(sse_data, ev_index, run_id), default=json_serializer)
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        # Socket closed mid-pump (normal on client disconnect) or stream
+        # failed. Best-effort error frame: a dead pump must not look like a
+        # completed run to a client whose socket is still open.
+        log_debug(f"WS tail pump for run {run_id} ended: {e}")
+        with contextlib.suppress(Exception):
+            await websocket.send_text(
+                json.dumps({"event": "error", "run_id": run_id, "error": f"stream tail failed: {str(e)[:200]}"})
+            )
+
+
+# NOTE on execute-socket wire format: the non-durable execute path sends
+# SSE-wrapped frames (WebSocketHandler.format_sse_event) while the reconnect
+# pump sends flat JSON dicts. Durable tails standardize on the FLAT format:
+# the FE parser accepts both, and one pump beats two formats diverging.
+
+
+async def cancel_subscription_pump(websocket: WebSocket) -> None:
+    """Cancel the tail pump attached to this socket, if any (called on
+    disconnect by the WS dispatcher, and on re-subscribe)."""
+    task = _ws_tail_pumps.pop(websocket, None)
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
 
 
 async def handle_workflow_via_websocket(
@@ -157,6 +245,89 @@ async def handle_workflow_via_websocket(
                 session_id = workflow.session_id
             else:
                 session_id = str(uuid4())
+
+        # Durable WS submission: the queue row is the acceptance, execution
+        # happens on whichever worker claims it, and this socket becomes a
+        # tail view of the event stream - the run survives this replica.
+        # Wire format: flat JSON dicts (the reconnect/subscribe format; the
+        # FE parser handles both, confirmed) with a leading "queued" ack
+        # frame so the client sees accepted/waiting instead of a silent
+        # socket while the job waits for a claim.
+        queue_worker = getattr(websocket.app.state, "queue_worker", None)
+        queued_ws_payload: Dict[str, Any] = {"input": user_message, "kwargs": {}, "stream": True}
+        ws_submit_queueable = (
+            queue_worker is not None
+            and not is_factory
+            and getattr(workflow, "db", None) is not None
+            and payload_is_queueable(queued_ws_payload)
+            and any(
+                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+                for candidate in (os.workflows or [])
+            )
+        )
+        if ws_submit_queueable:
+            # Accept must honor input_schema exactly like the inline path
+            try:
+                validate_seam_input(workflow, user_message)
+            except HTTPException as e:
+                await websocket.send_text(json.dumps({"event": "error", "error": str(e.detail)}))
+                return
+            assert queue_worker is not None  # narrowed by ws_submit_queueable
+            queued_run_id = str(uuid4())
+            job = QueuedJob(
+                id=queued_run_id,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+                session_id=session_id,
+                user_id=user_id,
+                payload=queued_ws_payload,
+                max_attempts=queue_worker.config.max_attempts,
+                deployment_id=queue_worker.config.deployment_id,
+            ).to_dict()
+            enqueue_result = await queue_worker.store.enqueue_job(job, max_depth=queue_worker.config.max_queue_depth)
+            if not enqueue_result["accepted"]:
+                # No Idempotency-Key over WS, so "duplicate" cannot legitimately
+                # happen on a fresh uuid - either way nothing was enqueued and
+                # the client must know the submission was NOT accepted
+                reason = enqueue_result.get("reason") or "rejected"
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": "Job queue is full; retry later"
+                            if reason == "queue_full"
+                            else f"Submission was not accepted ({reason})",
+                        }
+                    )
+                )
+                return
+            with contextlib.suppress(Exception):
+                # Fail-open: the queue row is already committed - a Redis blip
+                # must not kill an accepted submission (tails degrade gracefully)
+                await get_event_stream().register_run(queued_run_id, RunStatus.pending)
+            try:
+                await aprepare_accepted_or_abort(
+                    queue_worker, workflow, "workflow", queued_run_id, session_id, user_id, user_message
+                )
+            except HTTPException as he:
+                await websocket.send_text(json.dumps({"event": "error", "error": str(he.detail)}))
+                return
+            await websocket.send_text(
+                json.dumps({"event": "queued", "run_id": queued_run_id, "session_id": session_id})
+            )
+            # Tail the whole stream from the start (this socket is the primary
+            # view). One pump per socket; the dispatcher cancels it on
+            # disconnect/re-subscribe via the shared registry.
+            await cancel_subscription_pump(websocket)
+            _ws_tail_pumps[websocket] = asyncio.create_task(
+                _pump_event_stream_to_websocket(websocket, queued_run_id, None)
+            )
+            return
+        if queue_worker is not None:
+            log_warning(
+                "WS workflow submission bypasses the durable queue (factory/off-registry/no-db "
+                "workflows are not queueable): bounded and observable, but NOT durable."
+            )
 
         # Execute workflow in background with streaming via WebSocket
         await workflow.arun(  # type: ignore
@@ -289,19 +460,30 @@ async def handle_workflow_subscription(
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
                 return
 
-        # Check if run exists in event buffer
-        buffer_status = event_buffer.get_run_status(run_id)
+        # Check if the run is known to the event stream (any replica)
+        event_stream = get_event_stream()
+        try:
+            buffer_status = await event_stream.get_run_status(run_id)
+        except Exception as e:
+            log_error(f"WS subscription: event stream status probe failed for run {run_id}: {e}")
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": f"event stream unavailable: {str(e)[:200]}"})
+            )
+            return
 
         if buffer_status is None:
             # Run not in buffer - check database
             if workflow_id and session_id:
                 try:
+                    # Lenient: replay only reads stored events through the
+                    # workflow's db handle, never its resolved references.
                     workflow = get_workflow_by_id(
                         workflow_id=workflow_id,
                         workflows=os.workflows,
                         db=os.db,
                         registry=os.registry,
                         create_fresh=True,
+                        strict=False,
                     )
                 except FactoryContextRequired:
                     workflow = None
@@ -309,41 +491,29 @@ async def handle_workflow_subscription(
                     workflow_run = await workflow.aget_run_output(run_id, session_id, user_id=user_id)
 
                     if workflow_run:
-                        # Run exists in DB - send all events from DB
-                        if workflow_run.events:
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "event": "replay",
-                                        "run_id": run_id,
-                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
-                                        "total_events": len(workflow_run.events),
-                                        "message": "Run completed. Replaying all events from database.",
-                                    }
-                                )
+                        # Run exists in DB - replay through the shared
+                        # floor-honoring helper (same contract as the SSE
+                        # resume routes): stamped events are filtered under
+                        # the client's last_event_index and keep their REAL
+                        # stream indices - positional renumbering re-sent the
+                        # full history and destroyed index continuity for
+                        # partially-caught-up clients.
+                        replay_dicts = stored_event_replay_dicts(workflow_run, run_id, last_event_index)
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "event": "replay",
+                                    "run_id": run_id,
+                                    "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                    "total_events": len(replay_dicts),
+                                    "message": "Run completed. Replaying stored events from database."
+                                    if replay_dicts
+                                    else "Run completed but no events stored past the requested index.",
+                                }
                             )
-
-                            # Send events one by one
-                            for idx, event in enumerate(workflow_run.events):
-                                # Convert event to dict and add event_index
-                                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                                event_dict["event_index"] = idx
-                                if "run_id" not in event_dict:
-                                    event_dict["run_id"] = run_id
-
-                                await websocket.send_text(json.dumps(event_dict, default=json_serializer))
-                        else:
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "event": "replay",
-                                        "run_id": run_id,
-                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
-                                        "total_events": 0,
-                                        "message": "Run completed but no events stored.",
-                                    }
-                                )
-                            )
+                        )
+                        for event_dict in replay_dicts:
+                            await websocket.send_text(json.dumps(event_dict, default=json_serializer))
                         return
 
             # Run not found anywhere
@@ -352,10 +522,13 @@ async def handle_workflow_subscription(
             )
             return
 
-        # Run is in buffer (still active or recently completed)
-        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
-            # Run finished - send all events from buffer
-            all_events = event_buffer.get_events(run_id, last_event_index=None)
+        # Run is known to the stream (still active or recently completed).
+        # PAUSED belongs here too: a paused run's stream is settled until the
+        # continue-run, so subscribers get the replay (ending in the paused
+        # snapshot) rather than an open live tail claiming RUNNING.
+        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
+            # Run finished - replay everything still buffered
+            all_events = await event_stream.replay(run_id, last_event_index=None)
 
             await websocket.send_text(
                 json.dumps(
@@ -369,23 +542,18 @@ async def handle_workflow_subscription(
                 )
             )
 
-            # Send all events
             for ev_index, buffered_event in all_events:
-                # Convert event to dict and add event_index
-                event_dict = (
-                    buffered_event.model_dump() if hasattr(buffered_event, "model_dump") else buffered_event.to_dict()
+                await websocket.send_text(
+                    json.dumps(_stream_payload_to_dict(buffered_event, ev_index, run_id), default=json_serializer)
                 )
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-
-                await websocket.send_text(json.dumps(event_dict))
             return
 
-        # Run is still active - send missed events and subscribe to new ones
-        missed_events = event_buffer.get_events(run_id, last_event_index)
-        current_event_count = event_buffer.get_event_count(run_id)
+        # Run is still active - replay missed events, then follow live via a
+        # tail pump (works regardless of which replica executes the run)
+        missed_events = await event_stream.replay(run_id, last_event_index)
+        current_event_count = await event_stream.get_event_count(run_id)
 
+        last_replayed_index = last_event_index
         if missed_events:
             # Send catch-up notification
             await websocket.send_text(
@@ -401,20 +569,11 @@ async def handle_workflow_subscription(
                 )
             )
 
-            # Send missed events
             for ev_index, buffered_event in missed_events:
-                # Convert event to dict and add event_index
-                event_dict = (
-                    buffered_event.model_dump() if hasattr(buffered_event, "model_dump") else buffered_event.to_dict()
+                await websocket.send_text(
+                    json.dumps(_stream_payload_to_dict(buffered_event, ev_index, run_id), default=json_serializer)
                 )
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-
-                await websocket.send_text(json.dumps(event_dict))
-
-        # Register websocket for future events
-        await websocket_manager.register_websocket(run_id, websocket)
+                last_replayed_index = ev_index
 
         # Send subscription confirmation
         await websocket.send_text(
@@ -427,6 +586,14 @@ async def handle_workflow_subscription(
                     "message": "Subscribed to workflow run. You will receive new events as they occur.",
                 }
             )
+        )
+
+        # Live phase: tail() handles the replay/subscribe race internally, so
+        # events landing between our replay and the pump start are not lost.
+        # One pump per socket: a re-subscribe replaces the previous pump.
+        await cancel_subscription_pump(websocket)
+        _ws_tail_pumps[websocket] = asyncio.create_task(
+            _pump_event_stream_to_websocket(websocket, run_id, last_replayed_index)
         )
 
         log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
@@ -530,6 +697,114 @@ async def handle_workflow_continue_via_websocket(
                     json.dumps({"event": "error", "error": f"Invalid step_requirements: {str(e)}"})
                 )
                 return
+
+        # Durable continue: CAS the run's EXISTING paused ticket back to
+        # queued so the continuation leg survives crashes and executes on
+        # whichever worker claims it; this socket becomes a tail view
+        # speaking the flat-JSON tail format (the same
+        # _pump_event_stream_to_websocket frames the reconnect/subscription
+        # surface sends - the FE parser handles both, per the 2026-08-02
+        # resolution that removed the SSE-wrapped execute pump).
+        queue_worker = getattr(websocket.app.state, "queue_worker", None)
+        continue_payload = {"step_requirements": step_requirements_data}
+        workflow_is_queueable = any(
+            getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+            for candidate in (os.workflows or [])
+        )
+        if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
+            # existing_run.is_paused was proven above. stream_requested: this
+            # socket IS a stream - a non-streaming submission's ticket must be
+            # refused before the CAS, not silently pumped from an empty stream
+            continue_outcome = await acontinue_via_queue(
+                queue_worker,
+                run_id,
+                continue_payload,
+                stream_requested=True,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+            )
+            if continue_outcome is not None:
+                outcome = continue_outcome["outcome"]
+                if outcome == "stream_mismatch":
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "error",
+                                "run_id": run_id,
+                                "error": "Run was submitted non-streaming; continue it over HTTP "
+                                "and poll for the result instead of a WebSocket",
+                            }
+                        )
+                    )
+                    return
+                if outcome == "settling":
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "error",
+                                "run_id": run_id,
+                                "error": "Run is settling between execution legs; retry in a moment",
+                            }
+                        )
+                    )
+                    return
+                if outcome == "conflict":
+                    ticket_status = (continue_outcome.get("job") or {}).get("status", "unknown")
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "error",
+                                "run_id": run_id,
+                                "error": f"Run is not continuable (ticket status: {ticket_status})",
+                            }
+                        )
+                    )
+                    return
+                # queued (accepted) or attach (double-click): pump the event
+                # stream to this socket. Tail from the PRE-ACCEPT index
+                # (captured by the helper before the CAS) - the execute
+                # socket gets post-approval events only, exactly like the
+                # detached continue producer; earlier history belongs to the
+                # subscription/replay surface. One pump per socket, cancelled
+                # on disconnect/re-subscribe by the dispatcher (same registry
+                # the subscription pump uses).
+                # Also send the "queued" ack here: the continue socket has the
+                # same claim-delay window as a submission, and the FE ignores
+                # unknown frames until it wires this one up
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(
+                        json.dumps({"event": "queued", "run_id": run_id, "session_id": session_id})
+                    )
+                await cancel_subscription_pump(websocket)
+                _ws_tail_pumps[websocket] = asyncio.create_task(
+                    _pump_event_stream_to_websocket(websocket, run_id, continue_outcome.get("tail_from"))
+                )
+                return
+            # DELIBERATE transport asymmetry with the HTTP continue door
+            # (which refuses this cell): the socket is itself the live event
+            # channel the detached machinery streams into, so falling back
+            # delivers exactly what the caller attached for - minus
+            # durability, hence the warning.
+            log_warning(
+                "WS background continue bypasses the durable queue (no paused ticket for this "
+                "run): executing on the accepting replica instead - bounded and observable, "
+                "but NOT durable."
+            )
+
+        # Inline-door admission gate: a paused/queued/running durable ticket
+        # OWNS this run's continuation - the detached WS door must refuse or
+        # the cross-door double-execution race reopens (as an error frame,
+        # this being a socket)
+        try:
+            await araise_if_ticket_owns_continue(
+                getattr(websocket.app.state, "queue_worker", None),
+                run_id,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+            )
+        except HTTPException as gate_exc:
+            await websocket.send_text(json.dumps({"event": "error", "run_id": run_id, "error": str(gate_exc.detail)}))
+            return
 
         # Continue workflow in background with WebSocket streaming.
         # Events are broadcast via WebSocketHandler through _handle_event calls,
@@ -730,6 +1005,7 @@ async def workflow_continue_response_streamer(
     user_id: Optional[str] = None,
     step_requirements: Optional[List[Any]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    queue_worker: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
@@ -745,16 +1021,42 @@ async def workflow_continue_response_streamer(
             **kwargs,
         )
 
-        async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk)  # type: ignore
+        # Post-approval events must reach the event stream too: with
+        # _handle_event transport-free, this response is otherwise their only
+        # copy, and a later /resume or WS reconnect would replay just the
+        # pre-pause prefix. Re-register (idempotent, cross-replica continue),
+        # mark RUNNING, publish per event, and complete with the final status.
+        await amark_continue_stream_running(run_id, component=workflow, session_id=session_id, user_id=user_id)
+
+        try:
+            async for run_response_chunk in run_response:
+                if not isinstance(run_response_chunk, WorkflowRunOutput):
+                    await workflow._apublish_stream_event(run_response_chunk, run_id)
+                yield format_sse_event(run_response_chunk)  # type: ignore
+        finally:
+            # Stream close + paused-ticket settle as one cancellation-proof
+            # unit; under cancellation the final status is KNOWN - see the
+            # agents twin for both hazards. Otherwise it resolves from THIS
+            # run's row, never session.runs[-1]
+            import sys
+
+            _exc = sys.exc_info()[0]
+            _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+            await afinalize_continue_stream(
+                workflow,
+                run_id,
+                session_id,
+                queue_worker=queue_worker,
+                final_status=RunStatus.cancelled if _cancelled else None,
+            )
 
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
         # backwards compatibility with older clients.
         _session = await workflow.aget_session(session_id=session_id)
-        if _session and _session.runs:
-            _last_run = _session.runs[-1]
-            if getattr(_last_run, "is_paused", False):
+        if _session is not None:
+            _last_run = _session.get_run(run_id)
+            if _last_run is not None and getattr(_last_run, "is_paused", False):
                 from agno.run.workflow import WorkflowPausedEvent
 
                 paused_event = WorkflowPausedEvent(
@@ -772,6 +1074,8 @@ async def workflow_continue_response_streamer(
                     content=_last_run.content,
                     metadata=_last_run.metadata,
                 )
+                with contextlib.suppress(Exception):
+                    await workflow._apublish_stream_event(paused_event, run_id)
                 yield format_sse_event(paused_event)
 
                 # Legacy WorkflowRunOutput event for backwards compatibility
@@ -816,9 +1120,16 @@ async def _resume_stream_generator(
     2. Run completed (in buffer): replay all events since last_event_index
     3. Not in buffer: fall back to database replay
     """
-    from agno.os.managers import sse_subscriber_manager
-
-    buffer_status = event_buffer.get_run_status(run_id)
+    event_stream = get_event_stream()
+    try:
+        buffer_status = await event_stream.get_run_status(run_id)
+    except Exception as e:
+        # Network-backed streams can fail here; headers are already sent, so
+        # the only honest signal is an SSE error frame (never a silent close,
+        # and never a quiet fall-through to the DB path)
+        log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
+        yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
+        return
 
     if buffer_status is None:
         # PATH 3: Not in buffer -- fall back to database
@@ -830,28 +1141,18 @@ async def _resume_stream_generator(
                 yield f"event: error\ndata: {json.dumps(error)}\n\n"
                 return
             if run_output and run_output.events:
-                meta: dict = {
-                    "event": "replay",
-                    "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
-                    "total_events": len(run_output.events),
-                    "message": "Run completed. Replaying all events from database.",
-                }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                from agno.os.utils import stored_event_replay_frames
 
-                for idx, event in enumerate(run_output.events):
-                    event_dict = event.to_dict()
-                    event_dict["event_index"] = idx
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                for frame in stored_event_replay_frames(run_output, run_id, last_event_index):
+                    yield frame
                 return
             elif run_output:
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": run_output.status.value
+                    if hasattr(run_output.status, "value")
+                    else (run_output.status or "unknown"),
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
@@ -864,9 +1165,9 @@ async def _resume_stream_generator(
         return
 
     if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
-        # PATH 2: Run finished -- replay missed events from buffer
-        total_buffered = event_buffer.get_event_count(run_id)
-        missed_events = event_buffer.get_events(run_id, last_event_index=last_event_index)
+        # PATH 2: Run finished -- replay missed events from the event stream
+        total_buffered = await event_stream.get_event_count(run_id)
+        missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
         log_debug(
             f"Workflow resume PATH 2: run_id={run_id}, status={buffer_status.value}, "
             f"last_event_index={last_event_index}, total_buffered={total_buffered}, "
@@ -884,90 +1185,85 @@ async def _resume_stream_generator(
         }
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
-        for ev_index, buffered_event in missed_events:
-            event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = ev_index
-            if "run_id" not in event_dict:
-                event_dict["run_id"] = run_id
-            event_type = event_dict.get("event", "message")
-            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        for ev_index, payload in missed_events:
+            yield replayed_payload_to_sse(payload, ev_index, run_id)
         return
 
-    # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
-    queue = sse_subscriber_manager.subscribe(run_id)
+    # PATH 1: Run still active (RUNNING, or PENDING while queued for a
+    # concurrency slot) -- replay missed events, then tail live events. The
+    # event stream's tail() owns the replay/subscribe race, dedup by
+    # event_index, and terminal detection (including a producer that died
+    # without writing a sentinel).
+    missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
+    current_count = await event_stream.get_event_count(run_id)
 
+    last_replayed_index = last_event_index if last_event_index is not None else -1
+
+    if missed_events:
+        meta = {
+            "event": "catch_up",
+            "run_id": run_id,
+            "status": "running",
+            "missed_events": len(missed_events),
+            "current_event_count": current_count,
+            "message": f"Catching up on {len(missed_events)} missed events.",
+        }
+        yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
+
+        for ev_index, payload in missed_events:
+            yield replayed_payload_to_sse(payload, ev_index, run_id)
+            last_replayed_index = max(last_replayed_index, ev_index)
+
+    # Confirm subscription for live events
+    subscribed = {
+        "event": "subscribed",
+        "run_id": run_id,
+        "status": "running",
+        "current_event_count": current_count,
+        "message": "Subscribed to workflow run. Receiving live events.",
+    }
+    yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+
+    log_debug(f"SSE client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
+
+    # Pump the tail through a queue so we can heartbeat on idle without
+    # cancelling the tail generator (cancelling its __anext__ would kill it).
+    tail_queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump_tail() -> None:
+        try:
+            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
+                await tail_queue.put(tail_item)
+        except Exception as e:
+            # A tail that DIES must not look like a tail that FINISHED: emit an
+            # error frame so the client can distinguish and reconnect
+            log_error(f"Resume tail failed for run {run_id}: {e}")
+            with contextlib.suppress(Exception):
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
+        finally:
+            await tail_queue.put(None)
+
+    pump_task = asyncio.create_task(_pump_tail())
     try:
-        missed_events = event_buffer.get_events(run_id, last_event_index)
-        current_count = event_buffer.get_event_count(run_id)
-
-        # Track the highest replayed event_index for dedup against queue events
-        last_replayed_index = last_event_index if last_event_index is not None else -1
-
-        if missed_events:
-            meta = {
-                "event": "catch_up",
-                "run_id": run_id,
-                "status": "running",
-                "missed_events": len(missed_events),
-                "current_event_count": current_count,
-                "message": f"Catching up on {len(missed_events)} missed events.",
-            }
-            yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
-
-            for ev_index, buffered_event in missed_events:
-                event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-                event_type = event_dict.get("event", "message")
-                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                last_replayed_index = ev_index
-
-        # Re-check buffer status after subscribing
-        updated_status = event_buffer.get_run_status(run_id)
-        if updated_status is not None and updated_status != RunStatus.running:
-            remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-            if remaining:
-                for ev_index, buffered_event in remaining:
-                    event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = ev_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-            return
-
-        # Stream live events from queue (dedup by event_index)
         while True:
             try:
-                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
-                # Check if run ended without sending sentinel
-                status = event_buffer.get_run_status(run_id)
-                if status is None or status != RunStatus.running:
-                    # Run ended - replay any remaining events from buffer
-                    remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-                    for ev_index, buffered_event in remaining:
-                        event_dict = buffered_event.to_dict()
-                        event_dict["event_index"] = ev_index
-                        if "run_id" not in event_dict:
-                            event_dict["run_id"] = run_id
-                        event_type = event_dict.get("event", "message")
-                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                    break
-                # Still running - send heartbeat to keep connection alive
+                # Tail is idle (queued or silent run) - keep the connection alive
                 yield ": heartbeat\n\n"
                 continue
             if item is None:
+                # Tail finished: run reached a terminal state
                 break
-            event_index, sse_data = item
-            if event_index <= last_replayed_index:
-                continue
-            last_replayed_index = event_index
+            _ev_index, sse_data = item
             yield sse_data
-
     finally:
-        sse_subscriber_manager.unsubscribe(run_id, queue)
+        pump_task.cancel()
+        # Suppress everything, not just CancelledError: an exception re-raised
+        # here reaches the ASGI layer on a response whose headers are already
+        # sent (the pump has already surfaced it as an error frame)
+        with contextlib.suppress(BaseException):
+            await pump_task
 
 
 def get_workflow_router(
@@ -1049,7 +1345,15 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            for db_workflow in get_workflows(db=os.db, registry=os.registry):
+            db_workflows = get_workflows(db=os.db, registry=os.registry)
+            if db_workflows:
+                # Apply the same RBAC filtering to DB-loaded workflows:
+                # without it, a caller whose scope excludes a workflow
+                # still saw its config here (the agents endpoint already
+                # filters)
+                if getattr(request.state, "authorization_enabled", False):
+                    db_workflows = filter_resources_by_access(request, db_workflows, "workflows")
+            for db_workflow in db_workflows or []:
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
                 except Exception:
@@ -1104,6 +1408,8 @@ def get_workflow_router(
                 create_fresh=True,
                 version=version,
             )  # type: ignore[assignment]
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1231,6 +1537,95 @@ def get_workflow_router(
                 )
 
             if stream:
+                # Durable queued streaming: the queue row is the acceptance,
+                # execution happens on whichever worker claims it, and this
+                # response tails the event stream. Durability attaches to the
+                # RUN (complete output guaranteed via the run row); the live
+                # stream is the best-effort view.
+                queue_worker = getattr(request.app.state, "queue_worker", None)
+                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
+                stream_queueable = (
+                    queue_worker is not None
+                    and getattr(workflow, "db", None) is not None
+                    and not isinstance(workflow, RemoteWorkflow)
+                    and version is None
+                    and payload_is_queueable(queued_stream_payload)
+                    and any(
+                        getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+                        for candidate in (os.workflows or [])
+                    )
+                )
+                if stream_queueable:
+                    # 202/stream-accept must honor input_schema like the inline path
+                    validate_seam_input(workflow, message)
+                    assert queue_worker is not None  # narrowed by stream_queueable
+                    from agno.run.base import RunStatus as _RS
+
+                    queued_run_id = str(uuid4())
+                    queued_session_id = session_id or str(uuid4())
+                    job = QueuedJob(
+                        id=queued_run_id,
+                        component_type="workflow",
+                        component_id=getattr(workflow, "id", None) or workflow_id,
+                        session_id=queued_session_id,
+                        user_id=user_id,
+                        payload=queued_stream_payload,
+                        max_attempts=queue_worker.config.max_attempts,
+                        deployment_id=queue_worker.config.deployment_id,
+                        idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                    ).to_dict()
+                    enqueue_result = await queue_worker.store.enqueue_job(
+                        job, max_depth=queue_worker.config.max_queue_depth
+                    )
+                    if enqueue_result["reason"] == "queue_full":
+                        raise HTTPException(status_code=429, detail="Job queue is full")
+                    if enqueue_result["reason"] == "duplicate":
+                        existing = enqueue_result["job"]
+                        if existing is None:
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was already used but the original run could not be retrieved",
+                            )
+                        ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
+                        if not (existing.get("payload") or {}).get("stream"):
+                            # The key was used by a NON-stream submission: its
+                            # run never registers in the event stream, so a
+                            # tail would close instantly and silently. Refuse
+                            # honestly instead.
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was used by a non-streaming submission; "
+                                f"poll run {existing['id']} instead of attaching a stream",
+                            )
+                        # Attach to the ORIGINAL run's stream. A terminal
+                        # original (or one whose stream keys already expired)
+                        # gets the full resume path - buffer or DB replay -
+                        # instead of a blind tail that would close silently
+                        # with zero events.
+                        if existing.get("status") in ("queued", "running"):
+                            return StreamingResponse(
+                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            )
+                        return StreamingResponse(
+                            _resume_stream_generator(
+                                workflow, existing["id"], None, existing.get("session_id"), user_id
+                            ),
+                            media_type="text/event-stream",
+                        )
+                    with contextlib.suppress(Exception):
+                        # Fail-open: the queue row is already committed - a Redis blip
+                        # must not 500 an accepted submission (tails degrade gracefully)
+                        await get_event_stream().register_run(queued_run_id, _RS.pending)
+                    await aprepare_accepted_or_abort(
+                        queue_worker, workflow, "workflow", queued_run_id, queued_session_id, user_id, message
+                    )
+                    return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
+                if queue_worker is not None:
+                    log_warning(
+                        "Streaming background workflow run bypasses the durable queue "
+                        "(remote/factory/version-pinned submissions are not queueable): "
+                        "bounded and observable, but NOT durable."
+                    )
                 # background=True, stream=True: resumable SSE streaming
                 # Workflow runs in a detached asyncio.Task that survives client disconnections.
                 # Events are buffered for reconnection via /resume endpoint.
@@ -1253,6 +1648,102 @@ def get_workflow_router(
                     status_code=400,
                     detail="Background execution requires a database to be configured on the workflow",
                 )
+
+            # Durable queue path: acceptance is a committed row; whichever
+            # replica's worker claims the job executes it, surviving crashes
+            # and deploys. Client contract identical: 202 + poll.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            # Queueable only if this is a plain registry instance: the worker
+            # resolves from the registry, so factory-backed or off-registry
+            # (db-resolved / version-pinned) components would be accepted here
+            # and then fail or run differently in the worker.
+            component_is_queueable = any(
+                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+                for candidate in (os.workflows or [])
+            )
+            queued_payload = {"input": message, "kwargs": kwargs}
+            if (
+                queue_worker is not None
+                and not isinstance(workflow, RemoteWorkflow)
+                and component_is_queueable
+                and version is None  # version-pinned resolution differs from the worker's registry instance
+                and payload_is_queueable(queued_payload)
+            ):
+                # 202 must honor input_schema exactly like the inline path 422s
+                validate_seam_input(workflow, message)
+                queued_run_id = str(uuid4())
+                queued_session_id = session_id or str(uuid4())
+                job = QueuedJob(
+                    id=queued_run_id,
+                    component_type="workflow",
+                    component_id=getattr(workflow, "id", None) or workflow_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    payload=queued_payload,
+                    max_attempts=queue_worker.config.max_attempts,
+                    deployment_id=queue_worker.config.deployment_id,
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                ).to_dict()
+
+                # Enqueue FIRST: the committed queue row is the acceptance.
+                # Rejected or duplicate submissions must leave no phantom
+                # PENDING run behind in the session.
+                enqueue_result = await queue_worker.store.enqueue_job(
+                    job, max_depth=queue_worker.config.max_queue_depth
+                )
+                if enqueue_result["reason"] == "queue_full":
+                    raise HTTPException(status_code=429, detail="Job queue is full")
+                if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
+                    existing = enqueue_result["job"]
+                    ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "run_id": existing["id"],
+                            "session_id": existing["session_id"],
+                            # Same vocabulary as the run poll: a duplicate of a
+                            # failed run says ERROR (not an invented "FAILED"),
+                            # and a running one says RUNNING (not PENDING).
+                            "status": ticket_status_to_api(existing["status"]) or existing["status"].upper(),
+                        },
+                    )
+                if enqueue_result["reason"] == "duplicate":
+                    # Duplicate but the original row could not be retrieved:
+                    # NEVER fall through to a 202 for a run that was not
+                    # enqueued - that acceptance would be a lie
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Idempotency-Key was already used but the original run could not be retrieved",
+                    )
+                # Accepted: persist the PENDING run row so pollers find it.
+                # Idempotent - a worker that already claimed the job wins.
+                await aprepare_accepted_or_abort(
+                    queue_worker, workflow, "workflow", queued_run_id, queued_session_id, user_id, message
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
+                )
+            elif queue_worker is not None:
+                # EVERY bypass reason warns - a client gets its 202 either way
+                # and must never silently believe acceptance was durable.
+                if not payload_is_queueable(queued_payload):
+                    log_warning(
+                        "Background run bypasses the durable queue: the submission carries values plain "
+                        "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
+                else:
+                    # Off-registry, factory-backed, or version-pinned: the
+                    # worker resolves from the registry, so these cannot ride
+                    # the queue - previously this dropped to the non-durable
+                    # path with no log line at all.
+                    log_warning(
+                        "Background run bypasses the durable queue: the workflow is not a plain "
+                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
+                        "resolution differs from the worker's registry instance). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
 
             run_response = await workflow.arun(
                 input=message,
@@ -1346,6 +1837,10 @@ def get_workflow_router(
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        background: bool = Form(
+            False,
+            description="Continue in background (survives client disconnect). Requires database. Use /resume to reconnect.",
+        ),
         factory_input: Optional[str] = Form(
             None,
             description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
@@ -1429,6 +1924,102 @@ def get_workflow_router(
         # attribute the continued run to another user.
         effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
 
+        if background:
+            # Durable continue: CAS the run's EXISTING paused ticket back to
+            # queued (same row, same run_id) so the continuation leg survives
+            # crashes and executes on whichever worker claims it. Runs that
+            # never rode the queue have no ticket to transition and keep the
+            # non-background path below.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            continue_payload = {"step_requirements": step_requirements_data}
+            workflow_is_queueable = any(
+                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+                for candidate in (os.workflows or [])
+            )
+            if (
+                queue_worker is not None
+                and not isinstance(workflow, RemoteWorkflow)
+                and workflow_is_queueable
+                and payload_is_queueable(continue_payload)
+            ):
+                # The endpoint already proved the run row is PAUSED above
+                continue_outcome = await acontinue_via_queue(
+                    queue_worker,
+                    run_id,
+                    continue_payload,
+                    stream_requested=stream,
+                    component_type="workflow",
+                    component_id=getattr(workflow, "id", None) or workflow_id,
+                )
+                if continue_outcome is not None:
+                    outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")
+                    if outcome == "stream_mismatch":
+                        # Pre-CAS refusal: nothing was accepted behind this
+                        # 409 (submit-seam duplicate parity)
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Run was submitted non-streaming; poll run {run_id} instead of attaching a stream",
+                        )
+                    if outcome == "settling":
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Run is settling between execution legs; retry in a moment",
+                            headers={"Retry-After": "1"},
+                        )
+                    if outcome == "conflict":
+                        ticket_status = (ticket or {}).get("status", "unknown")
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Run is not continuable (ticket status: {ticket_status})",
+                        )
+                    # queued (accepted) or attach (double-click): same
+                    # response shape as the submit seam
+                    if stream:
+                        # Tail from the PRE-ACCEPT index (captured by the
+                        # helper before the CAS): the continue response
+                        # carries post-approval events only, exactly like the
+                        # detached continue streamer; earlier history belongs
+                        # to /resume
+                        return StreamingResponse(
+                            queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
+                            media_type="text/event-stream",
+                        )
+                    return JSONResponse(
+                        status_code=202,
+                        content={"run_id": run_id, "session_id": session_id, "status": "PENDING"},
+                    )
+            # No durable path (no worker, factory/remote workflow, or no
+            # paused ticket): refuse. The background param on this HTTP
+            # endpoint arrived with the durable queue, so no pre-queue
+            # clients depend on a fallthrough (unlike agents/teams, whose
+            # inline non-stream fallthrough is kept for back-compat), and
+            # HTTP has no workflow detached-continue machinery to serve
+            # instead - a replica-bound foreground response would silently
+            # fake the semantics the caller asked for.
+            #
+            # DELIBERATE transport asymmetry: the workflow WebSocket
+            # continue door falls back to detached execution with a warning
+            # for this same cell, because the socket is itself the live
+            # event channel the detached machinery streams into. HTTP has
+            # no equivalent until workflows grow the resumable-continue
+            # streamer agents/teams have.
+            raise HTTPException(
+                status_code=409,
+                detail="background=true continuation is only available for durably-submitted "
+                "workflow runs (a paused queue ticket); this run has none. Retry without "
+                "background, or submit the workflow with background=true and a durable queue.",
+            )
+
+        # Inline-door admission gate: a paused/queued/running durable ticket
+        # OWNS this run's continuation; non-queue doors must refuse or the
+        # cross-door double-execution race reopens. 409/503 raise here.
+        await araise_if_ticket_owns_continue(
+            getattr(request.app.state, "queue_worker", None),
+            run_id,
+            component_type="workflow",
+            component_id=getattr(workflow, "id", None) or workflow_id,
+        )
+
         if stream:
             return StreamingResponse(
                 workflow_continue_response_streamer(
@@ -1438,6 +2029,7 @@ def get_workflow_router(
                     user_id=effective_user_id,
                     step_requirements=parsed_requirements,
                     background_tasks=background_tasks,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                 ),
                 media_type="text/event-stream",
             )
@@ -1451,6 +2043,21 @@ def get_workflow_router(
                     step_requirements=parsed_requirements,
                     stream=False,
                     background_tasks=background_tasks,
+                )
+                # Status-only stream sync (deliberate scope): a non-stream
+                # continue has no events to publish, but a formerly-queued/
+                # streamed run's stream view must stop saying PAUSED once the
+                # continue settles - only_if_tracked leaves never-streamed
+                # runs alone.
+                # Stream close + paused-ticket settle as one
+                # cancellation-proof unit (see the streaming twin)
+                await afinalize_continue_stream(
+                    workflow,
+                    run_id,
+                    session_id,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
+                    only_if_tracked=True,
+                    final_status=getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
             except InputCheckError as e:
@@ -1504,12 +2111,22 @@ def get_workflow_router(
                     component_id=workflow_id,
                 )
 
+            # Tombstone a still-queued durable ticket first: intent alone
+            # does not stop a job no task is executing yet
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            if queue_worker is not None:
+                await queue_worker.acancel_queued(run_id)
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
         try:
             workflow = get_workflow_by_id(
-                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                workflow_id=workflow_id,
+                workflows=os.workflows,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                strict=False,
             )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
@@ -1534,6 +2151,11 @@ def get_workflow_router(
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
+        # Tombstone a still-queued durable ticket first: intent alone
+        # does not stop a job no task is executing yet
+        queue_worker = getattr(request.app.state, "queue_worker", None)
+        if queue_worker is not None:
+            await queue_worker.acancel_queued(run_id)
         await workflow.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 
@@ -1596,7 +2218,12 @@ def get_workflow_router(
             )
 
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            strict=False,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -1665,7 +2292,12 @@ def get_workflow_router(
         else:
             try:
                 workflow = get_workflow_by_id(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
@@ -1682,11 +2314,37 @@ def get_workflow_router(
         if hasattr(workflow, "aget_session"):
             session = await workflow.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
             if session is None:
+                # The acceptance is the committed ticket; the run row (and on
+                # a fresh session, the session row) lands a beat later. A 404
+                # inside that beat reports an accepted run as nonexistent -
+                # answer from the ticket instead, tenant-checked, fail-closed.
+                ticket_view = await aticket_poll_fallback(
+                    getattr(request.app.state, "queue_worker", None),
+                    run_id,
+                    session_id,
+                    "workflow",
+                    workflow_id,
+                    user_id,
+                    user_scoped=user_id is not None,
+                )
+                if ticket_view is not None:
+                    return ticket_view
                 raise HTTPException(status_code=404, detail="Run not found")
             assert_session_matches_component(session, "workflows", workflow_id, not_found_detail="Run not found")
 
         run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
+            ticket_view = await aticket_poll_fallback(
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                session_id,
+                "workflow",
+                workflow_id,
+                user_id,
+                user_scoped=user_id is not None,
+            )
+            if ticket_view is not None:
+                return ticket_view
             raise HTTPException(status_code=404, detail="Run not found")
 
         # Per-resource RBAC: the run must explicitly belong to the path workflow.
@@ -1743,6 +2401,7 @@ def get_workflow_router(
             user_id=user_id,
             session_id=session_id,
             factory_input=factory_input,
+            strict=False,
         )
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")

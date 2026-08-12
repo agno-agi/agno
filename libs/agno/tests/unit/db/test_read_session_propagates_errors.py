@@ -139,15 +139,19 @@ class TestWorkflowReadSessionPropagatesErrors:
         wf._has_async_db.return_value = has_async
         if get_session_side_effect is not None:
             if has_async:
+
                 async def _boom(**_kwargs):
                     raise get_session_side_effect
+
                 wf.db.get_session = _boom
             else:
                 wf.db.get_session.side_effect = get_session_side_effect
         else:
             if has_async:
+
                 async def _ok(**_kwargs):
                     return get_session_return
+
                 wf.db.get_session = _ok
             else:
                 wf.db.get_session.return_value = get_session_return
