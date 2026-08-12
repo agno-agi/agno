@@ -729,6 +729,15 @@ def get_team_router(
         if background:
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
+            # The db requirement gates BOTH shapes here: the non-stream
+            # branch always 400ed, while the stream branch used to enter the
+            # detached streamer and let arun(background=True) raise - the
+            # same misconfiguration answered 200 + SSE error frame,
+            # indistinguishable from a runtime failure.
+            if not team.db:
+                raise HTTPException(
+                    status_code=400, detail="Background execution requires a database to be configured on the team"
+                )
 
             if stream:
                 # Durable queued streaming: the queue row is the acceptance,
@@ -837,12 +846,9 @@ def get_team_router(
                     media_type="text/event-stream",
                 )
 
-            # background=True, stream=False: return 202 immediately with run metadata
-            if not team.db:
-                raise HTTPException(
-                    status_code=400, detail="Background execution requires a database to be configured on the team"
-                )
-
+            # background=True, stream=False: return 202 immediately with run
+            # metadata (the db requirement was enforced at the top of the
+            # background branch, for both shapes)
             # Durable queue path: acceptance is a committed row; whichever
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
