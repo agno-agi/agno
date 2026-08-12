@@ -1563,7 +1563,6 @@ def get_workflow_router(
                 stream_queueable = (
                     queue_worker is not None
                     and getattr(workflow, "db", None) is not None
-                    and not isinstance(workflow, RemoteWorkflow)
                     and version is None
                     and payload_is_queueable(queued_stream_payload)
                     and any(
@@ -1578,7 +1577,7 @@ def get_workflow_router(
                     from agno.run.base import RunStatus as _RS
 
                     queued_run_id = str(uuid4())
-                    queued_session_id = session_id or str(uuid4())
+                    queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="workflow",
@@ -1676,7 +1675,6 @@ def get_workflow_router(
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
-                and not isinstance(workflow, RemoteWorkflow)
                 and component_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
@@ -1684,7 +1682,7 @@ def get_workflow_router(
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(workflow, message)
                 queued_run_id = str(uuid4())
-                queued_session_id = session_id or str(uuid4())
+                queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="workflow",
@@ -1918,6 +1916,7 @@ def get_workflow_router(
         if not getattr(existing_run, "is_paused", False):
             status = getattr(existing_run, "status", None)
             _status_to_detail = {
+                RunStatus.pending: "run is already pending",
                 RunStatus.running: "run is already running",
                 RunStatus.completed: "run is already completed",
                 RunStatus.error: "run has errored",
@@ -1957,12 +1956,7 @@ def get_workflow_router(
                 getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
                 for candidate in (os.workflows or [])
             )
-            if (
-                queue_worker is not None
-                and not isinstance(workflow, RemoteWorkflow)
-                and workflow_is_queueable
-                and payload_is_queueable(continue_payload)
-            ):
+            if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
                 # The endpoint already proved the run row is PAUSED above
                 continue_outcome = await acontinue_via_queue(
                     queue_worker,

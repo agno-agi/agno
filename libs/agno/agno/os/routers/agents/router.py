@@ -774,7 +774,6 @@ def get_agent_router(
                     queue_worker is not None
                     and getattr(agent, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
-                    and not isinstance(agent, RemoteAgent)
                     and version is None
                     and not (base64_images or base64_audios or base64_videos or input_files)
                     and any(
@@ -790,7 +789,7 @@ def get_agent_router(
                     from agno.run.base import RunStatus as _RS
 
                     queued_run_id = str(uuid4())
-                    queued_session_id = session_id or str(uuid4())
+                    queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="agent",
@@ -896,7 +895,6 @@ def get_agent_router(
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
-                and not isinstance(agent, RemoteAgent)
                 and agent_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
@@ -908,7 +906,7 @@ def get_agent_router(
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(agent, message)
                 queued_run_id = str(uuid4())
-                queued_session_id = session_id or str(uuid4())
+                queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="agent",

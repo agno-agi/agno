@@ -48,7 +48,7 @@ def harness(tmp_path):
                 created_at=int(time.time()),
             )
         )
-    return SimpleNamespace(client=client)
+    return SimpleNamespace(client=client, db=db)
 
 
 class TestContinueTypedErrorMapping:
@@ -93,3 +93,32 @@ class TestSubmitBlanket500Removed:
         )
         assert resp.status_code == 429, f"typed HTTPException must propagate, got {resp.status_code}: {resp.text}"
         assert resp.json()["detail"] == "model rate limited"
+
+
+class TestPendingWordingInPausedGate:
+    def test_queued_pending_run_gets_specific_wording(self, harness):
+        """The workflow continue status map had no pending entry: a
+        queued-PENDING run answered the generic not-paused wording while
+        agents say "run is already pending"."""
+        runs_table = harness.db._get_table(table_type="runs", create_table_if_not_found=True)
+        with harness.db.Session() as sess, sess.begin():
+            sess.execute(
+                runs_table.insert().values(
+                    run_id="r-wf-pending",
+                    session_id="s-wf",
+                    run_type="workflow",
+                    workflow_id="qa-wf",
+                    status="PENDING",
+                    run_index=1,
+                    run_data=json.dumps(
+                        {"run_id": "r-wf-pending", "session_id": "s-wf", "workflow_id": "qa-wf", "status": "PENDING"}
+                    ),
+                    created_at=int(time.time()),
+                )
+            )
+        resp = harness.client.post(
+            "/workflows/qa-wf/runs/r-wf-pending/continue",
+            data={"session_id": "s-wf", "stream": "false", "background": "false"},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "run is already pending", f"got {resp.json()['detail']!r}"

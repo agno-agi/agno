@@ -1789,10 +1789,17 @@ async def araise_if_ticket_owns_continue(
         return
     status = job.get("status")
     if status == "paused":
+        # The message carries its own escape hatch: when the run ROW is
+        # missing while this paused ticket survives (a lost row after a
+        # session-store fault), background=true itself fails not-found and
+        # falls through to this gate - without the second sentence the 409
+        # told the caller to do exactly what it just did, a dead end.
         raise HTTPException(
             status_code=409,
             detail=f"Run {run_id} was submitted through the durable queue; continue it with "
-            "background=true (the queue owns its continuations)",
+            "background=true (the queue owns its continuations). If background=true cannot "
+            "find the run, its row is missing while the ticket survives: cancel the run and "
+            "requeue the ticket from the /queue operations surface.",
         )
     if status in ("queued", "running"):
         raise HTTPException(
