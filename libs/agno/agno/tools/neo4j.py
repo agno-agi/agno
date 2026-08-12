@@ -64,16 +64,16 @@ class Neo4jTools(Toolkit):
         # Register toolkit methods as tools
         tools: List[Callable] = []
         if all or list_labels:
-            tools.append(self.list_labels)
+            tools.append(self.list_neo4j_labels)
         if all or list_relationship_types:
-            tools.append(self.list_relationship_types)
+            tools.append(self.list_neo4j_relationship_types)
         if all or get_schema:
-            tools.append(self.get_schema)
+            tools.append(self.get_neo4j_schema)
         if all or run_cypher_query:
-            tools.append(self.run_cypher_query)
+            tools.append(self.run_neo4j_cypher_query)
         super().__init__(name="neo4j_tools", tools=tools, **kwargs)
 
-    def list_labels(self) -> str:
+    def list_neo4j_labels(self) -> str:
         """
         Retrieve all node labels present in the connected Neo4j database.
 
@@ -90,7 +90,7 @@ class Neo4jTools(Toolkit):
             logger.exception("Error listing labels")
             return json.dumps([])
 
-    def list_relationship_types(self) -> str:
+    def list_neo4j_relationship_types(self) -> str:
         """
         Retrieve all relationship types present in the connected Neo4j database.
 
@@ -107,7 +107,7 @@ class Neo4jTools(Toolkit):
             logger.exception("Error listing relationship types")
             return json.dumps([])
 
-    def get_schema(self) -> str:
+    def get_neo4j_schema(self) -> str:
         """
         Retrieve a visualization of the database schema, including nodes and relationships.
 
@@ -124,7 +124,7 @@ class Neo4jTools(Toolkit):
             logger.exception("Error getting Neo4j schema")
             return json.dumps([])
 
-    def run_cypher_query(self, query: str) -> str:
+    def run_neo4j_cypher_query(self, query: str) -> str:
         """
         Execute an arbitrary Cypher query against the connected Neo4j database.
 

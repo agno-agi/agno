@@ -101,17 +101,17 @@ class RedshiftTools(Toolkit):
 
         tools: List[Callable] = []
         if all or show_tables:
-            tools.append(self.show_tables)
+            tools.append(self.show_redshift_tables)
         if all or describe_table:
-            tools.append(self.describe_table)
+            tools.append(self.describe_redshift_table)
         if all or summarize_table:
-            tools.append(self.summarize_table)
+            tools.append(self.summarize_redshift_table)
         if all or inspect_query:
-            tools.append(self.inspect_query)
+            tools.append(self.inspect_redshift_query)
         if all or run_query:
-            tools.append(self.run_query)
+            tools.append(self.run_redshift_sql)
         if all or export_table_to_path:
-            tools.append(self.export_table_to_path)
+            tools.append(self.export_redshift_table_to_path)
 
         super().__init__(name="redshift_tools", tools=tools, **kwargs)
 
@@ -242,13 +242,13 @@ class RedshiftTools(Toolkit):
             log_error(f"An unexpected error occurred: {str(e)}")
             return f"An unexpected error occurred: {e}"
 
-    def show_tables(self) -> str:
+    def show_redshift_tables(self) -> str:
         """Lists all tables in the configured schema."""
 
         stmt = "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;"
         return self._execute_query(stmt, (self.table_schema,))
 
-    def describe_table(self, table: str) -> str:
+    def describe_redshift_table(self, table: str) -> str:
         """
         Provides the schema (column name, data type, is nullable) for a given table.
 
@@ -265,7 +265,7 @@ class RedshiftTools(Toolkit):
         """
         return self._execute_query(stmt, (self.table_schema, table))
 
-    def summarize_table(self, table: str) -> str:
+    def summarize_redshift_table(self, table: str) -> str:
         """
         Computes and returns key summary statistics for a table's columns.
 
@@ -352,7 +352,7 @@ class RedshiftTools(Toolkit):
         except redshift_connector.Error as e:
             return f"Error summarizing table: {e}"
 
-    def inspect_query(self, query: str) -> str:
+    def inspect_redshift_query(self, query: str) -> str:
         """
         Shows the execution plan for a SQL query (using EXPLAIN).
 
@@ -364,7 +364,7 @@ class RedshiftTools(Toolkit):
         """
         return self._execute_query(f"EXPLAIN {query}")
 
-    def export_table_to_path(self, table: str, path: str) -> str:
+    def export_redshift_table_to_path(self, table: str, path: str) -> str:
         """
         Exports a table's data to a local CSV file.
 
@@ -404,7 +404,7 @@ class RedshiftTools(Toolkit):
                     pass  # Connection might be closed
             return f"Error exporting table: {e}"
 
-    def run_query(self, query: str) -> str:
+    def run_redshift_sql(self, query: str) -> str:
         """
         Runs a read-only SQL query and returns the result.
 

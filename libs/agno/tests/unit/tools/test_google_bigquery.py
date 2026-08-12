@@ -40,7 +40,7 @@ def test_run_sql_query_success(bq_tools_instance, mock_bq_client):
     mock_bq_client.query.return_value = mock_query_job
 
     query = "SELECT product_name, quantity FROM sales"
-    result_json_str = bq_tools_instance.run_sql_query(query)
+    result_json_str = bq_tools_instance.run_bigquery_sql(query)
 
     expected_inner_string = "[{'product_name': 'Laptop', 'quantity': 5}, {'product_name': 'Mouse', 'quantity': 20}]"
     expected_json_string = json.dumps(expected_inner_string)
@@ -59,7 +59,7 @@ def test_list_tables_error(bq_tools_instance, mock_bq_client):
     """Test list_tables error handling."""
     mock_bq_client.list_tables.side_effect = Exception("Network Error")
 
-    result = bq_tools_instance.list_tables()
+    result = bq_tools_instance.list_bigquery_tables()
     assert "Error getting tables: Network Error" == result
 
 
@@ -79,7 +79,7 @@ def test_describe_table_success(bq_tools_instance, mock_bq_client):
     mock_table_object.to_api_repr.return_value = mock_table_api_repr
     mock_bq_client.get_table.return_value = mock_table_object
 
-    result = bq_tools_instance.describe_table(table_id="customers")
+    result = bq_tools_instance.describe_bigquery_table(table_id="customers")
 
     expected_data = {"table_description": "Table of customer data", "columns": "['customer_id', 'email']"}
     expected_json_string = json.dumps(expected_data)
@@ -92,7 +92,7 @@ def test_describe_table_error(bq_tools_instance, mock_bq_client):
     """Test describe_table error handling."""
     mock_bq_client.get_table.side_effect = Exception("Table Not Found")
 
-    result = bq_tools_instance.describe_table(table_id="non_existent_table")
+    result = bq_tools_instance.describe_bigquery_table(table_id="non_existent_table")
     assert "Error getting table schema: Table Not Found" == result
 
 
@@ -103,7 +103,7 @@ def test_run_sql_query_empty_result(bq_tools_instance, mock_bq_client):
     mock_bq_client.query.return_value = mock_query_job
 
     query = "SELECT * FROM empty_table"
-    result = bq_tools_instance.run_sql_query(query)
+    result = bq_tools_instance.run_bigquery_sql(query)
     expected_json_string = json.dumps("[]")
     assert result == expected_json_string
 
@@ -113,7 +113,7 @@ def test_run_sql_query_error_in_client_query(bq_tools_instance, mock_bq_client):
     mock_bq_client.query.side_effect = Exception("Query Execution Failed")
 
     query = "SELECT * FROM some_table"
-    result = bq_tools_instance.run_sql_query(query)
+    result = bq_tools_instance.run_bigquery_sql(query)
 
     expected_json_string = json.dumps("")
     assert result == expected_json_string
