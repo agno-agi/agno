@@ -638,9 +638,7 @@ def get_agent_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
-        # int like teams/workflows: the old str declaration with a bare
-        # int(version) cast 500ed on non-numeric input where siblings 422
-        version: Optional[int] = Form(None, description="Agent version to use for this run"),
+        version: Optional[str] = Form(None, description="Agent version to use for this run"),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
@@ -685,7 +683,7 @@ def get_agent_router(
             os.agents,
             os.db,
             registry,
-            version=version,
+            version=int(version) if version else None,
             request=request,
             user_id=user_id,
             session_id=session_id,

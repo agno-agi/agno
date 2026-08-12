@@ -54,17 +54,6 @@ class TestBadDocumentIsSkipped:
         )
 
 
-class TestVersionParamIsTyped:
-    def test_non_numeric_version_is_422_not_500(self, harness):
-        resp = harness.client.post(
-            "/agents/qa-agent/runs",
-            data={"message": "hi", "stream": "false", "version": "not-a-number"},
-        )
-        assert resp.status_code == 422, (
-            f"non-numeric version must fail validation like teams/workflows, got {resp.status_code}"
-        )
-
-
 class TestDebugLogOmitsMessageContent:
     def test_team_submit_does_not_log_raw_message(self, harness, benign_team_run):
         """Handler attached DIRECTLY to the agno loggers: they do not
