@@ -165,8 +165,7 @@ class LanceDb(VectorDb):
         if use_tantivy:
             log_warning("use_tantivy is deprecated. LanceDB now uses native FTS. This parameter is ignored.")
 
-        # Whether the LIVE table has the ``user_id`` owner column. Tables
-        # created before v3 lack it; resolved lazily and cached.
+        # Whether the live table has the ``user_id`` column; pre-v3 tables lack it.
         self._owner_column_exists: Optional[bool] = None
 
         log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
@@ -269,15 +268,8 @@ class LanceDb(VectorDb):
                     logger.exception("Sync table creation also failed")
                     raise
 
-    # Top-level column that holds the chunk owner for per-user RAG isolation.
-    # ``NULL`` means shared / unowned (admin / org-wide content). The column is
-    # populated from the explicit ``user_id`` parameter on insert/upsert. By
-    # promoting this out of the JSON ``payload`` blob, we can push it down
-    # into LanceDB's native ``.where(...)`` clause — the wrapper previously
-    # filtered in Python AFTER the top-K vector search (broken for isolation:
-    # top-K math becomes silently wrong for any predicate that excludes most
-    # of the global top-K). With a real column we use ``prefilter=True`` so
-    # the predicate runs BEFORE the ANN search.
+    # Owner column for per-user isolation; ``NULL`` is shared content. A real column
+    # rather than a ``payload`` key so the scope predicate pushes into ``.where(...)``.
     USER_ID_COL: str = "user_id"
 
     def _base_schema(self) -> pa.Schema:
@@ -309,13 +301,11 @@ class LanceDb(VectorDb):
         return tbl  # type: ignore
 
     def _scoped_doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the deterministic id so two users inserting the
-        same content get distinct ids. None keeps the stable base id.
+        """Fold the owner into the deterministic id so two users inserting the same
+        content get distinct ids. ``None`` keeps the stable base id.
 
-        ``base_id`` is caller-controlled and variable length, so it is collapsed with
-        ``content_hash`` into a fixed-length digest before the owner is folded in -
-        otherwise the '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice')
-        collapse to the same id, letting one owner overwrite the other's chunk.
+        ``base_id`` is collapsed with ``content_hash`` into a fixed-length digest before
+        the owner is folded in, otherwise ('doc_1', 'alice') and ('doc', '1_alice') collide.
         """
         doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
         if user_id is None:
@@ -323,12 +313,7 @@ class LanceDb(VectorDb):
         return md5(f"{doc_id}_{user_id}".encode()).hexdigest()
 
     def _user_id_column_exists(self) -> bool:
-        """Whether the live table has the ``user_id`` owner column.
-
-        Tables created before v3 predate per-user isolation and lack the
-        column until the v2 -> v3 migration adds it (``table.add_columns``).
-        Cached after the first lookup.
-        """
+        """Whether the live table has the ``user_id`` column. Pre-v3 tables lack it until migrated."""
         if self._owner_column_exists is None:
             try:
                 if self.table is None:
@@ -336,10 +321,7 @@ class LanceDb(VectorDb):
                     return True
                 self._owner_column_exists = self.USER_ID_COL in self.table.schema.names
             except Exception:
-                # Inspection failed (odd handle, remote hiccup): assume
-                # migrated for THIS call only. Caching the assumption would
-                # let one blip permanently mask a real legacy table —
-                # uncached, the next call re-inspects.
+                # Assume migrated for this call only; left uncached so the next call re-inspects.
                 log_warning(
                     f"Could not inspect table '{self.table_name}' for the user_id column; "
                     "proceeding as migrated for this operation."
@@ -350,28 +332,21 @@ class LanceDb(VectorDb):
     def _require_owner_column(self, user_id: Optional[str]) -> bool:
         """Gate every ``user_id``-column reference on the live schema.
 
-        Returns True when the column exists, False when it is missing and the
-        operation is unscoped — the caller then falls back to pre-v3 queries
-        that never mention the column. A scoped operation on an unmigrated
-        table raises instead of surfacing a raw DataFusion error (or being
-        swallowed into an empty result).
+        Returns True when the column exists and False when it is missing on an unscoped
+        call, so the caller falls back to pre-v3 queries. A scoped call raises instead.
         """
         if self._user_id_column_exists():
             return True
         if user_id is None:
             return False
-        # The cached answer may predate a migration run while this process is
-        # alive — re-inspect once before refusing. LanceTable pins its dataset
-        # version, so a plain re-read of ``self.table.schema`` returns the
-        # same stale version forever; refresh the handle first or a user who
-        # just ran the migration keeps hitting this error until restart.
+        # Re-inspect once before refusing: LanceTable pins its dataset version, so
+        # ``self.table.schema`` stays stale until the handle checks out the latest.
         self._owner_column_exists = None
         try:
             if self.table is not None:
                 self.table.checkout_latest()
         except Exception:
-            # Older clients / cloud handles may not support checkout — the
-            # re-inspect then sees whatever the handle sees.
+            # Older clients / cloud handles may not support checkout.
             pass
         if self._user_id_column_exists():
             return True
@@ -394,16 +369,14 @@ class LanceDb(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to add as metadata to documents
-            user_id (Optional[str]): Owner of these chunks for per-user RAG
-                isolation. Stored in the dedicated ``user_id`` column.
-                ``None`` means shared / unscoped.
+            user_id (Optional[str]): Owner of these chunks, stored in the ``user_id``
+                column. ``None`` means shared.
         """
         if len(documents) <= 0:
             log_info("No documents to insert")
             return
 
-        # Unmigrated (pre-v3) tables reject rows that carry the column, so the
-        # row dicts below must omit it; scoped writes raise here instead.
+        # Pre-v3 tables reject rows carrying the column, so the row dicts below must omit it.
         include_owner = self._require_owner_column(user_id)
 
         log_debug(f"Inserting {len(documents)} documents")
@@ -480,8 +453,7 @@ class LanceDb(VectorDb):
             log_debug("No documents to insert")
             return
 
-        # Fail a scoped write on an unmigrated table now, before paying for
-        # embeddings the sync insert would reject anyway.
+        # Fail a scoped write on an unmigrated table before paying for embeddings.
         self._require_owner_column(user_id)
 
         log_debug(f"Inserting {len(documents)} documents")
@@ -547,8 +519,7 @@ class LanceDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): See ``insert``.
         """
-        # Before the guard: a scoped upsert on an unmigrated table must raise,
-        # not have its dedup guard silently answer False first.
+        # Before the dedup guard so a scoped upsert raises instead of answering False.
         self._require_owner_column(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -610,15 +581,10 @@ class LanceDb(VectorDb):
         self.upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def _user_scope_where_clause(self, user_id: Optional[str]) -> Optional[str]:
-        """Build the LanceDB SQL ``WHERE`` clause for per-user scope.
+        """Build the read-scope ``WHERE`` clause.
 
-        ``None`` (no scope) → no WHERE clause.
-        A non-empty string → ``user_id = '<value>' OR user_id IS NULL`` so
-        the caller sees their own chunks plus shared (NULL) content.
-
-        The value is single-quoted with internal quotes doubled (standard
-        SQL escape). ``user_id`` is the column name LanceDB sees; ``payload``
-        is opaque JSON, so this predicate is server-side and indexable.
+        ``None`` means no clause; otherwise the owner's rows plus shared (``NULL``) rows.
+        Internal quotes are doubled to escape the literal.
         """
         if user_id is None:
             return None
@@ -628,9 +594,8 @@ class LanceDb(VectorDb):
     def _owner_where_clause(self, user_id: Optional[str]) -> str:
         """Build the exact-owner ``WHERE`` clause used by writes.
 
-        Unlike ``_user_scope_where_clause`` there is no OR-NULL arm: a scoped
-        write must not reach the shared bucket, and ``None`` addresses the
-        shared bucket alone so a shared re-upsert never wipes a scoped owner.
+        No OR-NULL arm: a scoped write never reaches the shared bucket, and ``None``
+        addresses the shared bucket alone.
         """
         if user_id is None:
             return f"{self.USER_ID_COL} IS NULL"
@@ -651,10 +616,8 @@ class LanceDb(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
-            user_id (Optional[str]): Per-user RAG isolation scope. When set,
-                results are restricted to rows with ``user_id = <value>`` OR
-                ``user_id IS NULL`` (shared). When ``None``, no owner
-                predicate is applied.
+            user_id (Optional[str]): Restrict results to this user's rows plus shared
+                (``user_id IS NULL``) rows. ``None`` applies no owner predicate.
 
         Returns:
             List[Document]: List of matching documents
@@ -663,8 +626,7 @@ class LanceDb(VectorDb):
             log_error("Table not initialized")
             return []
 
-        # A scoped search on an unmigrated table raises the clear migration
-        # error here rather than a raw DataFusion "no field named user_id".
+        # Raise the migration error here rather than a raw DataFusion "no field named user_id".
         self._require_owner_column(user_id)
 
         results = None
@@ -769,10 +731,8 @@ class LanceDb(VectorDb):
             vector_column_name=self._vector_col,
         ).limit(limit)
 
-        # ``prefilter=True`` runs the predicate BEFORE the ANN top-K so the
-        # vector ranking only sees rows that pass scope. Without this LanceDB
-        # would post-filter, silently truncating results — the exact failure
-        # mode that made K2 unsafe on LanceDB before this refactor.
+        # ``prefilter=True`` runs the predicate before the ANN top-K; post-filtering
+        # would silently truncate results.
         where_clause = self._user_scope_where_clause(user_id)
         if where_clause is not None:
             results = results.where(where_clause, prefilter=True)
@@ -812,7 +772,7 @@ class LanceDb(VectorDb):
             .limit(limit)
         )
 
-        # Hybrid search: same prefilter rationale as ``vector_search``.
+        # Same prefilter rationale as ``vector_search``.
         where_clause = self._user_scope_where_clause(user_id)
         if where_clause is not None:
             results = results.where(where_clause, prefilter=True)
@@ -842,8 +802,7 @@ class LanceDb(VectorDb):
             query_type="fts",
         ).limit(limit)
 
-        # FTS doesn't have the same top-K cliff as ANN, but pre-filtering
-        # still avoids ranking rows the caller can't see.
+        # FTS has no top-K cliff, but prefiltering still avoids ranking unreadable rows.
         where_clause = self._user_scope_where_clause(user_id)
         if where_clause is not None:
             results = results.where(where_clause, prefilter=True)
@@ -1066,23 +1025,17 @@ class LanceDb(VectorDb):
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """Delete content by content ID, scoped to ``user_id`` when set.
 
-        With ``user_id``: only rows where the ``user_id`` column matches
-        AND content_id matches get deleted. Prevents cross-user delete
-        races. Without ``user_id``: deletes across all owners (legacy
-        behaviour; safe only for unscoped/admin tooling).
+        ``None`` deletes across all owners, for unscoped/admin callers.
         """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
-        # Outside the try: a scoped delete on an unmigrated table must raise,
-        # not be swallowed into False. The unscoped/admin path works on pre-v3
-        # tables by not selecting the column at all.
+        # Outside the try so a scoped delete raises instead of returning False.
         has_owner_column = self._require_owner_column(user_id)
         try:
             total_count = self.table.count_rows()
-            # Pre-filter on the user_id column at the server side when
-            # scoped — saves scanning every payload in Python.
+            # Server-side owner filter when scoped, so we don't scan every payload in Python.
             select_cols = ["id", "payload"] + ([self.USER_ID_COL] if has_owner_column else [])
             search = self.table.search().select(select_cols).limit(total_count)
             if user_id is not None:
@@ -1113,17 +1066,13 @@ class LanceDb(VectorDb):
     def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Delete content by content hash, scoped to ``user_id``.
 
-        Only the owner's own rows are considered; None scopes to the shared
-        (NULL) bucket so a shared re-upsert never wipes a scoped owner's
-        identical-content rows.
+        ``None`` scopes to the shared (``NULL``) bucket, not to every owner.
         """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
-        # Outside the try: a scoped delete on an unmigrated table must raise,
-        # not be swallowed into False. Unscoped falls back to no owner clause
-        # (the whole pre-v3 table is the shared bucket), matching the guard.
+        # Outside the try so a scoped delete raises instead of returning False.
         scope_to_owner = self._require_owner_column(user_id)
         try:
             total_count = self.table.count_rows()
@@ -1156,17 +1105,14 @@ class LanceDb(VectorDb):
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if documents with the given content hash exist.
 
-        Scoped to the owner's own rows; None scopes to the shared (NULL) bucket
-        alone rather than any owner. This is the guard half of the upsert dedup
-        pair, so it addresses the same bucket ``_delete_by_content_hash`` clears
-        for None.
+        ``None`` scopes to the shared (``NULL``) bucket, matching
+        ``_delete_by_content_hash`` so the upsert dedup pair sees the same rows.
         """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
-        # Outside the try — see ``_delete_by_content_hash``; the fallback keeps
-        # the dedup pair matching the same rows on unmigrated tables.
+        # Outside the try so a scoped check raises instead of returning False.
         scope_to_owner = self._require_owner_column(user_id)
         try:
             total_count = self.table.count_rows()
@@ -1202,10 +1148,7 @@ class LanceDb(VectorDb):
                 return
 
             total_count = self.table.count_rows()
-            # Select the user_id column too so we can preserve it across the
-            # delete-and-reinsert dance below; without this the column would
-            # come back NULL on every update_metadata call. Unmigrated (pre-v3)
-            # tables have no such column to select or preserve.
+            # Select the owner column too so the delete-and-reinsert below can preserve it.
             has_owner_column = self._user_id_column_exists()
             select_cols = ["id", "payload", "vector"] + ([self.USER_ID_COL] if has_owner_column else [])
             results = self.table.search().select(select_cols).limit(total_count).to_list()
@@ -1257,10 +1200,7 @@ class LanceDb(VectorDb):
                     update_data["vector"] = vector_data
                 if text_data is not None:
                     update_data["text"] = text_data
-                # Preserve the owner column across delete-and-reinsert. The
-                # row dict from ``select`` above carries the existing value;
-                # omitting this would NULL out user_id (and silently turn an
-                # owned chunk into a shared one).
+                # Omitting this would NULL out user_id and turn an owned chunk into a shared one.
                 if has_owner_column:
                     update_data[self.USER_ID_COL] = row.get(self.USER_ID_COL)
 

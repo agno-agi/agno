@@ -1894,9 +1894,7 @@ class FirestoreDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Flatten into the bulk-upsert list.
+                # One record per distinct user_id, plus the empty-string bucket for unowned sessions.
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
@@ -1921,9 +1919,7 @@ class FirestoreDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket.
+            user_id (Optional[str]): If set, only return that user's bucket. ``None`` returns every bucket.
         """
         try:
             collection_ref = self._get_collection(table_type="metrics")
@@ -1962,11 +1958,8 @@ class FirestoreDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # Firestore lacks a native OR predicate across "user_id == X OR user_id
-    # IS NULL", so we post-filter in Python. A row is visible if its
-    # ``user_id`` matches the caller OR is unset (None / missing). When
-    # ``user_id=None`` the predicate is dropped (admin / RBAC-off view).
 
+    # Firestore has no OR predicate, so ``user_id == X OR user_id IS NULL`` is post-filtered in Python.
     @staticmethod
     def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
         if user_id is None:
@@ -1979,9 +1972,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): If set, only delete rows owned by this user; unowned rows are shared.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2006,7 +1997,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2048,7 +2039,7 @@ class FirestoreDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): If set, only return rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2070,10 +2061,7 @@ class FirestoreDb(BaseDb):
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
 
-            # We have to post-filter for user_id (Firestore lacks an OR
-            # predicate that can target both ``== uid`` and ``IS NULL``), so
-            # defer pagination until after the filter — otherwise pagination
-            # would slice the unfiltered set.
+            # Owner scoping is post-filtered in memory, so defer pagination or it slices the unfiltered set.
             if user_id is None:
                 query = apply_pagination(query, limit, page)
 

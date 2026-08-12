@@ -1,17 +1,9 @@
 """Tests for the legacy-schema (pre-v3) fallback across the vector DBs.
 
-The contract, agreed for v3:
-- store missing the ``user_id`` column/field + ``user_id=None``  -> behave
-  byte-for-byte like main (v2): no owner references anywhere.
-- store missing the column/field + a real ``user_id``            -> raise a
-  clear ValueError naming the v2 -> v3 migration; never a raw driver error,
-  never a silent ``[]`` / ``False``.
-- store migrated while the process is alive                      -> the gate
-  re-inspects once before refusing, so scoped ops recover without a restart.
-
-The gate-contract tests exercise every backend's ``_require_owner_*`` gate
-directly (no server needed). The LanceDB tests then prove the full behavior
-against a real (embedded) engine: a byte-accurate v2 table end to end.
+A store without the ``user_id`` column/field serves unscoped calls exactly as v2 did,
+raises a ValueError naming the v2 -> v3 migration on scoped calls, and recovers without a
+restart once migrated. The gate tests cover every backend against mocks; the LanceDB tests
+run the same contract against a real (embedded) v2 table.
 """
 
 from __future__ import annotations
@@ -112,7 +104,7 @@ def _build(name, tmp_path):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_unscoped_on_legacy_store_falls_back(backend, tmp_path, monkeypatch):
-    """Path 1: column missing + user_id=None -> proceed WITHOUT owner references."""
+    """Column missing + user_id=None -> proceed WITHOUT owner references."""
     db, probe_name, gate = _build(backend, tmp_path)
     monkeypatch.setattr(db, probe_name, lambda: False)
 
@@ -121,12 +113,11 @@ def test_unscoped_on_legacy_store_falls_back(backend, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_scoped_on_legacy_store_raises_migration_error(backend, tmp_path, monkeypatch):
-    """Path 2: column missing + real user_id -> clear error naming the migration."""
+    """Column missing + real user_id -> clear error naming the migration."""
     db, probe_name, gate = _build(backend, tmp_path)
     monkeypatch.setattr(db, probe_name, lambda: False)
 
-    # Most backends point at the migration script; Weaviate says "recreate"
-    # (its index_null_state is create-time-only, so no script can heal it).
+    # Weaviate says "recreate", not "migration": its index_null_state is create-time-only.
     with pytest.raises(ValueError, match="migration|recreate"):
         gate("alice")
 
@@ -143,12 +134,7 @@ def test_migrated_store_passes_the_gate(backend, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_gate_reinspects_after_live_migration(backend, tmp_path, monkeypatch):
-    """A store migrated while the process is alive recovers without a restart.
-
-    The probe answers False (stale cache), then True (post-migration): the
-    gate must re-inspect once before refusing. Regression test for the
-    ClickHouse bug where a cached False was refused forever.
-    """
+    """A store migrated while the process is alive recovers without a restart."""
     db, probe_name, gate = _build(backend, tmp_path)
     answers = [False, True]
     monkeypatch.setattr(db, probe_name, lambda: answers.pop(0))
@@ -255,12 +241,8 @@ def test_lancedb_scoped_flows_recover_after_migration(legacy_lance):
 
 
 def test_weaviate_gate_requires_null_state_indexing_not_just_the_property():
-    """A collection with ``user_id`` bolted on later (``add_property``) but
-    without create-time ``index_null_state`` must NOT pass the gate: every
-    shared-bucket filter runs ``is_none(user_id)``, which Weaviate refuses
-    without null-state indexing — and that setting is immutable, so waving the
-    collection through would break every ingest's dedup check unrepairably.
-    """
+    """``add_property`` alone must not pass the gate: shared-bucket filters run ``is_none(user_id)``,
+    which Weaviate refuses without create-time ``index_null_state``."""
     pytest.importorskip("weaviate")
     from types import SimpleNamespace
 
@@ -276,7 +258,7 @@ def test_weaviate_gate_requires_null_state_indexing_not_just_the_property():
         client.collections.get.return_value.config.get.return_value = config
         return Weaviate(collection="T", client=client, embedder=StubEmbedder())
 
-    # Half-migrated (the add_property trap): property present, null-state off.
+    # Half-migrated: property present, null-state off.
     assert _db_with(null_state=False)._user_id_property_exists() is False
 
     # Fully v3: both create-time pieces present.
@@ -284,9 +266,7 @@ def test_weaviate_gate_requires_null_state_indexing_not_just_the_property():
 
 
 def test_surrealdb_create_after_drop_redefines_the_schema():
-    """``drop()`` must clear the once-per-instance schema flag: without that,
-    ``create()`` after a drop on the same object is a silent no-op and the
-    collection stays missing (uploads fail, searches return nothing)."""
+    """``drop()`` must clear the once-per-instance schema flag, or ``create()`` after it is a no-op."""
     pytest.importorskip("surrealdb")
     from agno.vectordb.surrealdb import SurrealDb
 
@@ -306,10 +286,8 @@ def test_surrealdb_create_after_drop_redefines_the_schema():
 
 @pytest.mark.parametrize("backend", ["clickhouse", "redis", "weaviate"])
 def test_drop_resets_the_owner_schema_cache(backend, tmp_path, monkeypatch):
-    """``drop()`` must clear the cached schema answer: the next store under the
-    same name is created with the owner column/field, and a stale False would
-    keep refusing scoped ops on it (pgvector/singlestore/lancedb already do
-    this)."""
+    """``drop()`` must clear the cached schema answer, or a stale False refuses scoped ops
+    on the next store created under the same name."""
     db, probe_name, _gate = _build(backend, tmp_path)
     cache_attr = {
         "clickhouse": "_owner_column_exists",
@@ -317,14 +295,11 @@ def test_drop_resets_the_owner_schema_cache(backend, tmp_path, monkeypatch):
         "weaviate": "_owner_property_exists",
     }[backend]
     setattr(db, cache_attr, False)
-    # Make the drop's own server calls succeed against the mocks. Redis builds
-    # a real SearchIndex from the URL — swap it for a mock so delete() doesn't
-    # attempt a TCP connect.
+    # Redis builds a real SearchIndex from the URL — swap it so delete() skips the TCP connect.
     if backend == "redis":
         db.index = MagicMock()
     if backend == "valkey":
-        # drop() also sweeps keys via a scan loop that never terminates on a
-        # MagicMock cursor — not what this test is about.
+        # drop()'s key sweep never terminates on a MagicMock cursor.
         monkeypatch.setattr(db, "_delete_all_keys", lambda: None)
     monkeypatch.setattr(db, "exists", lambda: True, raising=False)
     monkeypatch.setattr(db, "table_exists", lambda: True, raising=False)
@@ -335,11 +310,8 @@ def test_drop_resets_the_owner_schema_cache(backend, tmp_path, monkeypatch):
 
 
 def test_lancedb_gate_recovers_from_migration_by_another_process(legacy_lance):
-    """The migration script runs in its own process while the app holds a
-    pinned LanceTable handle. The gate's re-inspect must checkout_latest()
-    before re-reading the schema — a plain re-read returns the stale pinned
-    version forever, and the user who just migrated would keep getting the
-    migration error until restart."""
+    """The gate recovers when another process migrates the table: a pinned LanceTable handle
+    re-reads the stale schema forever, so the re-inspect must ``checkout_latest()`` first."""
     import lancedb
 
     db = legacy_lance
@@ -348,22 +320,20 @@ def test_lancedb_gate_recovers_from_migration_by_another_process(legacy_lance):
     with pytest.raises(ValueError, match="migration"):
         db.search("x", limit=1, user_id="alice")
 
-    # Migrate through a completely separate handle (a different process).
+    # Migrate through a separate handle, standing in for a different process.
     other_handle = lancedb.connect(str(db.uri)).open_table("legacy")
     other_handle.add_columns({"user_id": "CAST(NULL AS STRING)"})
     assert "user_id" not in db.table.schema.names, "app handle must still be pinned to the stale version"
 
-    # The very next scoped op on the app's handle must recover, not re-raise.
+    # The next scoped op on the app's handle must recover, not re-raise.
     db.upsert("cdcd8888", [_doc("al-1", "alice-doc", "alice private budget", "cid-al")], user_id="alice")
     results = db.search("budget", limit=5, user_id="alice")
     assert any("alice private" in d.content for d in results)
 
 
 def test_qdrant_write_ensures_tenant_index_on_preexisting_collection():
-    """Knowledge only calls create() when the collection doesn't exist, so a
-    pre-v3 Qdrant collection would never get its tenant payload index from
-    create() alone — the write path must ensure it, exactly once per
-    instance."""
+    """A pre-v3 collection never reaches create(), so the write path must ensure the tenant
+    payload index itself, once per instance."""
     pytest.importorskip("qdrant_client")
     from agno.knowledge.document import Document
     from agno.vectordb.qdrant import Qdrant
@@ -382,11 +352,8 @@ def test_qdrant_write_ensures_tenant_index_on_preexisting_collection():
 # ---------------------------------------------------------------------------
 # Inconclusive inspections are never cached
 # ---------------------------------------------------------------------------
-# A transient inspection failure assumes "migrated" for that call only. If the
-# assumption were cached, one blip would permanently mask a real legacy store
-# — silently, because the swallowed unknown-column errors downstream read as
-# an empty knowledge base. These tests arrange a blip THEN a conclusive
-# legacy answer, and assert the second call lands the truth.
+# A failed inspection assumes "migrated" for that call only: caching it would mask a real
+# legacy store silently, since the swallowed unknown-column errors read as an empty knowledge base.
 
 
 def test_pgvector_probe_blip_is_not_cached(monkeypatch):

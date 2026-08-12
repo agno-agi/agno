@@ -11,11 +11,7 @@ ALICE = "alice"
 
 
 class SpyKnowledge:
-    """Records the owner each retrieval was scoped to.
-
-    ``retrieve``/``aretrieve`` accept ``user_id``, so the signature probe in the
-    retrieval helpers is expected to find the parameter and pass the owner.
-    """
+    """Records the owner each retrieval was scoped to. ``retrieve`` declares ``user_id``."""
 
     def __init__(self) -> None:
         self.max_results = 5
@@ -52,11 +48,7 @@ class SpyKnowledge:
 
 
 class LegacyKnowledge:
-    """A pre-isolation Knowledge whose ``retrieve`` has no ``user_id`` parameter.
-
-    No ``**kwargs`` either, so the signature probe answers False. Passing the kwarg
-    unconditionally would raise ``TypeError``.
-    """
+    """A pre-isolation Knowledge: ``retrieve`` declares neither ``user_id`` nor ``**kwargs``."""
 
     def __init__(self) -> None:
         self.max_results = 5
@@ -87,7 +79,7 @@ class SpyOwner:
         self.knowledge_filters = None
         self.enable_agentic_knowledge_filters = False
         self.references_format = "json"
-        # Read when no run_context is supplied, i.e. the public Agent.get_relevant_docs_from_knowledge() call
+        # Read only when no run_context is supplied
         self.user_id = user_id
 
 
@@ -375,14 +367,7 @@ class TestCustomRetrieverGetsOwner:
 
 
 class ProtocolKnowledge:
-    """A ``KnowledgeProtocol``-shaped implementation: ``retrieve(query, **kwargs)``.
-
-    ``agno/knowledge/protocol.py`` documents retrieval with ``**kwargs`` rather
-    than named parameters, so a conforming class never declares ``user_id``
-    explicitly. Probing only for the literal name would drop the owner here -
-    and since ``None`` is the admin view, the drop widens retrieval to every
-    owner instead of raising.
-    """
+    """A ``KnowledgeProtocol``-shaped implementation: ``retrieve(query, **kwargs)``, no named ``user_id``."""
 
     def __init__(self) -> None:
         self.max_results = 5
@@ -462,11 +447,7 @@ class TestVariadicKnowledgeStillGetsOwner:
 
 
 class VariadicInsertKnowledge:
-    """A custom Knowledge whose ``insert`` is declared ``insert(self, **kwargs)``.
-
-    The ordinary wrapper shape. The owner has to reach it the same way it reaches a
-    variadic ``retrieve``, because a write that loses it lands in the shared bucket.
-    """
+    """A custom Knowledge whose ``insert`` is declared ``insert(self, **kwargs)``."""
 
     def __init__(self) -> None:
         self.stored: List[Dict[str, Any]] = []

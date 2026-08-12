@@ -10,7 +10,7 @@ from agno.vectordb.base import VectorDb
 
 
 class StubVectorDb(VectorDb):
-    """Records what Knowledge hands the backend: content hash, documents, filters and owner."""
+    """Records what Knowledge hands the backend on every call."""
 
     def __init__(self, content_exists: bool = False, upsert_supported: bool = False) -> None:
         self.content_exists = content_exists
@@ -42,8 +42,7 @@ class StubVectorDb(VectorDb):
         return False
 
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
-        # A set user_id matches only that owner's rows, the way the column-based
-        # backends scope it; None matches any owner, which is the unscoped query.
+        # Mirrors the column-based backends: None matches any owner, a set user_id only that owner's rows.
         self.exists_calls.append((content_hash, user_id))
         if self.content_exists:
             return True

@@ -175,12 +175,7 @@ class SurrealDb(VectorDb):
         self.m = m
         self.search_ef = search_ef
 
-        # Whether this instance has run the (idempotent) DEFINE statements.
-        # Collections created before v3 lack the ``user_id``/``content_id``
-        # field DEFINEs, and the table is SCHEMAFUL: the server silently
-        # strips undefined fields on write, which would turn a scoped write
-        # into a shared one. Writes call ``_ensure_schema`` so the DEFINEs
-        # reach pre-v3 collections too, not only freshly created ones.
+        # Whether the DEFINE statements have run for this instance
         self._schema_ensured: bool = False
 
     @property
@@ -226,7 +221,6 @@ class SurrealDb(VectorDb):
         if not filters:
             return ""
         # Bind the key as well as the value: an interpolated key is caller data in the WHERE clause
-        # Walk items() like _build_filter_params, so the two cannot produce different counts
         conditions = [f"meta_data[$filter_key_{i}] = $filter_value_{i}" for i, _ in enumerate(filters.items())]
         return "AND " + " AND ".join(conditions)
 
@@ -238,7 +232,8 @@ class SurrealDb(VectorDb):
             filters: A dictionary of filters to apply to the query.
 
         Returns:
-            Dict[str, Any]: The $filter_key_i / $filter_value_i bindings.
+            The $filter_key_i / $filter_value_i bindings.
+
         """
         if not filters:
             return {}
@@ -252,9 +247,8 @@ class SurrealDb(VectorDb):
     def _user_scope_condition(user_id: Optional[str]) -> str:
         """Build the per-user scope predicate for the search WHERE clause.
 
-        A non-None owner matches its own rows plus the shared (NONE) bucket;
-        user_id=None applies no scope. Bound as $scope_user_id so a caller's own
-        metadata filter can't collide with the owner scope.
+        An owner matches its own rows plus the shared (NONE) rows; None applies no scope.
+
         """
         if user_id is None:
             return ""
@@ -264,9 +258,8 @@ class SurrealDb(VectorDb):
     def _owner_scope_condition(user_id: Optional[str]) -> str:
         """Build the owner-only scope predicate for a delete WHERE clause.
 
-        Unlike the search scope this never merges the shared bucket in - a
-        scoped delete clears the caller's own rows alone. Bound as
-        $scope_user_id, the same name the search scope uses.
+        Unlike the search scope this never merges the shared rows in; None applies no scope.
+
         """
         if user_id is None:
             return ""
@@ -276,23 +269,18 @@ class SurrealDb(VectorDb):
     def _escape_record_id_part(value: str) -> str:
         """Percent-escape one half of a folded record id.
 
-        ':' is the fold delimiter and '%' is the escape character, so both have
-        to be encoded before either half can be joined or matched by prefix.
+        ':' is the fold delimiter and '%' the escape character, so both are encoded.
+
         """
         return value.replace("%", "%25").replace(":", "%3A")
 
     @classmethod
     def _fold_record_id(cls, doc_id: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the record id so two owners' identical content
-        don't collide onto one record.
+        """Fold the owner into the record id so two owners' identical content don't collide.
 
-        ':' is both the fold delimiter and a legal char in doc_id/user_id, so
-        each side is percent-escaped before joining — otherwise ("a:x", "y") and
-        ("a", "x:y") would both fold to "a:x:y" and clobber each other. The
-        unfolded id is escaped by the same rule: a shared document whose own id
-        carries a ':' (a URL, say) would otherwise land on the id an owned fold
-        produces, and whichever wrote last would take the other's record. Stable,
-        so re-upserting the same pair updates the same record in place.
+        Both halves are escaped first — ("a:x", "y") and ("a", "x:y") would otherwise fold to the same
+        record, and so would an unfolded id that carries a ':' of its own.
+
         """
         if user_id is None:
             return cls._escape_record_id_part(doc_id)
@@ -302,10 +290,9 @@ class SurrealDb(VectorDb):
     def _ensure_schema(self) -> None:
         """Run the DEFINE statements once for this instance.
 
-        Every statement is ``IF NOT EXISTS`` so this is idempotent — and it
-        must run even when the table already exists: a pre-v3 table lacks the
-        ``user_id``/``content_id`` DEFINEs and, being SCHEMAFUL, silently
-        strips those fields from writes until they are defined.
+        Idempotent, and it must run on collections created before v3 too: the table is
+        SCHEMAFUL, so writes silently lose ``user_id``/``content_id`` until they are defined.
+
         """
         if self._schema_ensured:
             return
@@ -366,8 +353,7 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Checking if document exists by ID: {id}")
-        # Bind the record id via type::record, the same way the upsert writes it -
-        # a string never compares equal to a record link, so a plain $id matched nothing.
+        # Bind via type::record, the way the upsert writes it: a string never equals a record link
         result = self.client.query(
             self.ID_EXISTS_QUERY.format(collection=self.collection),
             {"table": self.collection, "record_id": id},
@@ -379,19 +365,14 @@ class SurrealDb(VectorDb):
 
         Args:
             content_hash: The content hash of the document to check.
-            user_id: The owner to check, so another owner's identical upload is
-                not judged a duplicate. This is the guard half of the upsert
-                dedup pair, so None (default) addresses the shared (NONE) bucket
-                alone rather than every owner - the same bucket a None-scoped
-                delete clears.
+            user_id: The owner to check, so another owner's identical upload is not judged a
+                duplicate. None (default) checks the shared (NONE-owned) rows alone.
 
         Returns:
             True if the document exists, False otherwise.
 
         """
         log_debug(f"Checking if document exists by content hash: {content_hash}")
-        # Bind the owner exactly as the write path stores it: None lands as NONE,
-        # so the shared bucket is addressed and no owned row can answer for it.
         params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
         result = self.client.query(
             self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
@@ -412,22 +393,17 @@ class SurrealDb(VectorDb):
             content_hash: The content hash for the documents.
             documents: A list of documents to insert.
             filters: A dictionary of filters to apply to the query.
-            user_id: Owner of these chunks for per-user isolation. None
-                (default) writes to the shared bucket, visible to everyone.
+            user_id: Owner of these chunks. None (default) writes shared chunks, visible to everyone.
 
         """
-        # A pre-v3 collection is SCHEMAFUL without the ``user_id`` DEFINE, so
-        # the server would silently strip the owner off every row — run the
-        # idempotent DEFINEs first. Knowledge only calls ``create()`` for
-        # collections that don't exist yet, so the write path has to do this.
+        # Writes ensure the schema too: ``create()`` only runs for collections that don't exist yet
         self._ensure_schema()
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
             if doc.name is not None:
-                # name_exists and delete_by_name both match meta_data.name, so the
-                # write has to put it there or they can never resolve a document.
+                # name_exists and delete_by_name match meta_data.name, so the write has to put it there
                 meta_data.setdefault("name", doc.name)
             data: Dict[str, Any] = {
                 "content": doc.content,
@@ -453,16 +429,13 @@ class SurrealDb(VectorDb):
             content_hash: The content hash for the documents.
             documents: A list of documents to upsert.
             filters: A dictionary of filters to apply to the query.
-            user_id: Owner of these chunks for per-user isolation. None
-                (default) writes to the shared bucket, visible to everyone.
+            user_id: Owner of these chunks. None (default) writes shared chunks, visible to everyone.
 
         """
-        # See the matching comment in ``insert`` — pre-v3 collections need the
-        # ``user_id`` DEFINE before any owned write can persist its owner.
+        # See ``insert``
         self._ensure_schema()
-        # UPSERT replaces by record id, so a document that SHRINKS between versions
-        # leaves its dropped chunks behind, and a chunk with no id is created afresh
-        # every time. Clear the caller's own chunks for this hash first.
+        # UPSERT replaces by record id, so clear this owner's chunks first or a shrunken document
+        # leaves its dropped chunks behind
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -471,8 +444,7 @@ class SurrealDb(VectorDb):
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
             if doc.name is not None:
-                # name_exists and delete_by_name both match meta_data.name, so the
-                # write has to put it there or they can never resolve a document.
+                # name_exists and delete_by_name match meta_data.name, so the write has to put it there
                 meta_data.setdefault("name", doc.name)
             data: Dict[str, Any] = {
                 "content": doc.content,
@@ -484,10 +456,7 @@ class SurrealDb(VectorDb):
             if filters:
                 data["meta_data"].update(filters)
             if doc.id:
-                # Bind the record id via type::record so a reader-assigned UUID
-                # (hyphenated, digit-leading) is accepted, and fold the owner into
-                # the id so two owners' identical content don't collide; the unfolded
-                # id is escaped by the same rule.
+                # type::record accepts a reader-assigned UUID; the fold keeps two owners' ids apart
                 data["table"] = self.collection
                 data["record_id"] = self._fold_record_id(doc.id, user_id)
                 self.client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
@@ -507,8 +476,8 @@ class SurrealDb(VectorDb):
             query: The query to search for.
             limit: The maximum number of documents to return.
             filters: A dictionary of filters to apply to the query.
-            user_id: When set, restrict results to the caller's own chunks plus
-                the shared (NONE-owned) bucket. None (default) applies no scope.
+            user_id: Restrict results to this user's chunks plus the shared (NONE-owned) chunks.
+                None (default) applies no scope.
 
         Returns:
             A list of documents that are similar to the query.
@@ -558,8 +527,7 @@ class SurrealDb(VectorDb):
         """Drop the vector collection."""
         log_debug(f"Dropping collection: {self.collection}")
         self.client.query(self.DROP_TABLE_QUERY.format(collection=self.collection))
-        # The table is gone — the next create()/write must re-run the DEFINEs,
-        # or the collection would silently stay missing after a drop+create.
+        # The table is gone, so the next create()/write must re-run the DEFINEs
         self._schema_ensured = False
 
     def exists(self) -> bool:
@@ -580,9 +548,7 @@ class SurrealDb(VectorDb):
         """Delete all documents from the vector store.
 
         Returns:
-            True if the delete completed, False if it errored. Unlike the scoped
-            deletes this does not ask for the removed rows back - the whole
-            collection would have to be materialised to count them.
+            True if the delete completed, False if it errored.
 
         """
         try:
@@ -599,18 +565,14 @@ class SurrealDb(VectorDb):
             id: The ID of the document to delete.
 
         Returns:
-            True if rows were deleted, False if none matched or the query errored.
-            A bare DELETE answers with an empty list either way, so the query asks
-            for ``RETURN VALUE id`` - the ids alone, never the embeddings.
+            True if rows were deleted, False if none matched or the query errored. A bare DELETE
+            answers with an empty list either way, so the query asks for ``RETURN VALUE id``.
 
         """
         log_debug(f"Deleting document by ID: {id}")
         try:
-            # Bind the record id via type::record, the same way the upsert writes it -
-            # a string never compares equal to a record link, so a plain $id matched nothing.
-            # The write folds the owner in (``_fold_record_id``), so match the shared
-            # record for this id plus every owned fold of it; this method takes no
-            # user_id, so it clears the document for all owners by design.
+            # The write folds the owner into the id, so match the shared record plus every owned
+            # fold of it: this method takes no user_id and clears the document for all owners
             escaped = self._escape_record_id_part(id)
             result = self.client.query(
                 self.DELETE_BY_ID_QUERY.format(collection=self.collection),
@@ -654,10 +616,8 @@ class SurrealDb(VectorDb):
             log_warning("No metadata provided for deletion; refusing to match every row.")
             return False
         try:
-            # Bind both halves. Interpolating the key builds the path out of caller
-            # data: a key carrying a '.' splits into an unbound variable and a field
-            # walk, and NONE = NONE is true for every row - one ordinary dotted key
-            # deletes the whole collection.
+            # Bind both halves: an interpolated key carrying a '.' becomes NONE = NONE, which
+            # matches every row
             conditions = [f"meta_data[$key_{i}] = $value_{i}" for i, _ in enumerate(metadata.items())]
             params: Dict[str, Any] = {}
             for i, (key, value) in enumerate(metadata.items()):
@@ -677,8 +637,7 @@ class SurrealDb(VectorDb):
 
         Args:
             content_id: The content ID of the documents to delete.
-            user_id: When set, delete only that owner's own chunks; None
-                (default) deletes across all owners.
+            user_id: Delete only this owner's chunks. None (default) deletes across all owners.
 
         Returns:
             True if rows were deleted, False if none matched or the query errored.
@@ -704,16 +663,12 @@ class SurrealDb(VectorDb):
 
         Args:
             content_hash: The content hash of the documents to delete.
-            user_id: The owner whose chunks to clear. This is the delete half of
-                the upsert dedup pair, so None (default) clears the shared (NONE)
-                bucket alone - the same bucket content_hash_exists checks - and a
-                shared re-upsert never wipes a scoped owner's identical content.
+            user_id: The owner whose chunks to clear. None (default) clears the shared (NONE-owned)
+                chunks alone, so a shared re-upsert never wipes an owner's identical content.
 
         Returns:
-            True if rows were deleted, False if none matched. Errors are left to
-            propagate: the only caller is ``upsert``, whose own callers mark the
-            content FAILED, and swallowing here would let the write proceed over
-            chunks that were never cleared.
+            True if rows were deleted, False if none matched. Errors propagate instead of being
+            swallowed, so ``upsert`` never writes over chunks that were not cleared.
 
         """
         log_debug(f"Deleting documents by content hash: {content_hash}")
@@ -728,11 +683,7 @@ class SurrealDb(VectorDb):
     def _extract_result(query_result: Any) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response.
 
-        The connection classes imported at module scope only exist in surrealdb
-        >= 1.0, which hands back the rows themselves: a list for a SELECT, a dict
-        for INFO FOR DB. The legacy {"status", "time", "result"} envelope can no
-        longer reach here, and unwrapping it turned every returned row into {},
-        which is why the existence checks answered False for rows that existed.
+        surrealdb >= 1.0 hands back the rows themselves: a list for a SELECT, a dict for INFO FOR DB.
 
         Args:
             query_result: The query result from SurrealDB.
@@ -768,19 +719,14 @@ class SurrealDb(VectorDb):
 
         Args:
             content_hash: The content hash of the document to check.
-            user_id: The owner to check, so another owner's identical upload is
-                not judged a duplicate. This is the guard half of the upsert
-                dedup pair, so None (default) addresses the shared (NONE) bucket
-                alone rather than every owner - the same bucket a None-scoped
-                delete clears.
+            user_id: The owner to check, so another owner's identical upload is not judged a
+                duplicate. None (default) checks the shared (NONE-owned) rows alone.
 
         Returns:
             True if the document exists, False otherwise.
 
         """
         log_debug(f"Checking if document exists by content hash: {content_hash}")
-        # Bind the owner exactly as the write path stores it: None lands as NONE,
-        # so the shared bucket is addressed and no owned row can answer for it.
         params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
         response = await self.async_client.query(
             self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
@@ -793,15 +739,12 @@ class SurrealDb(VectorDb):
 
         Args:
             content_hash: The content hash of the documents to delete.
-            user_id: The owner whose chunks to clear. This is the delete half of
-                the upsert dedup pair, so None (default) clears the shared (NONE)
-                bucket alone - the same bucket async_content_hash_exists checks -
-                and a shared re-upsert never wipes a scoped owner's identical
-                content.
+            user_id: The owner whose chunks to clear. None (default) clears the shared (NONE-owned)
+                chunks alone, so a shared re-upsert never wipes an owner's identical content.
 
         Returns:
-            True if rows were deleted, False if none matched. See
-            ``_delete_by_content_hash`` for why errors propagate here.
+            True if rows were deleted, False if none matched. See ``_delete_by_content_hash``
+            for why errors propagate here.
 
         """
         log_debug(f"Deleting documents by content hash: {content_hash}")
@@ -825,19 +768,17 @@ class SurrealDb(VectorDb):
             content_hash: The content hash for the documents.
             documents: A list of documents to insert.
             filters: A dictionary of filters to apply to the query.
-            user_id: Owner of these chunks for per-user isolation. None
-                (default) writes to the shared bucket, visible to everyone.
+            user_id: Owner of these chunks. None (default) writes shared chunks, visible to everyone.
 
         """
-        # See the matching comment in ``insert``.
+        # See ``insert``
         await self._async_ensure_schema()
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
             if doc.name is not None:
-                # name_exists and delete_by_name both match meta_data.name, so the
-                # write has to put it there or they can never resolve a document.
+                # name_exists and delete_by_name match meta_data.name, so the write has to put it there
                 meta_data.setdefault("name", doc.name)
             data: Dict[str, Any] = {
                 "content": doc.content,
@@ -864,14 +805,12 @@ class SurrealDb(VectorDb):
             content_hash: The content hash for the documents.
             documents: A list of documents to upsert.
             filters: A dictionary of filters to apply to the query.
-            user_id: Owner of these chunks for per-user isolation. None
-                (default) writes to the shared bucket, visible to everyone.
+            user_id: Owner of these chunks. None (default) writes shared chunks, visible to everyone.
 
         """
-        # See the matching comment in ``insert``.
+        # See ``insert``
         await self._async_ensure_schema()
-        # See the matching comment in ``upsert``. The guard and its delete run on
-        # the async client so an async-only connection still dedupes.
+        # See ``upsert``; the guard and its delete run on the async client
         if await self.async_content_hash_exists(content_hash, user_id=user_id):
             await self._async_delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -880,8 +819,7 @@ class SurrealDb(VectorDb):
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
             if doc.name is not None:
-                # name_exists and delete_by_name both match meta_data.name, so the
-                # write has to put it there or they can never resolve a document.
+                # name_exists and delete_by_name match meta_data.name, so the write has to put it there
                 meta_data.setdefault("name", doc.name)
             data: Dict[str, Any] = {
                 "content": doc.content,
@@ -894,10 +832,7 @@ class SurrealDb(VectorDb):
                 data["meta_data"].update(filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
             if doc.id:
-                # Bind the record id via type::record so a reader-assigned UUID
-                # (hyphenated, digit-leading) is accepted, and fold the owner into
-                # the id so two owners' identical content don't collide; the unfolded
-                # id is escaped by the same rule.
+                # type::record accepts a reader-assigned UUID; the fold keeps two owners' ids apart
                 data["table"] = self.collection
                 data["record_id"] = self._fold_record_id(doc.id, user_id)
                 await self.async_client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
@@ -917,8 +852,8 @@ class SurrealDb(VectorDb):
             query: The query to search for.
             limit: The maximum number of documents to return.
             filters: A dictionary of filters to apply to the query.
-            user_id: When set, restrict results to the caller's own chunks plus
-                the shared (NONE-owned) bucket. None (default) applies no scope.
+            user_id: Restrict results to this user's chunks plus the shared (NONE-owned) chunks.
+                None (default) applies no scope.
 
         Returns:
             A list of documents that are similar to the query.
@@ -966,7 +901,7 @@ class SurrealDb(VectorDb):
         """Drop the vector collection asynchronously."""
         log_debug(f"Dropping collection: {self.collection}")
         await self.async_client.query(self.DROP_TABLE_QUERY.format(collection=self.collection))
-        # See ``drop`` — the DEFINEs must re-run after a drop.
+        # See ``drop``
         self._schema_ensured = False
 
     async def async_exists(self) -> bool:

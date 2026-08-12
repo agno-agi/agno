@@ -95,12 +95,8 @@ def _collect_referenced_component_ids(
     """
     Collect every component ID a config or links list references.
 
-    Walks the config recursively picking up agent_id/team_id/workflow_id
-    references (team members, workflow steps at any nesting depth) and adds
-    the child_component_id of each explicit link.
-
     Args:
-        config: The component config to walk for references
+        config: The component config to walk for agent_id/team_id/workflow_id references
         links: Optional explicit links whose child_component_id is included
 
     Returns:
@@ -140,17 +136,14 @@ def _validate_referenced_component_ownership(
     """
     Reject configs/links that reference components the caller does not own.
 
-    Only applies when the caller is scoped (user isolation on, non-admin).
-    IDs that don't resolve to a stored component are allowed — they may refer
-    to registry/code-defined components, which are shared. The error mirrors
-    the regular not-found response so it doesn't confirm that another user's
-    component exists.
+    Unresolvable IDs are allowed: they may be shared registry/code-defined components.
+    A cross-user hit raises 404, not 403, so the error can't confirm the component exists.
 
     Args:
         db: Database to look up component ownership in
         config: The component config to validate references for
         links: Optional explicit links to validate
-        scoped_user_id: The caller's owner id, or None when unscoped
+        scoped_user_id: The caller's owner id; None (unscoped) skips the check
         own_component_id: The component being written, excluded from checks
     """
     if scoped_user_id is None:
@@ -328,10 +321,7 @@ def attach_routes(
             component_id = body.component_id
             if component_id is None:
                 component_id = generate_id_from_name(body.name)
-                # Under user isolation, append a short owner-derived hex suffix so two
-                # users can both create e.g. "Market Researcher" without colliding on
-                # the global component_id. Hashing keeps the owner out of the visible
-                # id. Unscoped callers (admin / isolation off) keep the plain id.
+                # Owner-derived suffix so two users creating the same name get distinct component_ids.
                 if scoped_user_id:
                     component_id = f"{component_id}-{hash_string_sha256(scoped_user_id)[:8]}"
 
@@ -364,13 +354,9 @@ def attach_routes(
                         )
                     links = member_links or None
 
-            # Attribute the created component to the caller. Falls back to
-            # ``request.state.user_id`` (the unscoped JWT sub) for the owner
-            # column, so even admin-created components carry the creator's id.
+            # Falls back to the unscoped JWT sub so admin-created components still carry an owner.
             creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
 
-            # A scoped caller must not reference another user's components as
-            # members/steps of the new component.
             _validate_referenced_component_ownership(
                 db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
             )
@@ -532,8 +518,6 @@ def attach_routes(
             config_data = body.config or {}
             config_data = _resolve_db_in_config(config_data, db, registry)
 
-            # A scoped caller must not reference another user's components as
-            # members/steps/links of this config version.
             _validate_referenced_component_ownership(
                 db, config_data, links=body.links, scoped_user_id=scoped_user_id, own_component_id=component_id
             )
@@ -580,8 +564,6 @@ def attach_routes(
             if config_data is not None:
                 config_data = _resolve_db_in_config(config_data, db, registry)
 
-            # A scoped caller must not reference another user's components as
-            # members/steps/links of this config version.
             _validate_referenced_component_ownership(
                 db, config_data, links=body.links, scoped_user_id=scoped_user_id, own_component_id=component_id
             )

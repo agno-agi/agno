@@ -52,15 +52,14 @@ def apply_sorting(
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given single date, bucketed per ``user_id``.
 
-    Each session is attributed to its owning user. Sessions without a
-    ``user_id`` aggregate under the sentinel empty-string bucket.
+    Sessions without a ``user_id`` aggregate under the empty string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        A list of per-user metrics records.
+        List[dict]: The calculated metrics, one record per user.
     """
 
     def _empty_metric_record() -> Dict[str, Any]:

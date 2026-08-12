@@ -57,22 +57,15 @@ class VectorDb(ABC):
     def id_exists(self, id: str) -> bool:
         raise NotImplementedError
 
-    # user_id identifies the OWNER of the chunks. Backends translate it into their
-    # native primitive: pgvector writes a column, Chroma routes to a per-user
-    # collection, Pinecone uses a namespace. What None means is per operation, not per
-    # class: a search widens to every owner, a write lands in the shared bucket, a
-    # delete narrows. Backends that don't yet implement isolation must still accept the
-    # parameter as a no-op so the Knowledge wrapper can pass it uniformly.
+    # user_id is the owner of the chunks, mapped by each backend to its native primitive.
+    # None widens a search, writes the shared bucket, and deletes across every owner.
 
     @abstractmethod
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check whether the given content hash was already ingested for an owner.
 
-        This is the guard half of the dedup pair: a True is followed by a delete of the
-        same content hash under the same user_id, so the guard must match exactly the
-        rows that delete would clear - never more. A guard that matched every owner
-        would let one caller's private copy report "already exists" for a shared
-        publish, skip the write, and leave the shared bucket empty.
+        Must match exactly the rows a delete of the same content hash under the same user_id
+        would clear, never more.
 
         Args:
             content_hash (str): The content hash to look for
@@ -97,8 +90,7 @@ class VectorDb(ABC):
             content_hash (str): The content hash the documents were chunked from
             documents (List[Document]): The documents to insert
             filters (Optional[Dict[str, Any]]): Metadata to stamp on every chunk
-            user_id (Optional[str]): The owner of the chunks. None writes the shared
-                bucket, which every scoped reader can see
+            user_id (Optional[str]): The owner of the chunks. None writes the shared bucket
         """
         raise NotImplementedError
 
@@ -212,9 +204,8 @@ class VectorDb(ABC):
 
         Args:
             content_id (str): The content ID to delete
-            user_id (Optional[str]): Scope the delete to that owner's chunks alone -
-                shared chunks survive, and one caller cannot wipe another's by guessing
-                their content_id. None is the admin view and deletes across every owner
+            user_id (Optional[str]): Scope the delete to that owner's chunks; shared chunks
+                survive. None deletes across every owner
 
         Returns:
             bool: True if chunks were deleted, False otherwise

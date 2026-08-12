@@ -14,8 +14,7 @@ class DeterministicEmbedder:
         self.dimensions = dimensions
 
     def get_embedding(self, text: str) -> List[float]:
-        # md5, not builtin hash(): PYTHONHASHSEED salts hash() per process, so the
-        # same text would embed differently on every run.
+        # md5, not builtin hash(): PYTHONHASHSEED would embed the same text differently each run.
         vector = [0.0] * self.dimensions
         vector[int(md5(text.encode()).hexdigest(), 16) % self.dimensions] = 1.0
         return vector

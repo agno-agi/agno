@@ -53,12 +53,7 @@ def _merge_model_metrics(target: List[dict], extra: List[dict]) -> None:
 
 
 def _merge_timestamp(current: Any, candidate: Any, *, latest: bool) -> Any:
-    """Merge two timestamps into the later (or earlier) one, tolerating None.
-
-    A missing value is never coerced to 0, so the comparison stays between two
-    values the adapter actually stored rather than between a stored value and an
-    int the adapter never uses.
-    """
+    """Merge two timestamps into the later (or earlier) one, tolerating None."""
     if candidate is None:
         return current
     if current is None:
@@ -68,29 +63,20 @@ def _merge_timestamp(current: Any, candidate: Any, *, latest: bool) -> Any:
             return candidate if candidate > current else current
         return candidate if candidate < current else current
     except TypeError:
-        # Adapters store epoch ints; a row carrying a datetime cannot be ordered
-        # against one, and a metrics read should not fail over it.
+        # Adapters store epoch ints; a row carrying a datetime cannot be ordered against one.
         return current
 
 
 def _aggregate_metrics_by_date(rows: List[dict]) -> List[dict]:
     """Collapse per-user metric rows into one aggregate row per date and period.
 
-    Metrics are always stored per user. Unscoped callers (admins, or any caller
-    when user_isolation is off) get this legacy one-row-per-day view instead of a
-    per-user breakdown, so per-user activity is never exposed through an unscoped
-    read. Scoped callers bypass this and receive only their own bucket.
-
-    The aggregate carries a synthesised id: the stored per-user ids embed the owner
-    on most key-value backends ({date}_{user_id}_daily, {date}|{user_id} on
-    SurrealDB) and rows arrive in no particular order, so keeping one member's id
-    would both leak that owner and make the response unstable between calls.
+    The id is synthesised rather than carried over: stored per-user ids embed the owner
+    on most key-value backends, and rows arrive in no particular order.
     """
     by_bucket: Dict[Any, dict] = {}
     for row in rows:
-        # A period-less row belongs in the daily bucket, and both halves of the
-        # bucket key have to be the values that reach the id, or two buckets can
-        # end up sharing one id.
+        # A period-less row belongs in the daily bucket, and the bucket key has to be
+        # what reaches the id, or two buckets can end up sharing one id.
         period = row.get("aggregation_period") or "daily"
         day = row.get("date")
         # The date arrives as a date, a datetime or a string; the key is a day.
@@ -101,14 +87,11 @@ def _aggregate_metrics_by_date(rows: List[dict]) -> List[dict]:
         elif isinstance(day, str):
             day_key = day
         elif isinstance(day, (int, float)) and not isinstance(day, bool):
-            # SurrealDB stores the day as an epoch second and converts back on
-            # the way out, so it is the one backend that hands this a number.
+            # SurrealDB is the one backend that stores the day as an epoch second.
             day_key = datetime.fromtimestamp(day, tz=timezone.utc).date().isoformat()
         else:
-            # The response carries a day, so a record whose date is not one
-            # cannot be returned at all. Skip it rather than fail every other
-            # user's row, and say so -- an unscoped read that quietly returned
-            # fewer runs than the owner's own read would be worse.
+            # The response carries a day, so a record whose date is not one cannot be
+            # returned at all. Skip it rather than fail every other user's row.
             logger.warning("Skipping metrics record %s: date %r is not a day", row.get("id"), day)
             continue
         bucket = (day_key, period)
@@ -213,10 +196,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             db = await get_db(dbs, db_id, table)
 
-            # Scope metrics to the caller's bucket when user_isolation is on.
-            # Admins (and isolation-off deployments) get the full table — which
-            # in the legacy / single-tenant case is a single global bucket and
-            # behaves identically to the pre-isolation API.
             scoped_user_id = get_scoped_user_id(request)
 
             if isinstance(db, RemoteDb):
@@ -239,10 +218,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     user_id=scoped_user_id,
                 )
 
-            # Unscoped callers (admins, or any caller when user_isolation is
-            # off) get the legacy one-row-per-day aggregate rather than the
-            # per-user rows, which are always stored. Scoped callers already
-            # receive only their own bucket.
+            # Unscoped callers (admins, or user_isolation off) get the legacy one-row-per-day
+            # aggregate; scoped callers already receive only their own bucket.
             if scoped_user_id is None:
                 metrics = _aggregate_metrics_by_date(metrics)
 
@@ -355,9 +332,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             db = await get_db(dbs, db_id, table)
 
-            # Scope the refresh response to the caller, like GET /metrics. Resolved
-            # before the background branch so an identity-less token cannot start a
-            # refresh either.
+            # Resolved before the background branch so an identity-less token cannot start a refresh.
             scoped_user_id = get_scoped_user_id(request)
 
             headers = None
@@ -391,8 +366,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             if result is None:
                 return []
 
-            # Non-admins see only their own bucket; unscoped callers (admins /
-            # isolation-off) get the legacy one-row-per-day aggregate.
+            # Scoped callers see only their own bucket; unscoped callers get the legacy aggregate.
             if scoped_user_id is not None:
                 result = [metric for metric in result if metric.get("user_id") == scoped_user_id]
             else:

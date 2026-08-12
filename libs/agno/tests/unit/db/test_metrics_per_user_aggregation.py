@@ -1,9 +1,7 @@
 """Unit tests for per-user metrics aggregation.
 
-Locks in the contract that ``calculate_date_metrics`` buckets sessions by
-``user_id`` and emits one metrics record per distinct user. Sessions without
-a user_id aggregate into the sentinel empty-string bucket — the legacy
-single-tenant deployment surface.
+``calculate_date_metrics`` buckets sessions by ``user_id`` and emits one record per
+distinct user. Sessions without a user_id roll up under the empty-string bucket.
 """
 
 from datetime import date
@@ -47,9 +45,6 @@ class TestPerUserBucketing:
 
 
 class TestEmptyStringSentinelBucket:
-    """Sessions without a user_id roll up under user_id=''. This is the
-    legacy / RBAC-off surface — looks identical to global metrics."""
-
     def test_unowned_sessions_share_the_empty_string_bucket(self):
         by_user = _by_user(_agent_session(None), _agent_session(None))
 
@@ -59,9 +54,7 @@ class TestEmptyStringSentinelBucket:
         assert by_user[""]["users_count"] == 0
 
     def test_an_owner_literally_named_empty_string_lands_in_the_sentinel_bucket(self):
-        """Pins a divergence: everywhere else in the isolation work ``""`` is a
-        real owner that scopes to itself, but metrics fold it into the unowned
-        sentinel and stop counting it as a user."""
+        """Elsewhere ``""`` is a real owner that scopes to itself; metrics fold it into the unowned bucket."""
         by_user = _by_user(_agent_session(""), _agent_session(None))
 
         assert set(by_user) == {""}

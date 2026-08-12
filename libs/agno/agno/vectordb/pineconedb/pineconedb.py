@@ -67,11 +67,8 @@ class PineconeDb(VectorDb):
         kwargs (Optional[Dict[str, str]]): Additional keyword arguments.
     """
 
-    # Per-user RAG isolation. The owner is stored in a top-level ``user_id``
-    # metadata field and reads/deletes are scoped with a metadata filter.
-    # * Upserts with ``user_id`` stamp the field; ``user_id=None`` omits it (the SHARED bucket).
-    # * Searches with ``user_id=X`` AND an own-OR-shared ``$or`` onto the caller's filter.
-    # * Searches with ``user_id=None`` apply no scope (admin view, sees all).
+    # Owner of the chunk, stored as a top-level metadata field. ``None`` omits it on
+    # upsert (the shared bucket) and applies no scope on search.
     USER_ID_KEY: str = "user_id"
 
     def __init__(
@@ -275,8 +272,7 @@ class PineconeDb(VectorDb):
             namespace (Optional[str], optional): The namespace for the documents. Defaults to None.
             batch_size (Optional[int], optional): The batch size for upsert. Defaults to None.
             show_progress (bool, optional): Whether to show progress during upsert. Defaults to False.
-            user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
-                None writes to the shared bucket (no user_id metadata field).
+            user_id (Optional[str], optional): Owner of these chunks. Defaults to None, the shared bucket.
 
         """
 
@@ -295,15 +291,12 @@ class PineconeDb(VectorDb):
                 metadata["content_id"] = document.content_id
 
             metadata["content_hash"] = content_hash
-            # Stamp the owner; user_id=None writes to the shared bucket (no field).
-            # Drop any inherited owner key first: metadata and filters are caller data, not the owner
+            # Drop any owner key the caller passed in metadata or filters before stamping ours
             metadata.pop(self.USER_ID_KEY, None)
             if user_id is not None:
                 metadata[self.USER_ID_KEY] = user_id
 
-            # Fold the owner into the id so two owners' identical content get distinct ids.
-            # A document without an id falls back to a content digest, otherwise every
-            # such chunk would share one vector id and overwrite the others.
+            # Fall back to a content digest so id-less chunks don't collide on one vector id
             base_id = document.id or md5(document.content.encode()).hexdigest()
             vector_id = self._record_id(base_id, user_id)
             data_to_upsert = {
@@ -425,15 +418,12 @@ class PineconeDb(VectorDb):
                 metadata["content_id"] = doc.content_id
 
             metadata["content_hash"] = content_hash
-            # Stamp the owner; user_id=None writes to the shared bucket (no field).
-            # Drop any inherited owner key first: metadata and filters are caller data, not the owner
+            # Drop any owner key the caller passed in metadata or filters before stamping ours
             metadata.pop(self.USER_ID_KEY, None)
             if user_id is not None:
                 metadata[self.USER_ID_KEY] = user_id
 
-            # Fold the owner into the id so two owners' identical content get distinct ids.
-            # A document without an id falls back to a content digest, otherwise every
-            # such chunk would share one vector id and overwrite the others.
+            # Fall back to a content digest so id-less chunks don't collide on one vector id
             base_id = doc.id or md5(doc.content.encode()).hexdigest()
             vector_id = self._record_id(base_id, user_id)
             data_to_upsert = {
@@ -520,8 +510,8 @@ class PineconeDb(VectorDb):
             namespace (Optional[str], optional): The namespace to search in. Defaults to None.
             include_values (Optional[bool], optional): Whether to include values in the search results. Defaults to None.
             include_metadata (Optional[bool], optional): Whether to include metadata in the search results. Defaults to None.
-            user_id (Optional[str], optional): Restrict results to the caller's chunks
-                plus the shared bucket. None means no scope (admin view).
+            user_id (Optional[str], optional): Scope results to this user plus shared chunks.
+                Defaults to None, which applies no scope.
 
         Returns:
             List[Document]: The list of matching documents.
@@ -530,7 +520,6 @@ class PineconeDb(VectorDb):
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in PineconeDB. No filters will be applied.")
             filters = None
-        # AND the own-OR-shared scope onto the caller's metadata filter
         filters = self._scoped_filter(filters, user_id)
         dense_embedding = self.embedder.get_embedding(query)
 
@@ -613,12 +602,7 @@ class PineconeDb(VectorDb):
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     def _collect_ids_by_filter(self, filter_conditions: Dict[str, Any]) -> List[str]:
-        """Collect the ids of the vectors matching a metadata filter.
-
-        Serverless indexes do not support metadata-filtered deletes, so a
-        filter has to be resolved to concrete ids first. A dummy vector is
-        fine here since only the ids under the filter are needed, not ranking.
-        """
+        """Collect the ids of the vectors matching a metadata filter."""
         if self.dimension is None:
             raise ValueError("Dimension is not set for this Pinecone index")
         dummy_vector = [0.0] * self.dimension
@@ -635,9 +619,7 @@ class PineconeDb(VectorDb):
     def _delete_by_filter(self, filter_conditions: Dict[str, Any]) -> bool:
         """Resolve a metadata filter to ids and delete them.
 
-        Metadata-filtered deletes silently no-op on serverless indexes, so the
-        matching ids are collected first and deleted by id (supported on both
-        serverless and pod indexes).
+        Metadata-filtered deletes silently no-op on serverless indexes.
         """
         ids = self._collect_ids_by_filter(filter_conditions)
         if ids:
@@ -723,10 +705,7 @@ class PineconeDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): Scope the check to the owner's chunks. None checks the
-                shared bucket (no user_id field) - this is the guard half of the upsert
-                dedup pair, so None addresses the shared bucket alone rather than every
-                owner, the same bucket _delete_by_content_hash clears for None.
+            user_id (Optional[str]): Scope the check to this user's chunks. None checks the shared bucket alone.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
@@ -760,8 +739,7 @@ class PineconeDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Scope the delete to the owner's chunks. None deletes the
-                shared bucket (no user_id field).
+            user_id (Optional[str]): Scope the delete to this user's chunks. None deletes the shared bucket.
 
         Returns:
             bool: True if documents were deleted, False otherwise.
@@ -786,7 +764,7 @@ class PineconeDb(VectorDb):
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
         """
-        # Owner is stored as a metadata field; never let a caller reassign it.
+        # Never let a caller reassign the owner field
         metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
         try:
             # Query for vectors with the given content_id
@@ -833,12 +811,9 @@ class PineconeDb(VectorDb):
             raise
 
     def _record_id(self, base_id: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the vector id so two owners' identical content get
-        distinct ids. The shared bucket (user_id=None) keeps the base id.
+        """Fold the owner into the vector id; user_id=None keeps the base id.
 
-        The base id is caller-controlled and variable length, so it is collapsed to a
-        fixed-length digest before the owner is folded in - otherwise the '_' boundary
-        moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to the same vector id.
+        The base id is digested first so ('doc_1', 'alice') and ('doc', '1_alice') cannot collide.
         """
         if user_id is None:
             return base_id

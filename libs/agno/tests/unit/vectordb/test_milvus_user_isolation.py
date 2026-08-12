@@ -1,8 +1,4 @@
-"""Milvus per-user RAG isolation contract.
-
-Owner lives in a top-level ``user_id`` scalar field; the ``__shared__`` sentinel is the
-shared bucket. Runs end-to-end against milvus-lite with a fresh ``.db`` file per test.
-"""
+"""Unit tests for Milvus per-user isolation, run against milvus-lite with a fresh ``.db`` file per test."""
 
 import logging
 from typing import List, Optional
@@ -37,9 +33,7 @@ if MILVUS_AVAILABLE and MILVUS_LITE_AVAILABLE:
     from agno.vectordb.milvus import Milvus
     from agno.vectordb.milvus.milvus import SHARED_USER_ID_VALUE
 
-# milvus-lite's embedded server does not implement the AllocTimestamp RPC and
-# logs a NotImplementedError at ERROR on every connection; pymilvus handles the
-# fallback, so keep that noise out of the test output.
+# milvus-lite logs a NotImplementedError at ERROR on every connection; pymilvus falls back, so silence it.
 logging.getLogger("grpc._server").setLevel(logging.CRITICAL)
 
 TEST_COLLECTION = "isolation_test"
@@ -47,7 +41,7 @@ TEST_COLLECTION = "isolation_test"
 
 @pytest.fixture
 def milvus_db(tmp_path):
-    """A fresh vector-mode Milvus backed by a per-test milvus-lite ``.db`` file."""
+    """Fixture to create a Milvus instance backed by a per-test milvus-lite ``.db`` file."""
     db = Milvus(collection=TEST_COLLECTION, uri=str(tmp_path / "milvus_iso.db"), embedder=DeterministicEmbedder())
     db.create()
     yield db
@@ -77,8 +71,7 @@ def _shared_docs() -> List[Document]:
 
 
 def _rows(db, fields=None):
-    """Raw rows via explicit output fields (milvus-lite drops fields under the adapter's ``output_fields=["*"]``, so
-    we name them)."""
+    """Raw rows with explicit output fields - milvus-lite drops fields under ``output_fields=["*"]``."""
     return db.client.query(
         collection_name=TEST_COLLECTION,
         filter="",
@@ -96,22 +89,20 @@ def _count(db) -> int:
 
 
 def _search_names(db, query: str, user_id: Optional[str]) -> set:
-    """Run the adapter search, then map result ids back to names via a raw query (milvus-lite drops ``name`` under
-    the adapter's ``output_fields=["*"]``)."""
+    """Adapter search, with result ids mapped back to names via a raw query."""
     results = db.search(query, limit=20, user_id=user_id)
     idmap = {r["id"]: r.get("name") for r in _rows(db)}
     return {idmap.get(d.id) for d in results}
 
 
 class TestWriteStampsOwner:
-    """Pin the contract: ``user_id`` is a top-level field, not nested in meta_data."""
+    """``user_id`` is written as a top-level field, not nested in meta_data."""
 
     def test_explicit_user_id_persisted_top_level(self, milvus_db):
         milvus_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
         rows = _rows(milvus_db, fields=["id", "user_id", "meta_data"])
         assert len(rows) == 1
         assert rows[0].get("user_id") == "alice"
-        # And NOT smuggled into the caller-controlled meta_data blob.
         assert "user_id" not in milvus_db._decode_json_field(rows[0].get("meta_data"), default={})
 
     def test_none_user_id_persisted_as_shared_sentinel(self, milvus_db):
@@ -121,20 +112,17 @@ class TestWriteStampsOwner:
         assert rows[0].get("user_id") == SHARED_USER_ID_VALUE
 
     def test_user_id_omitted_defaults_to_shared_sentinel(self, milvus_db):
-        """Backwards-compatible: callers that never pass ``user_id`` get the shared sentinel — they're effectively
-        opting out of isolation."""
+        """Callers that never pass ``user_id`` get the shared sentinel."""
         milvus_db.insert(content_hash="h1", documents=_shared_docs())
         rows = _rows(milvus_db, fields=["id", "user_id"])
         assert rows[0].get("user_id") == SHARED_USER_ID_VALUE
 
 
 class TestScopeExpressionBuilder:
-    """The scope-expression builder is small enough to unit-test directly, without spinning the DB at all."""
+    """Test the scope expression builder."""
 
     def test_user_id_field_constant_is_user_id(self):
-        # The field name is baked into every persisted row and into the scope
-        # expression. If it drifts, retrieval silently stops matching what was
-        # written - and an unmatched scope reads as "no rows", not as an error.
+        # A drifting field name silently stops matching written rows instead of erroring.
         from agno.vectordb.milvus.milvus import USER_ID_FIELD
 
         assert USER_ID_FIELD == "user_id"
@@ -162,7 +150,7 @@ class TestScopeExpressionBuilder:
 
 
 class TestSearchScope:
-    """The load-bearing test: alice's search returns her chunks plus shared chunks, never bob's."""
+    """Alice's search returns her own chunks plus shared chunks, never bob's."""
 
     @pytest.fixture
     def search_corpus(self, milvus_db):
@@ -177,7 +165,6 @@ class TestSearchScope:
         assert "company-holidays" in names
 
     def test_alice_never_sees_bob(self, search_corpus):
-        """The isolation contract."""
         names = _search_names(search_corpus, "salary", "alice")
         assert "bob-salary" not in names
 
@@ -204,20 +191,18 @@ class TestSearchScope:
 
 
 class TestDedupScope:
-    """Steal-prevention: the owner is folded into the deterministic doc id, so two users uploading byte-identical
-    content (same content_hash) land on distinct primary keys."""
+    """The owner is folded into the doc id, so identical content from two users keeps distinct keys."""
 
     def test_two_owners_identical_content_both_survive(self, milvus_db):
         milvus_db.insert(content_hash="h", documents=[_doc("a", "same secret", "c1")], user_id="alice")
         milvus_db.insert(content_hash="h", documents=[_doc("b", "same secret", "c1")], user_id="bob")
         rows = _rows(milvus_db)
         assert len(rows) == 2
-        assert len({r["id"] for r in rows}) == 2  # distinct primary keys
+        assert len({r["id"] for r in rows}) == 2
         assert _owners(milvus_db) == ["alice", "bob"]
 
     def test_shared_reingest_does_not_wipe_owned(self, milvus_db):
-        """A shared re-ingest of content a user already owns must not clobber the owned row — the two rows are keyed
-        independently."""
+        """A shared re-ingest of content a user already owns must not clobber the owned row."""
         milvus_db.insert(content_hash="h", documents=[_doc("a", "same secret", "c1")], user_id="alice")
         milvus_db.insert(content_hash="h", documents=[_doc("s", "same secret", "c1")], user_id=None)
         assert _owners(milvus_db) == [SHARED_USER_ID_VALUE, "alice"]
@@ -230,17 +215,16 @@ class TestDedupScope:
 
 
 class TestUpdateMetadataOwnership:
-    """``update_metadata`` writes into the caller-controlled meta_data blob; it must never reassign the top-level
-    owner, even if a ``user_id`` key is smuggled in."""
+    """``update_metadata`` must never reassign the top-level owner, even if given a ``user_id`` key."""
 
     def test_update_metadata_cannot_reassign_owner(self, milvus_db):
         milvus_db.insert(content_hash="h", documents=[_doc("a", "Alice secret", "c1")], user_id="alice")
         milvus_db.update_metadata("c1", {"user_id": "bob", "tag": "x"})
         rows = _rows(milvus_db, fields=["id", "user_id", "meta_data"])
-        assert rows[0].get("user_id") == "alice"  # owner untouched
+        assert rows[0].get("user_id") == "alice"
         meta = milvus_db._decode_json_field(rows[0].get("meta_data"), default={})
-        assert "user_id" not in meta  # stripped from the metadata blob too
-        assert meta.get("tag") == "x"  # legitimate keys still applied
+        assert "user_id" not in meta
+        assert meta.get("tag") == "x"
 
 
 class TestDeleteScope:
@@ -262,7 +246,7 @@ class TestDeleteScope:
         """A scoped caller must never delete the shared bucket."""
         content_id_corpus.delete_by_content_id("doc-1", user_id="alice")
         owners = _owners(content_id_corpus)
-        assert SHARED_USER_ID_VALUE in owners  # shared survived
+        assert SHARED_USER_ID_VALUE in owners
         assert "alice" not in owners
 
     def test_unscoped_delete_wipes_everyone(self, content_id_corpus):

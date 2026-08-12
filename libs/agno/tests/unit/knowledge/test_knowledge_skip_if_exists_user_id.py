@@ -1,16 +1,11 @@
-"""Tests for the owner scope of the ``skip_if_exists`` existence check.
-
-The check used to run unowned, so the first person to upload a file claimed it
-for everyone: a second owner was told it already existed and ended up with no
-chunks of their own, and no way to read the first owner's.
-"""
+"""Tests for the owner scope of the ``skip_if_exists`` existence check."""
 
 import pytest
 
 
 @pytest.fixture
 def handbook(tmp_path) -> str:
-    """One file, uploaded by both owners, so both uploads share a content hash."""
+    """One file, so both owners' uploads share a content hash."""
     file_path = tmp_path / "handbook.txt"
     file_path.write_text("the company handbook")
     return str(file_path)
@@ -18,7 +13,6 @@ def handbook(tmp_path) -> str:
 
 @pytest.fixture
 def handbook_dir(tmp_path) -> str:
-    """A directory upload, which fans out into one Content per file."""
     directory = tmp_path / "docs"
     directory.mkdir()
     (directory / "handbook.txt").write_text("the company handbook")
@@ -26,7 +20,7 @@ def handbook_dir(tmp_path) -> str:
     return str(directory)
 
 
-# --- The reported bug: a second owner is denied their own copy ---
+# --- Second owner gets their own copy ---
 
 
 def test_second_owner_gets_own_copy(knowledge, vector_db, handbook):
@@ -61,12 +55,11 @@ def test_second_owner_gets_own_copy_from_directory(knowledge, vector_db, handboo
     assert vector_db.owners == ["alice", "alice", "bob", "bob"]
 
 
-# --- The behaviour skip_if_exists is there for, still intact ---
+# --- skip_if_exists dedupe within one owner ---
 
 
 def test_same_owner_second_upload_is_skipped(knowledge, vector_db, handbook):
-    """The dedupe still fires within one owner - that is the whole point of the
-    flag, and scoping must not turn it off."""
+    """The dedupe still fires within one owner."""
     knowledge.insert(path=handbook, skip_if_exists=True, user_id="alice")
     knowledge.insert(path=handbook, skip_if_exists=True, user_id="alice")
 
@@ -96,7 +89,7 @@ def test_without_skip_if_exists_both_uploads_are_written(knowledge, vector_db, h
     assert vector_db.owners == ["alice", "alice"]
 
 
-# --- The owner reaches the backend, for the origins that read before writing ---
+# --- Owner reaches the existence check ---
 
 
 def test_owner_reaches_the_existence_check(knowledge, vector_db, handbook):
@@ -107,8 +100,7 @@ def test_owner_reaches_the_existence_check(knowledge, vector_db, handbook):
 
 
 def test_topics_owner_reaches_the_existence_check(knowledge, vector_db):
-    """The topics loop rebuilds Content per topic; the owner has to survive that
-    rebuild or every topic upload is checked against the shared bucket."""
+    """The topics loop rebuilds Content per topic; the owner has to survive that rebuild."""
     knowledge.insert(topics=["Cats"], skip_if_exists=True, user_id="alice")
 
     assert vector_db.exists_calls

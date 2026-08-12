@@ -5,23 +5,21 @@ Per-User Component Isolation
 Demonstrates serving components with per-user isolation, so each caller only
 sees and manages the agents, teams, and workflows they created.
 
-Enable it with AuthorizationConfig(user_isolation=True). Components created
-over POST /components are stamped with the caller's JWT subject, and every
-component route, list route, and run route is then scoped to that owner.
+Components created over POST /components are stamped with the caller's JWT
+subject, and the component, list, and run routes are scoped to that owner.
 Admins (agent_os:admin scope) keep seeing everything.
 
 Generate a token for a user with:
 
     python -c "import jwt, datetime as d; print(jwt.encode({'sub': 'alice', \
-'aud': 'user-isolation-os', 'scopes': ['components:read', 'components:write', \
-'components:delete', 'agents:read', 'agents:run'], 'exp': \
-d.datetime.now(d.UTC) + d.timedelta(hours=1)}, 'my-jwt-secret', algorithm='HS256'))"
+'scopes': ['components:read', 'components:write', 'components:delete', \
+'agents:read', 'agents:run'], 'exp': d.datetime.now(d.UTC) + \
+d.timedelta(hours=1)}, 'my-jwt-secret', algorithm='HS256'))"
 
 Then create a component as that user:
 
     curl -X POST http://localhost:7777/components \
-        -H "Authorization: Bearer $ALICE_TOKEN" \
-        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $ALICE_TOKEN" -H "Content-Type: application/json" \
         -d '{"name": "Alice Agent", "component_type": "agent", "stage": "published",
              "config": {"name": "Alice Agent", "instructions": "You are Alice private agent."}}'
 
@@ -43,10 +41,8 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="postg
 # ---------------------------------------------------------------------------
 # Create AgentOS App
 # ---------------------------------------------------------------------------
-# No agents are registered in code: every component is created over the API and
-# lives in the database, which is what makes it ownable by a user. Code-defined
-# components passed to AgentOS(agents=[...]) are shared by design and stay
-# visible to everyone.
+# No agents are registered in code: only components created over the API live in
+# the database and can be owned. Components passed to AgentOS(agents=[...]) are shared.
 agent_os = AgentOS(
     id="user-isolation-os",
     db=db,

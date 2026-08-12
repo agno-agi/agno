@@ -105,10 +105,7 @@ class TestManagerCreate:
 
 
 class TestManagerCreateNameScope:
-    """The ``if_exists`` name lookup is scoped to the owner, so two owners may
-    each hold a schedule of one name. Needs a real db -- ``MagicMock`` swallows
-    the ``user_id`` kwarg and hands back whatever the lookup was stubbed with,
-    which is exactly the bug these cases are here to catch."""
+    """Name lookups for ``if_exists`` are owner-scoped. Needs a real db -- ``MagicMock`` ignores ``user_id``."""
 
     @pytest.fixture
     def db_mgr(self, tmp_path):
@@ -139,8 +136,7 @@ class TestManagerCreateNameScope:
         bob = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
         alice = db_mgr.create(name="nightly", cron="0 10 * * *", endpoint="/alice", if_exists="update", user_id="alice")
 
-        # An unscoped lookup would resolve to bob's row, and the scoped update
-        # against it is a no-op -- so alice would be handed bob's schedule back.
+        # An unscoped lookup would resolve to bob's row and hand alice his schedule back
         assert alice.id != bob.id
         assert alice.user_id == "alice"
         assert db_mgr.get(bob.id).endpoint == "/bob"

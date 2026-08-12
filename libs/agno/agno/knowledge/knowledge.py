@@ -125,8 +125,9 @@ class Knowledge(RemoteKnowledge):
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
             skip_if_exists: Whether to skip inserting content if it already exists (default: False)
-            user_id: Owner of this content. ``None`` writes to the shared
-                bucket (visible to everyone). See ``ainsert`` for details.
+            user_id: Owner of this content. ``None`` writes to the shared bucket, which everyone
+                can read. A string scopes the content to that user: scoped reads return their own
+                rows plus shared ones, and scoped writes and deletes touch only their own.
         """
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -199,15 +200,7 @@ class Knowledge(RemoteKnowledge):
         auth: Optional[ContentAuth] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        """Insert a single piece of content.
-
-        Args:
-            user_id: Owner of this content. ``None`` writes to the shared
-                bucket (visible to everyone). A string scopes the content
-                to that user — only they (and admins / unscoped callers)
-                will see it via per-user retrieval. See
-                ``KNOWLEDGE_ISOLATION_DESIGN.md``.
-        """
+        """Insert a single piece of content. See ``insert``."""
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
             log_warning(
@@ -436,9 +429,8 @@ class Knowledge(RemoteKnowledge):
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
             skip_if_exists: Whether to skip inserting content if it already exists (default: True)
             remote_content: Optional remote content (S3, GCS, etc.) to insert
-            user_id: Owner applied to every item in this call. ``None`` writes
-                to the shared bucket. A per-item ``user_id`` in the list form
-                takes precedence. See ``insert`` for details.
+            user_id: Owner applied to every item in this call. A per-item ``user_id`` in the
+                list form takes precedence. See ``insert``.
         """
         if args and isinstance(args[0], list):
             arguments = args[0]
@@ -563,16 +555,10 @@ class Knowledge(RemoteKnowledge):
         self,
         search_filters: Optional[Union[Dict[str, Any], List["FilterExpr"]]],
     ) -> Optional[Union[Dict[str, Any], List["FilterExpr"]]]:
-        """Inject the ``linked_to`` (Knowledge instance) scope into the
-        caller-provided filters when ``isolate_vector_search`` is on.
+        """Add the ``linked_to`` instance scope to the caller's filters when isolation is on.
 
-        ``user_id`` is NOT mixed into the filter DSL — each backend handles
-        per-user isolation natively (pgvector uses a column predicate, Chroma
-        uses per-user collections, Pinecone uses namespaces, etc.). The
-        ``user_id`` value flows separately to ``vector_db.search(user_id=...)``.
-
-        Returns the new filter object — original ``search_filters`` is not
-        mutated.
+        Returns a new filter object. ``user_id`` is not part of the filter DSL — it travels
+        separately to ``vector_db.search()``, where each backend applies its own primitive.
         """
         if not (self.isolate_vector_search and self.name):
             return search_filters
@@ -596,11 +582,7 @@ class Knowledge(RemoteKnowledge):
         """Returns relevant documents matching a query.
 
         Args:
-            user_id: Per-user RAG isolation scope. Forwarded directly to the
-                underlying ``vector_db.search(user_id=...)`` — each backend
-                handles isolation using its native primitive (pgvector
-                column, Chroma collection, etc.). ``None`` returns
-                everything (admin / isolation-off behaviour).
+            user_id: Owner scope forwarded to ``vector_db.search()``. ``None`` searches everything.
         """
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
@@ -690,9 +672,7 @@ class Knowledge(RemoteKnowledge):
         if isinstance(self.contents_db, AsyncBaseDb):
             raise ValueError("get_content() is not supported for async databases. Please use aget_content() instead.")
 
-        # Filter by linked_to (instance scope) and user_id (owner scope).
-        # The DB applies "(user_id = :uid OR user_id IS NULL)" when user_id
-        # is set, returning the caller's rows plus shared/legacy rows.
+        # A scoped read returns the caller's rows plus shared ones (user_id IS NULL)
         contents, count = self.contents_db.get_knowledge_contents(
             limit=limit,
             page=page,
@@ -714,7 +694,6 @@ class Knowledge(RemoteKnowledge):
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
-        # Filter by linked_to + user_id (see ``get_content`` for semantics).
         if isinstance(self.contents_db, AsyncBaseDb):
             contents, count = await self.contents_db.get_knowledge_contents(
                 limit=limit,
@@ -805,15 +784,12 @@ class Knowledge(RemoteKnowledge):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
-        # Ownership lives on the contents row, so a vector-only knowledge base
-        # has nothing to check and keeps deleting by id as it always did.
+        # Ownership lives on the contents row, so a vector-only knowledge base has nothing to check
         scoped = user_id is not None and self.contents_db is not None
         content = self.get_content_by_id(content_id, user_id=user_id) if scoped else None
         if scoped and (content is None or self._content_is_shared(content, user_id)):
-            # Not the caller's row to remove, so the contents-db delete would
-            # match nothing. ``delete_by_content_id`` takes no owner, so going
-            # ahead would strip another owner's vectors and leave their row
-            # behind pointing at nothing.
+            # ``delete_by_content_id`` takes no owner, so going ahead would strip another
+            # owner's vectors and leave their row behind pointing at nothing
             log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
             return
 
@@ -827,12 +803,7 @@ class Knowledge(RemoteKnowledge):
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                # Scope the vector-DB delete to the same ``user_id`` that
-                # scopes the contents-DB delete below — otherwise a caller
-                # whose ownership check fails on the contents row could
-                # still wipe the vector chunks. Backends that don't yet
-                # implement per-user isolation accept ``user_id`` as a
-                # no-op (see VectorDb.delete_by_content_id).
+                # Backends without per-user isolation accept ``user_id`` as a no-op
                 self.vector_db.delete_by_content_id(content_id, user_id=user_id)
 
         if self.contents_db is not None:
@@ -881,10 +852,8 @@ class Knowledge(RemoteKnowledge):
     def _content_is_shared(content: Content, user_id: Optional[str]) -> bool:
         """Whether ``content`` is shared (unowned) content the caller may read but not delete.
 
-        Reads surface a scoped caller's own rows *plus* unowned ones, so a bulk
-        delete that reused that list would destroy org-wide content — including
-        its vectors, which are removed without an owner filter. An unscoped
-        caller (admin / isolation off) still deletes everything.
+        Scoped reads surface unowned rows too, so a bulk delete must skip them. An unscoped
+        caller still deletes everything.
         """
         return user_id is not None and content.user_id is None
 
@@ -1265,10 +1234,8 @@ class Knowledge(RemoteKnowledge):
             if content.remote_content:
                 self._load_from_remote_content(content, upsert, skip_if_exists)
         except Exception as e:
-            # The loaders write the contents-db row before the vector work runs,
-            # so an error here (e.g. the pre-v3 migration gate) would otherwise
-            # strand the row in 'processing' forever — mark it failed with the
-            # reason, then let the caller see the exception.
+            # The loaders write the contents-db row before the vector work, so a failure
+            # here would otherwise strand the row in 'processing' forever
             self._mark_content_failed(content, str(e))
             raise
 
@@ -1301,8 +1268,7 @@ class Knowledge(RemoteKnowledge):
             raise
 
     def _mark_content_failed(self, content: Content, reason: str) -> None:
-        """Best-effort: record a terminal 'failed' status + reason on the
-        contents-db row so pollers don't wait forever on 'processing'."""
+        """Best-effort record of a terminal 'failed' status and reason on the contents-db row."""
         try:
             content.status = ContentStatus.FAILED
             content.status_message = reason
@@ -1312,7 +1278,7 @@ class Knowledge(RemoteKnowledge):
             pass
 
     async def _amark_content_failed(self, content: Content, reason: str) -> None:
-        """Async twin of ``_mark_content_failed``."""
+        """Async version of _mark_content_failed."""
         try:
             content.status = ContentStatus.FAILED
             content.status_message = reason
@@ -1331,11 +1297,8 @@ class Knowledge(RemoteKnowledge):
         Args:
             content_hash: The content hash string to check for existence
             skip_if_exists: Whether to skip if content already exists
-            user_id: Owner of the content being loaded. The existence check is scoped
-                to that owner, so an upload another owner already made does not deny
-                this one a copy of chunks it could never read. ``None`` addresses the
-                shared bucket alone — see ``VectorDb.content_hash_exists``, where the
-                same value would otherwise let a private copy skip a shared publish.
+            user_id: Owner of the content being loaded. The existence check is scoped to that
+                owner, so ``None`` matches the shared bucket alone.
 
         Returns:
             bool: True if should skip processing, False if should continue
@@ -1489,11 +1452,8 @@ class Knowledge(RemoteKnowledge):
         Prepare documents for insertion by assigning content_id and optionally
         calculating sizes and updating metadata.
 
-        Note: ``user_id`` is NOT written into ``meta_data`` here. It flows as
-        an explicit parameter on the ``vector_db.insert`` / ``async_insert``
-        calls (see ``_aload_content`` etc.) — that keeps owner identity out
-        of the user-controlled JSONB blob and avoids collisions with any
-        ``user_id`` key callers might legitimately have in their own metadata.
+        Note: ``user_id`` is not written into ``meta_data``. It flows as an explicit parameter
+        on the ``vector_db.insert`` / ``async_insert`` calls instead.
 
         Args:
             documents: List of documents to prepare
@@ -2427,14 +2387,11 @@ class Knowledge(RemoteKnowledge):
           so the same content inserted with different metadata produces distinct hashes
           (this allows `upsert=False` inserts of the same document with different
           metadata to coexist instead of collapsing onto each other).
-        - When the content carries an owner, the owner leads the hash so two users
-          uploading the same file name get distinct rows instead of one user's upload
-          landing on — and taking over — the other's.
+        - When the content carries an owner, the owner leads the hash so two users uploading
+          the same file name get distinct rows instead of colliding
         """
         hash_parts = []
-        # Owner first: the id derived from this hash is the row key, so leaving the
-        # owner out lets a second uploader overwrite the first one's row. Unowned
-        # content (isolation off, admin/system uploads) hashes exactly as before.
+        # Unowned content hashes exactly as before, so existing rows keep their ids
         if content.user_id is not None:
             hash_parts.append(content.user_id)
         if content.name:
@@ -2506,10 +2463,7 @@ class Knowledge(RemoteKnowledge):
         """
         hash_parts = []
 
-        # Owner first, same as ``_build_content_hash``: the per-source id is
-        # derived from this hash and ``_should_skip`` dedups on it against every
-        # owner's vectors, so leaving the owner out makes a second user's crawl
-        # of the same source look like one that is already indexed.
+        # Owner first, as in ``_build_content_hash``, so one owner's crawl doesn't dedup another's
         if content.user_id is not None:
             hash_parts.append(content.user_id)
         if content.name:
@@ -2619,8 +2573,6 @@ class Knowledge(RemoteKnowledge):
             access_count=0,
             status=content.status if content.status else ContentStatus.PROCESSING,
             status_message=self._ensure_string_field(content.status_message, "content.status_message", default=""),
-            # Carry the uploader from Content into the persisted row. ``None``
-            # means shared / org-wide (see KnowledgeRow.user_id docstring).
             user_id=content.user_id,
             created_at=created_at,
             updated_at=updated_at,
@@ -2772,8 +2724,7 @@ class Knowledge(RemoteKnowledge):
                 log_warning(f"Content row not found for id: {content.id}, cannot update status")
                 return None
             if user_id is not None and content_row.user_id is None:
-                # Shared content is readable by a scoped caller but not theirs to
-                # change, the same rule ``remove_content_by_id`` enforces.
+                # Shared content is readable by a scoped caller but not theirs to change
                 log_debug(f"Skipping update of content {content.id}: shared content is not owned by {user_id}")
                 return None
 
@@ -3350,7 +3301,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             **kwargs,
         )
 
-    # The tools these factories build carry the run's owner, like the agent/team search tool does
+    # The tools these factories build carry the run's owner
     def _create_search_tool(
         self,
         run_response: Optional[Any] = None,
@@ -3649,9 +3600,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             query: The query string.
             max_results: Maximum number of results.
             filters: Filters to apply.
-            user_id: Owner-scope filter forwarded to ``search``. ``None``
-                returns everything (admin / RBAC-off); a string returns the
-                caller's chunks plus the shared bucket.
+            user_id: Owner scope forwarded to ``search``. ``None`` returns everything.
             **kwargs: Additional parameters.
 
         Returns:
@@ -3667,7 +3616,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         user_id: Optional[str] = None,
         **kwargs,
     ) -> List[Document]:
-        """Async version of retrieve. See ``retrieve`` for arg semantics."""
+        """Async version of retrieve."""
         return await self.asearch(query=query, max_results=max_results, filters=filters, user_id=user_id)
 
     # ========================================================================

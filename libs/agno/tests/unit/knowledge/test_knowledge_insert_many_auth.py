@@ -1,14 +1,4 @@
-"""Tests for insert_many() / ainsert_many() parameter passing.
-
-``insert()`` takes ``auth`` and ``user_id`` and carries them down; its siblings
-take ``*args, **kwargs``, so a value handed to them used to be read by nobody and
-every chunk landed unowned with no error.
-
-``paths`` and ``text_contents`` are driven end-to-end into the recording backend.
-``urls``, ``topics`` and ``remote_content`` fetch before they reach the vector DB,
-so those loops are checked at ``_load_content``, where ``content.user_id`` is the
-single value the vector-DB write later reads.
-"""
+"""Tests for insert_many() and ainsert_many() auth and user_id parameter passing."""
 
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import AsyncMock, patch
@@ -30,8 +20,7 @@ def text_files(tmp_path) -> List[str]:
 
 
 def _origins(knowledge) -> List[Tuple[str, Optional[str]]]:
-    """Record (content origin, owner) instead of loading, so the loops that
-    fetch before they write can still be checked without the network."""
+    """Record (content origin, owner) instead of loading, so the fetching loops need no network."""
     seen: List[Tuple[str, Optional[str]]] = []
 
     def _record(content: Content, *args, **kwargs) -> None:
@@ -141,8 +130,6 @@ def test_insert_many_keyword_branch_text_contents_passes_user_id(knowledge, vect
 
 
 def test_insert_many_keyword_branch_covers_every_content_type(knowledge):
-    """Every loop in the keyword branch forwards the owner - missing one is the
-    bug this guards against."""
     seen = _origins(knowledge)
 
     knowledge.insert_many(**_all_content_kwargs(), user_id="alice")
@@ -201,8 +188,6 @@ def test_insert_many_list_branch_applies_top_level_user_id(knowledge, vector_db)
 
 
 def test_insert_many_list_branch_per_item_user_id_wins(knowledge, vector_db):
-    """A per-item owner overrides the top-level one, so a single call can mix
-    owners."""
     knowledge.insert_many(
         [
             {"text_content": "one", "user_id": "bob"},

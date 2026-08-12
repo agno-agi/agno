@@ -1,10 +1,4 @@
-"""Tests for the metrics REST API router.
-
-Metrics are stored one row per (user, date), so the router is what turns that
-back into an answer: a scoped caller sees only their own bucket, an unscoped
-caller (admin, or any caller when ``user_isolation`` is off) sees the legacy
-one-row-per-day aggregate.
-"""
+"""Tests for the metrics REST API router."""
 
 import logging
 import time
@@ -63,7 +57,7 @@ def settings():
 
 @pytest.fixture
 def mock_db(alice_row, bob_row):
-    """A day with two owners plus the unowned bucket, as the db layer stores it."""
+    """A day with two owners plus the unowned bucket."""
     rows = [alice_row, bob_row, _make_metric("", runs=1, tokens=5)]
     db = MagicMock()
     db.get_metrics = MagicMock(return_value=(rows, int(time.time())))
@@ -238,7 +232,6 @@ class TestAggregationEdges:
         ]
 
     def test_period_less_row_folds_into_the_daily_bucket(self, client, mock_db, alice_row):
-        """A row without a period must not synthesise a second '_daily' id."""
         bob = _make_metric("bob", runs=3)
         bob["aggregation_period"] = None
         mock_db.get_metrics.return_value = ([alice_row, bob], int(time.time()))
@@ -261,11 +254,7 @@ class TestAggregationEdges:
         assert resp.json()["metrics"][0]["id"] == "2026-01-01_daily"
 
     def test_malformed_date_is_skipped_and_logged(self, client, mock_db, alice_row, caplog):
-        """Key-value backends can hold a record whose date is not a day.
-
-        It cannot be rendered, so it is skipped -- but an unscoped read that
-        quietly returns fewer runs than the owner's own read has to say so.
-        """
+        """Key-value backends can hold a record whose date is not a day, so it is skipped and logged."""
         poison = _make_metric("bob", runs=3)
         poison["date"] = {"broken": True}
         mock_db.get_metrics.return_value = ([alice_row, poison], int(time.time()))
@@ -303,7 +292,6 @@ class TestAggregationEdges:
         assert resp.json()["metrics"][0]["agent_runs_count"] == 5
 
     def test_ids_are_unique_across_buckets(self, client, mock_db, alice_row):
-        """Every synthesised id keys exactly one returned bucket."""
         rows = [
             alice_row,
             _make_metric("bob", runs=3),

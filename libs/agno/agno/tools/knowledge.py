@@ -105,11 +105,7 @@ class KnowledgeTools(Toolkit):
         try:
             log_debug(f"Searching knowledge base: {query}")
 
-            # Scope retrieval to the caller's chunks plus the shared bucket.
-            # ``run_context.user_id`` is the owner of the current run (set
-            # from ``Agent.user_id`` or per-call ``agent.run(user_id=...)``)
-            # — ``None`` means no owner / admin-equivalent retrieval (see
-            # Knowledge.search docstring).
+            # Scope retrieval to the run's owner; ``None`` searches everything.
             relevant_docs: List[Document] = self.knowledge.search(query=query, user_id=run_context.user_id)
             if len(relevant_docs) == 0:
                 return "No documents found"

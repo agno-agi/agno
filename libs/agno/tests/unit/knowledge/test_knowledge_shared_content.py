@@ -1,10 +1,7 @@
 """Tests that shared (unowned) content survives a scoped caller's deletes.
 
-Reads surface a scoped caller's own rows plus the unowned ones, so a delete that
-reused that list would destroy org-wide content. Both the single-item and the
-bulk path have to skip it, and neither may strip its vectors on the way past --
-``delete_by_content_id`` carries no owner, so removing them would leave the row
-behind pointing at nothing.
+Both the single-item and bulk paths must skip rows the caller does not own, and
+leave their vectors alone -- ``delete_by_content_id`` takes no owner to scope by.
 """
 
 from unittest.mock import MagicMock

@@ -123,9 +123,8 @@ as an admin.
 **Result:** The non-admin listing held its own row plus both shared rows.
 `PATCH` and `DELETE` on a shared row returned 403, `DELETE` on the other
 subject's row returned 404, and the bulk delete cleared only the caller's own
-row. The admin deleted a shared row and the other subject's row with 200 each.
-The served instance kept the remaining shared row and one row owned by alice,
-so three consecutive runs left the same two rows behind.
+row. The admin deleted a shared row and the other subject's row with 200 each,
+leaving the same two rows behind across three consecutive runs.
 
 ---
 

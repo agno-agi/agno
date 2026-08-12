@@ -194,17 +194,12 @@ def apply_pagination_to_records(
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given single date, bucketed per ``user_id``.
 
-    Each session is attributed to its owning user. Sessions without a
-    ``user_id`` aggregate under the sentinel empty-string bucket.
-
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        A list of per-user metrics records. Firestore uses a deterministic
-        per-(date, user) document ID so re-running the calculation updates
-        the same record rather than producing duplicates.
+        The list of per-user metrics records. Sessions without a ``user_id`` bucket under "".
     """
 
     def _empty_metric_record() -> Dict[str, Any]:
@@ -274,13 +269,8 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
         users_count = 0 if user_id == "" else 1
-        # Firestore treats ``/`` in a document id as a path separator, and also
-        # rejects ``.``, ``..``, and ``__..__`` names — an external IdP subject
-        # like ``google-oauth2/…`` or a URI-shaped ``sub`` would silently drop
-        # that user's metrics (the write throws under ``batch.commit`` and the
-        # bulk upsert's ``try/except`` swallows it). Hash the owner segment so
-        # every user_id yields a path-safe, collision-resistant id. The raw
-        # ``user_id`` is still on the record for querying.
+        # Firestore document ids reject ``/``, ``.``, ``..`` and ``__..__``, so hash the owner
+        # segment: an IdP subject like ``google-oauth2/abc`` fails the write, which the upsert swallows.
         user_segment = "shared" if user_id == "" else hashlib.sha256(user_id.encode("utf-8")).hexdigest()
         metric_id = f"{date_to_process.isoformat()}_{user_segment}_daily"
 
@@ -357,11 +347,7 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
     for i, record in enumerate(metrics_records):
         record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
         try:
-            # Create a unique document ID based on (user_id, date, period).
-            # ``record["id"]`` is set by ``calculate_date_metrics`` to
-            # ``{date}_{sha256(user_id)}_daily`` (or ``{date}_shared_daily``
-            # for the unowned bucket) so it is path-safe for Firestore and
-            # deterministic — re-runs update the same doc.
+            # ``record["id"]`` is deterministic per (date, user_id), so re-runs update the same doc.
             doc_id = record["id"]
             doc_ref = collection_ref.document(doc_id)
             batch.set(doc_ref, record, merge=True)

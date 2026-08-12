@@ -1,37 +1,22 @@
 # mypy: disable-error-code=var-annotated
-"""Migrate SQL-based Agno VectorDBs for per-user isolation (v2 -> v3).
+"""Use this script to migrate your Agno VectorDBs from v2 to v3
 
-v3 adds per-user RAG isolation: each stored chunk carries an owner ``user_id``
-column, and scoped searches return ``WHERE user_id = <caller> OR user_id IS NULL``
-(``NULL`` = shared / org-wide, visible to everyone).
+This script works with PgVector and SingleStore.
 
-Existing (pre-v3) tables have no ``user_id`` column. The adapter only creates
-the schema when the table does NOT already exist, so an existing table is left
-untouched and the new code fails with ``column "user_id" does not exist`` on the
-first insert/search. This script adds the column (and its index) to existing
-tables.
+v3 adds per-user isolation: each stored chunk carries an owner user_id, and a scoped
+search matches `user_id = <caller> OR user_id IS NULL` (NULL = shared). This script adds
+that column, which pre-v3 tables don't have, to the provided tables:
+- PgVector: user_id VARCHAR column, plus a btree index
+- SingleStore: user_id VARCHAR(255) column
 
-Data safety: no rows are moved or rewritten. After the column is added, every
-existing row has ``user_id = NULL`` and is therefore treated as SHARED — it stays
-visible to all callers. So this is a pure, non-destructive schema migration.
+No rows are rewritten: existing rows get user_id = NULL and stay shared with everyone.
+To give a SingleStore chunk an owner afterwards, delete and re-insert it — the row id
+hashes user_id in, so a bare UPDATE duplicates the chunk on the next upsert.
 
-Backends:
-- PgVector    -> ALTER TABLE ADD COLUMN user_id VARCHAR + btree index
-- SingleStore -> ALTER TABLE ADD COLUMN user_id VARCHAR(255)
-
-Optional ownership backfill (NOT done here): if you want to *assign* existing
-shared chunks to a specific owner instead of leaving them shared, you can
-``UPDATE <table> SET user_id = '<owner>' WHERE ...``.
-  * PgVector: safe in place — the row id does not depend on user_id.
-  * SingleStore: the row id folds user_id in (``md5(base_id_content_hash_user_id)``),
-    so a bare UPDATE leaves the id inconsistent with what a later scoped upsert
-    computes, creating a duplicate on the next re-upsert. To reassign an owner on
-    SingleStore, delete + re-insert the chunk under the target user instead.
-
-Usage:
-- Set ``pg_vector_db_url`` + ``pg_vector_config`` for PgVector, and/or
-  ``singlestore_db_url`` + ``singlestore_config`` for SingleStore.
-- Run the script.
+To use the script simply:
+- For PgVector, set the `pg_vector_db_url` and `pg_vector_config` variables
+- For SingleStore, set the `singlestore_db_url` and `singlestore_config` variables
+- Run the script
 """
 
 from agno.utils.log import log_error, log_info, log_warning
@@ -61,11 +46,8 @@ singlestore_config = {
 # -----------------------------------------
 
 
-#  Exit if no configurations are provided
 def migrate_pgvector_table(table_name: str, schema: str = "ai") -> None:
-    """Add the ``user_id`` column (and its index) to a PgVector table.
-
-    Idempotent: skips the table if the column already exists.
+    """Migrate a single PgVector table to v3 by adding the user_id column and its index.
 
     Args:
         table_name: Name of the table to migrate.
@@ -92,12 +74,12 @@ def migrate_pgvector_table(table_name: str, schema: str = "ai") -> None:
             log_info(f"Table {schema}.{table_name} already has the user_id column. No migration needed.")
             return
 
-        # Add the owner column. Nullable, defaulting to NULL = shared.
+        # Add the owner column. Nullable, NULL = shared.
         with pgvector.Session() as sess, sess.begin():
             log_info(f"Adding user_id column to {schema}.{table_name}")
             sess.execute(text(f'ALTER TABLE "{schema}"."{table_name}" ADD COLUMN user_id VARCHAR;'))
 
-        # Index it for fast scope filtering (mirrors idx_{table}_user_id in the adapter).
+        # Add an index for the new column
         with pgvector.Session() as sess, sess.begin():
             index_name = f"idx_{table_name}_user_id"
             log_info(f"Creating index {index_name} on user_id column")
@@ -114,9 +96,7 @@ def migrate_pgvector_table(table_name: str, schema: str = "ai") -> None:
 
 
 def migrate_singlestore_table(table_name: str, schema: str = "ai") -> None:
-    """Add the ``user_id`` column to a SingleStore table.
-
-    Idempotent: skips the table if the column already exists.
+    """Migrate a single SingleStore table to v3 by adding the user_id column.
 
     Args:
         table_name: Name of the table to migrate.
@@ -142,7 +122,7 @@ def migrate_singlestore_table(table_name: str, schema: str = "ai") -> None:
             log_info(f"Table {schema}.{table_name} already has the user_id column. No migration needed.")
             return
 
-        # Add the owner column. Matches the adapter's VARCHAR(255), nullable = NULL = shared.
+        # Add the owner column. Nullable, NULL = shared.
         with singlestore.Session() as sess, sess.begin():
             log_info(f"Adding user_id column to {schema}.{table_name}")
             sess.execute(text(f"ALTER TABLE `{schema}`.`{table_name}` ADD COLUMN user_id VARCHAR(255);"))

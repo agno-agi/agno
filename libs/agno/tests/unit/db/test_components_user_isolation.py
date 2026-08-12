@@ -1,11 +1,8 @@
 """Unit tests for per-user component isolation.
 
-Locks in the contract that component reads/writes/deletes scope by ``user_id``
-when one is supplied (the OS passes the caller's id under user_isolation), and
-stay global when it is ``None`` (single-user / admin).
-
-Component persistence is implemented by the SQLite and Postgres adapters only;
-SQLite is exercised here so the suite needs no external services.
+Verifies that component reads, writes and deletes scope by ``user_id`` when one is
+supplied, and stay global when it is ``None``. Exercised against SQLite so the suite
+needs no external services.
 """
 
 import pytest
@@ -41,7 +38,6 @@ class TestScopedReads:
         assert alice_total == 1
 
     def test_list_unscoped_sees_all(self, db):
-        """user_id=None (admin / single-user) sees every component."""
         _make(db, "c_alice", "alice")
         _make(db, "c_bob", "bob")
 
@@ -67,30 +63,25 @@ class TestScopedWrites:
         _make(db, "c_alice", "alice")
         _make(db, "c_bob", "bob")
 
-        # bob cannot delete alice's component
         assert db.delete_component("c_alice", user_id="bob") is False
         assert db.get_component("c_alice") is not None
 
-        # alice can delete her own
         assert db.delete_component("c_alice", user_id="alice") is True
         assert db.get_component("c_alice") is None
-        # bob's component untouched
         assert db.get_component("c_bob") is not None
 
     def test_upsert_scoped(self, db):
         _make(db, "c_alice", "alice")
 
-        # bob cannot update alice's component -> fails closed instead of creating
+        # A scoped miss fails closed instead of creating a second component for bob
         with pytest.raises(ValueError):
             db.upsert_component(component_id="c_alice", name="hacked", user_id="bob")
         assert db.get_component("c_alice")["name"] != "hacked"
 
-        # alice can update her own
         updated = db.upsert_component(component_id="c_alice", name="my agent", user_id="alice")
         assert updated["name"] == "my agent"
 
     def test_upsert_does_not_reassign_owner(self, db):
-        """A scoped update must not silently move the component to another owner."""
         _make(db, "c_alice", "alice")
 
         db.upsert_component(component_id="c_alice", name="renamed", user_id="alice")
@@ -110,9 +101,7 @@ class TestComponentIdIsTakenIsGeneric:
 
 
 class TestNestedRehydrationScope:
-    """The owner ContextVar must stop a stored team from rehydrating another
-    user's private member, even when the reference was smuggled straight into
-    the DB (bypassing the route-level ownership check on create)."""
+    """A stored team must not rehydrate another user's private member."""
 
     def _make_team(self, db, component_id, user_id, members):
         db.create_component_with_config(
@@ -128,7 +117,7 @@ class TestNestedRehydrationScope:
         from agno.team.team import get_team_by_id
 
         _make(db, "alice_agent", "alice")
-        # bob's team references alice's private agent directly in the DB.
+        # bob's team references alice's private agent, written straight into the DB
         self._make_team(db, "bob_team", "bob", [{"type": "agent", "agent_id": "alice_agent"}])
 
         team = get_team_by_id(db=db, id="bob_team", user_id="bob")

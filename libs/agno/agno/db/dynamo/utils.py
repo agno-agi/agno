@@ -87,12 +87,7 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
     data = {}
     for key, value in item.items():
         if "S" in value:
-            # ``serialize_to_dynamo_item`` only ``json.dumps`` dicts and lists;
-            # raw strings are stored verbatim in ``S``. Mirror that on read:
-            # accept JSON only when it decodes to a dict or list. Otherwise the
-            # string "42" would come back as int 42, "null" as None, "true" as
-            # True — silently corrupting string columns (notably ``user_id``,
-            # which then breaks isolation or fails row validation).
+            # Only dicts and lists are JSON-encoded on write; decoding anything else turns "42" into int 42.
             raw = value["S"]
             try:
                 decoded = json.loads(raw)
@@ -359,17 +354,14 @@ def deserialize_session_result(
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given single date, bucketed per ``user_id``.
 
-    Each session is attributed to its owning user. Sessions without a
-    ``user_id`` aggregate under the sentinel empty-string bucket.
+    Sessions without a ``user_id`` aggregate under the sentinel empty-string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        A list of per-user metrics records. DynamoDB uses a deterministic
-        per-(date, user) ID so re-running the calculation updates the same
-        row instead of producing duplicates.
+        List[dict]: One metrics record per user, with a deterministic id so re-runs update the same row.
     """
 
     def _empty_metric_record() -> Dict[str, Any]:

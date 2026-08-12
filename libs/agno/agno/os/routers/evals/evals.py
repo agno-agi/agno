@@ -423,9 +423,7 @@ def attach_routes(
                 headers=headers,
             )
 
-        # Resolve the owner before running anything: the eval makes real model
-        # calls and persists a row, so a caller that cannot be scoped has to be
-        # turned away first rather than pay for a run it then gets a 403 for.
+        # Resolved before the run: get_scoped_user_id raises 403 and the eval below makes real model calls.
         creator_user_id = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
 
         if eval_run_input.agent_id and eval_run_input.team_id:

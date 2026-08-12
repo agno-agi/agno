@@ -1,10 +1,7 @@
 """SDK ingest errors must leave a terminal contents-db row, not 'processing'.
 
-The loaders write the contents-db row before any vector work, and the pre-v3
-migration gate (among other errors) raises inside the vector work. The SDK
-path (_load_content / _aload_content) must mark the row failed with the
-reason before re-raising — otherwise a UI or job polling for completion
-waits forever. (The HTTP route already did this via process_content.)
+The row is written before any vector work, so an error raised there (here, the
+pre-v3 migration gate) must mark the row failed with a reason before re-raising.
 """
 
 from __future__ import annotations

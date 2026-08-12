@@ -74,9 +74,7 @@ def test_prepare_documents_for_insert_without_metadata(knowledge):
     # Call _prepare_documents_for_insert without metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1")
 
-    # Verify existing metadata is preserved (only linked_to is added). user_id
-    # is NOT written into meta_data — it flows separately as an explicit
-    # parameter on vector_db.insert/upsert.
+    # Verify existing metadata is preserved (only linked_to is added); user_id is not written into meta_data
     assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
     assert result[1].meta_data == {"linked_to": ""}
 
@@ -96,7 +94,7 @@ def test_prepare_documents_for_insert_with_empty_metadata(knowledge):
     # Call _prepare_documents_for_insert with empty metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata={})
 
-    # Verify existing metadata is preserved (only linked_to is added).
+    # Verify existing metadata is preserved (only linked_to is added)
     assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
 
 

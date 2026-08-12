@@ -1,8 +1,4 @@
-"""OpenSearch per-user RAG isolation contract.
-
-Owner lives in a top-level ``user_id`` keyword field; the field being absent is the
-shared bucket. ``FakeIndex`` evaluates the clause types the scope filter emits.
-"""
+"""OpenSearch per-user RAG isolation. The owner is a top-level ``user_id`` field; its absence is the shared bucket."""
 
 from typing import Any, Dict, List
 from unittest.mock import Mock, patch
@@ -25,7 +21,7 @@ SHARED = "The office is closed on January 1."
 
 
 class FakeIndex:
-    """An OpenSearch stand-in that really evaluates the clauses the scope filter emits."""
+    """An OpenSearch stand-in that evaluates the clauses the scope filter emits."""
 
     def __init__(self):
         self.docs: Dict[str, Dict[str, Any]] = {}
@@ -134,7 +130,7 @@ class _AsyncFakeIndices:
 
 @pytest.fixture
 def opensearch_db():
-    """An OpenSearch wired to FakeIndex, so reads and deletes really run the scope clause."""
+    """OpenSearch instance wired to FakeIndex, so reads and deletes run the real scope clause."""
     with (
         patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
         patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
@@ -167,8 +163,7 @@ class TestWriteStampsOwner:
     """The owner is a top-level keyword field, not a meta_data entry."""
 
     def test_mapping_declares_user_id_as_keyword(self, opensearch_db):
-        # keyword, not text: a text field would match the analyzed tokens of the
-        # id instead of the id, so "Alice Smith" would match "alice".
+        # keyword, not text: a text field would match the analyzed tokens of the id, so "Alice Smith" matches "alice".
         assert opensearch_db.mapping["mappings"]["properties"]["user_id"] == {"type": "keyword"}
 
     def test_scoped_insert_stamps_the_field(self, opensearch_db):
@@ -194,8 +189,7 @@ class TestWriteStampsOwner:
         assert sorted(s["user_id"] for s in opensearch_db.client.docs.values()) == ["alice", "bob"]
 
     def test_two_owners_upserting_the_same_bytes_do_not_collide(self, opensearch_db):
-        # upsert builds its own _id, so an owner-blind id here would make bob's
-        # doc_as_upsert land on alice's document and rewrite its owner field.
+        # upsert builds its own _id: an owner-blind one would land bob's doc_as_upsert on alice's document.
         opensearch_db.upsert("h_same", [doc("template", "Quarterly review template.")], user_id="alice")
         opensearch_db.upsert("h_same", [doc("template", "Quarterly review template.")], user_id="bob")
 
@@ -203,7 +197,7 @@ class TestWriteStampsOwner:
         assert sorted(s["user_id"] for s in opensearch_db.client.docs.values()) == ["alice", "bob"]
 
     def test_underscored_id_does_not_collide(self, opensearch_db):
-        """The base id is collapsed with the content_hash into a fixed-length digest before the owner is folded in."""
+        """The base id and the content_hash are digested before the owner is folded in."""
         left = doc("doc", "Any content")
         left.meta_data["content_hash"] = "1"
         right = doc("doc", "Any content")
@@ -211,13 +205,12 @@ class TestWriteStampsOwner:
 
         assert opensearch_db._build_doc_id(left, "a_lice") != opensearch_db._build_doc_id(right, "lice")
 
-        # whatever the caller passes, the owner is always folded into a fixed-length digest
         long_id = doc("doc_1_2_3", "Any content")
         long_id.meta_data["content_hash"] = "h"
         assert len(opensearch_db._build_doc_id(long_id, None)) == 32
 
     def test_unscoped_doc_id_is_unchanged(self, opensearch_db):
-        """Existing indexes keep updating in place, so the fix is not a migration."""
+        """Unscoped ids are unchanged, so existing indexes keep updating in place."""
         from hashlib import md5
 
         target = doc("legacy", "Legacy content")
@@ -235,7 +228,6 @@ class TestOwnerValidation:
     def test_rejects_unsafe_user_id(self, opensearch_db, bad):
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
             opensearch_db._validate_user_id(bad)
-        # And the rejection is enforced on the write path, not just the helper.
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
             opensearch_db.insert("h_alice", [doc("alice", ALICE)], user_id=bad)
         assert opensearch_db.client.docs == {}, "the guard must fire before anything is written"
@@ -262,8 +254,7 @@ class TestOwnerValidation:
         assert len(opensearch_db.client.docs) == 3, "the guard must fire before anything is written or deleted"
 
     def test_search_rejects_before_the_search_type_dispatch(self, opensearch_db):
-        """An unrecognised search type returns [] without reaching any leaf, so the dispatcher has to check the
-        owner itself rather than lean on the leaf it picks."""
+        """An unrecognised search type reaches no leaf, so the dispatcher has to check the owner itself."""
         opensearch_db.search_type = "not_a_search_type"
 
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
@@ -280,16 +271,14 @@ class TestOwnerValidation:
         ids=["async_insert", "async_upsert", "async_search"],
     )
     async def test_every_async_entry_point_rejects(self, opensearch_db, call):
-        """async_search delegates to search on a worker thread, so the ValueError has to survive the thread hop and
-        the await."""
+        """async_search delegates to search on a worker thread, so the ValueError has to survive the thread hop."""
         seed(opensearch_db)
 
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
             await call(opensearch_db)
 
     def test_none_is_not_rejected_anywhere(self, opensearch_db):
-        """None is the shared bucket on a write and the admin view on a read - it is the one value the guard must
-        let through, not the one it exists to catch."""
+        """None is the shared bucket on a write and the admin view on a read, so the guard must let it through."""
         opensearch_db.insert("h_shared", [doc("shared", SHARED)], user_id=None)
         opensearch_db.upsert("h_shared", [doc("shared", SHARED)], user_id=None)
 
@@ -395,7 +384,7 @@ class TestAsyncIsolation:
 
 
 class TestSearchQueryShape:
-    """The clauses sent to OpenSearch. These bodies were driven against a real 2.19 cluster."""
+    """The clauses sent to OpenSearch."""
 
     SCOPE = {
         "bool": {
@@ -422,13 +411,11 @@ class TestSearchQueryShape:
         assert opensearch_db._owner_filter("alice") == self.OWNER
 
     def test_shared_bucket_clause_is_the_absence_of_the_field(self, opensearch_db):
-        """The shared bucket is not a sentinel value, so it also covers every document written before this field
-        existed."""
+        """Not a sentinel value, so it also covers documents written before the field existed."""
         assert opensearch_db._shared_bucket_filter() == self.SHARED_BUCKET
 
     def test_vector_query_pre_filters_inside_the_knn_clause(self, opensearch_db):
-        """Post-filtering the k nearest neighbours returns nothing when they all belong to another owner, so a
-        scoped knn query has to filter first."""
+        """Post-filtering returns nothing when the k nearest neighbours all belong to another owner."""
         body = opensearch_db._build_vector_query("q", 5, None, "alice")
 
         assert body["query"]["knn"]["embedding"]["filter"] == {"bool": {"filter": [self.SCOPE]}}
@@ -468,9 +455,8 @@ class TestSearchQueryShape:
     def test_hybrid_query_scopes_both_halves(self, opensearch_db):
         body = opensearch_db._build_hybrid_query("q", 5, None, "alice")
 
-        # The bool filter scopes the multi_match half and the result set as a whole.
+        # The scope is repeated inside the knn half so its k neighbours come from the scoped set.
         assert body["query"]["bool"]["filter"] == [self.SCOPE]
-        # The knn half repeats it so its k neighbours come from the scoped set.
         knn = body["query"]["bool"]["should"][0]["knn"]["embedding"]
         assert knn["filter"] == {"bool": {"filter": [self.SCOPE]}}
 
@@ -484,8 +470,7 @@ class TestDeleteScope:
         assert texts(opensearch_db.search("salary", limit=10, user_id=None)) == sorted([BOB, SHARED])
 
     def test_owner_delete_leaves_the_shared_bucket_alone(self, opensearch_db):
-        """A caller can view shared content but cannot delete it, so the shared chunks survive a scoped delete and
-        stay retrievable."""
+        """A caller can view shared content but cannot delete it."""
         opensearch_db.insert("h_shared", [doc("shared", SHARED)])
 
         opensearch_db.delete_by_content_id("cid", user_id="alice")
@@ -541,8 +526,7 @@ class TestContentHashExistsScope:
         }
 
     def test_shared_publish_survives_a_private_holder(self, opensearch_db):
-        """The user-visible half: the shared publish is not skipped, so alice's chunk and the shared one both exist
-        and bob can retrieve the shared one."""
+        """A private holder of the hash must not make the shared publish look like a duplicate."""
         opensearch_db.insert("h_alice", [doc("alice", ALICE)], user_id="alice")
 
         if not opensearch_db.content_hash_exists("h_alice", user_id=None):
@@ -562,8 +546,7 @@ class TestLegacyIndexCompatibility:
         assert texts(found) == ["Legacy handbook."]
 
     def test_documents_without_the_field_are_not_deletable_by_an_owner(self, opensearch_db):
-        """Every document written before this field existed reads as shared, so an owner-scoped delete must not be
-        able to reach any of them."""
+        """Documents written before the field existed read as shared, so an owner-scoped delete cannot reach them."""
         opensearch_db.client.docs["old"] = {"content": "Legacy handbook.", "meta_data": {}, "content_id": "cid"}
 
         opensearch_db.delete_by_content_id("cid", user_id="alice")
@@ -571,7 +554,7 @@ class TestLegacyIndexCompatibility:
         assert list(opensearch_db.client.docs) == ["old"]
 
     def test_the_index_mapping_is_never_written_to(self, opensearch_db):
-        """Schema changes ship as an explicit migration, so nothing here alters a mapping the user already has."""
+        """Nothing here alters an existing mapping - schema changes ship as an explicit migration."""
         opensearch_db.insert("h_alice", [doc("alice", ALICE)], user_id="alice")
         opensearch_db.insert("h_bob", [doc("bob", BOB)], user_id="bob")
 

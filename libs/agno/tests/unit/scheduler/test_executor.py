@@ -331,8 +331,7 @@ class TestExecutorExecute:
 
 
 class TestScheduleOwnerAttribution:
-    """The schedule owner -- not the payload, not the internal service -- decides
-    who a scheduled call runs as."""
+    """Test that the schedule owner, not the payload, decides who a scheduled call runs as."""
 
     @pytest.fixture
     def executor(self):
@@ -391,7 +390,6 @@ class TestScheduleOwnerAttribution:
 
     @pytest.mark.asyncio
     async def test_owner_header_is_sent_on_non_run_endpoints(self, executor):
-        """A schedule can name any endpoint, so the owner has to ride along there too."""
         schedule = self._schedule(user_id="alice", endpoint="/schedules/someone-elses", method="DELETE")
         headers = await self._headers_sent(executor, schedule)
 
@@ -407,21 +405,17 @@ class TestScheduleOwnerAttribution:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("owner", ["alice smith", "user/1", "ünicode", " padded "])
     async def test_owner_is_percent_encoded_for_the_hop(self, executor, owner):
-        """A header value has to be latin-1 and has to survive whitespace
-        stripping, so the executor encodes it; the reader unquotes it back."""
+        """Header values must be latin-1 and survive whitespace stripping, so the owner is encoded."""
         schedule = self._schedule(user_id=owner, endpoint="/config", method="GET")
         headers = await self._headers_sent(executor, schedule)
 
         raw = headers[SCHEDULE_OWNER_HEADER]
-        raw.encode("latin-1")  # would raise if the owner rode along un-encoded
+        raw.encode("latin-1")  # raises if the owner rode along un-encoded
         assert unquote(raw) == owner
 
     @pytest.mark.asyncio
     async def test_empty_string_owner_is_forwarded_not_dropped(self, executor):
-        """The guard is ``is not None``, so an owner named ``""`` still rides
-        along -- it is an owner, not a second spelling of "unowned". The read
-        side refuses the blank identity with a 403 rather than widening the
-        call to every user."""
+        """The guard is ``is not None``, so an owner of ``""`` rides along instead of being dropped."""
         schedule = self._schedule(user_id="", endpoint="/config", method="GET")
         headers = await self._headers_sent(executor, schedule)
 

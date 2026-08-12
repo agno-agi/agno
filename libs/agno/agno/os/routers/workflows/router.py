@@ -188,8 +188,7 @@ async def handle_workflow_via_websocket(
                 else:
                     user_id = jwt_user_id
 
-        # Owner scope for DB-backed workflow components: a non-admin caller may
-        # only resolve workflows they own, and only when isolation is enabled.
+        # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
         scoped_user_id = get_scoped_user_id_for_ws(
             user_id,
             jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
@@ -1519,18 +1518,13 @@ def get_workflow_router(
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
-        # Internal-service caller (scheduler executor): see the matching
-        # comment in ``agents/router.py``. Trust the form-field user_id so
-        # scheduler-fired runs are attributed to the schedule owner.
         scoped_user_id = get_scoped_user_id(request)
         state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
         elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
-            # Scheduler executor caller — trust the form-field owner, or leave
-            # user_id unset if the schedule itself was unowned (executor writes
-            # no form-field ``user_id`` in that case). See the matching comment
-            # in ``agents/router.py``.
+            # The sentinel identifies the caller, not the owner: keep the form-field ``user_id``
+            # the executor wrote, which is None for an unowned schedule.
             pass
         elif state_user_id is not None:
             if user_id and user_id != state_user_id:

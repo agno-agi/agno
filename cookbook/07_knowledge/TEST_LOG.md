@@ -104,7 +104,7 @@ No tests recorded yet.
 
 **Description:** OpenSearch on localhost:9200, index `per_user_isolation_demo`. `user_id` keyword field scoped with `term` OR `must_not exists`.
 
-**Result:** Alice 2 results, Bob 2, admin 3. All assertions passed. Alice's agent called `search_knowledge_base` and got back her own chunk plus the shared one; Bob's salary was absent from the references, excluded by the scoped read rather than by an empty result.
+**Result:** Alice 2 results, Bob 2, admin 3. All assertions passed; the agent did not state Bob's salary.
 
 ---
 
@@ -174,7 +174,7 @@ No tests recorded yet.
 
 **Description:** Upstash Vector over `UPSTASH_VECTOR_REST_URL` / `_TOKEN`, index at 1536 dimensions, cosine. `user_id` in metadata scoped with `user_id = X OR HAS NOT FIELD user_id`. Waits for eventual consistency: 2s after the index reset, 5s after the upserts.
 
-**Result:** Alice 2 results, Bob 2, admin 3, identical across three consecutive runs. All assertions passed. Alice's agent called `search_knowledge_base` and got back her own chunk plus the shared one; Bob's salary was absent from the references.
+**Result:** Alice 2 results, Bob 2, admin 3, identical across three consecutive runs. All assertions passed; the agent did not state Bob's salary.
 
 ---
 
@@ -182,9 +182,9 @@ No tests recorded yet.
 
 **Status:** PASS
 
-**Description:** Valkey on localhost:6379, index `per_user_isolation_valkey`. `user_id` TAG field with a `__shared__` sentinel tag. Needs the valkey-bundle image; plain `valkey/valkey` ships no search module, and Redis Stack answers the same FT.* commands, so a stray Redis on 6379 fails on the writes rather than on the connection.
+**Description:** Valkey on localhost:6379, index `per_user_isolation_valkey`. `user_id` TAG field with a `__shared__` sentinel tag. Needs the valkey-bundle image; plain `valkey/valkey` ships no search module, and a stray Redis Stack on 6379 answers the same FT.* commands and fails only on the writes.
 
-**Result:** Alice 2 results, Bob 2, admin 3. All assertions passed. Alice's agent called `search_knowledge_base` and got back her own chunk plus the shared one; Bob's salary was absent from the references. ValkeyDB logs nothing during search, so the non-vacuity guard is what distinguishes a scoped read from an agent that never searched.
+**Result:** Alice 2 results, Bob 2, admin 3. All assertions passed; the agent did not state Bob's salary.
 
 ---
 

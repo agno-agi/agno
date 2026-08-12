@@ -5,9 +5,8 @@ Each user gets a private view of one shared knowledge base. Documents
 uploaded with a user_id are visible only to that user; documents uploaded
 without one are shared with everyone.
 
-SurrealDB stores the owner in an option<string> user_id field and appends
-user_id = $scope_user_id OR user_id = NONE to the vector search, binding the
-scope separately so metadata filters cannot collide with it.
+SurrealDB stores the owner in an option<string> user_id field and adds
+user_id = $scope_user_id OR user_id = NONE to the vector search.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
@@ -57,9 +56,8 @@ def show(label: str, results: List[Document]) -> None:
 # Create Knowledge Base
 # ---------------------------------------------------------------------------
 
-# Knowledge's constructor runs sync exists()/create(), so the backend needs a
-# blocking client here and an async one for the searches below. The async client
-# signs in on the running loop, at the top of main().
+# Sync client for the constructor's exists()/create(), async client for the
+# searches below - it signs in on the running loop at the top of main().
 client = Surreal(SURREAL_URL)
 client.signin({"username": SURREAL_USER, "password": SURREAL_PASSWORD})
 client.use(SURREAL_NAMESPACE, SURREAL_DATABASE)
@@ -70,8 +68,7 @@ vector_db = SurrealDb(
     client=client, async_client=async_client, collection=COLLECTION_NAME
 )
 
-# Start clean: records left by an earlier run still carry their owner and would
-# show up as extra results below.
+# Start clean: records left by an earlier run still carry their owner.
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()
@@ -94,8 +91,6 @@ if __name__ == "__main__":
         )
         await async_client.use(SURREAL_NAMESPACE, SURREAL_DATABASE)
 
-        # Alice and Bob upload private docs; the last upload has no user_id,
-        # which makes it shared / org-wide content.
         await knowledge.ainsert(
             name="alice_salary",
             text_content=ALICE_SALARY,
@@ -106,6 +101,7 @@ if __name__ == "__main__":
             text_content=BOB_SALARY,
             user_id="bob",
         )
+        # The last upload has no user_id, which makes it shared with everyone.
         await knowledge.ainsert(
             name="company_holidays",
             text_content=HOLIDAYS,
@@ -154,11 +150,6 @@ if __name__ == "__main__":
         print("AGENT-MEDIATED RETRIEVAL: the owner has to survive the handoff")
         print("=" * 60 + "\n")
 
-        # Everything above calls Knowledge directly. An application does not -
-        # it runs an agent, and the owner has to travel from the run context
-        # through the search tool into the vector DB. A dropped user_id becomes
-        # None, which is the admin view, so a broken handoff leaks silently
-        # instead of raising.
         alice_agent = Agent(
             name="Alice's Assistant",
             model=OpenAIResponses(id="gpt-5.5"),
@@ -176,15 +167,14 @@ if __name__ == "__main__":
         print("Alice's agent on 'What is Bob's salary?':")
         print(response.content)
 
-        # Assert on what retrieval actually returned, not on the model's prose:
-        # the references are the deterministic record of the isolation boundary.
+        # Assert on what retrieval returned, not on the model's prose.
         retrieved = " ".join(
             item["content"]
             for ref in (response.references or [])
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
         )
-        # Guard against a vacuous pass: empty references mean the agent never searched
+        # Empty references mean the agent never searched, so the check below is vacuous
         assert retrieved, (
             "Retrieval returned no documents, so the isolation check below would pass on nothing"
         )

@@ -21,19 +21,15 @@ DEFAULT_NAMESPACE = ""
 
 
 def _always_false(key: str) -> str:
-    """A predicate over ``key`` that can never be true (a field cannot both exist
-    and be absent). Used to fail CLOSED when a value cannot be expressed as an
-    Upstash literal."""
+    """A predicate that can never match, so an unrepresentable value fails closed."""
     return f"(HAS FIELD {key} AND HAS NOT FIELD {key})"
 
 
 def _quote_value(value: str) -> Optional[str]:
-    """Render a string as an Upstash filter literal, or None if impossible.
+    """Render a string as an Upstash filter literal, or None if it has no literal form.
 
-    Upstash does not process backslash escapes inside a literal, so the value is
-    wrapped in whichever quote char it does not itself contain: a double quote if
-    the value has none, otherwise a single quote. A value with both quote chars is
-    unrepresentable and returns None so callers fail closed (no leak).
+    Upstash does not process backslash escapes, so the value is wrapped in whichever quote char it
+    does not itself contain; a value with both is unrepresentable.
     """
     if '"' not in value:
         return f'"{value}"'
@@ -43,12 +39,7 @@ def _quote_value(value: str) -> Optional[str]:
 
 
 def _reject_unrepresentable_user_id(user_id: Optional[str]) -> None:
-    """Reject a user_id that cannot be expressed as an Upstash filter literal.
-
-    A value with both quote chars has no literal form, so its owner-scope filter
-    fails closed (matches nothing). Stamping such a row would leave it readable
-    and deletable only by an admin, so fail loud at write time instead.
-    """
+    """Reject a user_id with no filter literal form: its chunks would be unreadable by the owner."""
     if user_id is not None and _quote_value(user_id) is None:
         raise ValueError(
             f"user_id {user_id!r} contains both quote characters and cannot be expressed "
@@ -57,8 +48,7 @@ def _reject_unrepresentable_user_id(user_id: Optional[str]) -> None:
 
 
 def _equals_predicate(key: str, value: str) -> str:
-    """key = <literal> for a string value, or an always-false predicate when the
-    value contains both quote chars (so the equality safely matches nothing)."""
+    """key = <literal>, or an always-false predicate when the value has no literal form."""
     quoted = _quote_value(value)
     if quoted is None:
         return _always_false(key)
@@ -84,10 +74,7 @@ class UpstashVectorDb(VectorDb):
         **kwargs: Additional keyword arguments.
     """
 
-    # Per-user RAG isolation: Upstash has no per-tenant column, so the owner is
-    # stamped into a top-level user_id metadata key. Writes with user_id stamp it;
-    # None omits it (the shared bucket). Scoped reads/deletes match the caller's own
-    # chunks plus the shared bucket; user_id=None applies no scope (admin view).
+    # The owner is stamped into a top-level metadata key; None omits it (the shared bucket)
     USER_ID_KEY: str = "user_id"
 
     def __init__(
@@ -219,10 +206,8 @@ class UpstashVectorDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): Restrict the check to the owner's chunks. None checks
-                the shared bucket (HAS NOT FIELD user_id) - this is the guard half of the
-                upsert dedup pair, so None addresses the shared bucket alone rather than
-                every owner, the same bucket _delete_by_content_hash clears for None.
+            user_id (Optional[str]): Restrict the check to the owner's chunks. None checks the shared
+                bucket alone, the same bucket _delete_by_content_hash clears for None.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
@@ -237,11 +222,8 @@ class UpstashVectorDb(VectorDb):
                 filter_str = f"{filter_str} AND HAS NOT FIELD {self.USER_ID_KEY}"
 
             if not self.use_upstash_embeddings and self.embedder is not None:
-                # For custom embeddings, we need a dummy vector for the query.
-                # It must be non-zero: a zero vector has no cosine similarity to any
-                # row, so the query returns nothing regardless of the filter and the
-                # existence check would always report False. The value is irrelevant
-                # since we only care about the filter match, not the ranking.
+                # For custom embeddings, we need a dummy vector for the query
+                # It must be non-zero: a zero vector matches no row, so the check would always be False
                 info = self.index.info()
                 dimension = info.dimension
                 dummy_vector = [1.0] * dimension
@@ -296,20 +278,16 @@ class UpstashVectorDb(VectorDb):
         return namespace in namespaces
 
     def _user_scope_filter_str(self, user_id: Optional[str]) -> str:
-        """Owner-scope predicate for a scoped read: the caller's own chunks plus
-        the shared bucket. Returns "" when user_id is None (no scope, admin view).
-        """
+        """Owner-scope predicate: the caller's own chunks plus the shared bucket, empty when unscoped."""
         if user_id is None:
             return ""
         return f"({_equals_predicate(self.USER_ID_KEY, user_id)} OR HAS NOT FIELD {self.USER_ID_KEY})"
 
     def _record_id(self, base_id: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the deterministic id so two users uploading the same
-        content get distinct keys. The shared bucket (user_id=None) keeps the base id.
+        """Fold the owner into the id so two users uploading the same content get distinct keys.
 
-        The base id is caller-controlled and variable length, so it is collapsed to a
-        fixed-length digest before the owner is folded in - otherwise the '_' boundary
-        moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to the same record id.
+        user_id None keeps the base id. The base id is digested first so that ('doc_1', 'alice') and
+        ('doc', '1_alice') cannot fold to the same record id.
         """
         if user_id is None:
             return base_id
@@ -329,14 +307,12 @@ class UpstashVectorDb(VectorDb):
             documents (List[Document]): The documents to upsert.
             filters (Optional[Dict[str, Any]], optional): The filters for the upsert. Defaults to None.
             namespace (Optional[str], optional): The namespace for the documents. Defaults to None, which uses the instance namespace.
-            user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
-                None (default) writes to the shared bucket.
+            user_id (Optional[str], optional): Owner of these chunks. Defaults to None, the shared bucket.
         """
         _reject_unrepresentable_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
 
-        # Scoped dedup so re-upserting the same content replaces the owner's own
-        # chunks rather than accumulating them (and never touches another owner's).
+        # Scoped dedup: re-upserting replaces this owner's chunks and leaves other owners' alone
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -381,7 +357,6 @@ class UpstashVectorDb(VectorDb):
             else:
                 logger.warning(f"Document {document.id} has no name")
 
-            # Fold the owner into the id so two users' identical content never collide.
             vector_id = self._record_id(document.id, user_id)
 
             if not self.use_upstash_embeddings:
@@ -425,8 +400,7 @@ class UpstashVectorDb(VectorDb):
         Args:
             documents (List[Document]): The documents to insert.
             filters (Optional[Dict[str, Any]], optional): The filters for the insert. Defaults to None.
-            user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
-                None (default) writes to the shared bucket.
+            user_id (Optional[str], optional): Owner of these chunks. Defaults to None, the shared bucket.
         """
         logger.warning("Upstash does not support insert operations. Using upsert instead.")
         self.upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -445,8 +419,8 @@ class UpstashVectorDb(VectorDb):
             limit (int, optional): Maximum number of results to return. Defaults to 5.
             filters (Optional[Dict[str, Any]], optional): Metadata filters for the search.
             namespace (Optional[str], optional): The namespace to search in. Defaults to None, which uses the instance namespace.
-            user_id (Optional[str], optional): Restrict results to the caller's chunks
-                plus the shared bucket. None means no scope (admin view, sees all).
+            user_id (Optional[str], optional): Restrict results to the caller's chunks plus the shared
+                bucket. Defaults to None, which applies no scope.
         Returns:
             List[Document]: List of matching documents.
         """
@@ -455,7 +429,6 @@ class UpstashVectorDb(VectorDb):
             log_warning("Filters Expressions are not supported in UpstashDB. No filters will be applied.")
             filters = None
         filter_str = "" if filters is None else str(filters)
-        # AND the owner scope onto the caller's filter (no-op when user_id is None).
         scope_str = self._user_scope_filter_str(user_id)
         if scope_str:
             filter_str = f"{filter_str} AND {scope_str}" if filter_str else scope_str
@@ -650,14 +623,12 @@ class UpstashVectorDb(VectorDb):
             documents (List[Document]): The documents to upsert.
             filters (Optional[Dict[str, Any]], optional): The filters for the upsert. Defaults to None.
             namespace (Optional[str], optional): The namespace for the documents. Defaults to None, which uses the instance namespace.
-            user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
-                None (default) writes to the shared bucket.
+            user_id (Optional[str], optional): Owner of these chunks. Defaults to None, the shared bucket.
         """
         _reject_unrepresentable_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
 
-        # Scoped dedup so re-upserting the same content replaces the owner's own
-        # chunks rather than accumulating them (and never touches another owner's).
+        # Scoped dedup: re-upserting replaces this owner's chunks and leaves other owners' alone
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -745,7 +716,6 @@ class UpstashVectorDb(VectorDb):
             else:
                 logger.warning(f"Document {document.id} has no name")
 
-            # Fold the owner into the id so two users' identical content never collide.
             vector_id = self._record_id(document.id, user_id)
 
             if not self.use_upstash_embeddings:
@@ -800,8 +770,7 @@ class UpstashVectorDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Restrict the delete to the owner's chunks when set;
-                None scopes to the shared bucket (HAS NOT FIELD user_id).
+            user_id (Optional[str]): Restrict the delete to the owner's chunks; None to the shared bucket.
 
         Returns:
             bool: True if deletion was successful, False otherwise.

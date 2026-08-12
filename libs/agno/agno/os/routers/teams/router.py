@@ -627,18 +627,13 @@ def get_team_router(
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
-        # Internal-service caller (scheduler executor): see the matching
-        # comment in ``agents/router.py``. Trust the form-field user_id so
-        # scheduler-fired runs are attributed to the schedule owner.
         scoped_user_id = get_scoped_user_id(request)
         state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
         elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
-            # Scheduler executor caller — trust the form-field owner, or leave
-            # user_id unset if the schedule itself was unowned (executor writes
-            # no form-field ``user_id`` in that case). See the matching comment
-            # in ``agents/router.py``.
+            # Scheduler executor: the sentinel is the caller, not the owner. Keep the form-field
+            # ``user_id``, which the executor leaves unset for an unowned schedule.
             pass
         elif state_user_id is not None:
             if user_id and user_id != state_user_id:

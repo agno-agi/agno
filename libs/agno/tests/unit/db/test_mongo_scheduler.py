@@ -308,9 +308,7 @@ def test_scheduler_index_schemas_registered():
     schedule_runs_indexes = get_collection_indexes("schedule_runs")
 
     assert any(i.get("key") == "id" and i.get("unique") for i in schedules_indexes)
-    # ``name`` is indexed but NOT unique: uniqueness is per owner, enforced by the
-    # router's scoped get_schedule_by_name + 409. A global unique index would let
-    # one user's schedule name block another's with a raw DuplicateKeyError.
+    # ``name`` is indexed but not unique — schedule names are unique per owner, not globally
     assert any(i.get("key") == "name" and not i.get("unique") for i in schedules_indexes)
     assert any(i.get("key") == "user_id" for i in schedules_indexes)
     assert any(i.get("key") == "id" and i.get("unique") for i in schedule_runs_indexes)

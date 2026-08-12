@@ -77,18 +77,10 @@ def apply_pagination(
 
 
 # -- Metrics util methods --
-# Per-user aggregation: each session is attributed to its owning user.
-# Sessions without a ``user_id`` aggregate under the sentinel empty-string
-# bucket. ``bulk_upsert_metrics`` keys on (user_id, date, aggregation_period).
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
-    """Calculate metrics for the given single date, bucketed per ``user_id``.
+    """Calculate metrics for the given single date, one record per user.
 
-    Args:
-        date_to_process (date): The date to calculate metrics for.
-        sessions_data (dict): The sessions data to calculate metrics for.
-
-    Returns:
-        A list of per-user metrics records.
+    Sessions with no ``user_id`` are bucketed under the empty-string sentinel.
     """
 
     def _empty_metric_record() -> Dict[str, Any]:
@@ -230,10 +222,7 @@ def bulk_upsert_metrics(collection: Collection, metrics_records: List[Dict[str, 
     for record in metrics_records:
         record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
         try:
-            # The unique key is (user_id, date, aggregation_period). Default
-            # the user_id to the empty-string sentinel for safety so legacy
-            # records (written before user_id was tracked) still match a
-            # single bucket per (date, period).
+            # Legacy records have no ``user_id``, so default to the empty-string sentinel bucket
             collection.replace_one(
                 {
                     "user_id": record.get("user_id", ""),
@@ -272,10 +261,7 @@ async def abulk_upsert_metrics(
     for record in metrics_records:
         record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
         try:
-            # The unique key is (user_id, date, aggregation_period). Default
-            # the user_id to the empty-string sentinel for safety so legacy
-            # records (written before user_id was tracked) still match a
-            # single bucket per (date, period).
+            # Legacy records have no ``user_id``, so default to the empty-string sentinel bucket
             await collection.replace_one(
                 {
                     "user_id": record.get("user_id", ""),

@@ -891,10 +891,7 @@ class InMemoryDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Upsert each record by the full (user_id, date,
-                # aggregation_period) key.
+                # One metrics record per user_id: upsert each by (user_id, date, aggregation_period)
                 for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
                     existing_record_idx = None
                     for i, existing_metric in enumerate(self._metrics):
@@ -983,9 +980,7 @@ class InMemoryDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket.
+            user_id (Optional[str]): The ID of the user. If provided, only returns that user's records.
         """
         try:
             filtered_metrics = []
@@ -1002,7 +997,7 @@ class InMemoryDb(BaseDb):
                     continue
 
                 row = deepcopy(metric)
-                # Map the sentinel empty-string user_id back to None.
+                # Unowned sessions are bucketed under "": surface them as None
                 if row.get("user_id") == "":
                     row["user_id"] = None
                 filtered_metrics.append(row)
@@ -1018,8 +1013,6 @@ class InMemoryDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # In-memory storage filters in Python: a row is visible if its
-    # ``user_id`` matches the caller OR is unset (None / missing).
 
     @staticmethod
     def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
@@ -1033,9 +1026,8 @@ class InMemoryDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes rows owned by this user.
+                Unowned rows are shared content and are never deleted by a scoped call.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1056,7 +1048,8 @@ class InMemoryDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this
+                user or unowned (shared) rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1092,7 +1085,8 @@ class InMemoryDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this
+                user or unowned (shared) rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1107,7 +1101,7 @@ class InMemoryDb(BaseDb):
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
 
-            # Owner scoping: drop rows the caller isn't allowed to see.
+            # Apply user_id filter if provided
             if user_id is not None:
                 knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 

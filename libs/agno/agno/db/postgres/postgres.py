@@ -2548,9 +2548,7 @@ class PostgresDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Flatten into the bulk-upsert list.
+                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
@@ -2579,10 +2577,8 @@ class PostgresDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket — the router decides whether
-                that's appropriate (admins see all; non-admins are scoped).
+            user_id (Optional[str]): When set, return only this user's bucket. ``None`` returns every
+                bucket, including the empty-string one holding unowned sessions.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2615,16 +2611,13 @@ class PostgresDb(BaseDb):
                 if not result:
                     return [], None
 
-                # Get the latest updated_at, scoped to whatever filter was
-                # applied — otherwise an admin's "give me everything" call
-                # could shadow a per-user view with a stale-looking timestamp.
+                # Get the latest updated_at, scoped to the same user filter
                 latest_stmt = select(func.max(table.c.updated_at))
                 if user_id is not None:
                     latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_updated_at = sess.execute(latest_stmt).scalar()
 
-            # Map the sentinel empty-string user_id back to None so API
-            # consumers don't have to know about the storage detail.
+            # Map the empty-string owner sentinel back to None for API consumers
             rows: List[dict] = []
             for row in result:
                 row_dict = dict(row._mapping)
@@ -2643,9 +2636,8 @@ class PostgresDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): When set, only delete the row if owned by this user. Shared
+                (``user_id IS NULL``) rows are not deleted.
         """
         try:
             table = self._get_table(table_type="knowledge")
@@ -2667,9 +2659,8 @@ class PostgresDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                returns the row if it is owned by ``user_id`` OR is unowned
-                (NULL). Otherwise returns None.
+            user_id (Optional[str]): When set, only return the row if owned by this user or shared
+                (``user_id IS NULL``).
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2710,8 +2701,8 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter. When set, returns
-                rows owned by this user plus shared rows (``user_id IS NULL``).
+            user_id (Optional[str]): When set, return rows owned by this user plus shared
+                (``user_id IS NULL``) rows.
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2732,7 +2723,7 @@ class PostgresDb(BaseDb):
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
 
-                # Owner scoping: "rows I own, plus shared rows (NULL owner)".
+                # Apply owner scoping if provided
                 if user_id is not None:
                     stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
@@ -4280,8 +4271,7 @@ class PostgresDb(BaseDb):
                     existing_stmt = existing_stmt.where(table.c.user_id == user_id)
                 existing = sess.execute(existing_stmt).fetchone()
                 if existing is None:
-                    # Scoped lookup missed: if the row exists under another owner,
-                    # fail closed instead of falling through to a create (PK violation).
+                    # The row may exist under another owner: fail closed rather than collide on the PK
                     if user_id is not None:
                         unscoped = sess.execute(
                             select(table.c.component_id).where(table.c.component_id == component_id)
@@ -4550,8 +4540,7 @@ class PostgresDb(BaseDb):
                 ).scalar_one_or_none()
 
                 if existing is not None:
-                    # Generic wording: under user isolation this must not confirm
-                    # the existence of another user's component.
+                    # Deliberately vague: the message must not confirm another user's component exists
                     raise ValueError(f"Component ID {component_id} is not available")
 
                 # Check label uniqueness
@@ -5747,10 +5736,8 @@ class PostgresDb(BaseDb):
             raise e
 
     # -- Schedule methods --
-    # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
-    # routes can scope by owner. The executor pair (``claim_due_schedule`` /
-    # ``release_schedule``) intentionally has no user_id — the poller must be
-    # able to fire schedules across all users.
+    # User-facing methods take an optional ``user_id`` filter. ``claim_due_schedule`` and
+    # ``release_schedule`` intentionally don't: the poller fires schedules for every user.
     def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
@@ -5853,9 +5840,7 @@ class PostgresDb(BaseDb):
             runs_table = self._get_table(table_type="schedule_runs")
             with self.Session() as sess, sess.begin():
                 if runs_table is not None:
-                    # Mirror the user_id guard on the cascade delete so we don't
-                    # nuke another user's runs if the schedule_id happens to be
-                    # shared (it shouldn't be, but defend in depth).
+                    # Mirror the owner guard on the cascade so another user's runs aren't deleted
                     runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
                     if user_id is not None:
                         runs_delete = runs_delete.where(runs_table.c.user_id == user_id)

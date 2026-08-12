@@ -69,8 +69,7 @@ class Clickhouse(VectorDb):
         self.async_client = asyncclient
         self.table_name = table_name
 
-        # Whether the LIVE table has the ``user_id`` owner column. Tables
-        # created before v3 lack it; resolved lazily and cached.
+        # Whether the live table has the ``user_id`` column; resolved lazily and cached.
         self._owner_column_exists: Optional[bool] = None
 
         # Embedder for embedding the document contents
@@ -278,13 +277,8 @@ class Clickhouse(VectorDb):
         return len(result.result_rows) > 0 if result.result_rows else False
 
     def _user_id_column_exists(self) -> bool:
-        """Whether the live table has the ``user_id`` owner column.
-
-        Tables created before v3 predate per-user isolation and lack the
-        column until the v2 -> v3 migration adds it. The CREATE TABLE DDL
-        always declares the column, so the live schema has to be inspected.
-        Cached after the first lookup.
-        """
+        """Whether the live table has the ``user_id`` column. Tables created before the v2 -> v3
+        migration lack it, so the live schema is inspected. Cached after the first lookup."""
         if self._owner_column_exists is None:
             try:
                 if not self.table_exists():
@@ -299,10 +293,7 @@ class Clickhouse(VectorDb):
                     )
                     self._owner_column_exists = len(result.result_rows) > 0 if result.result_rows else False
             except Exception:
-                # Inspection failed (connection, permissions, odd driver
-                # response): assume migrated for THIS call only. Caching the
-                # assumption would let one blip permanently mask a real legacy
-                # table — uncached, the next call re-inspects.
+                # Assume migrated for this call only, uncached, so the next call re-inspects.
                 log_warning(
                     f"Could not inspect table '{self.table_name}' for the user_id column; "
                     "proceeding as migrated for this operation."
@@ -311,20 +302,13 @@ class Clickhouse(VectorDb):
         return self._owner_column_exists
 
     def _require_owner_column(self, user_id: Optional[str]) -> bool:
-        """Gate every ``user_id``-column reference on the live schema.
-
-        Returns True when the column exists, False when it is missing and the
-        operation is unscoped — the caller then falls back to pre-v3 SQL that
-        never mentions the column. A scoped operation on an unmigrated table
-        raises instead of surfacing a driver error (or silently widening the
-        scope).
-        """
+        """Whether SQL may reference the ``user_id`` column. False when it is missing and the
+        operation is unscoped, so the caller falls back to pre-v3 SQL; a scoped operation raises."""
         if self._user_id_column_exists():
             return True
         if user_id is None:
             return False
-        # The cached answer may predate a migration run while this process is
-        # alive — re-inspect once before refusing.
+        # The cached answer may predate a migration run, so re-inspect once before refusing.
         self._owner_column_exists = None
         if self._user_id_column_exists():
             return True
@@ -335,20 +319,15 @@ class Clickhouse(VectorDb):
         )
 
     def _validate_user_id(self, user_id: Optional[str]) -> None:
-        """Reject an empty user_id: "" is the reserved shared-owner sentinel, so a
-        scoped caller passing "" would target the shared bucket. Use None for shared."""
+        """Reject an empty user_id: "" is the reserved shared-owner sentinel; use None for shared."""
         if user_id == "":
             raise ValueError(
                 "user_id must not be an empty string - that value is reserved to mark content shared with every user"
             )
 
     def _scoped_record_id(self, cleaned_content: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the deterministic primary key so two users inserting the
-        same content get distinct rows. None keeps the stable content digest.
-
-        The content is collapsed to a fixed-length digest before the owner is folded
-        in, so the '_' boundary cannot move and let one owner overwrite another's row.
-        """
+        """Fold the owner into the deterministic id so two users get distinct rows for the same
+        content; None keeps the plain digest. Content is digested first so the '_' boundary is fixed."""
         _id = md5(cleaned_content.encode()).hexdigest()
         if user_id is None:
             return _id
@@ -362,8 +341,7 @@ class Clickhouse(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         self._validate_user_id(user_id)
-        # A scoped insert into an unmigrated table must raise; an unscoped one
-        # falls back to the pre-v3 column list with no user_id reference.
+        # Unscoped inserts fall back to the pre-v3 column list; scoped ones raise.
         include_owner = self._require_owner_column(user_id)
         owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
@@ -417,8 +395,7 @@ class Clickhouse(VectorDb):
     ) -> None:
         """Insert documents asynchronously."""
         self._validate_user_id(user_id)
-        # A scoped insert into an unmigrated table must raise; an unscoped one
-        # falls back to the pre-v3 column list with no user_id reference.
+        # Unscoped inserts fall back to the pre-v3 column list; scoped ones raise.
         include_owner = self._require_owner_column(user_id)
         owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
@@ -582,10 +559,7 @@ class Clickhouse(VectorDb):
         )
 
     def _user_scope_where_clause(self, parameters: Dict[str, Any], user_id: Optional[str]) -> str:
-        """Scope WHERE fragment matching the owner's rows plus shared ('') rows.
-
-        Returns "" (no scope) when user_id is None. user_id is bound, not interpolated.
-        """
+        """WHERE fragment matching the owner's rows plus shared ('') rows; "" when user_id is None."""
         if user_id is None:
             return ""
         parameters["user_id"] = user_id
@@ -599,8 +573,7 @@ class Clickhouse(VectorDb):
         user_id: Optional[str] = None,
     ) -> List[Document]:
         self._validate_user_id(user_id)
-        # A scoped search on an unmigrated table raises the clear migration
-        # error here instead of being swallowed into [] further down.
+        # Ahead of the try below so a scoped search raises instead of returning [].
         self._require_owner_column(user_id)
         if filters is not None:
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
@@ -665,7 +638,7 @@ class Clickhouse(VectorDb):
     ) -> List[Document]:
         """Search for documents asynchronously."""
         self._validate_user_id(user_id)
-        # See ``search`` — scoped searches on unmigrated tables raise clearly.
+        # See ``search`` — raises here instead of being swallowed into [].
         self._require_owner_column(user_id)
         async_client = await self._ensure_async_client()
 
@@ -732,8 +705,7 @@ class Clickhouse(VectorDb):
                 "DROP TABLE {database_name:Identifier}.{table_name:Identifier}",
                 parameters=parameters,
             )
-            # The next table under this name is created with the owner column —
-            # re-resolve the cached schema answer lazily.
+            # The next table under this name will have the owner column; re-resolve lazily.
             self._owner_column_exists = None
 
     async def async_drop(self) -> None:
@@ -895,9 +867,7 @@ class Clickhouse(VectorDb):
             bool: True if documents were deleted, False otherwise
         """
         self._validate_user_id(user_id)
-        # Outside the try: a scoped delete on an unmigrated table must raise,
-        # not be swallowed into False. (The unscoped path never names the
-        # owner column, so it works on pre-v3 tables as-is.)
+        # Outside the try so a scoped delete raises instead of returning False.
         self._require_owner_column(user_id)
         try:
             log_debug(f"ClickHouse VectorDB : Deleting documents with content_id {content_id}")
@@ -924,14 +894,11 @@ class Clickhouse(VectorDb):
 
         Args:
             content_hash (str): Content hash to check
-            user_id (Optional[str]): Owner to scope the check to (shared owner "" for None).
-                This is the guard half of the upsert dedup pair, so None addresses the
-                shared bucket alone rather than every owner - the same bucket
-                _delete_by_content_hash clears for None.
+            user_id (Optional[str]): Owner to scope the check to; None checks the shared ("")
+                bucket alone, matching what _delete_by_content_hash clears for None.
         """
         self._validate_user_id(user_id)
-        # On an unmigrated (pre-v3) table there is no owner column: the whole
-        # table is the shared bucket, exactly like main. Scoped checks raise.
+        # An unmigrated table has no owner column, so the whole table is the shared bucket.
         scope_to_owner = self._require_owner_column(user_id)
         parameters = self._get_base_parameters()
         parameters["content_hash"] = content_hash
@@ -953,13 +920,11 @@ class Clickhouse(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete
-            user_id (Optional[str]): Owner to scope the delete to; None scopes to
-                the shared bucket ("") so a shared re-upsert never wipes a scoped
-                owner's identical-content row. The value is bound, never interpolated.
+            user_id (Optional[str]): Owner to scope the delete to; None scopes to the shared ("")
+                bucket so a shared re-upsert never wipes a scoped owner's identical-content row.
         """
         self._validate_user_id(user_id)
-        # Outside the try — see ``content_hash_exists``; the fallback keeps the
-        # dedup pair matching the same rows on unmigrated tables.
+        # Outside the try so a scoped delete raises instead of returning False.
         scope_to_owner = self._require_owner_column(user_id)
         try:
             parameters = self._get_base_parameters()

@@ -2006,9 +2006,7 @@ class MongoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Flatten into the bulk-upsert list.
+                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
@@ -2031,9 +2029,7 @@ class MongoDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket.
+            user_id (Optional[str]): Return only this user's bucket. ``None`` returns every bucket.
         """
         try:
             collection = self._get_collection(table_type="metrics")
@@ -2058,9 +2054,7 @@ class MongoDb(BaseDb):
             # Get the latest updated_at
             latest_updated_at = max(record.get("updated_at", 0) for record in records)
 
-            # Map the sentinel empty-string user_id back to None so API
-            # consumers don't have to know about the storage detail. Also
-            # strip MongoDB's internal _id.
+            # Map the empty-string user_id sentinel back to None, and drop MongoDB's _id field
             cleaned: List[dict] = []
             for record in records:
                 row = dict(record)
@@ -2075,14 +2069,9 @@ class MongoDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # The owner-scope predicate for reads is "rows I own, plus rows nobody
-    # owns (admin / org-wide shared content)". Mongo expresses this as
-    # ``{"$or": [{"user_id": uid}, {"user_id": None}, {"user_id": {"$exists": False}}]}``
-    # — the third clause covers documents written before the column existed
-    # (Mongo silently omits absent fields rather than storing them as null).
-    # When ``user_id`` is ``None`` the predicate is dropped entirely (admin /
-    # RBAC-off / single-user view sees everything).
 
+    # Matches rows the user owns plus unowned ones. ``$exists`` covers documents predating the field,
+    # which Mongo omits rather than storing as null.
     def _knowledge_user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if user_id is None:
             return None
@@ -2093,9 +2082,7 @@ class MongoDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): When set, only deletes rows owned by this user. Unowned rows are shared.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2121,7 +2108,7 @@ class MongoDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): When set, restrict to this user's rows plus unowned ones.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2165,7 +2152,7 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): When set, restrict to this user's rows plus unowned ones.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2184,7 +2171,7 @@ class MongoDb(BaseDb):
             if linked_to is not None:
                 query["linked_to"] = linked_to
 
-            # Owner scoping: "rows I own, plus shared rows (NULL owner)".
+            # Apply owner scoping if provided
             scope = self._knowledge_user_scope_filter(user_id)
             if scope is not None:
                 query = {"$and": [query, scope]} if query else scope
@@ -3157,11 +3144,8 @@ class MongoDb(BaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
-    # -- Schedule methods --
-    # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
-    # routes can scope by owner. The executor pair (``claim_due_schedule`` /
-    # ``release_schedule``) intentionally has no user_id — the poller must be
-    # able to fire schedules across all users.
+    # -- Scheduler methods --
+    # ``claim_due_schedule`` / ``release_schedule`` stay unscoped so the poller can fire every user's schedules.
     def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = self._get_collection(table_type="schedules")
@@ -3271,9 +3255,7 @@ class MongoDb(BaseDb):
 
             runs_collection = self._get_collection(table_type="schedule_runs")
             if runs_collection is not None:
-                # Mirror the user_id guard on the cascade delete so we don't
-                # nuke another user's runs if the schedule_id happens to be
-                # shared (it shouldn't be, but defend in depth).
+                # Mirror the owner guard on the cascade so a shared schedule_id can't drop another user's runs
                 runs_query: Dict[str, Any] = {"schedule_id": schedule_id}
                 if user_id is not None:
                     runs_query["user_id"] = user_id

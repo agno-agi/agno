@@ -315,8 +315,7 @@ def test_update_metadata_writes_to_hash(redis_db):
 
 
 def test_update_metadata_drops_reserved_fields(redis_db):
-    """Caller metadata must not overwrite the fields the adapter owns - writing ``user_id``
-    would hand the chunk to another owner, and ``id`` would orphan the key."""
+    """Caller metadata must not overwrite the fields the adapter owns."""
     db, idx = redis_db
     idx.query.return_value = [{"id": "test_index:k1"}]
     redis_client = db.redis_client

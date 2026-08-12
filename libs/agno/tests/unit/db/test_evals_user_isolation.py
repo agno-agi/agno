@@ -158,11 +158,7 @@ def _try_import_class(module_path: str, class_name: str):
 @pytest.mark.parametrize("module_path,class_name", _EVAL_ADAPTERS)
 @pytest.mark.parametrize("method_name", _SCOPED_METHODS)
 def test_eval_reads_accept_user_id(module_path: str, class_name: str, method_name: str):
-    """A scoped call must be expressible on every adapter.
-
-    Without the parameter the OS cannot scope the call at all, so a scoped
-    caller silently gets everyone's eval runs.
-    """
+    """Every adapter accepts ``user_id``; without it a scoped caller sees everyone's eval runs."""
     import inspect
 
     cls = _try_import_class(module_path, class_name)
@@ -173,11 +169,7 @@ def test_eval_reads_accept_user_id(module_path: str, class_name: str, method_nam
 
 @pytest.mark.parametrize("module_path,class_name", _EVAL_ADAPTERS)
 def test_update_eval_run_user_id_is_implemented(module_path: str, class_name: str):
-    """The owner has to be storable, not just filterable.
-
-    ``BaseDb.update_eval_run_user_id`` raises NotImplementedError, so inheriting
-    it leaves the adapter unable to record an owner at all.
-    """
+    """Every adapter overrides ``update_eval_run_user_id``; the base stub raises NotImplementedError."""
     from agno.db.base import AsyncBaseDb, BaseDb
 
     cls = _try_import_class(module_path, class_name)

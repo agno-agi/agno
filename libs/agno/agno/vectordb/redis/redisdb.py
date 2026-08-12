@@ -28,21 +28,16 @@ from agno.vectordb.search import SearchType
 RESERVED_HASH_FIELDS = {"id", "name", "content", "embedding", "content_hash", "content_id", "user_id"}
 
 
-# The characters RediSearch treats as special inside a TAG query, taken from
-# redisvl's TokenEscaper (itself from the Redis escaping docs), plus the '|' union
-# character redisvl omits. Escaping only these matters: escaping anything else
-# leaves the backslash in the query literally, so the clause hunts for a value that
-# was never stored and the owner cannot read their own chunks.
+# Characters RediSearch treats as special inside a TAG query: redisvl's TokenEscaper set,
+# plus the '|' union character it omits. Escaping anything else breaks the match.
 _TAG_SPECIAL_CHARS = re.compile(r"[,.<>{}\[\]\\\"\':;!@#$%^&*()\-+=~\/ \?|]")
 
 
 def _escape_tag_value(value: Any) -> str:
     """Escape FT.SEARCH TAG special characters so the value matches as one literal tag.
 
-    redisvl's ``Tag`` escapes a backslash but not the '|' union character, so an owner
-    id carrying one (an OIDC ``sub`` such as ``auth0|507f...``) would widen the scope
-    into several owners instead of matching. Build the clause here rather than through
-    Tag, escaping exactly RediSearch's special set.
+    redisvl's ``Tag`` leaves '|' unescaped, which widens an owner id such as ``auth0|507f...``
+    into several owners.
     """
     return _TAG_SPECIAL_CHARS.sub(lambda m: f"\\{m.group(0)}", str(value))
 
@@ -59,13 +54,11 @@ class RedisDB(VectorDb):
     # the sentinel owner tag and the owner-OR-shared scope matches either.
     USER_ID_FIELD: str = "user_id"
     SHARED_OWNER_TAG: str = "__shared__"
-    # TAG fields split stored values on a separator (default ","), so "a,b,c" would
-    # index as three tags. 0x1f never appears in real values, keeping each owner value
-    # one atomic tag; the owner field is also case sensitive.
+    # TAG fields split stored values on a separator (default ","), so "a,b,c" would index
+    # as three tags. 0x1f never appears in real values, keeping each owner one atomic tag.
     USER_ID_SEPARATOR: str = "\x1f"
-    # RediSearch truncates an indexed TAG at the first NUL and at 4096 bytes, so an
-    # owner id carrying either would index as a prefix of another owner's tag and write
-    # into their scoped view.
+    # RediSearch truncates an indexed TAG at 4096 bytes, so a longer owner id would index
+    # as a prefix of another owner's tag.
     MAX_USER_ID_BYTES: int = 4096
 
     def __init__(
@@ -142,8 +135,7 @@ class RedisDB(VectorDb):
         self._async_redis_client: Optional[AsyncRedis] = None
         self._async_index: Optional[AsyncSearchIndex] = None
 
-        # Whether the LIVE index schema has the owner tag field. Indices
-        # created before v3 lack it; resolved lazily and cached.
+        # Whether the live index schema has the owner field; resolved lazily and cached
         self._owner_field_exists: Optional[bool] = None
 
         log_debug(f"Initialized Redis with index '{self.index_name}'")
@@ -161,18 +153,8 @@ class RedisDB(VectorDb):
     def _validate_user_id(self, user_id: Optional[str]) -> None:
         """Reject user_id values that would break TAG-based isolation.
 
-        The separator would index one value as several owner tags, the shared
-        sentinel would let a caller impersonate the shared bucket, braces can
-        never be matched by a scope clause, wildcards match other owners' tags
-        even when escaped, surrounding whitespace is trimmed at index time so
-        ' alice' indexes as the tag 'alice' and is read by that owner, a NUL byte
-        or an over-long value is truncated at index time so 'victim\\x00attacker'
-        indexes as 'victim' and writes into that owner's view, and an empty string
-        is an owner tag no scope clause can ever match.
-
-        The TAG union character '|' is not rejected: ``_escape_tag_value``
-        escapes it when the scope clause is built, and OIDC subject claims
-        ('auth0|...', 'google-oauth2|...') are legitimate owner ids.
+        Each rejected form indexes or matches as another owner's tag, or impersonates the
+        shared bucket. '|' is allowed: ``_escape_tag_value`` escapes it and OIDC ids carry it.
         """
         if user_id is None:
             return
@@ -197,13 +179,11 @@ class RedisDB(VectorDb):
             raise ValueError("user_id must not have leading or trailing whitespace")
 
     def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the deterministic id so two users uploading the
-        same content get distinct keys. The shared bucket keeps the legacy id.
+        """Fold the owner into the deterministic id so two users uploading the same content
+        get distinct keys. The shared bucket keeps the legacy id.
 
-        The base id is caller-controlled and variable length, so it is collapsed
-        to a fixed-length digest before the owner is folded in - otherwise the
-        '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to
-        the same key, letting one owner overwrite the other's chunk.
+        The base id is hashed first so the '_' boundary is fixed - otherwise ('doc_1',
+        'alice') and ('doc', '1_alice') fold to the same key.
         """
         if user_id is None:
             return base_id
@@ -214,11 +194,8 @@ class RedisDB(VectorDb):
         return f"@{self.USER_ID_FIELD}:{{{_escape_tag_value(user_id)}}}"
 
     def _user_scope_filter(self, user_id: Optional[str]) -> Optional["FilterExpression"]:
-        """Build the owner-OR-shared scope for a search.
-
-        user_id set  -> match the caller's own chunks OR the shared chunks
-        (which store the sentinel owner tag).
-        user_id None -> return None (no scope; admin sees everything).
+        """Scope a search to the caller's own chunks plus the shared ones (which store the
+        sentinel owner tag). ``None`` returns no scope, so an unscoped caller sees everything.
         """
         if user_id is None:
             return None
@@ -246,9 +223,7 @@ class RedisDB(VectorDb):
                     {"name": "content", "type": "text"},
                     {"name": "content_hash", "type": "tag"},
                     {"name": "content_id", "type": "tag"},
-                    # Owner of the chunk for per-user isolation. Shared chunks store
-                    # the sentinel owner tag; the scope query matches owner|shared.
-                    # A 0x1f separator keeps any owner value one atomic tag.
+                    # Owner of the chunk for per-user isolation (see USER_ID_SEPARATOR)
                     {
                         "name": self.USER_ID_FIELD,
                         "type": "tag",
@@ -278,15 +253,10 @@ class RedisDB(VectorDb):
         return SearchIndex(self.schema, redis_url=self.redis_url)
 
     def _index_has_user_id_field(self) -> Optional[bool]:
-        """Whether the LIVE index schema contains the owner tag field.
+        """Whether the live index schema contains the owner tag field.
 
-        Indices created before v3 lack it, and every scoped query against them
-        fails with "Unknown field" — which downstream except blocks turn into
-        empty results. ``create()`` warns loudly for that case instead.
-
-        Returns None when the index cannot be inspected (connection failure,
-        restricted FT.INFO, unexpected response) — an inconclusive answer, not
-        a verdict either way.
+        Returns None when the index cannot be inspected (connection failure, restricted
+        FT.INFO, unexpected response) — inconclusive, not a verdict either way.
         """
         try:
             info = self.index.info()
@@ -306,11 +276,8 @@ class RedisDB(VectorDb):
     def _user_id_field_exists(self) -> bool:
         """Cached wrapper around ``_index_has_user_id_field``.
 
-        Only conclusive answers are cached. An inconclusive inspection assumes
-        "migrated" for THIS call only — failing closed would let a transient
-        blip flip a healthy v3 index into refusing every scoped op — but it is
-        logged and not remembered, so the next call re-inspects and a real
-        legacy index still gets its real verdict once inspection works.
+        Only conclusive answers are cached — an inconclusive inspection assumes "migrated"
+        for this call alone.
         """
         if self._owner_field_exists is None:
             answer = self._index_has_user_id_field()
@@ -326,19 +293,14 @@ class RedisDB(VectorDb):
     def _require_owner_field(self, user_id: Optional[str]) -> bool:
         """Gate every owner-tag reference on the live index schema.
 
-        Returns True when the field is indexed. Returns False when it is
-        missing and the operation is unscoped — the caller then emits pre-v3
-        queries with no owner clause. A scoped operation on a pre-v3 index
-        raises instead of matching nothing (the owner tag on an unindexed
-        field never matches, which downstream code would render as an empty
-        knowledge base).
+        True when the field is indexed, False when it is missing and the operation is
+        unscoped. A scoped operation on a pre-v3 index raises rather than matching nothing.
         """
         if self._user_id_field_exists():
             return True
         if user_id is None:
             return False
-        # The cached answer may predate an index rebuild — re-inspect once
-        # before refusing.
+        # The cached answer may predate an index rebuild — re-inspect once before refusing
         self._owner_field_exists = None
         if self._user_id_field_exists():
             return True
@@ -356,8 +318,7 @@ class RedisDB(VectorDb):
                 log_debug(f"Created Redis index: {self.index_name}")
             else:
                 log_debug(f"Redis index already exists: {self.index_name}")
-                # Warn only on a conclusive verdict — None means the index
-                # couldn't be inspected, which is not evidence it is legacy.
+                # Warn only on a conclusive verdict — None means the index couldn't be inspected
                 if self._index_has_user_id_field() is False:
                     log_warning(
                         f"Redis index '{self.index_name}' was created without the "
@@ -430,25 +391,17 @@ class RedisDB(VectorDb):
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document with the given content hash exists.
 
-        user_id set  -> only the caller's own chunks count, so another owner's
-        identical upload is not judged a duplicate. None -> the shared bucket
-        alone (the sentinel owner tag), never every owner.
-
-        This is the guard half of the upsert dedup pair, so it matches exactly
-        the bucket ``_dedupe_filter`` clears and never an owned row: otherwise a
-        shared publish is judged a duplicate on the strength of one tenant's
-        private copy and the shared bucket never receives it.
+        Scoped to the same bucket ``_dedupe_filter`` clears, so the dedup guard and the
+        upsert delete never disagree.
         """
-        # Both gates sit outside the try: an invalid user_id or a scoped check
-        # on a pre-v3 index must raise, not be swallowed into False.
+        # Outside the try so an invalid user_id or a scoped check on a pre-v3 index raises
         self._validate_user_id(user_id)
         scope_to_owner = self._require_owner_field(user_id)
         try:
             if scope_to_owner:
                 filter_expression: "FilterExpression" = self._dedupe_filter(content_hash, user_id)
             else:
-                # Pre-v3 index: no owner field to match — the whole index is
-                # the shared bucket, exactly like main.
+                # Pre-v3 index: no owner field, so the whole index is the shared bucket
                 filter_expression = Tag("content_hash") == content_hash
             query = FilterQuery(
                 filter_expression=filter_expression,
@@ -466,9 +419,8 @@ class RedisDB(VectorDb):
         Create object serializable into Redis HASH structure
         """
         doc_dict = doc.to_dict()
-        # Ensure an ID is present; derive a deterministic one from content when missing.
-        # Fold the owner into the id so two users uploading identical content get
-        # distinct keys and cannot overwrite each other.
+        # Ensure an ID is present; derive a deterministic one from content when missing
+        # Fold in the owner so two users uploading identical content get distinct keys
         base_id = doc.id or hash_string_sha256(doc.content)
         doc_dict["id"] = self._scoped_doc_id(base_id, user_id)
         if not doc.embedding:
@@ -509,10 +461,7 @@ class RedisDB(VectorDb):
     ) -> None:
         """Insert documents into the Redis index."""
         self._validate_user_id(user_id)
-        # Scoped writes on a pre-v3 index raise: the owner tag would be stored
-        # but unindexed, so the owner could never find (or safely delete) the
-        # chunks. Unscoped writes proceed — the stored sentinel is harmless on
-        # an index that doesn't know the field, and self-heals after a rebuild.
+        # A scoped write on a pre-v3 index raises: the owner tag would be stored unindexed
         self._require_owner_field(user_id)
         try:
             # Store content hash for tracking
@@ -537,7 +486,7 @@ class RedisDB(VectorDb):
     ) -> None:
         """Async version of insert method."""
         self._validate_user_id(user_id)
-        # See ``insert`` for why this gate sits outside the try.
+        # See ``insert`` for why a scoped write on a pre-v3 index raises
         self._require_owner_field(user_id)
         try:
             async_index = await self._get_async_index()
@@ -579,9 +528,8 @@ class RedisDB(VectorDb):
         self._validate_user_id(user_id)
         scope_to_owner = self._require_owner_field(user_id)
         try:
-            # Find existing docs for this content_hash in the caller's bucket and delete them.
-            # On a pre-v3 index there is no owner field: dedupe by content_hash
-            # alone, exactly like main.
+            # Find and delete existing docs for this content_hash in the caller's bucket.
+            # A pre-v3 index has no owner field, so it dedupes by content_hash alone.
             if scope_to_owner:
                 dedupe: "FilterExpression" = self._dedupe_filter(content_hash, user_id)
             else:
@@ -655,8 +603,7 @@ class RedisDB(VectorDb):
         if filters and isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Redis. No filters will be applied.")
             filters = None
-        # Both gates sit outside the try: an invalid user_id or a scoped
-        # search on a pre-v3 index must raise, not be swallowed into [].
+        # Outside the try so an invalid user_id or a scoped search on a pre-v3 index raises
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         try:
@@ -788,8 +735,7 @@ class RedisDB(VectorDb):
         try:
             self.index.delete(drop=True)
             log_debug(f"Deleted Redis index: {self.index_name}")
-            # The next index under this name is created with the owner field —
-            # re-resolve the cached schema answer lazily.
+            # The next index under this name has the owner field — re-resolve lazily
             self._owner_field_exists = None
             return True
         except Exception as e:
@@ -802,7 +748,7 @@ class RedisDB(VectorDb):
             async_index = await self._get_async_index()
             await async_index.delete(drop=True)
             log_debug(f"Deleted Redis index: {self.index_name}")
-            # See ``drop`` — re-resolve the cached schema answer lazily.
+            # See ``drop`` — re-resolve the cached schema answer lazily
             self._owner_field_exists = None
         except Exception as e:
             log_error(f"Error dropping Redis index: {str(e)}")
@@ -917,12 +863,10 @@ class RedisDB(VectorDb):
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by content ID.
 
-        user_id set  -> delete only the caller's own chunks (must NOT touch
-        the shared bucket). None -> the admin view, deleting across every owner.
+        ``user_id`` deletes only that owner's chunks, never the shared bucket; ``None``
+        deletes across every owner.
         """
-        # Outside the try: a scoped delete on a pre-v3 index must raise, not
-        # be swallowed into False. (The unscoped path never names the owner
-        # field, so it works on pre-v3 indices as-is.)
+        # Outside the try so a scoped delete on a pre-v3 index raises instead of returning False
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         try:
@@ -957,8 +901,7 @@ class RedisDB(VectorDb):
         """Update metadata for documents with the given content ID."""
         try:
             # Drop keys the adapter owns so caller metadata can't overwrite the id,
-            # embedding or owner and thereby corrupt indexing or escape isolation,
-            # mirroring the insert path (_parse_redis_hash).
+            # embedding or owner, mirroring the insert path (_parse_redis_hash).
             reserved = {k: v for k, v in metadata.items() if k in RESERVED_HASH_FIELDS}
             if reserved:
                 log_warning(f"Ignoring reserved meta_data keys that cannot be overwritten: {sorted(reserved)}")

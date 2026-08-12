@@ -422,11 +422,7 @@ def test_cleanup_is_idempotent_when_no_legacy_column():
 
 
 def test_down_then_up_in_the_same_process():
-    """A revert drops the runs table; a later up() in the same process must rebuild it.
-
-    The revert used to drop agno_runs from the database while leaving it registered
-    on db.metadata, so the next up() raised InvalidRequestError.
-    """
+    """A revert drops agno_runs; a later up() in the same process must rebuild it despite stale db.metadata."""
     db, db_file = _new_db()
     db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
     _add_legacy_runs_column(db_file)

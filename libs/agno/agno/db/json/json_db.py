@@ -1145,9 +1145,7 @@ class JsonDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Upsert each by the full (user_id, date, period) key.
+                # Upsert one metrics record per user_id
                 for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
                     existing_record_idx = None
                     for i, existing_metric in enumerate(metrics):
@@ -1258,9 +1256,7 @@ class JsonDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket.
+            user_id (Optional[str]): The ID of the user to filter by. ``None`` returns metrics for all users.
         """
         try:
             metrics = self._read_json_file(self.metrics_table_name)
@@ -1295,8 +1291,6 @@ class JsonDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # File-backed storage filters in Python: a row is visible if its
-    # ``user_id`` matches the caller OR is unset (None / missing).
 
     @staticmethod
     def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
@@ -1310,9 +1304,7 @@ class JsonDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): When set, only deletes rows owned by this user; unowned rows are kept.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1335,7 +1327,7 @@ class JsonDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): Filter to rows owned by this user or unowned (shared) rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1373,7 +1365,7 @@ class JsonDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): Filter to rows owned by this user or unowned (shared) rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1388,7 +1380,7 @@ class JsonDb(BaseDb):
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
 
-            # Owner scoping: drop rows the caller isn't allowed to see.
+            # Apply owner scoping filter if provided
             if user_id is not None:
                 knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 

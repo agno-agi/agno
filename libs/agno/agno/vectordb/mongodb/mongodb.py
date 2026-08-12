@@ -25,10 +25,7 @@ except ImportError:
 
 DRIVER_METADATA = DriverInfo(name="Agno", version=metadata.version("agno"))
 
-# Per-user isolation: the owner is stored in a top-level ``user_id`` field
-# (kept out of meta_data so it can be declared as a $vectorSearch filter field).
-# Writes with user_id=None leave it null (the shared/admin bucket); searches with
-# user_id=X see the owner's chunks plus the shared bucket; user_id=None sees all.
+# The owner is stored top-level rather than in meta_data so it can be a $vectorSearch filter field.
 USER_ID_FIELD = "user_id"
 
 
@@ -328,7 +325,7 @@ class MongoDb(VectorDb):
                                     "path": "embedding",
                                     "similarity": self.distance_metric,
                                 },
-                                # user_id is a filter field so the per-user scope can pre-filter inside $vectorSearch
+                                # Declared here so the owner scope can pre-filter inside $vectorSearch.
                                 {
                                     "type": "filter",
                                     "path": USER_ID_FIELD,
@@ -381,7 +378,7 @@ class MongoDb(VectorDb):
                                 "path": "embedding",
                                 "similarity": self.distance_metric,
                             },
-                            # user_id is a filter field so the per-user scope can pre-filter inside $vectorSearch
+                            # Declared here so the owner scope can pre-filter inside $vectorSearch.
                             {
                                 "type": "filter",
                                 "path": USER_ID_FIELD,
@@ -521,12 +518,9 @@ class MongoDb(VectorDb):
             return False
 
     def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Build the tenant scope predicate for a search/delete.
+        """Build the owner scope for a search or delete: this user's chunks plus the shared (null) bucket.
 
-        ``user_id=None`` returns ``None`` (no scope — admin view sees all).
-        ``user_id="alice"`` matches either the caller's own chunks OR the shared
-        bucket (``user_id`` is null). Direct null equality is used because the
-        $vectorSearch pre-filter accepts ``$eq``/``$or`` but not ``$exists``.
+        ``None`` applies no scope. Null equality is used because the $vectorSearch pre-filter has no ``$exists``.
         """
         if user_id is None:
             return None
@@ -537,19 +531,14 @@ class MongoDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): The owner to check, so a different owner's
-                identical upload is not judged a duplicate. This is the guard half
-                of the upsert dedup pair, so ``None`` addresses the shared bucket
-                alone (``user_id`` is null) rather than every owner - the same
-                bucket a ``None``-scoped delete clears.
+            user_id (Optional[str]): Owner to check, so another owner's identical upload is not judged
+                a duplicate. ``None`` addresses the shared bucket alone, not every owner.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
         """
         try:
             collection = self._get_collection()
-            # Direct null equality, the same primitive ``_user_scope_filter`` uses:
-            # ``None`` matches the shared bucket and no owned row.
             query: Dict[str, Any] = {"content_hash": content_hash, USER_ID_FIELD: user_id}
             result = collection.find_one(query)
             exists = result is not None
@@ -617,10 +606,7 @@ class MongoDb(VectorDb):
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
 
-        # The ``_id`` is content-derived, so a re-upsert of edited content writes new
-        # rows instead of replacing the old ones. Clear the caller's prior chunks for
-        # this content_hash first, or a document that shrinks leaves stale chunks
-        # behind and they keep answering searches.
+        # The ``_id`` is content-derived, so edited content writes new rows; clear the prior chunks first.
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -658,8 +644,7 @@ class MongoDb(VectorDb):
             limit (int): The maximum number of documents to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Metadata filters to apply.
             min_score (float): Drop results scoring below this value; 0.0 keeps them all.
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. ``None`` searches all chunks (admin view).
+            user_id (Optional[str]): Restrict results to this user's chunks plus shared ones; ``None`` sees all.
         """
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
@@ -679,9 +664,7 @@ class MongoDb(VectorDb):
             try:
                 collection = self._get_collection()
 
-                # Cosmos has no vector pre-filter; scope after the search instead.
-                # Over-fetch when scoped so filtering the candidates doesn't
-                # starve the caller below ``limit``.
+                # Cosmos has no vector pre-filter, so scope after the search and over-fetch to absorb it.
                 k = min(limit * 4, 100) if scope_filter is not None else limit
 
                 # Construct the search pipeline
@@ -693,9 +676,7 @@ class MongoDb(VectorDb):
                 }
 
                 pipeline: List[Dict[str, Any]] = [search_stage]
-                # The scope $match must run before the inclusion $project below:
-                # $project drops ``user_id``, and matching on a missing field
-                # would pass every candidate ({user_id: None} matches missing).
+                # Must precede the $project below, which drops ``user_id``: a missing field matches {user_id: None}.
                 if scope_filter is not None:
                     pipeline.append({"$match": scope_filter})
                     pipeline.append({"$limit": limit})
@@ -740,7 +721,7 @@ class MongoDb(VectorDb):
                     "queryVector": query_embedding,
                     "path": "embedding",
                 }
-                # Scope as a pre-filter inside $vectorSearch so scoped users keep their recall.
+                # Pre-filter inside $vectorSearch so scoping doesn't cut the result set below ``limit``.
                 if scope_filter is not None:
                     vector_search_stage["filter"] = scope_filter
                 pipeline = [
@@ -840,8 +821,7 @@ class MongoDb(VectorDb):
             query (str): The query to search for.
             limit (int): The maximum number of documents to return.
             filters (Optional[Dict[str, Any]]): Metadata filters to apply.
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. ``None`` searches all chunks (admin view).
+            user_id (Optional[str]): Restrict results to this user's chunks plus shared ones; ``None`` sees all.
         """
 
         if self.cosmos_compatibility:
@@ -960,7 +940,7 @@ class MongoDb(VectorDb):
                     "fts_score": 1,
                 }
             },
-            # Union with Keyword Search Branch (scoped above when user_id is set)
+            # Union with Keyword Search Branch
             {
                 "$unionWith": {
                     "coll": self.collection_name,
@@ -1110,8 +1090,7 @@ class MongoDb(VectorDb):
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode("utf-8")).hexdigest()
-        # Fold the owner into the id so two owners' identical content get distinct
-        # _id values; user_id=None keeps the base id (shared/admin bucket).
+        # Fold the owner into the id so two owners' identical content get distinct _id values.
         if user_id is not None:
             doc_id = md5(f"{doc_id}_{user_id}".encode("utf-8")).hexdigest()
         doc_data = {
@@ -1122,7 +1101,6 @@ class MongoDb(VectorDb):
             "embedding": document.embedding,
             "content_id": document.content_id,
             "content_hash": content_hash,
-            # Top-level owner field (kept out of meta_data) so it can be a $vectorSearch filter field.
             USER_ID_FIELD: user_id,
         }
         log_debug(f"Prepared document: {doc_data['_id']}")
@@ -1303,8 +1281,7 @@ class MongoDb(VectorDb):
             limit (int): The maximum number of documents to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Metadata filters to apply.
             min_score (float): Drop results scoring below this value; 0.0 keeps them all.
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. ``None`` searches all chunks (admin view).
+            user_id (Optional[str]): Restrict results to this user's chunks plus shared ones; ``None`` sees all.
         """
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
@@ -1323,7 +1300,7 @@ class MongoDb(VectorDb):
                 "queryVector": query_embedding,
                 "path": "embedding",
             }
-            # Scope as a pre-filter inside $vectorSearch so scoped users keep their recall.
+            # Pre-filter inside $vectorSearch so scoping doesn't cut the result set below ``limit``.
             scope_filter = self._user_scope_filter(user_id)
             if scope_filter is not None:
                 vector_search_stage["filter"] = scope_filter
@@ -1498,13 +1475,14 @@ class MongoDb(VectorDb):
             return False
 
     def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
-        """Delete documents by content hash, scoped to ``user_id`` when set.
+        """Delete documents by content hash.
 
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Owner to scope the delete to; ``None`` scopes to
-                the shared bucket (``user_id`` is null) so a shared re-upsert never
-                wipes a scoped owner's identical-content chunks.
+            user_id (Optional[str]): Owner to scope the delete to; ``None`` scopes to the shared bucket alone.
+
+        Returns:
+            bool: True if documents were deleted successfully, False otherwise.
         """
         try:
             collection = self._get_collection()
@@ -1520,8 +1498,7 @@ class MongoDb(VectorDb):
 
         Args:
             content_id (str): The content ID of the documents to delete.
-            user_id (Optional[str]): Restrict the delete to the owner's chunks.
-                ``None`` is the admin view and deletes across every owner.
+            user_id (Optional[str]): Restrict the delete to this owner's chunks; ``None`` deletes across all owners.
         """
         try:
             collection = self._get_collection()

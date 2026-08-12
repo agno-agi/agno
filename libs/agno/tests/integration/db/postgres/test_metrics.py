@@ -227,8 +227,7 @@ def test_metrics_flow(postgres_db_real: PostgresDb, sample_agent_sessions_for_me
     assert len(metrics) > 0
     assert latest_update is not None
 
-    # Step 5: Metrics are bucketed per user -- the 3 sessions have 3 distinct
-    # owners, so the day has 3 rows that sum to the day's totals.
+    # Step 5: Metrics are bucketed per user, so the 3 sessions give 3 rows for the day
     assert len(metrics) == 3
     assert {m["user_id"] for m in metrics} == {"test_user_0", "test_user_1", "test_user_2"}
     assert sum(m["agent_runs_count"] for m in metrics) == 3
@@ -327,15 +326,14 @@ def test_calculate_metrics_multiple_days(postgres_db_real: PostgresDb, sample_mu
     result = postgres_db_real.calculate_metrics()
     assert result is not None
     assert isinstance(result, list)
-    # One record per (user, day): day 1 has 2 owners, day 2 has 3, day 3 has 1.
-    assert len(result) == 6
+    assert len(result) == 6  # One record per (user, day)
 
     # Retrieve all metrics
     metrics, latest_update = postgres_db_real.get_metrics()
     assert len(metrics) == 6
     assert latest_update is not None
 
-    # Fold the per-user rows back into per-day totals for the assertions below
+    # Fold the per-user rows back into per-day totals
     by_date: dict = {}
     for row in metrics:
         day = by_date.setdefault(row["date"], {"agent_runs_count": 0, "team_runs_count": 0, "workflow_runs_count": 0})
@@ -474,7 +472,7 @@ def test_get_metrics_date_range_multiple_days(postgres_db_real: PostgresDb, samp
     first_session_date = datetime.fromtimestamp(sample_multi_day_sessions[0].created_at, tz=timezone.utc).date()
     last_session_date = datetime.fromtimestamp(sample_multi_day_sessions[-1].created_at, tz=timezone.utc).date()
 
-    # Rows are per (user, day), so count distinct dates rather than rows.
+    # Rows are per (user, day), so assert on distinct dates rather than row counts
     metrics_full, _ = postgres_db_real.get_metrics(starting_date=first_session_date, ending_date=last_session_date)
     assert {m["date"] for m in metrics_full} == {
         first_session_date,

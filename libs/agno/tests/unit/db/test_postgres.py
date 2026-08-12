@@ -195,9 +195,7 @@ def test_create_table_with_indexes(postgres_db, mock_session):
             with patch("agno.db.postgres.postgres.create_schema"):
                 table = postgres_db._create_table("test_metrics", "metrics")
 
-    # Verify the metrics table indexes the expected columns. ``user_id`` was
-    # added when per-user aggregation landed, so the index set now includes
-    # both ``date`` and ``user_id``.
+    # Verify indexed columns
     indexed_cols = {index.columns[0].name for index in table.indexes}
     assert "date" in indexed_cols
     assert "user_id" in indexed_cols
@@ -211,8 +209,7 @@ def test_create_table_with_unique_constraints(postgres_db, mock_session):
         with patch("agno.db.postgres.postgres.create_schema"):
             table = postgres_db._create_table("test_metrics", "metrics")
 
-    # Verify unique constraint was added. The constraint expanded to include
-    # ``user_id`` after the per-user metrics aggregation refactor.
+    # Verify unique constraint was added
     constraint_names = [c.name for c in table.constraints if isinstance(c, UniqueConstraint)]
     assert "test_metrics_uq_metrics_user_date_period" in constraint_names
 

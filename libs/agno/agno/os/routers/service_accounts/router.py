@@ -250,8 +250,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         existing = await _db_call("get_service_account", service_account_id, user_id=scoped_user_id)
         if existing is None:
             raise HTTPException(status_code=404, detail=f"Service account '{service_account_id}' not found")
-        # A workspace-level account (no owner) is visible to everyone but is not
-        # any one caller's to revoke, same rule the knowledge routes enforce.
+        # The scoped read also returns unowned workspace-level accounts, which no single caller may revoke.
         if scoped_user_id is not None and existing.get("user_id") is None:
             raise HTTPException(status_code=403, detail="Cannot revoke a workspace-level service account")
         if existing.get("revoked_at") is None:

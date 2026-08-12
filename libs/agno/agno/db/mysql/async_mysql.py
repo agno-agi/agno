@@ -2312,9 +2312,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Flatten into the bulk-upsert list.
+                # One record per user_id, plus the empty-string bucket for unowned sessions
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
@@ -2340,9 +2338,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket.
+            user_id (Optional[str]): If set, only return that user's bucket. ``None`` returns all buckets.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2366,14 +2362,14 @@ class AsyncMySQLDb(AsyncBaseDb):
                 if not records:
                     return [], None
 
-                # Get the latest updated_at, scoped to whatever filter was applied.
+                # Get the latest updated_at
                 latest_stmt = select(func.max(table.c.updated_at))
                 if user_id is not None:
                     latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_result = await sess.execute(latest_stmt)
                 latest_updated_at = latest_result.scalar()
 
-            # Map the sentinel empty-string user_id back to None.
+            # Map the empty-string sentinel back to None
             rows: List[dict] = []
             for row in records:
                 row_dict = dict(row._mapping)
@@ -2392,9 +2388,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): If set, only delete rows owned by this user. Unowned rows are not deleted.
         """
         table = await self._get_table(table_type="knowledge")
 
@@ -2413,9 +2407,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                returns the row if it is owned by ``user_id`` OR is unowned
-                (NULL). Otherwise returns None.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned (NULL).
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2455,8 +2447,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter. When set, returns
-                rows owned by this user plus shared rows (``user_id IS NULL``).
+            user_id (Optional[str]): If set, only return rows owned by this user plus shared (NULL) rows.
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2475,7 +2466,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
 
-                # Owner scoping: "rows I own, plus shared rows (NULL owner)".
+                # Apply owner scoping: rows owned by this user, plus shared (NULL) rows
                 if user_id is not None:
                     stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 

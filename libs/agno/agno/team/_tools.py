@@ -269,7 +269,7 @@ def _determine_tools_for_model(
             run_context=run_context,
             session=session,
             team_run_context=team_run_context,
-            # Members must run as the owner the team itself resolved, not a stale caller argument
+            # Members run as the user_id resolved on run_context, not the caller's argument
             user_id=run_context.user_id if run_context else user_id,
             stream=stream or False,
             stream_events=stream_events or False,
@@ -309,7 +309,7 @@ def _determine_tools_for_model(
             session=session,
             team_run_context=team_run_context,
             input=user_message_content,
-            # Members must run as the owner the team itself resolved, not a stale caller argument
+            # Members run as the user_id resolved on run_context, not the caller's argument
             user_id=run_context.user_id if run_context else user_id,
             stream=stream or False,
             stream_events=stream_events or False,

@@ -1,7 +1,7 @@
-"""ClickHouse per-user RAG isolation contract.
+"""Unit tests for ClickHouse per-user isolation.
 
-Owner lives in a dedicated ``user_id`` String column; ``""`` is the shared bucket. The
-clickhouse clients are mocked, so the captured SQL and bound parameters are the contract.
+The owner lives in a ``user_id`` String column and ``""`` is the shared bucket. The clients
+are mocked, so the assertions run against the captured SQL and bound parameters.
 """
 
 from hashlib import md5
@@ -16,9 +16,7 @@ from agno.vectordb.search import SearchType
 
 from .conftest import DeterministicEmbedder
 
-# The column order the adapter writes; indices are resolved from the captured
-# ``column_names`` so a column reorder can't make the assertions read the
-# wrong cell.
+# The columns the adapter writes; indices are resolved from the captured ``column_names``.
 INSERT_COLUMNS = [
     "id",
     "name",
@@ -50,7 +48,7 @@ def _empty_result():
 
 @pytest.fixture
 def clickhouse_db():
-    """A Clickhouse whose clients are mocked - reach them via ``.client`` / ``.async_client``."""
+    """Build a Clickhouse instance backed by mocked ``.client`` / ``.async_client``."""
     client = MagicMock()
     client.query.return_value = _empty_result()
     async_client = AsyncMock()
@@ -64,8 +62,7 @@ def clickhouse_db():
         client=client,
         asyncclient=async_client,
     )
-    # The mocked client cannot answer the live-schema probe, and these tests
-    # model a migrated (v3) store — prime the owner-column gate accordingly.
+    # The mocked client cannot answer the schema probe, so prime the owner-column gate.
     db._owner_column_exists = True
     return db
 
@@ -89,15 +86,14 @@ def _id_of(client) -> str:
 
 
 class TestSchema:
-    """Pin the sentinel and the supported search type."""
+    """Pin the supported search type."""
 
     def test_get_supported_search_types(self, clickhouse_db):
         assert clickhouse_db.get_supported_search_types() == [SearchType.vector]
 
 
 class TestWriteStampsOwner:
-    """On insert the caller's id lands in the ``user_id`` column; ``None`` (and an omitted arg) collapse to the
-    shared sentinel ``""``."""
+    """Insert stamps the caller's id into ``user_id``; ``None`` and an omitted arg collapse to ``""``."""
 
     def test_explicit_user_id_stamped_into_column(self, clickhouse_db):
         clickhouse_db.insert(content_hash="h1", documents=[_doc("alice", "alice content")], user_id="alice")
@@ -119,8 +115,7 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """The owner is folded into the row id so two owners' copies of identical content occupy distinct ids and can't
-    overwrite one another; the shared (``None``) row keeps the plain content-hash id."""
+    """The owner is folded into the row id; the shared (``None``) row keeps the plain content-hash id."""
 
     def test_two_owners_identical_content_get_distinct_ids(self, clickhouse_db):
         clickhouse_db.insert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
@@ -145,8 +140,7 @@ class TestOwnerFoldedId:
 
 
 class TestSearchScope:
-    """A scoped search restricts to ``user_id = {bound} OR user_id = ''`` with the owner passed as a bound parameter
-    (never string-interpolated)."""
+    """A scoped search restricts to ``user_id = {bound} OR user_id = ''``, with the owner bound not interpolated."""
 
     def _search_call(self, client):
         call = client.query.call_args
@@ -156,7 +150,6 @@ class TestSearchScope:
         clickhouse_db.search("salary", limit=10, user_id="alice")
         sql, params = self._search_call(clickhouse_db.client)
         assert "WHERE (user_id = {user_id:String} OR user_id = '')" in sql
-        # Owner is bound, not interpolated into the SQL text.
         assert params["user_id"] == "alice"
         assert "alice" not in sql
 
@@ -212,10 +205,10 @@ class TestDeleteScope:
 
 
 class TestUpsertDedupScope:
-    """``upsert`` dedups within the writing owner's bucket only, so a shared re-ingest cannot evict an owned row."""
+    """``upsert`` dedups within the writing owner's bucket only."""
 
     def test_scoped_dedup_delete_targets_owner(self, clickhouse_db):
-        # Force the dedup path: pretend the owner already has this content_hash.
+        # Force the dedup path: the owner already has this content_hash.
         clickhouse_db.content_hash_exists = MagicMock(return_value=True)
         clickhouse_db.upsert(content_hash="h", documents=[_doc("alice", "text")], user_id="alice")
 
@@ -230,7 +223,6 @@ class TestUpsertDedupScope:
 
         sql, params = _delete_command(clickhouse_db.client, needle="content_hash")
         assert "WHERE content_hash = {content_hash:String} AND user_id = {user_id:String}" in sql
-        # None scopes the dedup to the shared bucket, never every owner's rows.
         assert params["user_id"] == SHARED_OWNER
 
     def test_upsert_dedup_check_is_scoped_to_writing_owner(self, clickhouse_db):
@@ -254,8 +246,7 @@ class TestUpsertDedupScope:
 
 
 class TestContentHashExistsScope:
-    """The dedup existence check keys on ``content_hash`` scoped by owner; ``None`` checks only the shared bucket,
-    never every owner's rows."""
+    """The dedup existence check is scoped by owner; ``None`` checks only the shared bucket."""
 
     def _call(self, client):
         for call in reversed(client.query.call_args_list):
@@ -299,8 +290,7 @@ class TestAsyncIsolation:
 
 
 class TestSentinelImpersonation:
-    """``""`` is the shared owner, so a caller who passes it reads and writes the bucket every tenant shares. Each
-    entry point has to reject it itself - a guard on one method is not a guard on the backend."""
+    """``""`` is the shared bucket sentinel, so every scoped entry point rejects it."""
 
     @pytest.mark.parametrize(
         "call",

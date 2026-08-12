@@ -472,10 +472,8 @@ def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
 def metric_record_day(record: Dict[str, Any]) -> Optional[date]:
     """Read the day off a stored metric record, or ``None`` if it has no usable one.
 
-    Key-value backends store the date as an ISO string, so a record written by a
-    different version — or hand-edited — can carry something ``fromisoformat``
-    refuses. Every metrics read walks the whole table, so raising there takes the
-    metrics API down for one bad row; skip that row and say so instead.
+    Key-value backends store the date as an ISO string; an unparseable one is skipped
+    rather than raised, so one bad row cannot break every metrics read.
     """
     raw = record.get("date")
     if isinstance(raw, datetime):

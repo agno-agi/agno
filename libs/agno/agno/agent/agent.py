@@ -1750,7 +1750,7 @@ def get_agent_by_id(
     from agno.utils.log import log_error
 
     try:
-        # Scope to owner: a non-owner must not load another user's agent component.
+        # Only resolve the agent if owned by this user.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 

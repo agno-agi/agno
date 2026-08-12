@@ -419,10 +419,8 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Metrics ---
-    # ``user_id`` filter scopes the per-user metrics bucket. ``None`` returns
-    # all buckets (admin view); a non-empty string returns just that user's
-    # bucket; passing the sentinel empty string returns the unowned bucket
-    # (sessions where no user_id was set — pre-RBAC / system runs).
+    # ``user_id`` picks the metrics bucket: ``None`` returns every bucket, a name returns that
+    # user's, and ``""`` returns the unowned bucket (sessions written without a user_id).
     @abstractmethod
     def get_metrics(
         self,
@@ -437,28 +435,16 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
-    # ``user_id`` semantics:
-    # - ``None``: no scoping. Single-user / admin / RBAC-off behaviour — sees
-    #   every row including those owned by other users.
-    # - non-empty string: reads scope to "rows owned by this user OR shared
-    #   rows (user_id IS NULL)". This is what non-admin authenticated routes
-    #   pass. Deletes are stricter — see ``delete_knowledge_content``.
-    #
-    # The "shared bucket" semantics (NULL = visible to all) lets admins
-    # publish org-wide knowledge by leaving the owner unset, while per-user
-    # uploads stay private. Owner on writes is carried inside ``knowledge_row``.
-
+    # ``user_id`` scopes reads to that user's rows plus shared (``user_id IS NULL``) rows;
+    # ``None`` applies no scoping. Deletes are stricter — see ``delete_knowledge_content``.
     @abstractmethod
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): When set, only delete if the row is owned
-                by this user. Shared / NULL-owned rows are readable by every
-                scoped caller but deletable by none of them: removing shared
-                content is the unscoped (admin) path. When None, no ownership
-                check.
+            user_id (Optional[str]): When set, only delete rows owned by this user. Shared rows
+                are readable by every scoped caller but deletable only by the unscoped path.
         """
         raise NotImplementedError
 
@@ -468,7 +454,7 @@ class BaseDb(ABC):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): Restrict to this user's rows plus shared rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -493,7 +479,7 @@ class BaseDb(ABC):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): Restrict to this user's rows plus shared rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -508,9 +494,8 @@ class BaseDb(ABC):
         """Upsert knowledge content in the database.
 
         Args:
-            knowledge_row (KnowledgeRow): The knowledge row to upsert.
-                ``knowledge_row.user_id`` carries the owner (``None`` for
-                shared / system uploads).
+            knowledge_row (KnowledgeRow): The knowledge row to upsert. Its ``user_id`` carries
+                the owner, ``None`` for shared uploads.
 
         Returns:
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
@@ -1374,15 +1359,9 @@ class BaseDb(ABC):
 
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
-    #
-    # Notes on ``user_id`` for schedule methods:
-    # - User-facing reads/updates/deletes accept an optional ``user_id`` filter.
-    #   ``None`` means "no scoping" (preserves single-user / admin behaviour);
-    #   a string AND-s into the WHERE clause so non-admins only see their own.
-    # - Owner on writes is carried inside ``schedule_data`` / ``run_data``.
-    # - ``claim_due_schedule`` and ``release_schedule`` are EXECUTOR endpoints
-    #   and intentionally take no ``user_id`` — the poller has to fire schedules
-    #   across all users.
+    # ``user_id`` scopes the user-facing reads, updates and deletes; ``claim_due_schedule`` and
+    # ``release_schedule`` take none, since the poller has to fire schedules across all users.
+
     def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
@@ -1406,8 +1385,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new schedule. ``schedule_data["user_id"]`` carries the owner
-        (``None`` for system-created schedules)."""
+        """Create a new schedule. ``schedule_data["user_id"]`` carries the owner."""
         raise NotImplementedError
 
     def update_schedule(
@@ -1421,22 +1399,21 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
-        """Atomically claim a due schedule for execution. SYSTEM CONTEXT — no user scoping."""
+        """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
     def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at. SYSTEM CONTEXT."""
+        """Release a claimed schedule and optionally update next_run_at."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a schedule run record. ``run_data["user_id"]`` should be
-        denormalised from the parent schedule so the runs router can scope reads."""
+        """Create a schedule run record. ``run_data["user_id"]`` is denormalised from the parent schedule."""
         raise NotImplementedError
 
     def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        """Update a schedule run record. SYSTEM CONTEXT — executor writes."""
+        """Update a schedule run record."""
         raise NotImplementedError
 
     def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -1609,14 +1586,8 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID.
-
-        Args:
-            service_account_id (str): The ID of the service account.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                returns the account if it is owned by ``user_id`` or is a
-                workspace-level account (no owner).
-        """
+        """Get a service account by ID. When ``user_id`` is set, only returns the account if it is
+        owned by that user or is workspace-level (no owner)."""
         raise NotImplementedError
 
     def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -1708,8 +1679,7 @@ class AsyncBaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
-        # Async adapters cannot read or write components yet, but they can still be asked to
-        # migrate a components table that a sync adapter created in the same database.
+        # Async adapters cannot read or write components yet, but may still migrate a table a sync adapter created.
         self.components_table_name = components_table or "agno_components"
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
@@ -1915,7 +1885,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Metrics ---
-    # See "user_id filter" note on the sync BaseDb.get_metrics above.
+    # See BaseDb.get_metrics for the ``user_id`` semantics.
     @abstractmethod
     async def get_metrics(
         self,
@@ -1930,7 +1900,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
-    # See ``BaseDb`` knowledge methods for the ``user_id`` semantics.
+    # See the BaseDb knowledge methods for the ``user_id`` semantics.
     @abstractmethod
     async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database."""
@@ -2513,7 +2483,8 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Schedules (Optional) ---
-    # See "Notes on user_id" on the sync BaseDb above. Same semantics here.
+    # These methods are optional. Override in subclasses to enable scheduler persistence.
+    # See BaseDb for the ``user_id`` semantics.
 
     async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
@@ -2552,11 +2523,11 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
-        """Atomically claim a due schedule for execution. SYSTEM CONTEXT — no user scoping."""
+        """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
     async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at. SYSTEM CONTEXT."""
+        """Release a claimed schedule and optionally update next_run_at."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
@@ -2566,7 +2537,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        """Update a schedule run record. SYSTEM CONTEXT — executor writes."""
+        """Update a schedule run record."""
         raise NotImplementedError
 
     async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -2666,14 +2637,8 @@ class AsyncBaseDb(ABC):
     async def get_service_account(
         self, service_account_id: str, user_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID.
-
-        Args:
-            service_account_id (str): The ID of the service account.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                returns the account if it is owned by ``user_id`` or is a
-                workspace-level account (no owner).
-        """
+        """Get a service account by ID. When ``user_id`` is set, only returns the account if it is
+        owned by that user or is workspace-level (no owner)."""
         raise NotImplementedError
 
     async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:

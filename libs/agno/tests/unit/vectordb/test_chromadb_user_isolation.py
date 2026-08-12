@@ -1,8 +1,4 @@
-"""ChromaDb per-user RAG isolation contract.
-
-Owner lives in the collection name: ``{base}__{user_id}`` per owner, the base collection
-for the shared bucket. Runs against a real embedded Chroma.
-"""
+"""ChromaDb per-user isolation: one collection per owner, ``{base}__{user_id}``, base for the shared bucket."""
 
 import os
 import shutil
@@ -19,7 +15,7 @@ TEST_PATH = "tmp/test_chromadb_isolation"
 
 @pytest.fixture
 def chroma_db(mock_embedder):
-    """A fresh ChromaDb per test, including ALL per-user collections."""
+    """Fixture to create and clean up a ChromaDb instance, including its per-user collections"""
     os.makedirs(TEST_PATH, exist_ok=True)
     if os.path.exists(TEST_PATH):
         shutil.rmtree(TEST_PATH)
@@ -35,7 +31,7 @@ def chroma_db(mock_embedder):
     yield db
 
     try:
-        db.drop()  # drops base AND any per-user collections
+        db.drop()  # drops the base and any per-user collections
     except Exception:
         pass
     if os.path.exists(TEST_PATH):
@@ -55,8 +51,7 @@ def _shared_docs() -> List[Document]:
 
 
 class TestCollectionNaming:
-    """The naming convention is part of the public contract — operators can inspect collections by name to audit
-    which users own what."""
+    """Test how a user_id maps to a collection name."""
 
     def test_none_resolves_to_base_collection_name(self, chroma_db):
         assert chroma_db._collection_name_for(None) == TEST_COLLECTION
@@ -69,19 +64,16 @@ class TestCollectionNaming:
         assert chroma_db._collection_name_for("alice") == f"{TEST_COLLECTION}__alice"
 
     def test_long_user_id_gets_hashed(self, chroma_db):
-        # Chroma collection names cap at 63 chars total. A user_id long
-        # enough to blow that should fall back to a stable hash suffix.
+        # Chroma caps collection names at 63 chars, so a longer user_id falls back to a hash suffix.
         very_long = "x" * 80
         name = chroma_db._collection_name_for(very_long)
-        # Hash suffix: 16 hex chars. ``{base}__{16-hex-chars}``.
         assert name.startswith(f"{TEST_COLLECTION}__")
         suffix = name[len(TEST_COLLECTION) + 2 :]
         assert len(suffix) == 16
         assert all(c in "0123456789abcdef" for c in suffix)
 
     def test_user_id_with_invalid_chars_gets_hashed(self, chroma_db):
-        # Chroma name rule: alphanumeric + ``_.-``. Email addresses use
-        # ``@`` and ``.`` which would fail the regex — fall back to hash.
+        # Chroma allows only alphanumerics and ``_.-``, so an email address falls back to a hash suffix.
         name = chroma_db._collection_name_for("alice@corp.com")
         assert name.startswith(f"{TEST_COLLECTION}__")
         suffix = name[len(TEST_COLLECTION) + 2 :]
@@ -89,13 +81,11 @@ class TestCollectionNaming:
 
 
 class TestWriteStampsOwner:
-    """Owned chunks land in the caller's per-user collection; unowned chunks land in the base collection (which is
-    also the shared bucket)."""
+    """Test that an insert lands in the caller's collection, or the base one when unowned."""
 
     def test_alice_insert_creates_alice_collection(self, chroma_db):
         chroma_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
 
-        # The Alice-specific collection now exists.
         alice_coll = chroma_db.client.get_collection(name=f"{TEST_COLLECTION}__alice")
         rows = alice_coll.get()
         assert len(rows["ids"]) == 1
@@ -114,10 +104,9 @@ class TestWriteStampsOwner:
         alice_coll = chroma_db.client.get_collection(name=f"{TEST_COLLECTION}__alice")
         bob_coll = chroma_db.client.get_collection(name=f"{TEST_COLLECTION}__bob")
 
-        # Each collection has exactly one row — neither leaked into the other.
         assert len(alice_coll.get()["ids"]) == 1
         assert len(bob_coll.get()["ids"]) == 1
-        # Cross-check the content too: Alice's row in Alice's collection, etc.
+
         alice_doc = alice_coll.get()["documents"][0]
         bob_doc = bob_coll.get()["documents"][0]
         assert "Alice" in alice_doc
@@ -125,11 +114,11 @@ class TestWriteStampsOwner:
 
 
 class TestSearchScope:
-    """The load-bearing test: cross-user retrieval is impossible."""
+    """Test that a scoped search only reads the caller's collection and the shared one."""
 
     @pytest.fixture
     def search_corpus(self, chroma_db):
-        """Three uploads: alice's, bob's, and one shared (no user_id)."""
+        """Fixture to insert one chunk for alice, one for bob and one shared"""
         chroma_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         chroma_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
         chroma_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
@@ -146,12 +135,11 @@ class TestSearchScope:
         assert "company-holidays" in names
 
     def test_alice_never_sees_bobs_chunk(self, search_corpus):
-        """The canonical isolation assertion."""
+        """Test that a scoped search never returns another user's chunk."""
         results = search_corpus.search(query="salary", limit=10, user_id="alice")
         names = {d.name for d in results}
         assert "bob-salary" not in names
-        # Belt and braces: also check by content. If isolation ever leaks
-        # we want this test to scream regardless of how names are tracked.
+        # Check the content too, in case a leaked chunk arrives without its name.
         for d in results:
             assert "Bob's salary" not in d.content
 
@@ -161,8 +149,7 @@ class TestSearchScope:
         assert "alice-salary" not in names
 
     def test_admin_user_id_none_sees_every_collection(self, search_corpus):
-        """``user_id=None`` is the unscoped read, so it covers every collection this knowledge base owns - the
-        shared base one plus one per owner."""
+        """``user_id=None`` is the unscoped read, so it covers the base collection plus one per owner."""
         results = search_corpus.search(query="anything", limit=10, user_id=None)
         names = {d.name for d in results}
         assert "company-holidays" in names
@@ -171,12 +158,11 @@ class TestSearchScope:
 
 
 class TestDeleteScope:
-    """``delete_by_content_id(content_id, user_id=...)`` must route to the caller's per-user collection — otherwise
-    Bob could guess Alice's content_id and wipe her chunks."""
+    """Test that ``delete_by_content_id`` routes to the caller's collection."""
 
     @pytest.fixture
     def content_id_corpus(self, chroma_db):
-        """Two users own chunks under the SAME content_id ``doc-1``."""
+        """Fixture to give two users a chunk under the same content_id ``doc-1``"""
         alice_doc = Document(name="alice-doc", content="Alice's secret.")
         alice_doc.content_id = "doc-1"
         bob_doc = Document(name="bob-doc", content="Bob's secret.")
@@ -187,7 +173,7 @@ class TestDeleteScope:
         return chroma_db
 
     def test_scoped_delete_only_touches_callers_collection(self, content_id_corpus):
-        """Bob deletes 'doc-1' scoped to himself — alice's chunks remain in alice's collection."""
+        """Test that bob deleting ``doc-1`` leaves alice's copy in place."""
         content_id_corpus.delete_by_content_id("doc-1", user_id="bob")
 
         alice_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__alice")
@@ -204,8 +190,7 @@ class TestDeleteScope:
         assert len(bob_coll.get()["ids"]) == 1
 
     def test_unscoped_delete_wipes_every_owner(self, content_id_corpus):
-        """``user_id=None`` is the admin view, so it clears every collection this knowledge base owns - the base one
-        alone would strand each owner's copy."""
+        """``user_id=None`` is the unscoped delete, so it clears every owner's copy, not just the base one."""
         content_id_corpus.delete_by_content_id("doc-1", user_id=None)
 
         alice_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__alice")
@@ -225,14 +210,13 @@ class TestDeleteScope:
 
 
 class TestDropCleansUpPerUserCollections:
-    """``drop()`` must wipe per-user collections too — otherwise they'd leak across test runs and across customer
-    migrations."""
+    """Test that ``drop()`` removes the per-user collections, not just the base one."""
 
     def test_drop_removes_per_user_collections(self, chroma_db):
         chroma_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         chroma_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
 
-        # Sanity: both per-user collections exist before drop.
+        # Both per-user collections exist before the drop
         existing = [c.name if hasattr(c, "name") else c for c in chroma_db.client.list_collections()]
         assert f"{TEST_COLLECTION}__alice" in existing
         assert f"{TEST_COLLECTION}__bob" in existing

@@ -1670,9 +1670,7 @@ class DynamoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Flatten into the bulk-upsert list.
+                # One record per user_id, plus the empty-string bucket for unowned sessions
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             # Store metrics in DynamoDB
@@ -1873,19 +1871,8 @@ class DynamoDb(BaseDb):
     def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Upsert a single metrics record.
 
-        ``calculate_date_metrics`` produces a deterministic id of the form
-        ``{date}_{user_id}_daily`` per (date, user_id, aggregation_period)
-        bucket. DynamoDB's primary key is ``id``, so ``PutItem`` is itself
-        the upsert — overwriting on the same id is the desired behaviour
-        for re-running the calculation, and distinct user buckets stay
-        distinct because their ids differ.
-
-        We deliberately do NOT dedupe via the
-        ``date-aggregation_period-index`` GSI: that index lacks ``user_id``,
-        so a Query would collapse all per-user records for a given date
-        into one, and the survivor's bucket data would clobber the others
-        (one row survives per date, ``get_metrics(user_id=...)`` returns
-        nothing).
+        Do not dedupe via the ``date-aggregation_period-index`` GSI: it lacks ``user_id``,
+        so a Query collapses every per-user record for a date into one.
 
         Args:
             table_name: The DynamoDB table name
@@ -1904,8 +1891,7 @@ class DynamoDb(BaseDb):
             prepared_record = self._prepare_metrics_record_for_dynamo(record)
             item = self._serialize_metrics_to_dynamo_item(prepared_record)
 
-            # PutItem on the deterministic per-(date, user_id, period) id —
-            # natural overwrite if it already exists.
+            # The id is deterministic per (date, user_id, period), so put_item is itself the upsert
             self.client.put_item(TableName=table_name, Item=item)
 
             return record
@@ -1983,9 +1969,8 @@ class DynamoDb(BaseDb):
         Args:
             starting_date: The starting date to filter metrics by.
             ending_date: The ending date to filter metrics by.
-            user_id: When provided, returns only that user's per-user bucket.
-                When ``None``, returns ALL buckets including the empty-string
-                unowned bucket.
+            user_id: When set, returns only that user's bucket. ``None`` returns every bucket,
+                including the unowned one.
 
         Returns:
             Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the total count.
@@ -2034,11 +2019,10 @@ class DynamoDb(BaseDb):
                 metric_data = deserialize_from_dynamodb_item(item)
                 if not metric_data:
                     continue
-                # Post-filter by user_id (DynamoDB scan can't OR-NULL on a
-                # non-key attribute cheaply; user_id isn't an index here).
+                # Filter by user_id in-memory (user_id is not a key attribute)
                 if user_id is not None and metric_data.get("user_id") != user_id:
                     continue
-                # Map the sentinel empty-string user_id back to None.
+                # The empty-string bucket holds unowned sessions
                 if metric_data.get("user_id") == "":
                     metric_data["user_id"] = None
                 metrics_data.append(metric_data)
@@ -2049,14 +2033,11 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get metrics: {str(e)}")
             raise e
 
-    # -- Knowledge methods --
-    # DynamoDB has no SQL OR predicate, so we post-filter in Python: the row
-    # is visible if its ``user_id`` matches the caller OR is unowned (None /
-    # absent). When the caller passes ``user_id=None`` we skip the check
-    # entirely (admin / RBAC-off view sees everything).
+    # --- Knowledge methods ---
 
     @staticmethod
     def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        """Unscoped callers see every row. Scoped callers see their own rows and unowned ones."""
         if user_id is None:
             return True
         owner = getattr(row, "user_id", None)
@@ -2067,9 +2048,8 @@ class DynamoDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): When set, only rows owned by this user are deleted. Unowned
+                rows are shared content and are left alone.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2097,7 +2077,7 @@ class DynamoDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): When set, the row is only returned if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2136,7 +2116,7 @@ class DynamoDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): When set, only rows owned by this user or unowned rows are returned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2169,7 +2149,7 @@ class DynamoDb(BaseDb):
                 except Exception as e:
                     log_error(f"Failed to deserialize knowledge row: {str(e)}")
 
-            # Owner scoping: drop rows the caller isn't allowed to see.
+            # Filter by user_id if provided
             if user_id is not None:
                 knowledge_rows = [row for row in knowledge_rows if self._knowledge_row_is_visible(row, user_id)]
 

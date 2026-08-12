@@ -43,8 +43,7 @@ class ScheduleCreate(BaseModel):
             raise ValueError("Endpoint must start with '/'")
         if "://" in v:
             raise ValueError("Endpoint must be a path, not a full URL")
-        # A control character makes the URL unsendable, so the schedule would be
-        # stored only to fail every time the poller reaches it.
+        # A control character makes the URL unsendable, so the schedule would fail on every trigger.
         if any(c.isspace() or unicodedata.category(c) == "Cc" for c in v):
             raise ValueError("Endpoint must not contain whitespace or control characters")
         return v
@@ -111,9 +110,7 @@ class ScheduleUpdate(BaseModel):
 
 class ScheduleResponse(BaseModel):
     id: str
-    # Owner of the schedule. ``None`` is an unowned (system) schedule, which
-    # the executor fires unscoped -- the two cases are not interchangeable, so
-    # a client has to be able to tell them apart.
+    # ``None`` is an unowned (system) schedule, which the executor fires unscoped.
     user_id: Optional[str] = None
     name: str
     description: Optional[str] = None

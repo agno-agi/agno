@@ -5,10 +5,9 @@ Each user gets a private view of one shared knowledge base. Documents
 uploaded with a user_id are visible only to that user; documents uploaded
 without one are shared with everyone.
 
-OpenSearch stores the owner in a top-level user_id keyword field. Shared
-chunks leave the field off, and a scoped read matches "term user_id" OR
-"must_not exists user_id" - which is also why documents written before this
-field existed keep showing up as shared content.
+OpenSearch keeps the owner in a top-level user_id keyword field. A scoped read
+matches that term OR "must_not exists user_id", so documents written before the
+field existed read as shared content.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
@@ -55,8 +54,7 @@ def show(label: str, results: List[Document]) -> None:
 
 vector_db = OpenSearch(index_name=INDEX_NAME, url=OPENSEARCH_URL)
 
-# Start clean: an index left over from another example would make its documents
-# look like shared content here.
+# Start clean: leftover documents from another example would read as shared content.
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()
@@ -75,8 +73,6 @@ knowledge = Knowledge(
 if __name__ == "__main__":
 
     async def main() -> None:
-        # Alice and Bob upload private docs; the last upload has no user_id,
-        # which makes it shared / org-wide content.
         await knowledge.ainsert(
             name="alice_salary",
             text_content=ALICE_SALARY,
@@ -87,6 +83,7 @@ if __name__ == "__main__":
             text_content=BOB_SALARY,
             user_id="bob",
         )
+        # The last upload has no user_id, which makes it shared content.
         await knowledge.ainsert(
             name="company_holidays",
             text_content=HOLIDAYS,
@@ -135,11 +132,6 @@ if __name__ == "__main__":
         print("AGENT-MEDIATED RETRIEVAL: the owner has to survive the handoff")
         print("=" * 60 + "\n")
 
-        # Everything above calls Knowledge directly. An application does not -
-        # it runs an agent, and the owner has to travel from the run context
-        # through the search tool into the vector DB. A dropped user_id becomes
-        # None, which is the admin view, so a broken handoff leaks silently
-        # instead of raising.
         alice_agent = Agent(
             name="Alice's Assistant",
             model=OpenAIResponses(id="gpt-5.5"),
@@ -157,15 +149,13 @@ if __name__ == "__main__":
         print("Alice's agent on 'What is Bob's salary?':")
         print(response.content)
 
-        # Assert on what retrieval actually returned, not on the model's prose:
-        # the references are the deterministic record of the isolation boundary.
+        # Assert on what retrieval returned, not on the model's prose.
         retrieved = " ".join(
             item["content"]
             for ref in (response.references or [])
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
         )
-        # Guard against a vacuous pass: empty references mean the agent never searched
         assert retrieved, (
             "Retrieval returned no documents, so the isolation check below would pass on nothing"
         )

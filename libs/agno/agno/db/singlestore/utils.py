@@ -153,8 +153,6 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
 
 # -- Metrics util methods --
-# Per-user aggregation: unique key is (user_id, date, aggregation_period).
-# Unowned sessions aggregate under the sentinel empty-string user_id.
 def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[dict]) -> list[dict]:
     """Bulk upsert metrics into the database with proper duplicate handling.
 
@@ -175,8 +173,7 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         date_val = record.get("date")
         period_val = record.get("aggregation_period")
 
-        # Check if record already exists based on the full unique key
-        # (user_id, date, aggregation_period).
+        # Check if record already exists based on user_id + date + aggregation_period
         existing_record = (
             session.query(table)
             .filter(
@@ -188,7 +185,7 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         )
 
         if existing_record:
-            # user_id is part of the unique key now; never overwrite it on conflict.
+            # Update existing record
             update_data = {
                 k: v
                 for k, v in record.items()
@@ -202,7 +199,7 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
                 table.c.aggregation_period == period_val,
             ).update(update_data)
 
-            # Get the updated record for return.
+            # Get the updated record for return
             updated_record = (
                 session.query(table)
                 .filter(
@@ -227,17 +224,14 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given single date, bucketed per ``user_id``.
 
-    Each session is attributed to its owning user. Sessions without a
-    ``user_id`` aggregate under the sentinel empty-string bucket — that
-    bucket is what RBAC-off deployments see and looks identical to the
-    legacy global-metrics shape (one row per date).
+    Sessions without a ``user_id`` aggregate under the empty-string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        A list of per-user metrics records.
+        List[dict]: The calculated metrics, one record per user.
     """
 
     def _empty_metric_record() -> Dict[str, Any]:

@@ -246,12 +246,8 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         token = credentials.credentials
 
         # Check internal service token (used by scheduler executor).
-        # The sentinel ``INTERNAL_SCHEDULER_USER_ID`` identifies the *caller*
-        # (the framework's own scheduler), not the *owner* of any work. Routes
-        # that fire downstream writes (sessions, traces, metrics) compare
-        # against this constant and prefer a form-field ``user_id`` set by the
-        # executor (which carries ``sched.user_id``) so the work is attributed
-        # to the schedule owner.
+        # ``INTERNAL_SCHEDULER_USER_ID`` identifies the caller, not the owner of the work:
+        # routes prefer the executor's form-field ``user_id`` so writes land on the schedule owner.
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True

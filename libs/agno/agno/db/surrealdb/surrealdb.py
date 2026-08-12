@@ -1436,9 +1436,8 @@ class SurrealDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket.
+            user_id (Optional[str]): If set, only return this user's bucket. Defaults to None (all
+                buckets, including the unowned one).
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1500,8 +1499,7 @@ class SurrealDb(BaseDb):
                 if isinstance(transformed.get("date"), datetime):
                     transformed["date"] = int(transformed["date"].timestamp())
 
-                # Map the sentinel empty-string user_id back to None so API
-                # consumers don't have to know about the storage detail.
+                # Unowned rows are stored with an empty-string user_id
                 if transformed.get("user_id") == "":
                     transformed["user_id"] = None
 
@@ -1574,9 +1572,7 @@ class SurrealDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Flatten into the bulk-upsert list.
+                # One record per user_id, plus the empty-string bucket for unowned sessions
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             results = []  # Initialize before the if block
@@ -1600,19 +1596,15 @@ class SurrealDb(BaseDb):
         table = self._get_table("knowledge")
         _ = self.client.delete(table)
 
-    # -- Knowledge methods --
-    # SurrealQL ``user_id IS NONE`` matches absent fields (Surreal stores
-    # NULL by omitting the field, like Mongo). ``WhereClause`` only chains
-    # AND, so for the OR-with-NULL scope we append a raw clause inline.
+    # Unowned knowledge rows have no user_id field at all, so owner scoping tests ``user_id IS NONE``.
 
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): If set, only delete the row if owned by this user. Unowned rows
+                are shared content.
         """
         table = self._get_table("knowledge")
         if user_id is None:
@@ -1630,7 +1622,7 @@ class SurrealDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1664,7 +1656,7 @@ class SurrealDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): If set, only return rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1681,7 +1673,7 @@ class SurrealDb(BaseDb):
 
         where_clause, where_vars = where.build()
 
-        # Owner scoping: append the OR-with-NULL predicate inline.
+        # WhereClause only chains AND, so the owner scope is appended raw
         if user_id is not None:
             scope_predicate = "(user_id = $user_id OR user_id IS NONE)"
             if where_clause:

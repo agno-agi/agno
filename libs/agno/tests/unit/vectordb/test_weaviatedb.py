@@ -257,8 +257,7 @@ def test_delete_by_content_id(weaviate_db, mock_weaviate_client):
     """Test deleting documents by content ID"""
     collection = mock_weaviate_client.collections.get.return_value
 
-    # delete_by_content_id returns result.successful > 0, so the delete result
-    # must expose a numeric successful count.
+    # delete_by_content_id checks result.successful > 0, so it needs a number
     collection.data.delete_many.return_value = Mock(successful=1)
 
     result = weaviate_db.delete_by_content_id("recipe_1")

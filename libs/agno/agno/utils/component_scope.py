@@ -1,12 +1,8 @@
 """Owner-scope for DB-backed component reconstruction.
 
-When a stored team/workflow is loaded for a scoped (non-admin) caller, its
-members and nested workflow-step executors must resolve as the same owner, or a
-reference to another user's private component would be silently rehydrated.
-Reconstruction recurses through ``Team`` ``from_dict`` and the workflow step
-tree, so the owner id rides in a ``ContextVar`` rather than threaded through
-every nested signature. ``None`` means unscoped (admin / isolation off) and
-resolves references regardless of owner.
+Reconstruction recurses through ``Team`` ``from_dict`` and the workflow step tree,
+so the owner id rides in a ``ContextVar`` rather than every nested signature.
+``None`` means unscoped and resolves references regardless of owner.
 """
 
 import contextvars
@@ -29,8 +25,7 @@ def get_component_owner_scope() -> Optional[str]:
 def component_owner_scope(user_id: Optional[str]) -> Generator[None, None, None]:
     """Scope nested DB-backed member/step resolution to ``user_id`` for the block.
 
-    ``user_id=None`` is a no-op (unscoped) and is safe to nest; the previous
-    value is always restored on exit.
+    ``user_id=None`` is a no-op (unscoped) and is safe to nest.
     """
     token = _component_owner_scope.set(user_id)
     try:

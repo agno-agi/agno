@@ -47,10 +47,9 @@ class ResolvedRunOptions:
         """Apply resolved options to run_context with precedence:
         explicit args > existing run_context > resolved defaults.
 
-        ``user_id`` inverts this: an owner already on the run_context wins, so a
-        workflow step cannot re-own a run that arrived scoped to someone else.
+        ``user_id`` inverts this: an owner already on the run_context wins, so a nested
+        executor cannot re-own a run that arrived scoped to someone else.
         """
-        # Fill the owner only when the run_context has none, so a caller-supplied owner still wins
         if user_id is not None and run_context.user_id is None:
             run_context.user_id = user_id
 

@@ -65,8 +65,7 @@ class SingleStore(VectorDb):
         # self.index: Optional[Union[Ivfflat, HNSW]] = index
         self.Session: sessionmaker[Session] = sessionmaker(bind=self.db_engine)
         self.reranker: Optional[Reranker] = reranker
-        # Whether the LIVE table has the ``user_id`` owner column. Tables
-        # created before v3 lack it; resolved lazily and cached.
+        # Whether the live table has the ``user_id`` column. Resolved lazily and cached.
         self._owner_column_exists: Optional[bool] = None
         self.table: Table = self.get_table()
 
@@ -138,12 +137,11 @@ class SingleStore(VectorDb):
             return False
 
     def _user_id_column_exists(self) -> bool:
-        """Whether the live table has the ``user_id`` owner column.
+        """
+        Check if the live table has the ``user_id`` column. Tables created before v3 lack it.
 
-        Tables created before v3 predate per-user isolation and lack the
-        column until the v2 -> v3 migration adds it. The metadata object in
-        ``self.table`` always declares the column, so the live schema has to
-        be inspected. Cached after the first lookup.
+        Returns:
+            bool: True if the column exists, False otherwise.
         """
         if self._owner_column_exists is None:
             try:
@@ -153,10 +151,7 @@ class SingleStore(VectorDb):
                 # No live table yet — it will be created with the column.
                 self._owner_column_exists = True
             except Exception:
-                # Inspection failed for another reason (connection, permissions,
-                # odd driver response): assume migrated for THIS call only.
-                # Caching the assumption would let one blip permanently mask a
-                # real legacy table — uncached, the next call re-inspects.
+                # Assume migrated for this call only; uncached, so the next call re-inspects.
                 log_warning(
                     f"Could not inspect table '{self.collection}' for the user_id column; "
                     "proceeding as migrated for this operation."
@@ -165,20 +160,17 @@ class SingleStore(VectorDb):
         return self._owner_column_exists
 
     def _require_owner_column(self, user_id: Optional[str]) -> bool:
-        """Gate every ``user_id``-column reference on the live schema.
+        """
+        Gate a ``user_id``-column reference on the live schema.
 
-        Returns True when the column exists, False when it is missing and the
-        operation is unscoped — the caller then falls back to pre-v3 SQL that
-        never mentions the column. A scoped operation on an unmigrated table
-        raises instead of surfacing a driver error (or silently widening the
-        scope).
+        Returns True when the column exists, False when it is missing and the operation is
+        unscoped. A scoped operation on an unmigrated table raises instead.
         """
         if self._user_id_column_exists():
             return True
         if user_id is None:
             return False
-        # The cached answer may predate a migration run while this process is
-        # alive — re-inspect once before refusing.
+        # The cached answer may predate a migration run — re-inspect once before refusing.
         self._owner_column_exists = None
         if self._user_id_column_exists():
             return True
@@ -189,21 +181,16 @@ class SingleStore(VectorDb):
         )
 
     def _apply_user_scope(self, stmt, user_id: Optional[str]):
-        """AND user_id = :uid OR user_id IS NULL into stmt when scoped
-        (user_id is bound, never interpolated). Adds no predicate when user_id is None.
-        """
+        """Scope stmt to this owner's rows plus shared (``user_id IS NULL``) rows. None adds no predicate."""
         if user_id is None:
             return stmt
         return stmt.where((self.table.c.user_id == user_id) | (self.table.c.user_id.is_(None)))
 
     def _scoped_record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the deterministic record id so two users upserting the
-        same content get distinct row ids. None keeps the stable base id.
-
-        ``base_id`` is caller-controlled and variable length, so it is collapsed with
-        ``content_hash`` into a fixed-length digest before the owner is folded in -
-        otherwise the '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice')
-        collapse to the same row id, letting one owner overwrite the other's chunk.
+        """
+        Fold the owner into the deterministic record id so two users upserting the same content
+        get distinct row ids; None keeps the base id. ``base_id`` is digested with
+        ``content_hash`` first so ('doc_1', 'alice') and ('doc', '1_alice') cannot collide.
         """
         record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
         if user_id is None:
@@ -216,15 +203,10 @@ class SingleStore(VectorDb):
 
         Args:
             document (Document): Document to validate
-            user_id (Optional[str]): When set, scope the check to the caller's own rows.
-                None scopes to the shared bucket (user_id IS NULL) alone rather than
-                every owner: this is the guard half of the upsert dedup pair, so it
-                addresses the same bucket _delete_by_content_hash clears for None.
+            user_id (Optional[str]): Scope the check to this owner's rows. None scopes to the
+                shared bucket (user_id IS NULL) alone, matching what _delete_by_content_hash clears.
         """
-        # Resolve the owner gate first: a scoped check on an unmigrated table
-        # must raise here, not surface as a driver error mid-query. On a
-        # pre-v3 table every row is unowned, so the shared bucket is the whole
-        # table: no owner predicate, exactly like main.
+        # On a pre-v3 table every row is unowned, so the shared bucket is the whole table.
         scope_to_owner = self._require_owner_column(user_id)
         with self.Session.begin() as sess:
             stmt = select(self.table.c.name).where(self.table.c.content_hash == content_hash)
@@ -277,8 +259,6 @@ class SingleStore(VectorDb):
             batch_size (int): Number of documents to insert in each batch.
             user_id (Optional[str]): Owner for per-user isolation; None means shared.
         """
-        # A scoped insert on an unmigrated (pre-v3) table must raise the clear
-        # migration error before any row work starts.
         self._require_owner_column(user_id)
         with self.Session.begin() as sess:
             counter = 0
@@ -306,8 +286,7 @@ class SingleStore(VectorDb):
                     content_hash=content_hash,
                     content_id=document.content_id,
                 )
-                # Only mention the owner column when the live table has it —
-                # a pre-v3 table stores the row unowned, exactly like main.
+                # Only name the owner column when the live table has it.
                 if self._user_id_column_exists():
                     record["user_id"] = user_id
 
@@ -331,8 +310,6 @@ class SingleStore(VectorDb):
         batch_size: int = 20,
         user_id: Optional[str] = None,
     ) -> None:
-        # A scoped upsert on an unmigrated (pre-v3) table must raise the clear
-        # migration error before the dedup pair runs.
         self._require_owner_column(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -355,7 +332,7 @@ class SingleStore(VectorDb):
             documents (List[Document]): List of documents to upsert.
             filters (Optional[Dict[str, Any]]): Optional filters for the upsert.
             batch_size (int): Number of documents to upsert in each batch.
-            user_id (Optional[str]): Explicit owner for per-user RAG isolation.
+            user_id (Optional[str]): Owner for per-user isolation; None means shared.
         """
         with self.Session.begin() as sess:
             counter = 0
@@ -392,8 +369,7 @@ class SingleStore(VectorDb):
                     content_hash=content_hash,
                     content_id=document.content_id,
                 )
-                # Only mention the owner column when the live table has it —
-                # a pre-v3 table stores the row unowned, exactly like main.
+                # Only name the owner column when the live table has it.
                 if self._user_id_column_exists():
                     record["user_id"] = user_id
                     set_clause["user_id"] = user_id
@@ -426,9 +402,6 @@ class SingleStore(VectorDb):
         Returns:
             List[Document]: List of documents that match the query.
         """
-        # A scoped search on an unmigrated (pre-v3) table must raise the clear
-        # migration error, never a raw driver error. Unscoped searches add no
-        # owner predicate (see _apply_user_scope), so they run unchanged.
         self._require_owner_column(user_id)
         if filters is not None:
             log_warning("Filters are not supported in SingleStore. No filters will be applied.")
@@ -453,7 +426,6 @@ class SingleStore(VectorDb):
         #         if hasattr(self.table.c, key):
         #             stmt = stmt.where(getattr(self.table.c, key) == value)
 
-        # Scope to the caller's rows plus shared rows.
         stmt = self._apply_user_scope(stmt, user_id)
 
         if self.distance == Distance.l2:
@@ -523,8 +495,7 @@ class SingleStore(VectorDb):
         if self.table_exists():
             log_debug(f"Deleting table: {self.collection}")
             self.table.drop(self.db_engine)
-            # The next table under this name will be created with the
-            # owner column — re-resolve lazily.
+            # The next table under this name is created with the owner column.
             self._owner_column_exists = None
 
     def exists(self) -> bool:
@@ -561,8 +532,6 @@ class SingleStore(VectorDb):
             bool: True if the index exists, False otherwise.
         """
         try:
-            # Read through the engine connection the DDL uses, not the Session:
-            # this is schema introspection, not row work.
             with self.db_engine.connect() as connection:
                 stmt = text(
                     "SELECT 1 FROM information_schema.STATISTICS "
@@ -575,26 +544,15 @@ class SingleStore(VectorDb):
 
     def optimize(self) -> None:
         """
-        Create the index the per-user scope predicate needs.
-
-        Every scoped search, scoped delete and scoped existence check filters on
-        ``user_id``, so without an index each one reads the whole table. The DDL
-        lives here rather than in the ``CREATE TABLE`` string so that a table
-        created before the column was indexed picks the index up on the next
-        call — ``create()`` skips a table that already exists, and it is the only
-        caller of this method for a new one.
+        Create the ``user_id`` index that scoped queries need.
         """
         index_name = f"idx_{self.collection}_user_id"
         if self._index_exists(index_name):
             log_debug(f"Index already exists: {index_name}")
             return
 
-        # USING HASH: the scope predicate is ``user_id = caller OR user_id IS
-        # NULL`` — equality on both halves, which is what a hash index serves,
-        # and NULLs are indexed alongside the rest so the shared bucket seeks
-        # too. It is also the only secondary index a SingleStore columnstore
-        # table (the default table type) accepts: USING BTREE is rejected there
-        # and an unqualified index is stored as a hash one regardless.
+        # USING HASH: the scope predicate is equality on both halves, and a columnstore
+        # table (the default type) rejects USING BTREE.
         try:
             with self.db_engine.connect() as connection:
                 connection.execute(
@@ -602,9 +560,7 @@ class SingleStore(VectorDb):
                 )
             log_info(f"Created index: {index_name}")
         except Exception as e:
-            # A SingleStore build that rejects the syntax, or an operator who
-            # already indexed the column under another name, must not take down
-            # the caller — the queries still run, just unindexed.
+            # Not fatal: the scoped queries still run, just unindexed.
             log_warning(f"Could not create index {index_name}: {str(e)}")
 
     def delete(self) -> bool:
@@ -643,9 +599,7 @@ class SingleStore(VectorDb):
         """
         from sqlalchemy import delete
 
-        # Outside the try: a scoped delete on an unmigrated table must raise,
-        # not be swallowed into False. (The unscoped path never names the
-        # owner column, so it works on pre-v3 tables as-is.)
+        # Outside the try so a scoped delete raises instead of returning False.
         self._require_owner_column(user_id)
         try:
             with self.Session.begin() as sess:
@@ -705,8 +659,6 @@ class SingleStore(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        # A scoped insert on an unmigrated (pre-v3) table must raise the clear
-        # migration error before any embedding work is paid for (mirrors insert).
         self._require_owner_column(user_id)
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -772,8 +724,7 @@ class SingleStore(VectorDb):
                     content_hash=content_hash,
                     content_id=document.content_id,
                 )
-                # Only mention the owner column when the live table has it \u2014
-                # a pre-v3 table stores the row unowned, exactly like main.
+                # Only name the owner column when the live table has it.
                 if self._user_id_column_exists():
                     record["user_id"] = user_id
 
@@ -798,14 +749,10 @@ class SingleStore(VectorDb):
         Args:
             documents (List[Document]): List of documents to upsert.
             filters (Optional[Dict[str, Any]]): Optional filters for the upsert.
-            user_id (Optional[str]): Explicit owner for per-user RAG isolation.
+            user_id (Optional[str]): Owner for per-user isolation; None means shared.
         """
-        # Raise early on a scoped upsert against an unmigrated table, before
-        # any embedding work is paid for (mirrors sync upsert).
         self._require_owner_column(user_id)
-        # The table has no unique key, so ON DUPLICATE KEY UPDATE never fires;
-        # clear the caller's existing rows for this hash first (mirrors sync upsert)
-        # so re-upserting the same content doesn't accumulate duplicate rows.
+        # The table has no unique key, so ON DUPLICATE KEY UPDATE never fires; clear first.
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -873,8 +820,7 @@ class SingleStore(VectorDb):
                     content_hash=content_hash,
                     content_id=document.content_id,
                 )
-                # Only mention the owner column when the live table has it —
-                # a pre-v3 table stores the row unowned, exactly like main.
+                # Only name the owner column when the live table has it.
                 if self._user_id_column_exists():
                     record["user_id"] = user_id
                 update_record = {k: v for k, v in record.items() if k != "id"}
@@ -911,18 +857,15 @@ class SingleStore(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): When set, delete only the caller's own rows.
-                None scopes to the shared bucket (user_id IS NULL) so a shared
-                re-upsert never wipes a scoped owner's identical-content row.
+            user_id (Optional[str]): Delete only this owner's rows. None deletes from the shared
+                bucket (user_id IS NULL) alone, so it never wipes an owner's identical-content row.
 
         Returns:
             bool: True if documents were deleted, False otherwise.
         """
         from sqlalchemy import delete
 
-        # Outside the try: a scoped delete on an unmigrated table must raise,
-        # not be swallowed into False. Unscoped falls back to no owner clause
-        # (the whole pre-v3 table is the shared bucket), matching the guard.
+        # Outside the try so a scoped delete raises instead of returning False.
         scope_to_owner = self._require_owner_column(user_id)
         try:
             with self.Session.begin() as sess:
@@ -953,10 +896,8 @@ class SingleStore(VectorDb):
 
         try:
             with self.Session.begin() as sess:
-                # Find documents with the given content_id. Select only the two
-                # columns this loop reads — ``select(self.table)`` would name
-                # every declared column, including ``user_id``, which a pre-v3
-                # table doesn't have.
+                # Find documents with the given content_id. Name only the columns this loop reads:
+                # ``select(self.table)`` would include ``user_id``, which a pre-v3 table lacks.
                 stmt = select(self.table.c.id, self.table.c.meta_data).where(self.table.c.content_id == content_id)
                 result = sess.execute(stmt)  # type: ignore
 

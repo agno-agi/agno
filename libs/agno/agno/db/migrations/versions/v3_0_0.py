@@ -1,8 +1,9 @@
-"""Migration v3.0.0: Normalize session runs into a runs table, isolate eval runs by user
+"""Migration v3.0.0: Normalize session runs into a runs table, add per-user isolation
 
-Sessions changes:
+Changes:
 - Create the runs table (one row per run, with the run payload as JSON)
 - Copy every run stored in the sessions table `runs` column into the runs table
+- Add the user_id column and its index to every table in ``USER_ID_TABLE_TYPES``
 
 This removes the unbounded growth of session rows: each run is now stored once,
 in its own row, instead of the whole run list being rewritten on every save.
@@ -12,21 +13,8 @@ migration — it stays in place as a backup. New writes will null it as sessions
 are touched. When you have verified the migration and taken a backup, drop the
 column manually by calling ``db.cleanup_legacy_runs_column()``.
 
-Per-user isolation changes:
-- Add the user_id column and its index to every table in ``USER_ID_TABLE_TYPES``
-
-The column backs per-user isolation: get / list / rename / delete scope by
-user_id when the caller is scoped, and stay global when it is None. Existing
-rows keep a NULL user_id, so they stay visible to admins and to unscoped
-deployments while a scoped caller sees none of them. Document backends store
-these records as documents and pick the field up without a schema change.
-
-To isolate another table, declare user_id on that table in the adapter schemas
-that have it, register the table type in ``MigrationManager`` and add it to
-``USER_ID_TABLE_TYPES`` — the per-backend functions read the column type from
-the schema, so they need no change. A backend whose schema does not declare the
-column is skipped, so a table type that only some adapters support is safe to
-list here.
+Existing rows keep a NULL user_id, so they stay visible to admins and to unscoped
+deployments. Document backends pick the field up without a schema change.
 """
 
 import json
@@ -47,12 +35,8 @@ except ImportError:
 BATCH_SIZE = 50
 
 
-# Table types that get a user_id column and index, so AgentOS can scope them per user.
-# Extend this tuple to isolate another table; the per-backend functions need no change,
-# and backends whose schema does not declare the column skip it.
-# - knowledge: declared on Postgres, SQLite, MySQL and SingleStore
-# - schedules / schedule_runs: declared on Postgres and SQLite (the only adapters
-#   with schedule schemas)
+# Table types that get a user_id column and index. Extend this tuple to isolate another
+# table: a backend whose schema does not declare the column is skipped.
 USER_ID_TABLE_TYPES = ("evals", "components", "knowledge", "schedules", "schedule_runs")
 
 
@@ -210,10 +194,6 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
 
 # ---------------------------------------------------------------------------
 # Per-backend dispatch
-#
-# One entry per SQL backend, routing a table type to the work v3.0.0 does on it.
-# The document backends carry user_id without a schema change, so they only
-# implement the sessions half and return False for everything else.
 # ---------------------------------------------------------------------------
 
 
@@ -377,10 +357,8 @@ def _build_run_rows(
 def _forget_runs_table(db) -> None:
     """Drop the runs table from the adapter's SQLAlchemy state after a revert.
 
-    ``DROP TABLE`` only removes the table from the database — the Table object
-    stays registered on ``db.metadata``, so a later up() in the same process
-    raises "Table is already defined for this MetaData instance" when it tries
-    to define it again.
+    ``DROP TABLE`` leaves the Table object registered on ``db.metadata``, so a later
+    up() in the same process fails with "Table is already defined".
     """
     metadata = getattr(db, "metadata", None)
     runs_table_name = getattr(db, "runs_table_name", None)
@@ -395,8 +373,7 @@ def _forget_runs_table(db) -> None:
 def _decode_run_data(value: Any) -> Any:
     """Decode a run_data or legacy runs payload read back through a raw SQL SELECT.
 
-    A raw select skips the column's JSON deserializer, so SQLite — which stores
-    the payload as a JSON string inside a JSON column — hands back both layers.
+    A raw select skips the column's JSON deserializer, so SQLite hands back both layers.
     """
     if isinstance(value, (bytes, bytearray)):
         value = value.decode()
@@ -1309,8 +1286,7 @@ async def _revert_async_mongo(db: AsyncBaseDb, table_type: str, table_name: str)
         {"$sort": {"session_id": 1, "run_index": 1, "created_at": 1}},
         {"$group": {"_id": "$session_id", "runs": {"$push": "$run_data"}}},
     ]
-    # PyMongo's async client returns a coroutine from aggregate(), Motor returns a
-    # cursor. _aggregate_to_list() is the adapter's helper that handles both.
+    # PyMongo's async client returns a coroutine from aggregate(), Motor a cursor.
     for group in await db._aggregate_to_list(runs_collection, pipeline):  # type: ignore
         session_id = group["_id"]
         runs = group["runs"]
@@ -2138,13 +2114,8 @@ def _revert_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
 def _user_id_column_ddl(db, table_type: str) -> Optional[str]:
     """Compile the user_id column type from the adapter's own schema for this table.
 
-    Keeps a migrated table identical to one created fresh from the schema, so a
-    later migration reading INFORMATION_SCHEMA sees the same type either way.
-
     Returns None when this adapter's schema has no such table, or has it without a
-    user_id column. Not every table type exists on every backend, and the SQL
-    adapters report an unknown table as version 2.0.0 rather than None, so the
-    migration is attempted there and has to bow out on its own.
+    user_id column — not every table type exists on every backend.
     """
     db_type = type(db).__name__
 
@@ -2168,11 +2139,8 @@ def _user_id_column_ddl(db, table_type: str) -> Optional[str]:
 def _user_id_composite_indexes(db, table_type: str, table_name: str) -> List[tuple]:
     """Schema-declared composite indexes that include user_id, as (name, columns).
 
-    These cannot predate the column, so the migration creates them too — a
-    migrated table stays identical to one created fresh from the schema (the
-    schedules listing path, for one, relies on its (user_id, enabled,
-    next_run_at) index). The names follow the adapters' composite-index
-    convention: ``idx_{table}_{columns joined with _}``.
+    Names follow the adapters' composite-index convention:
+    ``idx_{table}_{columns joined with _}``.
     """
     db_type = type(db).__name__
 
@@ -2235,8 +2203,7 @@ def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> b
             applied = True
 
         for comp_name, comp_cols in _user_id_composite_indexes(db, table_type, table_name):
-            # A composite can reference other v3-only columns (e.g. linked_to)
-            # that a legacy table doesn't have yet — skip until they exist.
+            # A composite can reference v3-only columns (e.g. linked_to) a legacy table lacks.
             if not all(c == "user_id" or _column_exists(sess, db_schema, table_name, c, db_type) for c in comp_cols):
                 continue
             if not _index_exists(sess, db_schema, table_name, comp_name, db_type):
@@ -2291,8 +2258,7 @@ async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, tabl
             applied = True
 
         for comp_name, comp_cols in _user_id_composite_indexes(db, table_type, table_name):
-            # A composite can reference other v3-only columns (e.g. linked_to)
-            # that a legacy table doesn't have yet — skip until they exist.
+            # A composite can reference v3-only columns (e.g. linked_to) a legacy table lacks.
             cols_present = True
             for c in comp_cols:
                 if c != "user_id" and not await _async_column_exists(sess, db_schema, table_name, c, db_type):
@@ -2434,8 +2400,7 @@ def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> boo
 
         table_columns = {col[1] for col in columns_info} | {"user_id"}
         for comp_name, comp_cols in _user_id_composite_indexes(db, table_type, table_name):
-            # A composite can reference other v3-only columns (e.g. linked_to)
-            # that a legacy table doesn't have yet — skip until they exist.
+            # A composite can reference v3-only columns (e.g. linked_to) a legacy table lacks.
             if not all(c in table_columns for c in comp_cols):
                 continue
             if comp_name not in existing_indexes:
@@ -2488,8 +2453,7 @@ async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_
         result = await sess.execute(text(f"PRAGMA table_info({quoted_table})"))
         table_columns = {col[1] for col in result.fetchall()} | {"user_id"}
         for comp_name, comp_cols in _user_id_composite_indexes(db, table_type, table_name):
-            # A composite can reference other v3-only columns (e.g. linked_to)
-            # that a legacy table doesn't have yet — skip until they exist.
+            # A composite can reference v3-only columns (e.g. linked_to) a legacy table lacks.
             if not all(c in table_columns for c in comp_cols):
                 continue
             if comp_name not in existing_indexes:
@@ -2616,9 +2580,7 @@ def _revert_mysql_like_user_id(db: BaseDb, table_type: str, table_name: str) -> 
             try:
                 sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN `user_id`"))
             except Exception:
-                # MySQL and SingleStore commit DDL immediately, so the index drop
-                # above already stuck. Put it back rather than leave the column in
-                # place but unindexed.
+                # MySQL and SingleStore commit DDL immediately, so the index drop above stuck.
                 if dropped_index:
                     sess.execute(
                         text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (`user_id`)")
@@ -2668,9 +2630,7 @@ async def _revert_async_mysql_user_id(db: AsyncBaseDb, table_type: str, table_na
             try:
                 await sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN `user_id`"))
             except Exception:
-                # MySQL commits DDL immediately, so the index drop above already
-                # stuck. Put it back rather than leave the column in place but
-                # unindexed.
+                # MySQL commits DDL immediately, so the index drop above already stuck.
                 if dropped_index:
                     await sess.execute(
                         text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (`user_id`)")
@@ -2682,11 +2642,7 @@ async def _revert_async_mysql_user_id(db: AsyncBaseDb, table_type: str, table_na
 
 
 def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
-    """Drop the user_id column from the given table for SQLite.
-
-    ``DROP COLUMN`` needs SQLite 3.35+, and the index has to go first because
-    SQLite refuses to drop a column an index still references.
-    """
+    """Drop the user_id column from the given table for SQLite."""
     db_type = type(db).__name__
     quoted_table = quote_db_identifier(db_type, table_name)
     index_name = f"idx_{table_name}_user_id"
@@ -2702,8 +2658,7 @@ def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool
 
         import sqlite3
 
-        # DROP COLUMN landed in SQLite 3.35.0. Skip rather than drop the index
-        # and then fail on the column, which would leave user_id unindexed.
+        # DROP COLUMN needs SQLite 3.35.0. Skip early, or the index drop lands and the column drop fails.
         if sqlite3.sqlite_version_info < (3, 35, 0):
             log_info(f"SQLite revert for {table_name}: DROP COLUMN needs SQLite >= 3.35.0, skipping")
             return False
@@ -2713,8 +2668,7 @@ def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool
         dropped_index = False
         indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
         existing_indexes = {idx[1] for idx in indexes}
-        # Composite indexes referencing user_id must go before the column:
-        # SQLite refuses to drop a column a multi-column index still covers.
+        # Composite indexes must go first: SQLite won't drop a column an index still covers.
         for comp_name, _comp_cols in _user_id_composite_indexes(db, table_type, table_name):
             if comp_name in existing_indexes:
                 log_info(f"-- Dropping index {comp_name} from {table_name}")
@@ -2732,9 +2686,7 @@ def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool
             try:
                 sess.execute(text(f"ALTER TABLE {quoted_table} DROP COLUMN user_id"))
             except Exception:
-                # SQLite commits DDL outside the session transaction, so the index
-                # drop above already stuck. Put it back rather than leave the column
-                # in place but unindexed.
+                # SQLite commits DDL outside the session, so the index drop above stuck.
                 if dropped_index:
                     sess.execute(
                         text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
@@ -2762,8 +2714,7 @@ async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_n
 
         import sqlite3
 
-        # DROP COLUMN landed in SQLite 3.35.0. Skip rather than drop the index
-        # and then fail on the column, which would leave user_id unindexed.
+        # DROP COLUMN needs SQLite 3.35.0. Skip early, or the index drop lands and the column drop fails.
         if sqlite3.sqlite_version_info < (3, 35, 0):
             log_info(f"SQLite revert for {table_name}: DROP COLUMN needs SQLite >= 3.35.0, skipping")
             return False
@@ -2773,8 +2724,7 @@ async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_n
         result = await sess.execute(text(f"PRAGMA index_list({quoted_table})"))
         existing_indexes = {idx[1] for idx in result.fetchall()}
         dropped_index = False
-        # Composite indexes referencing user_id must go before the column:
-        # SQLite refuses to drop a column a multi-column index still covers.
+        # Composite indexes must go first: SQLite won't drop a column an index still covers.
         for comp_name, _comp_cols in _user_id_composite_indexes(db, table_type, table_name):
             if comp_name in existing_indexes:
                 log_info(f"-- Dropping index {comp_name} from {table_name}")
@@ -2792,9 +2742,7 @@ async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_n
             try:
                 await sess.execute(text(f"ALTER TABLE {quoted_table} DROP COLUMN user_id"))
             except Exception:
-                # SQLite commits DDL outside the session transaction, so the index
-                # drop above already stuck. Put it back rather than leave the column
-                # in place but unindexed.
+                # SQLite commits DDL outside the session, so the index drop above stuck.
                 if dropped_index:
                     await sess.execute(
                         text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")

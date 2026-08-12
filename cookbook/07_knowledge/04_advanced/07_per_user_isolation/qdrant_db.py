@@ -1,13 +1,12 @@
 """
 Per-User Isolation: Qdrant
 ==========================
-Each user gets a private view of one shared knowledge base. Documents
-uploaded with a user_id are visible only to that user; documents uploaded
-without one are shared with everyone.
+Each user gets a private view of one shared knowledge base. Documents uploaded
+with a user_id are visible only to that user; documents uploaded without one are
+shared with everyone.
 
-Qdrant keeps a single collection with a keyword-indexed user_id payload field
-(is_tenant=True) and filters scoped reads to the caller's tenant OR chunks
-with no owner.
+Qdrant keeps one collection with a keyword-indexed user_id payload field
+(is_tenant=True) and filters scoped reads to the caller's tenant or unowned chunks.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
@@ -52,8 +51,7 @@ def show(label: str, results: List[Document]) -> None:
 # Create Knowledge Base
 # ---------------------------------------------------------------------------
 
-# Start clean: rows left by an earlier run still carry their owner and would
-# show up as extra results below.
+# Start clean: rows from an earlier run still carry their owner.
 vector_db = Qdrant(collection=COLLECTION_NAME, url=QDRANT_URL)
 if vector_db.exists():
     vector_db.drop()
@@ -75,8 +73,6 @@ if __name__ == "__main__":
     async def main() -> None:
         await vector_db.async_create()
 
-        # Alice and Bob upload private docs; the last upload has no user_id,
-        # which makes it shared / org-wide content.
         await knowledge.ainsert(
             name="alice_salary",
             text_content=ALICE_SALARY,
@@ -87,6 +83,7 @@ if __name__ == "__main__":
             text_content=BOB_SALARY,
             user_id="bob",
         )
+        # The last insert has no user_id, which makes it shared content.
         await knowledge.ainsert(
             name="company_holidays",
             text_content=HOLIDAYS,
@@ -135,11 +132,6 @@ if __name__ == "__main__":
         print("AGENT-MEDIATED RETRIEVAL: the owner has to survive the handoff")
         print("=" * 60 + "\n")
 
-        # Everything above calls Knowledge directly. An application does not -
-        # it runs an agent, and the owner has to travel from the run context
-        # through the search tool into the vector DB. A dropped user_id becomes
-        # None, which is the admin view, so a broken handoff leaks silently
-        # instead of raising.
         alice_agent = Agent(
             name="Alice's Assistant",
             model=OpenAIResponses(id="gpt-5.5"),
@@ -157,15 +149,13 @@ if __name__ == "__main__":
         print("Alice's agent on 'What is Bob's salary?':")
         print(response.content)
 
-        # Assert on what retrieval actually returned, not on the model's prose:
-        # the references are the deterministic record of the isolation boundary.
+        # Assert on what retrieval returned, not on the model's prose.
         retrieved = " ".join(
             item["content"]
             for ref in (response.references or [])
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
         )
-        # Guard against a vacuous pass: empty references mean the agent never searched
         assert retrieved, (
             "Retrieval returned no documents, so the isolation check below would pass on nothing"
         )
@@ -176,8 +166,8 @@ if __name__ == "__main__":
         )
         print("\nisolation holds: Bob's salary never reached Alice's agent")
 
-        # Close once the run is over. Closing earlier leaks: async_client is a lazy
-        # property that rebuilds itself, and the replacement is never closed.
+        # Close after the run: async_client is a lazy property that rebuilds if
+        # closed earlier, and the rebuilt client is never closed.
         await vector_db.async_close()
 
         print("\nDone.")

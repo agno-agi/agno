@@ -1129,9 +1129,7 @@ class GcsJsonDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Upsert each by (user_id, date, period).
+                # One metrics record per user_id. Upsert each by (user_id, date, period).
                 for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
                     existing_record_idx = None
                     for i, existing_metric in enumerate(metrics):
@@ -1240,9 +1238,7 @@ class GcsJsonDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket.
+            user_id (Optional[str]): The ID of the user to filter by. If not provided, all metrics are returned.
         """
         try:
             metrics = self._read_json_file(self.metrics_table_name)
@@ -1261,7 +1257,7 @@ class GcsJsonDb(BaseDb):
                     continue
 
                 row = dict(metric)
-                # Map the sentinel empty-string user_id back to None.
+                # The empty-string bucket holds unowned sessions. Report it as None.
                 if row.get("user_id") == "":
                     row["user_id"] = None
                 filtered_metrics.append(row)
@@ -1277,24 +1273,21 @@ class GcsJsonDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # GCS-backed JSON storage filters in Python: a row is visible if its
-    # ``user_id`` matches the caller OR is unset (None / missing).
 
     @staticmethod
     def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
+        """Check if the given knowledge row is owned by the given user or unowned (shared)."""
         if user_id is None:
             return True
         owner = item.get("user_id")
         return owner is None or owner == user_id
 
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
-        """Delete a knowledge row from the GCS JSON file.
+        """Delete knowledge content by ID.
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only rows owned by that user are deleted.
         """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
@@ -1313,7 +1306,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): The ID of the user. If provided, only their rows and unowned rows are visible.
         """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
@@ -1344,7 +1337,7 @@ class GcsJsonDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): The ID of the user. If provided, only their rows and unowned rows are returned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1356,7 +1349,7 @@ class GcsJsonDb(BaseDb):
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
 
-            # Owner scoping: drop rows the caller isn't allowed to see.
+            # Apply owner scoping if provided
             if user_id is not None:
                 knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 

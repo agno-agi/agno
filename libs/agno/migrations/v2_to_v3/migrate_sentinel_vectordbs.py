@@ -1,28 +1,17 @@
 # mypy: disable-error-code=var-annotated
-"""Backfill the shared-owner sentinel for sentinel-based VectorDBs (v2 -> v3).
+"""Use this script to backfill the shared-owner sentinel on your VectorDBs (v2 -> v3)
 
-v3 adds per-user RAG isolation. Most backends spell "shared / org-wide" as a
-NULL/absent ``user_id`` and their scoped search accepts it (``... OR user_id IS
-NULL``), so existing data stays visible with no data migration.
+This script works with Redis, Valkey, Couchbase and Cassandra.
 
-Redis, Couchbase and Cassandra are different: they spell "shared" as a LITERAL
-sentinel value ``"__shared__"`` written into the ``user_id`` field, and their
-scoped search is ``user_id == <caller> OR user_id == "__shared__"`` — there is NO
-"field is absent" branch. So a pre-v3 vector (which has NO ``user_id`` field at
-all) matches NEITHER side of the filter and becomes INVISIBLE to every scoped
-caller after v3 ships.
+v3 adds per-user RAG isolation. These backends spell "shared" as a literal ``user_id``
+value ``"__shared__"`` and their scoped search has no "field is absent" branch, so pre-v3
+vectors — which carry no ``user_id`` — are invisible to scoped callers until stamped. This
+backfill is mandatory for them, and idempotent: vectors that already carry a ``user_id``
+are left untouched.
 
-This script fixes that: it stamps ``user_id = "__shared__"`` onto every existing
-vector that has no owner yet, restoring them to the shared bucket so scoped users
-keep seeing them. This backfill is MANDATORY for these three backends (unlike the
-NULL-scheme SQL backends, where it's optional).
-
-Idempotent: vectors that already carry a ``user_id`` (a real owner or the
-sentinel) are left untouched.
-
-Backends: Redis, Couchbase, Cassandra.
-
-Usage: fill in the config block for the backend(s) you use and run the script.
+To use the script simply:
+- Fill in the config block for the backend(s) you use
+- Run the script
 """
 
 from functools import partial
@@ -60,8 +49,7 @@ couchbase_config: Dict[str, Any] = {
 # -----------------------------------------
 
 # ------------ Setup for Cassandra ------------
-# Provide a live cassandra-driver Session (same object you pass to the Cassandra
-# adapter), plus the keyspace and table name.
+# Provide a live cassandra-driver Session, plus the keyspace and table name.
 cassandra_config: Dict[str, Any] = {
     # "session": None,          # cassandra.cluster.Session
     # "keyspace": "my_keyspace",
@@ -73,9 +61,6 @@ cassandra_config: Dict[str, Any] = {
 def migrate_redis_index(index_name: str) -> None:
     """Stamp the shared sentinel onto every Redis vector lacking a ``user_id``.
 
-    Redis stores each vector as a hash under ``{index_name}:{id}`` with ``user_id``
-    as a TAG field. Existing (pre-v3) hashes have no such field.
-
     Args:
         index_name: The RedisDB ``index_name`` whose vectors should be backfilled.
     """
@@ -84,7 +69,7 @@ def migrate_redis_index(index_name: str) -> None:
 
         log_info(f"Starting shared-sentinel backfill for Redis index: {index_name}")
 
-        # Reuse the adapter only for its client + constants; we scan/patch hashes directly.
+        # Only the adapter's field constants are needed; hashes are scanned and patched directly.
         redis_url = redis_config.get("redis_url")
         client = redis_config.get("redis_client")
         if client is None and redis_url is None:
@@ -93,7 +78,7 @@ def migrate_redis_index(index_name: str) -> None:
         if client is None:
             from redis import Redis
 
-            assert redis_url is not None  # guaranteed by the check above; narrows for the type checker
+            assert redis_url is not None  # narrows for the type checker
             client = Redis.from_url(redis_url)
 
         field = RedisDB.USER_ID_FIELD
@@ -121,9 +106,6 @@ def migrate_redis_index(index_name: str) -> None:
 def migrate_valkey_index(index_name: str) -> None:
     """Stamp the shared sentinel onto every Valkey vector lacking a ``user_id``.
 
-    Valkey is Redis-compatible: each vector is a hash under ``{index_name}:{id}``
-    with ``user_id`` as a TAG field. Existing (pre-v3) hashes have no such field.
-
     Args:
         index_name: The ValkeyDb ``index_name`` whose vectors should be backfilled.
     """
@@ -140,7 +122,7 @@ def migrate_valkey_index(index_name: str) -> None:
         if client is None:
             from redis import Redis
 
-            assert valkey_url is not None  # guaranteed by the check above; narrows for the type checker
+            assert valkey_url is not None  # narrows for the type checker
             client = Redis.from_url(valkey_url)
 
         field = ValkeyDB.USER_ID_FIELD
@@ -165,11 +147,7 @@ def migrate_valkey_index(index_name: str) -> None:
 
 
 def migrate_couchbase() -> None:
-    """Stamp the shared sentinel onto every Couchbase document lacking a ``user_id``.
-
-    Couchbase stores each chunk as a document with a ``user_id`` field; the shared
-    bucket uses the literal ``"__shared__"``. Existing docs have no field.
-    """
+    """Stamp the shared sentinel onto every Couchbase document lacking a ``user_id``."""
     try:
         from datetime import timedelta
 
@@ -204,7 +182,6 @@ def migrate_couchbase() -> None:
         from couchbase.options import QueryOptions
 
         query = f"UPDATE {keyspace} SET {field} = $sentinel WHERE {field} IS MISSING OR {field} IS NULL"
-        # metrics=True so we can report the real mutation count.
         result = cluster.query(query, QueryOptions(named_parameters={"sentinel": sentinel}, metrics=True))
         # Drain the result so the mutation executes.
         for _ in result.rows():
@@ -223,20 +200,8 @@ def migrate_couchbase() -> None:
 def migrate_cassandra() -> None:
     """Stamp the shared sentinel onto every Cassandra chunk lacking a ``user_id``.
 
-    Cassandra (via cassio) stores metadata in a CQL map column ``metadata_s``, keyed
-    by string. The adapter scopes search with ``user_id == <caller> OR user_id ==
-    "__shared__"`` (no absent branch), so pre-v3 rows — whose ``metadata_s`` has no
-    ``user_id`` key — are invisible until backfilled.
-
-    Approach mirrors the adapter's own row handling: scan ``row_id, metadata_s``,
-    and for rows missing the key, do an in-place single-key map update
-    ``UPDATE ... SET metadata_s['user_id'] = '__shared__' WHERE row_id = ?``. This
-    does NOT change the row id, which is correct: the shared bucket uses the
-    un-folded id form (see the adapter's ``_scoped_row_id`` — ``user_id=None`` /
-    shared is the base id), so no re-embedding or id change is needed.
-
-    Requires ``cassandra_config`` with ``session`` (a live cassandra driver Session),
-    ``keyspace`` and ``table_name``.
+    Cassandra (via cassio) keeps metadata in the CQL map column ``metadata_s``, so the
+    backfill is an in-place single-key map update and leaves ``row_id`` untouched.
     """
     try:
         from agno.vectordb.cassandra.cassandra import SHARED_USER_ID_VALUE, USER_ID_METADATA_KEY
@@ -282,11 +247,8 @@ def migrate_cassandra() -> None:
 def run() -> None:
     """Run the configured sentinel backfills.
 
-    Each backend runs independently so one failure does not skip the others, but
-    the run as a whole FAILS LOUDLY: any backend that raises is collected and
-    re-raised at the end. This is critical for sentinel backends — a backfill that
-    silently "completed" while it actually errored would leave legacy vectors
-    invisible to every scoped search, with no signal to the operator.
+    Each backend runs independently; failures are collected and re-raised at the end so a
+    partial backfill is not reported as a success.
     """
     tasks: List[Tuple[str, Callable[[], None]]] = []
     for name in redis_config.get("index_names", []):

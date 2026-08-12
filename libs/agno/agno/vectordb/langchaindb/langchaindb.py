@@ -57,11 +57,7 @@ class LangChainVectorDb(VectorDb):
 
         Args:
             content_id (str): The content ID to delete
-            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LangChain
-                vectorstore owns these chunks.
-
-        Raises:
-            NotImplementedError: Always, so a delete is never silently dropped.
+            user_id (Optional[str]): Not supported - the LangChain vectorstore owns these chunks.
         """
         raise NotImplementedError
 
@@ -119,8 +115,7 @@ class LangChainVectorDb(VectorDb):
             query (str): The query string to search for.
             limit (int): The maximum number of documents to return. Defaults to 5.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
-            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LangChain
-                vectorstore owns these chunks.
+            user_id (Optional[str]): Not supported - the LangChain vectorstore owns these chunks.
 
         Returns:
             List[Document]: A list of relevant documents matching the query.

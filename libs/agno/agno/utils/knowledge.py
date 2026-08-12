@@ -39,9 +39,7 @@ def get_agentic_or_user_search_filters(
 def get_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
     """``{"user_id": ...}`` only when the callee accepts it.
 
-    ``KnowledgeProtocol`` documents retrieval as ``retrieve(self, query, **kwargs)``,
-    so ``**kwargs`` counts as accepting it. Dropping the owner is not an error, it
-    widens the call to every owner's documents, so it warns.
+    ``**kwargs`` counts as accepting it: ``KnowledgeProtocol`` retrieval is ``retrieve(self, query, **kwargs)``.
 
     Args:
         fn: The callable the kwarg will be passed to.

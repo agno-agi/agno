@@ -1,8 +1,4 @@
-"""LanceDB per-user RAG isolation contract.
-
-Owner lives in a nullable ``user_id`` column; NULL is the shared bucket. Runs end-to-end
-against a real embedded LanceDB, with the scope predicate applied as an ANN prefilter.
-"""
+"""LanceDB per-user isolation: the owner lives in a nullable ``user_id`` column, NULL is the shared bucket."""
 
 import os
 import shutil
@@ -19,8 +15,7 @@ TEST_PATH = "tmp/test_lancedb_isolation"
 
 @pytest.fixture
 def lance_db(mock_embedder):
-    """A fresh LanceDb per test — the schema change for ``user_id`` is in the base schema and would conflict with
-    any cached table from another test."""
+    """Fixture to create and clean up a LanceDb instance"""
     os.makedirs(TEST_PATH, exist_ok=True)
     if os.path.exists(TEST_PATH):
         shutil.rmtree(TEST_PATH)
@@ -80,8 +75,7 @@ class TestWriteStampsOwner:
         assert rows[0][lance_db.USER_ID_COL] is None
 
     def test_user_id_omitted_defaults_to_null(self, lance_db):
-        """Backwards-compatible: callers that never pass ``user_id`` get NULL (shared) — they're effectively opting
-        out of isolation."""
+        """Test that callers who never pass ``user_id`` get NULL (shared)"""
         lance_db.insert(content_hash="h1", documents=_shared_docs())
 
         rows = lance_db.table.search().select([lance_db.USER_ID_COL]).to_list()
@@ -89,7 +83,7 @@ class TestWriteStampsOwner:
 
 
 class TestSearchScope:
-    """The load-bearing test: alice's search returns her chunks plus shared chunks, but never bob's."""
+    """Test that a scoped search returns the caller's chunks plus shared chunks, never another user's."""
 
     @pytest.fixture
     def search_corpus(self, lance_db):
@@ -130,12 +124,11 @@ class TestSearchScope:
 
 
 class TestDeleteScope:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope the delete to the caller's bucket — otherwise
-    Bob could guess Alice's content_id and wipe her chunks."""
+    """Test that ``delete_by_content_id`` scopes the delete to the caller's own chunks."""
 
     @pytest.fixture
     def content_id_corpus(self, lance_db):
-        """Two users own chunks under the SAME content_id 'doc-1'."""
+        """Two users own chunks under the same content_id 'doc-1'"""
         alice_doc = Document(name="alice-doc", content="Alice's secret.")
         alice_doc.content_id = "doc-1"
         bob_doc = Document(name="bob-doc", content="Bob's secret.")
@@ -173,13 +166,12 @@ class TestDeleteScope:
 
 
 class TestWhereClauseHelper:
-    """The clause builder is small enough to unit-test directly."""
+    """Test the scope clause builder."""
 
     def test_none_returns_no_clause(self, lance_db):
         assert lance_db._user_scope_where_clause(None) is None
 
     def test_simple_alice_clause(self, lance_db):
-        # Must match the caller's id OR the shared (NULL) bucket — both.
         clause = lance_db._user_scope_where_clause("alice")
         assert "user_id = 'alice'" in clause
         assert "user_id IS NULL" in clause

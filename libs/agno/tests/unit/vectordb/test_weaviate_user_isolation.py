@@ -1,7 +1,7 @@
-"""Weaviate per-user RAG isolation contract.
+"""Unit tests for Weaviate per-user isolation.
 
-Owner lives in a top-level ``user_id`` property; NULL is the shared bucket. The weaviate
-clients are mocked, so the filter handed to the collection query is the contract.
+The owner lives in a top-level ``user_id`` property and NULL is the shared bucket. The
+clients are mocked, so these tests assert on the filter handed to the collection query.
 """
 
 import uuid
@@ -92,8 +92,7 @@ def weaviate_db(mock_weaviate_client, mock_async_weaviate_client):
         client=mock_weaviate_client,
         search_type=SearchType.vector,
     )
-    # The mocked client cannot answer the live-schema probe, and these tests
-    # model a migrated (v3) collection — prime the owner-property gate.
+    # The mocked client cannot answer the live-schema probe, so prime the owner-property gate.
     db._owner_property_exists = True
     return db
 
@@ -115,8 +114,7 @@ def _collection(client):
 
 
 class TestWriteStampsOwner:
-    """Inserts stamp the owner on the top-level ``user_id`` property; None (and omitted) land in the shared bucket
-    (property is None)."""
+    """Inserts stamp the owner on ``user_id``; None and omitted land in the shared bucket."""
 
     def test_explicit_user_id_persisted(self, weaviate_db, mock_weaviate_client):
         weaviate_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
@@ -135,8 +133,7 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """Two owners uploading byte-identical content get DISTINCT uuids (the owner is folded into the id), so one
-    insert never clobbers the other."""
+    """The owner is folded into the record id, so identical content from two owners gets distinct uuids."""
 
     def _insert_uuid(self, weaviate_db, mock_weaviate_client, user_id):
         _collection(mock_weaviate_client).data.insert.reset_mock()
@@ -167,8 +164,7 @@ class TestOwnerFoldedId:
 
 
 class TestSearchScope:
-    """A scoped search filters own-OR-shared (user_id == caller OR IS NULL); an admin search (user_id=None) applies
-    no filter."""
+    """A scoped search filters own-or-shared; an admin search (user_id=None) applies no filter."""
 
     def test_scoped_vector_search_is_own_or_shared(self, weaviate_db, mock_weaviate_client):
         weaviate_db.search("salary", limit=10, user_id="alice")
@@ -210,8 +206,7 @@ class TestSearchScope:
 
 
 class TestUpsertDedupScope:
-    """The upsert dedup delete is scoped to the writing owner, so re-ingesting shared content never wipes an owner's
-    identical-content row (and vice versa)."""
+    """The upsert dedup delete is scoped to the writing owner, so it never wipes another owner's rows."""
 
     def test_owner_upsert_dedup_deletes_only_owner(self, weaviate_db, mock_weaviate_client):
         weaviate_db.content_hash_exists = MagicMock(return_value=True)
@@ -245,8 +240,6 @@ class TestDeleteScope:
     def test_scoped_delete_matches_owner_only(self, weaviate_db, mock_weaviate_client):
         weaviate_db.delete_by_content_id("doc-1", user_id="bob")
         where = _collection(mock_weaviate_client).data.delete_many.call_args.kwargs["where"]
-        # ANDs the owner on: a scoped caller cannot wipe another owner's chunks,
-        # and does NOT OR in the shared bucket.
         assert _combinator(where) == "_FilterAnd"
         assert _leaves(where) == [
             ("content_id", "Equal", "doc-1"),
@@ -261,8 +254,7 @@ class TestDeleteScope:
 
 
 class TestDedupScope:
-    """_delete_by_content_hash scoped to an owner clears only that owner; None clears ONLY the shared (null) bucket,
-    never other owners' identical rows."""
+    """_delete_by_content_hash clears only the given owner; None clears only the shared (null) bucket."""
 
     def test_scoped_delete_matches_owner_only(self, weaviate_db, mock_weaviate_client):
         weaviate_db._delete_by_content_hash("h", user_id="alice")
@@ -284,8 +276,7 @@ class TestDedupScope:
 
 
 class TestEmptyUserIdRejected:
-    """Empty / whitespace-only user_id folds to the null bucket under FIELD tokenization, leaking the row to every
-    caller."""
+    """Empty / whitespace-only user_id folds to the shared null bucket under FIELD tokenization."""
 
     @pytest.mark.parametrize("bad_id", ["", " ", "   ", "\t", "\n"])
     def test_insert_rejects(self, weaviate_db, bad_id):

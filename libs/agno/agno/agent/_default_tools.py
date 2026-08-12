@@ -405,7 +405,7 @@ def add_to_knowledge(agent: Agent, query: str, result: str, user_id: Optional[st
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
-    # Probe like the retrieval path: a custom Knowledge whose insert predates isolation raises on the kwarg
+    # A custom Knowledge whose insert predates isolation raises on the user_id kwarg
     insert_kwargs: Dict[str, Any] = {
         "name": document_name,
         "text_content": document_content,

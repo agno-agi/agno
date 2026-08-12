@@ -124,9 +124,7 @@ class ScheduleExecutor:
                     "input": None,
                     "output": None,
                     "requirements": None,
-                    # Denormalise the owner from the parent Schedule so the runs
-                    # router can scope by user_id without a JOIN. ``None`` for
-                    # system / legacy schedules.
+                    # Denormalised from the parent Schedule so the runs router can scope without a JOIN
                     "user_id": sched.user_id,
                     "created_at": now,
                 }
@@ -262,13 +260,8 @@ class ScheduleExecutor:
         headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
         }
-        # The internal token identifies the executor, not a user. Carry the
-        # owner so the route scopes the call to them: a schedule can name any
-        # endpoint, so an owned schedule must not reach another user's data.
         if schedule.user_id is not None:
-            # Percent-encoded: a header value must be latin-1 while an owner id
-            # can be any unicode, and encoding also keeps a padded id distinct
-            # from a bare one once the hop strips surrounding whitespace.
+            # Percent-encoded: header values must be latin-1, and padded ids stay distinct from bare ones
             headers[SCHEDULE_OWNER_HEADER] = quote(schedule.user_id, safe="")
 
         client = await self._get_client()
@@ -278,13 +271,7 @@ class ScheduleExecutor:
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
 
-            # The schedule owner is authoritative: drop any user_id carried in
-            # the user-controlled payload so a crafted schedule can't run as
-            # another user, then attribute the run + downstream session /
-            # traces / metrics to the owner (or leave it unowned when the
-            # schedule has no owner). The agent run route only trusts this
-            # form-field user_id when the caller authenticates as the internal
-            # service (see ``agents/router.py``).
+            # The owner wins over the user-controlled payload: a crafted schedule must not run as another user
             form_payload.pop("user_id", None)
             if schedule.user_id is not None:
                 form_payload["user_id"] = schedule.user_id

@@ -1,8 +1,4 @@
-"""Couchbase per-user RAG isolation contract.
-
-Owner lives in a top-level ``user_id`` field; the ``__shared__`` sentinel is the shared
-bucket. The Cluster constructors are patched with fakes, so no server is contacted.
-"""
+"""Couchbase per-user RAG isolation, against a faked cluster."""
 
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
@@ -25,7 +21,7 @@ DIMS = 8
 
 
 def _embedded(name: str, content: str, **kwargs) -> Document:
-    """A Document with a precomputed embedding so writes need no round-trip."""
+    """Create a Document with a precomputed embedding"""
     doc = Document(name=name, content=content, **kwargs)
     doc.embedding = DeterministicEmbedder(dimensions=DIMS).get_embedding(content)
     return doc
@@ -37,7 +33,7 @@ def _named_params(options) -> Dict[str, Any]:
 
 
 class _Recorder:
-    """Shared sink for everything the adapter routes at the (faked) cluster."""
+    """Sink for everything the adapter sends at the faked cluster"""
 
     def __init__(self):
         self.queries: List[tuple] = []  # (n1ql_text, named_parameters)
@@ -174,7 +170,7 @@ def _make_db(**overrides) -> CouchbaseSearch:
 
 @pytest.fixture
 def couchbase_db():
-    """A CouchbaseSearch whose Cluster/AsyncCluster and FTS builders are patched - reach the sink via ``.recorder``."""
+    """Fixture to create a CouchbaseSearch with a faked cluster - the sink is on ``.recorder``"""
     recorder = _Recorder()
     collection = _FakeCollection(recorder)
     scope = _FakeScope(recorder, collection)
@@ -207,8 +203,7 @@ def couchbase_db():
 
 
 class TestWriteStampsOwner:
-    """``user_id`` is a top-level document field (NOT nested in the filters blob); ``None`` maps to the shared
-    sentinel."""
+    """``user_id`` is a top-level document field, not nested in filters; ``None`` maps to the shared sentinel"""
 
     def test_explicit_owner_stamped_top_level(self):
         prepared = _make_db().prepare_doc("h1", _embedded("d", "secret content"), user_id="alice")
@@ -241,8 +236,7 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """Byte-identical content for different owners yields distinct KV keys so one owner's write can't clobber
-    another's; the shared bucket keeps the legacy id."""
+    """The owner is folded into the KV key, so identical content for two owners lands on distinct keys"""
 
     def test_prepare_doc_folds_owner_into_id(self):
         db = _make_db()
@@ -264,8 +258,7 @@ class TestOwnerFoldedId:
 
 
 class TestSearchScope:
-    """A scoped search restricts to the caller's own chunks OR the ``__shared__`` bucket, and never another user's;
-    admin (None) applies no scope."""
+    """A scoped search matches the caller's own chunks or ``__shared__``; ``None`` applies no scope"""
 
     def test_user_scope_query_is_own_or_shared(self):
         db = _make_db()
@@ -302,8 +295,7 @@ class TestSearchScope:
         assert couchbase_db.recorder.prefilters[-1] is None
 
     def test_caller_filters_do_not_replace_the_owner_scope(self, couchbase_db):
-        """A caller-supplied filter and the owner scope are not alternatives - if passing filters suppresses the
-        scope, any caller who filters at all reads every owner's chunks."""
+        """Test that caller-supplied filters do not suppress the owner scope"""
         couchbase_db.search(query="q", filters={"dept": "eng"}, user_id="alice")
         prefilter = couchbase_db.recorder.prefilters[-1]
         assert prefilter is not None, "filters must not suppress the owner scope"
@@ -318,9 +310,7 @@ class TestSearchScope:
 
 
 class TestSentinelImpersonation:
-    """``__shared__`` is stored as an ordinary field value, so a caller can simply pass it: their upload would
-    publish org-wide, they would read every owner's shared content, and their scoped delete would clear out of the
-    shared bucket. Each entry point has to refuse it itself."""
+    """``__shared__`` is an ordinary field value a caller could pass, so every scoped entry point refuses it"""
 
     @pytest.mark.parametrize(
         "call",
@@ -352,13 +342,13 @@ class TestSentinelImpersonation:
             await call(couchbase_db)
 
     def test_none_is_not_rejected(self, couchbase_db):
-        """``None`` is the supported way to reach the shared bucket - only the literal sentinel is refused."""
+        """``None`` still reaches the shared bucket - only the literal sentinel is refused"""
         couchbase_db.insert("h", [_embedded("s", "shared content")], user_id=None)
         assert couchbase_db.recorder.inserted, "a shared write must still go through"
 
 
 class TestDedupScope:
-    """The per-user dedup path keys on ``content_hash`` bound to the owner."""
+    """The dedup path keys on ``content_hash`` bound to the owner"""
 
     def test_delete_by_content_hash_binds_owner(self, couchbase_db):
         couchbase_db._delete_by_content_hash("h1", user_id="alice")
@@ -367,8 +357,7 @@ class TestDedupScope:
         assert params == {"content_hash": "h1", "user_id": "alice"}
 
     def test_delete_by_content_hash_none_binds_shared_sentinel(self, couchbase_db):
-        """None must NOT clear every owner's row — it binds the __shared__ sentinel, so only the shared bucket's
-        stale chunk is removed."""
+        """``None`` binds the ``__shared__`` sentinel instead of clearing every owner's row"""
         couchbase_db._delete_by_content_hash("h1", user_id=None)
         n1ql, params = couchbase_db.recorder.queries[-1]
         assert "content_hash = $content_hash AND user_id = $user_id" in n1ql
@@ -387,8 +376,7 @@ class TestDedupScope:
         assert params == {"content_hash": "h1", "user_id": CouchbaseSearch.SHARED_USER_ID}
 
     def test_the_bound_predicate_cannot_match_a_private_row(self, couchbase_db):
-        """The behaviour behind the shape, evaluated against the body alice's write really stored: the content_hash
-        arm matches, the owner arm does not, so the gate answers False and the shared publish goes ahead."""
+        """Test that the bound predicate cannot match alice's row - the hash arm matches, the owner arm does not"""
         couchbase_db.insert(content_hash="h1", documents=[_embedded("d", "secret")], user_id="alice")
         alice_row = next(iter(couchbase_db.recorder.inserted[-1].values()))
 
@@ -399,19 +387,16 @@ class TestDedupScope:
         assert alice_row[CouchbaseSearch.USER_ID_FIELD] != params["user_id"]
 
     def test_upsert_dedup_delete_scoped_to_writing_owner(self, couchbase_db):
-        """When the writer's own chunk already exists, the pre-delete binds that owner only, so another owner's
-        identical-content row is left intact."""
+        """Test that the dedup pre-delete binds the writing owner only"""
         couchbase_db.recorder.query_rows = [{"doc_id": "stale-1"}]  # content_hash_exists -> True
         couchbase_db.upsert(content_hash="h1", documents=[_embedded("d", "same content")], user_id="bob")
         dedup_n1ql, dedup_params = couchbase_db.recorder.queries[0]
         assert dedup_params == {"content_hash": "h1", "user_id": "bob"}
-        # And only the row that scoped query returned is removed.
         assert couchbase_db.recorder.removed == ["stale-1"]
 
 
 class TestDeleteScope:
-    """``delete_by_content_id(content_id, user_id=...)`` scopes the delete to the caller's rows so Bob can't wipe
-    Alice's chunks by guessing her content_id."""
+    """``delete_by_content_id`` scopes the delete to the caller's own rows"""
 
     def test_scoped_delete_ands_owner(self, couchbase_db):
         couchbase_db.recorder.query_rows = [{"doc_id": "d-alice"}]
@@ -419,7 +404,6 @@ class TestDeleteScope:
         n1ql, params = couchbase_db.recorder.queries[-1]
         assert "AND user_id = $user_id" in n1ql
         assert params == {"content_id": "cid-1", "user_id": "alice"}
-        # Removes only what the owner-scoped query returned.
         assert couchbase_db.recorder.removed == ["d-alice"]
 
     def test_unscoped_delete_spans_all_owners(self, couchbase_db):

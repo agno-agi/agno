@@ -203,8 +203,7 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """The owner is folded into the primary key so two users' identical content gets distinct rows; a shared row
-    keeps the unfolded id."""
+    """The owner is folded into the row id, so two users' identical content gets distinct rows."""
 
     def test_two_owners_identical_content_get_distinct_row_ids(self, cassandra_db):
         cassandra_db.insert(content_hash="h", documents=[_doc("a", "same text")], user_id="alice")
@@ -238,10 +237,8 @@ class TestOwnerFoldedId:
         assert cassandra_db.table.put_calls[0]["row_id"] == hashlib.md5(f"{row_id}_alice".encode()).hexdigest()
 
     def test_owner_boundary_cannot_be_shifted(self, cassandra_db):
-        """The base id is caller-controlled, so it is collapsed to a fixed-length digest before the owner is folded
-        in."""
-        # The owner is folded into ``doc.id``, so the crafted split has to be on the
-        # document id -- varying content_id here would leave the base id untouched.
+        """The base id is caller-controlled, so it is hashed to a fixed length before the owner is folded in."""
+        # The owner is folded into ``doc.id``, so the crafted split has to be on the document id.
         cassandra_db.insert(content_hash="h", documents=[_doc("alice-doc", "body", doc_id="doc_1")], user_id="alice")
         cassandra_db.insert(content_hash="h", documents=[_doc("crafted", "other", doc_id="doc")], user_id="1_alice")
         row_ids = [c["row_id"] for c in cassandra_db.table.put_calls]
@@ -250,8 +247,7 @@ class TestOwnerFoldedId:
 
 
 class TestSearchQueryShape:
-    """A scoped search issues TWO equality-filtered searches (own + shared) and merges; admin (user_id=None) issues
-    ONE unfiltered search."""
+    """A scoped search issues two equality-filtered searches (own + shared); admin issues one unfiltered."""
 
     def test_scoped_search_issues_own_and_shared_filters(self, cassandra_db):
         cassandra_db.search("q", limit=5, user_id="alice")
@@ -260,7 +256,6 @@ class TestSearchQueryShape:
             {USER_ID_METADATA_KEY: "alice"},
             {USER_ID_METADATA_KEY: SHARED_USER_ID_VALUE},
         ]
-        # No search is ever issued for another owner's bucket.
         assert {USER_ID_METADATA_KEY: "bob"} not in sent
 
     def test_admin_search_is_single_unfiltered(self, cassandra_db):
@@ -304,8 +299,7 @@ class TestSearchScope:
 
 
 class TestDeleteScope:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope to the caller's chunks — otherwise a caller
-    could guess someone else's content_id and wipe their (or the shared) chunks."""
+    """``delete_by_content_id`` scopes to the caller's chunks; ``user_id=None`` deletes every owner's."""
 
     @pytest.fixture
     def content_id_corpus(self, cassandra_db):
@@ -334,8 +328,7 @@ class TestDeleteScope:
 
 
 class TestDedupScope:
-    """``delete_by_content_hash`` scopes to the owner bucket when user_id is set; None scopes to the shared bucket
-    only so it can't wipe every owner."""
+    """``delete_by_content_hash`` scopes to the owner bucket, or the shared bucket when ``user_id`` is ``None``."""
 
     @pytest.fixture
     def content_hash_corpus(self, cassandra_db):
@@ -377,8 +370,7 @@ class TestContentHashExistsScope:
 
 
 class TestUpsertDedupScope:
-    """``upsert`` re-ingest dedups within the caller's bucket only, so two owners' copies of identical content never
-    collide and a shared re-ingest can't steal an owned row."""
+    """``upsert`` re-ingest dedups within the caller's bucket only."""
 
     def test_two_owners_identical_content_both_survive(self, cassandra_db):
         cassandra_db.upsert(content_hash="h", documents=[_doc("alice", "shared text")], user_id="alice")
@@ -414,7 +406,6 @@ class TestUpdateMetadataOwnership:
         row = cassandra_db.session.rows[0]
         assert row.metadata_s[USER_ID_METADATA_KEY] == "alice"
         assert row.metadata_s["topic"] == "hr"
-        # The UPDATE payload the adapter wrote never carried the attacker's owner.
         _, written_meta = cassandra_db.session.updates[0]
         assert written_meta[USER_ID_METADATA_KEY] == "alice"
 

@@ -1815,7 +1815,7 @@ def get_team_by_id(
     try:
         from agno.utils.component_scope import component_owner_scope
 
-        # Scope to owner: a non-owner must not load another user's team component.
+        # Only resolve the team if owned by this user.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 

@@ -22,10 +22,8 @@ from agno.vectordb.distance import Distance
 from agno.vectordb.opensearch.index import Engine, SpaceType
 from agno.vectordb.search import SearchType
 
-# Per-user RAG isolation. A top-level keyword field records the owner of each chunk.
-# * Inserts with user_id stamp the field; user_id=None leaves it absent (the shared bucket).
-# * Searches with user_id=X match own OR absent; user_id=None applies no scope (admin view).
-# * Deletes with user_id=X match own only; the shared bucket takes an unscoped delete.
+# Owner of each chunk, for per-user isolation. The field is absent for user_id=None,
+# which is the shared bucket every caller can read but none can delete out of.
 USER_ID_FIELD = "user_id"
 
 
@@ -741,9 +739,8 @@ class OpenSearch(VectorDb):
         Note:
             Derived from the document's explicit id (or a hash of its content) combined
             with the content_hash, so re-indexing the same document upserts in place.
-            The owner is folded into a fixed-length digest of that base id, so two users
-            ingesting the same bytes get distinct _ids and the '_' boundary cannot be
-            shifted onto another owner; user_id=None keeps the pre-isolation _id.
+            The owner is hashed in on top of that, so two users ingesting the same bytes
+            get distinct _ids; user_id=None keeps the pre-isolation _id.
         """
         cleaned_content = (doc.content or "").replace("\x00", "�")
         base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
@@ -869,9 +866,7 @@ class OpenSearch(VectorDb):
         if content_hash is not None:
             index_doc["content_hash"] = content_hash
 
-        # Stamp the owner. Leaving the field off for user_id=None is what puts the
-        # document in the shared bucket, which the scope filter matches with must_not
-        # exists - the same state every pre-isolation document is already in.
+        # Leaving the field off for user_id=None is what puts the document in the shared bucket
         if user_id is not None:
             index_doc[USER_ID_FIELD] = user_id
 
@@ -946,8 +941,7 @@ class OpenSearch(VectorDb):
             content_hash: Content hash for the documents
             documents: List of documents to insert
             filters: Optional filters merged into each document's metadata
-            user_id: Owner of these chunks for per-user isolation. None (default)
-                writes to the shared bucket.
+            user_id: Owner of these chunks. None writes to the shared bucket.
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
@@ -970,8 +964,7 @@ class OpenSearch(VectorDb):
             content_hash: Content hash for the documents
             documents: List of documents to insert
             filters: Optional filters merged into each document's metadata
-            user_id: Owner of these chunks for per-user isolation. None (default)
-                writes to the shared bucket.
+            user_id: Owner of these chunks. None writes to the shared bucket.
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
@@ -1010,13 +1003,13 @@ class OpenSearch(VectorDb):
             content_hash: Content hash for the documents
             documents: List of documents to upsert
             filters: Optional filters merged into each document's metadata
-            user_id: Owner of these chunks for per-user isolation. The owner is part
-                of the _id, so an upsert only ever updates that owner's copy.
+            user_id: Owner of these chunks. The owner is part of the _id, so an upsert
+                only ever updates that owner's copy.
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
-            Clears the owner's existing chunks for this hash first, so a re-upsert
-            that splits into fewer chunks does not leave the surplus behind.
+            Clears the owner's existing chunks for this hash first, so a re-upsert that
+            splits into fewer chunks leaves no surplus behind.
         """
         self._validate_user_id(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
@@ -1038,8 +1031,8 @@ class OpenSearch(VectorDb):
             content_hash: Content hash for the documents
             documents: List of documents to upsert
             filters: Optional filters merged into each document's metadata
-            user_id: Owner of these chunks for per-user isolation. The owner is part
-                of the _id, so an upsert only ever updates that owner's copy.
+            user_id: Owner of these chunks. The owner is part of the _id, so an upsert
+                only ever updates that owner's copy.
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
@@ -1495,8 +1488,7 @@ class OpenSearch(VectorDb):
             query: Search query string
             limit: Maximum number of results to return
             filters: Optional filters to apply to search
-            user_id: Restrict results to the caller's chunks plus the shared bucket.
-                None means no scope (admin view).
+            user_id: Restrict results to this owner's chunks plus the shared bucket. None applies no scope.
 
         Returns:
             List[Document]: List of matching documents
@@ -1532,8 +1524,7 @@ class OpenSearch(VectorDb):
             query: Search query string
             limit: Maximum number of results to return
             filters: Optional filters to apply to search
-            user_id: Restrict results to the caller's chunks plus the shared bucket.
-                None means no scope (admin view).
+            user_id: Restrict results to this owner's chunks plus the shared bucket. None applies no scope.
 
         Returns:
             List[Document]: List of matching documents
@@ -1543,10 +1534,6 @@ class OpenSearch(VectorDb):
             async client. The search path also embeds the query and optionally reranks the
             results, both of which are synchronous, so there is little to gain from an
             async round trip. Offloading to a thread keeps the event loop free.
-
-            The owner is validated by search() rather than here: it is the same argument
-            checked before any request is built, and the ValueError travels back out of
-            the await.
         """
         return await asyncio.to_thread(self.search, query, limit, filters, user_id)
 
@@ -1564,7 +1551,7 @@ class OpenSearch(VectorDb):
             query: Search query string (will be embedded)
             limit: Maximum number of results to return
             filters: Optional filters to apply to search
-            user_id: Restrict results to the caller's chunks plus the shared bucket
+            user_id: Restrict results to this owner's chunks plus the shared bucket
 
         Returns:
             List[Document]: List of documents ordered by similarity score
@@ -1589,7 +1576,7 @@ class OpenSearch(VectorDb):
             query: Search query string
             limit: Maximum number of results to return
             filters: Optional filters to apply to search
-            user_id: Restrict results to the caller's chunks plus the shared bucket
+            user_id: Restrict results to this owner's chunks plus the shared bucket
 
         Returns:
             List[Document]: List of documents ordered by text relevance score
@@ -1614,7 +1601,7 @@ class OpenSearch(VectorDb):
             query: Search query string
             limit: Maximum number of results to return
             filters: Optional filters to apply to search
-            user_id: Restrict results to the caller's chunks plus the shared bucket
+            user_id: Restrict results to this owner's chunks plus the shared bucket
 
         Returns:
             List[Document]: List of documents ordered by combined similarity and relevance scores
@@ -1697,11 +1684,8 @@ class OpenSearch(VectorDb):
 
         Note:
             Generates query embedding and optionally applies filters. A scoped search
-            moves the filters inside the knn clause so OpenSearch prunes before
-            traversing the graph: the bool form below filters the k nearest neighbours
-            afterwards, which returns nothing at all when those k all belong to another
-            owner. NMSLIB rejects a filter inside the knn clause, so it keeps the bool
-            form and its reduced recall.
+            filters inside the knn clause: post-filtering returns nothing when the k
+            nearest neighbours all belong to another owner. NMSLIB rejects a knn filter.
         """
         query_embedding, usage = self._get_query_embedding(query)
         filter_conditions = self._scoped_filter_conditions(filters, user_id)
@@ -1775,11 +1759,9 @@ class OpenSearch(VectorDb):
             Dict[str, Any]: OpenSearch boolean query with vector and keyword components
 
         Note:
-            Combines KNN search (70% boost) with multi-match search (30% boost). The
-            filters are attached to the bool clause, which scopes both halves. A scoped
-            search repeats them inside the knn clause as well, so its k nearest
-            neighbours are drawn from the scoped set instead of being truncated to
-            another owner's documents first.
+            Combines KNN search (70% boost) with multi-match search (30% boost). The bool
+            filter scopes both halves; a scoped search repeats it inside the knn clause so
+            its k nearest neighbours are drawn from the scoped set.
         """
         query_embedding, usage = self._get_query_embedding(query)
         knn_options: Dict[str, Any] = {"vector": query_embedding, "k": limit, "boost": 0.7}
@@ -1837,10 +1819,8 @@ class OpenSearch(VectorDb):
             ValueError: If the owner is empty or whitespace-only
 
         Note:
-            The shared bucket is the absence of the field, not a value, so an empty or
-            whitespace-only owner is a third bucket rather than the shared one: no other
-            caller can read it, content_hash_exists(user_id=None) cannot probe it and no
-            scoped delete can clear it. Use None for shared/unscoped access.
+            The shared bucket is the absence of the field, not a value, so an empty owner
+            would be a third bucket no one can read or clear. Use None for shared access.
         """
         if user_id is not None and user_id.strip() == "":
             raise ValueError("user_id must not be empty or whitespace-only")
@@ -1856,10 +1836,8 @@ class OpenSearch(VectorDb):
             Dict[str, Any]: OpenSearch clause matching only the owner's chunks
 
         Note:
-            There is no must_not exists arm here: a caller may read the shared bucket
-            but may not delete out of it, and that arm would hand every owner the
-            admin-uploaded content plus every document written before this field
-            existed.
+            No must_not exists arm here: a caller may read the shared bucket but may not
+            delete out of it.
         """
         return {"term": {USER_ID_FIELD: user_id}}
 
@@ -1871,8 +1849,8 @@ class OpenSearch(VectorDb):
             Dict[str, Any]: OpenSearch clause matching only chunks that have no owner
 
         Note:
-            The shared bucket is the absence of the field, not a sentinel value, so it
-            also covers every document written before this field existed.
+            The shared bucket is the absence of the field, so this also covers every
+            document written before the field existed.
         """
         return {"bool": {"must_not": {"exists": {"field": USER_ID_FIELD}}}}
 
@@ -1887,10 +1865,8 @@ class OpenSearch(VectorDb):
             Dict[str, Any]: OpenSearch clause matching exactly one bucket
 
         Note:
-            Unlike _user_scope_filter this never widens to a second bucket, and unlike
-            it there is no unscoped branch: content_hash_exists and
-            _delete_by_content_hash must address the same rows as each other, so both
-            resolve None to the shared bucket rather than to every owner.
+            Unlike the read scope this never widens to a second bucket and has no
+            unscoped branch: None resolves to the shared bucket, not to every owner.
         """
         return self._owner_filter(user_id) if user_id is not None else self._shared_bucket_filter()
 
@@ -1906,9 +1882,8 @@ class OpenSearch(VectorDb):
             the shared bucket, or None when no scope applies
 
         Note:
-            Documents written without an owner have no user_id field, so must_not exists
-            is what keeps admin-uploaded content discoverable by every caller - including
-            every document written before this field existed.
+            must_not exists is what keeps unowned content - including every document
+            written before the field existed - discoverable by every caller.
         """
         if user_id is None:
             return None
@@ -1937,8 +1912,7 @@ class OpenSearch(VectorDb):
             List[Dict[str, Any]]: Filter conditions to AND together
 
         Note:
-            The scope is a nested bool rather than another term, because it is an OR of
-            the caller's bucket and the shared bucket.
+            The scope is a nested bool rather than a term, being an OR of two buckets.
         """
         conditions = self._build_filter_conditions(filters) if filters else []
 
@@ -2144,17 +2118,14 @@ class OpenSearch(VectorDb):
 
         Args:
             content_hash: Content hash to check
-            user_id: Restrict the check to the owner's own chunks. None restricts it
-                to the shared bucket alone.
+            user_id: Restrict the check to this owner's chunks. None checks the shared bucket alone.
 
         Returns:
             bool: True if document exists, False otherwise
 
         Note:
-            The scope is the exact-owner clause, not the own-or-shared clause reads use:
-            as the guard half of the upsert dedup pair it has to match exactly the chunks
-            _delete_by_content_hash clears under the same user_id, never more. None
-            therefore addresses the shared bucket alone rather than every owner.
+            Scoped to the exact owner, not the own-or-shared scope reads use: it has to
+            match exactly the chunks _delete_by_content_hash clears for the same user_id.
         """
         self._validate_user_id(user_id)
         return self._check_field_exists("content_hash", content_hash, self._exact_owner_scope(user_id))
@@ -2242,16 +2213,14 @@ class OpenSearch(VectorDb):
 
         Args:
             content_id: Content ID to delete
-            user_id: Restrict the delete to the owner's own chunks. None deletes
-                across all owners.
+            user_id: Restrict the delete to this owner's chunks. None deletes across all owners.
 
         Returns:
             bool: True if successful, False otherwise
 
         Note:
-            The scope is the exact-owner clause, not the own-or-shared clause reads use:
-            a caller can view shared content but cannot delete it, so removing shared
-            chunks takes an unscoped call.
+            Scoped to the exact owner: a caller can view shared content but cannot delete
+            it, so removing shared chunks takes an unscoped call.
         """
         self._validate_user_id(user_id)
         content_id_term = {"term": {"content_id.keyword": content_id}}
@@ -2270,19 +2239,14 @@ class OpenSearch(VectorDb):
 
         Args:
             content_hash: Content hash to delete
-            user_id: Owner to scope the delete to. None scopes to the shared bucket,
-                so a re-ingest of content one owner already holds never clears
-                another owner's identical chunks.
+            user_id: Owner to scope the delete to. None scopes to the shared bucket.
 
         Returns:
             bool: True if successful, False otherwise
 
         Note:
-            The delete half of the upsert dedup pair, sharing content_hash_exists'
-            scope exactly. It cannot be left to doc_as_upsert alone: the _id folds in
-            each chunk's own id, so a re-upsert that splits the same content into
-            fewer chunks writes new _ids and leaves the surplus ones behind, still
-            answering searches.
+            doc_as_upsert alone is not enough: the _id folds in each chunk's own id, so a
+            re-upsert that splits the same content into fewer chunks leaves the surplus behind.
         """
         return self._delete_by_query(
             self._content_hash_query(content_hash, user_id),

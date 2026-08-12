@@ -451,7 +451,7 @@ def get_system_message(
     if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
         build_context_fn = getattr(_resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
-            # The filter keys rendered into the prompt come from stored content, so scope them like retrieval
+            # The filter keys rendered here come from stored content, so scope them like retrieval
             build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
             build_context_kwargs.update(
                 get_user_id_kwarg(build_context_fn, run_context.user_id if run_context else agent.user_id)
@@ -1865,7 +1865,7 @@ def get_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-            # Applied after the **kwargs merge: the owner comes from the run context, so caller kwargs must not win
+            # After the **kwargs merge so caller kwargs cannot override the run context owner
             knowledge_retriever_kwargs.update(
                 get_user_id_kwarg(
                     agent.knowledge_retriever,
@@ -1892,7 +1892,6 @@ def get_relevant_docs_from_knowledge(
             num_documents = getattr(resolved_knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
-        # Owner scope comes from the run context; None is unscoped, see the Knowledge.search docstring
         retrieve_kwargs: Dict[str, Any] = {
             "query": query,
             "max_results": num_documents,
@@ -1971,7 +1970,7 @@ async def aget_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-            # Applied after the **kwargs merge: the owner comes from the run context, so caller kwargs must not win
+            # After the **kwargs merge so caller kwargs cannot override the run context owner
             knowledge_retriever_kwargs.update(
                 get_user_id_kwarg(
                     agent.knowledge_retriever,
@@ -2006,7 +2005,6 @@ async def aget_relevant_docs_from_knowledge(
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
-        # See the sync variant above
         scope_user_id = run_context.user_id if run_context else agent.user_id
         retrieve_kwargs: Dict[str, Any] = {
             "query": query,

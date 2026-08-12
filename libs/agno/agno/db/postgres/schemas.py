@@ -110,15 +110,10 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": String, "nullable": True},
-    # Per-user knowledge ownership. See KnowledgeRow.user_id; reads scope on
-    # ``(user_id = :uid OR user_id IS NULL)`` so the listing endpoint
-    # (/knowledge/config) only surfaces the caller's content + shared rows.
+    # Uploader. NULL means shared: visible to every user.
     "user_id": {"type": String, "nullable": True, "index": True},
     "__composite_indexes__": [
-        # Routes list "my content + shared" using
-        # ``WHERE (user_id = :uid OR user_id IS NULL) AND linked_to = :name``
-        # — covering both predicates speeds that up materially. Mirrors the
-        # SQLite schema, which already declares this index.
+        # Covers the list query, WHERE (user_id = :uid OR user_id IS NULL) AND linked_to = :name.
         {"name": "ix_knowledge_user_linked_to", "columns": ["user_id", "linked_to"]},
     ],
 }
@@ -136,11 +131,8 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": String, "nullable": False},
-    # Owner of this metric bucket. Stored as an empty string for "no owner"
-    # (RBAC off / pre-isolation deployments / system runs) so the unique
-    # constraint behaves predictably — Postgres treats multiple NULLs as
-    # distinct, which would break uniqueness on the per-user bucket.
-    # ``get_metrics`` maps ``""`` back to ``None`` for API consumers.
+    # Owner of this bucket. Empty string for no owner, since Postgres treats NULLs as distinct and the
+    # unique constraint below would not hold. get_metrics maps it back to None.
     "user_id": {"type": String, "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},

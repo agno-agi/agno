@@ -1490,11 +1490,9 @@ class RedisDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Iterate and upsert each.
+                # One record per distinct user_id, plus the empty-string bucket for unowned sessions
                 for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
-                    # Preserve created_at across re-runs.
+                    # Update the existing record while preserving created_at
                     existing_record = self._get_record("metrics", metrics_record["id"])
                     if existing_record:
                         metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
@@ -1522,9 +1520,7 @@ class RedisDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter by.
             ending_date (Optional[date]): The ending date to filter by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket.
+            user_id (Optional[str]): The ID of the user to filter by. When None, all buckets are returned.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the list of metrics and the latest updated_at.
@@ -1549,7 +1545,7 @@ class RedisDb(BaseDb):
                     filtered_metrics.append(metric)
                 all_metrics = filtered_metrics
 
-            # Filter by user_id if requested.
+            # Filter by user_id
             if user_id is not None:
                 all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
 
@@ -1558,7 +1554,7 @@ class RedisDb(BaseDb):
             if all_metrics:
                 latest_updated_at = max(metric.get("updated_at", 0) for metric in all_metrics)
 
-            # Map the sentinel empty-string user_id back to None.
+            # Map the sentinel empty-string user_id back to None
             cleaned: List[dict] = []
             for metric in all_metrics:
                 row = dict(metric)
@@ -1572,12 +1568,10 @@ class RedisDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # Redis stores records as serialized dicts; we filter in Python. A row
-    # is visible if its ``user_id`` matches the caller OR is unset. When the
-    # caller passes ``user_id=None`` we skip the check entirely.
 
     @staticmethod
     def _knowledge_doc_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        """Whether the given knowledge row is owned by ``user_id`` or unowned. Unscoped callers see everything."""
         if user_id is None:
             return True
         owner = doc.get("user_id")
@@ -1588,9 +1582,7 @@ class RedisDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes the row if it belongs to this user.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
@@ -1612,7 +1604,7 @@ class RedisDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1650,7 +1642,7 @@ class RedisDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1667,7 +1659,7 @@ class RedisDb(BaseDb):
             if linked_to is not None:
                 all_documents = [doc for doc in all_documents if doc.get("linked_to") == linked_to]
 
-            # Owner scoping: drop rows the caller isn't allowed to see.
+            # Apply owner filter if provided
             if user_id is not None:
                 all_documents = [doc for doc in all_documents if self._knowledge_doc_is_visible(doc, user_id)]
 

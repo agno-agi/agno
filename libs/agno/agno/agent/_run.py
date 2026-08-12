@@ -3256,13 +3256,7 @@ def _resolve_continue_owner(
     run_id: Optional[str],
     session: Optional[AgentSession],
 ) -> Optional[str]:
-    """Owner stored on the run being continued.
-
-    A resume rarely carries the owner: the caller replays the paused run, or
-    only its id, and a routed Agent has no ``user_id`` of its own to fall back
-    on. Losing it resumes with ``user_id=None`` — the unscoped admin view over
-    every tenant — so the paused run is the last place the owner survives.
-    """
+    """Owner stored on the run being continued."""
     if run_response is not None:
         return run_response.user_id
     if session is not None:
@@ -3441,8 +3435,7 @@ def continue_run_dispatch(
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
 
-    # Fall back to the owner the run paused with, so the resumed half retrieves
-    # under the same scope as the first half
+    # Fall back to the owner the run paused with, so the resume retrieves under the same scope
     if user_id is None:
         user_id = _resolve_continue_owner(run_response, run_id=run_id, session=agent_session)
 
@@ -4304,9 +4297,8 @@ def acontinue_run_dispatch(  # type: ignore
         update_metadata(agent, session=_pre_session)
         _session_state = load_session_state(agent, session=_pre_session, session_state={})
 
-    # Fall back to the owner the run paused with, so the resumed half retrieves
-    # under the same scope as the first half. With an async DB no session is read
-    # here, so a run_id-only resume has nothing to fall back to.
+    # Fall back to the owner the run paused with, so the resume retrieves under the same scope.
+    # With an async DB no session is read here, so a run_id-only resume has nothing to fall back to.
     if user_id is None:
         user_id = _resolve_continue_owner(run_response, run_id=run_id, session=_pre_session)
 

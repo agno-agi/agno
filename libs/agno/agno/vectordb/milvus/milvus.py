@@ -26,11 +26,7 @@ MILVUS_DISTANCE_MAP = {
 
 # Owner of a chunk for per-user isolation. An unset owner is the shared bucket.
 USER_ID_FIELD = "user_id"
-# Milvus cannot filter reliably on a null owner: `user_id is null` raises
-# "span() interface is not implemented for variable column" once a sealed segment
-# holds more than one chunk - several flushed insert batches are enough, deletes
-# are not required - and it fails on `search` and `query` as well as `delete`.
-# Shared rows therefore carry an explicit sentinel.
+# Milvus cannot filter on a null owner - `user_id is null` raises on a sealed segment - so shared rows use a sentinel.
 SHARED_USER_ID_VALUE = "__shared__"
 
 
@@ -193,8 +189,7 @@ class Milvus(VectorDb):
         for field_name, datatype, max_length, is_primary in fields:
             schema.add_field(field_name=field_name, datatype=datatype, max_length=max_length, is_primary=is_primary)
 
-        # Declare the owner field explicitly - hybrid search cannot filter on a dynamic field.
-        # Never null: shared rows carry SHARED_USER_ID_VALUE, so no predicate needs "is null".
+        # Declare the owner field explicitly - hybrid search cannot filter on a dynamic field
         schema.add_field(field_name=USER_ID_FIELD, datatype=DataType.VARCHAR, max_length=256, nullable=False)
 
         # Add vector fields
@@ -214,8 +209,7 @@ class Milvus(VectorDb):
 
         schema.add_field(field_name="id", datatype=DataType.VARCHAR, max_length=65_535, is_primary=True)
 
-        # Declare the owner field explicitly - a dynamic-field key cannot be filtered on.
-        # Never null: shared rows carry SHARED_USER_ID_VALUE, so no predicate needs "is null".
+        # Declare the owner field explicitly - a dynamic-field key cannot be filtered on
         schema.add_field(field_name=USER_ID_FIELD, datatype=DataType.VARCHAR, max_length=256, nullable=False)
 
         schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=self.dimensions)
@@ -259,15 +253,7 @@ class Milvus(VectorDb):
         return index_params
 
     def _validate_user_id(self, user_id: Optional[str]) -> None:
-        """Reject a user_id the sentinel-based contract cannot tell apart from shared.
-
-        The shared bucket is a value stored in the row, not the absence of one, so a
-        caller whose real id is that value addresses the shared bucket outright: their
-        uploads publish org-wide, they read every other owner's shared content as their
-        own, and a scoped delete of theirs clears out of the shared bucket - which the
-        strict-delete contract says is nobody's to remove but an admin's. Refuse the
-        collision rather than store it; use None for shared/unscoped access.
-        """
+        """Reject a user_id that collides with the shared sentinel. Use None for shared/unscoped access."""
         if user_id == SHARED_USER_ID_VALUE:
             raise ValueError(
                 f"user_id must not be '{SHARED_USER_ID_VALUE}' - that value is reserved to mark content "
@@ -275,13 +261,9 @@ class Milvus(VectorDb):
             )
 
     def _scoped_doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the deterministic id so two users uploading the
-        same content get distinct ids. None keeps the stable base id.
+        """Fold the owner into the deterministic id so two users uploading the same content get distinct ids.
 
-        ``base_id`` is caller-controlled and variable length, so it is collapsed with
-        ``content_hash`` into a fixed-length digest before the owner is folded in -
-        otherwise the '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice')
-        collapse to the same id, letting one owner overwrite the other's chunk.
+        ``base_id`` is digested first so a shifted '_' boundary cannot collide two owners' ids.
         """
         doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
         if user_id is None:
@@ -433,16 +415,10 @@ class Milvus(VectorDb):
         """
         Check if a document with the given content hash exists.
 
-        user_id set checks only that owner's chunks (never another user's or the
-        shared bucket), so an upload one owner already made is not judged a
-        duplicate for everyone.
-
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): Owner to scope the check to. This is the guard
-                half of the upsert dedup pair, so None addresses the shared bucket
-                alone (the shared sentinel) rather than every owner - the same
-                bucket a None-scoped delete clears.
+            user_id (Optional[str]): Owner to scope the check to. ``None`` checks the shared
+                bucket alone, matching what a ``None``-scoped delete clears.
 
         Returns:
             bool: True if a document with the given content hash exists, False otherwise.
@@ -499,8 +475,7 @@ class Milvus(VectorDb):
         """Insert documents based on search type.
 
         Args:
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
-                None (default) writes to the shared bucket.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents")
@@ -551,8 +526,7 @@ class Milvus(VectorDb):
         """Insert documents asynchronously based on search type.
 
         Args:
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
-                None (default) writes to the shared bucket.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
         log_info(f"Inserting {len(documents)} documents asynchronously")
@@ -663,14 +637,12 @@ class Milvus(VectorDb):
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
         log_debug(f"Upserting {len(documents)} documents")
 
-        # ``upsert`` replaces by primary key, so a document that SHRINKS between
-        # versions leaves its dropped chunks behind - nothing overwrites them and
-        # they keep answering searches. Clear the caller's prior chunks first.
+        # ``upsert`` replaces by primary key, so a shrunk document would leave its dropped chunks behind
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -723,7 +695,7 @@ class Milvus(VectorDb):
         """Upsert documents asynchronously.
 
         Args:
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
         log_debug(f"Upserting {len(documents)} documents asynchronously")
@@ -829,19 +801,13 @@ class Milvus(VectorDb):
 
     @staticmethod
     def _escape_expr_literal(value: str) -> str:
-        """Escape a value interpolated into a double-quoted Milvus expression literal
-        so a quote or backslash in the value cannot break out of the string.
-        """
+        """Escape a value interpolated into a double-quoted Milvus expression literal."""
         return value.replace("\\", "\\\\").replace('"', '\\"')
 
     def _scoped_filter_expr(
         self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]], user_id: Optional[str]
     ) -> Optional[str]:
-        """Combine the metadata filter with the per-user owner scope.
-
-        A set user_id restricts results to the caller's own chunks plus the shared
-        bucket; None applies no scope (admin view, sees everything).
-        """
+        """Combine the metadata filter with the owner scope. ``None`` applies no scope."""
         if isinstance(filters, list):
             filters = None
         base = self._build_expr(filters)
@@ -872,8 +838,8 @@ class Milvus(VectorDb):
                 - radius (float): Minimum similarity threshold for range search
                 - range_filter (float): Maximum similarity threshold for range search
                 - params (dict): Index-specific search params (e.g., nprobe, ef)
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. None means no scope (admin view, sees all).
+            user_id (Optional[str]): Restrict results to this user's chunks plus the shared
+                bucket. ``None`` applies no scope.
 
         Returns:
             List[Document]: List of matching documents
@@ -945,8 +911,8 @@ class Milvus(VectorDb):
                 - radius (float): Minimum similarity threshold for range search
                 - range_filter (float): Maximum similarity threshold for range search
                 - params (dict): Index-specific search params (e.g., nprobe, ef)
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. None means no scope (admin view, sees all).
+            user_id (Optional[str]): Restrict results to this user's chunks plus the shared
+                bucket. ``None`` applies no scope.
 
         Returns:
             List[Document]: List of matching documents
@@ -1008,8 +974,8 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. None means no scope (admin view, sees all).
+            user_id (Optional[str]): Restrict results to this user's chunks plus the shared
+                bucket. ``None`` applies no scope.
 
         Returns:
             List[Document]: List of matching documents
@@ -1113,8 +1079,8 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. None means no scope (admin view, sees all).
+            user_id (Optional[str]): Restrict results to this user's chunks plus the shared
+                bucket. ``None`` applies no scope.
 
         Returns:
             List[Document]: List of matching documents
@@ -1316,14 +1282,10 @@ class Milvus(VectorDb):
         """
         Delete documents by content hash, scoped to user_id when set.
 
-        user_id set deletes only that owner's chunks; None deletes from the shared
-        bucket alone, so a shared re-upsert never wipes a scoped owner's
-        identical-content chunks. This is the delete half of the upsert dedup pair,
-        so it clears exactly the bucket ``content_hash_exists`` checks.
-
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Restrict the delete to the owner's chunks.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks. ``None`` clears
+                the shared bucket alone, matching what ``content_hash_exists`` checks.
 
         Returns:
             bool: True if the delete completed, False otherwise.
@@ -1346,12 +1308,10 @@ class Milvus(VectorDb):
         """
         Delete documents by content ID, scoped to user_id when set.
 
-        user_id set deletes only that owner's chunks (never another user's or the
-        shared bucket); None deletes all chunks with this content_id.
-
         Args:
             content_id (str): The content ID to delete
-            user_id (Optional[str]): Restrict the delete to the owner's chunks.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks. ``None`` deletes
+                every chunk with this content_id.
 
         Returns:
             bool: True if documents were deleted, False otherwise
@@ -1428,8 +1388,7 @@ class Milvus(VectorDb):
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
         """
-        # Owner is a scalar field, not metadata; drop any incoming user_id so a
-        # metadata write can't reassign ownership.
+        # Owner is a scalar field, not metadata - drop any incoming user_id so ownership can't be reassigned
         metadata = {k: v for k, v in metadata.items() if k != USER_ID_FIELD}
         try:
             # Fetch the full row so we can do a complete upsert. Milvus only supports

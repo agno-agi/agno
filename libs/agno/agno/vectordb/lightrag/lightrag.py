@@ -70,9 +70,7 @@ class LightRag(VectorDb):
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if content with the given hash exists.
 
-        Always False: Knowledge routes LightRAG ingestion through
-        ``insert_file_bytes`` / ``insert_text``, and this guard runs before that
-        branch, so answering True would block every LightRAG upload.
+        Always False: returning True would block the ``insert_file_bytes`` / ``insert_text`` upload path.
         """
         if user_id is not None:
             log_warning(
@@ -125,13 +123,11 @@ class LightRag(VectorDb):
 
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
-        Delete documents by content ID.
-        Not implemented for LightRag - use ``delete_by_external_id``.
+        Delete documents by content ID. Not supported for LightRag - use ``delete_by_external_id``.
 
         Args:
             content_id (str): The content ID to delete
-            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LightRAG
-                server owns these chunks.
+            user_id (Optional[str]): Ignored - LightRAG does not support per-user isolation.
 
         Returns:
             bool: False as this operation is not supported
@@ -172,8 +168,7 @@ class LightRag(VectorDb):
             query (str): The query string to search for.
             limit (int): The maximum number of documents to return. Defaults to 5.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
-            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LightRAG
-                server owns these chunks.
+            user_id (Optional[str]): Ignored - LightRAG does not support per-user isolation.
 
         Returns:
             List[Document]: A list of relevant documents matching the query.

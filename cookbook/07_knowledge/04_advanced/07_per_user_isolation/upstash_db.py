@@ -5,10 +5,7 @@ Each user gets a private view of one shared knowledge base. Documents
 uploaded with a user_id are visible only to that user; documents uploaded
 without one are shared with everyone.
 
-Upstash stores the owner in each vector's metadata; shared chunks omit the
-field and scoped reads filter user_id = X OR HAS NOT FIELD user_id. The Upstash
-wrapper raises NotImplementedError from async_search, so Knowledge.asearch falls
-back to the sync call with the owner intact.
+Upstash keeps the owner in each vector's metadata; shared chunks simply omit the field.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
@@ -61,8 +58,7 @@ vector_db = UpstashVectorDb(
     embedder=OpenAIEmbedder(),
 )
 
-# Start clean. Upstash cannot drop an index over the API, so the vectors are
-# deleted instead and the delete is given time to propagate.
+# Upstash cannot drop an index over the API, so clear the vectors and let the delete propagate.
 vector_db.delete(delete_all=True)
 time.sleep(2)
 
@@ -79,8 +75,6 @@ knowledge = Knowledge(
 if __name__ == "__main__":
 
     async def main() -> None:
-        # Alice and Bob upload private docs; the last upload has no user_id,
-        # which makes it shared / org-wide content.
         await knowledge.ainsert(
             name="alice_salary",
             text_content=ALICE_SALARY,
@@ -91,6 +85,7 @@ if __name__ == "__main__":
             text_content=BOB_SALARY,
             user_id="bob",
         )
+        # The last upload has no user_id, which makes it shared with everyone.
         await knowledge.ainsert(
             name="company_holidays",
             text_content=HOLIDAYS,
@@ -142,11 +137,6 @@ if __name__ == "__main__":
         print("AGENT-MEDIATED RETRIEVAL: the owner has to survive the handoff")
         print("=" * 60 + "\n")
 
-        # Everything above calls Knowledge directly. An application does not -
-        # it runs an agent, and the owner has to travel from the run context
-        # through the search tool into the vector DB. A dropped user_id becomes
-        # None, which is the admin view, so a broken handoff leaks silently
-        # instead of raising.
         alice_agent = Agent(
             name="Alice's Assistant",
             model=OpenAIResponses(id="gpt-5.5"),
@@ -164,15 +154,13 @@ if __name__ == "__main__":
         print("Alice's agent on 'What is Bob's salary?':")
         print(response.content)
 
-        # Assert on what retrieval actually returned, not on the model's prose:
-        # the references are the deterministic record of the isolation boundary.
+        # Assert on what retrieval returned, not on the model's prose.
         retrieved = " ".join(
             item["content"]
             for ref in (response.references or [])
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
         )
-        # Guard against a vacuous pass: empty references mean the agent never searched
         assert retrieved, (
             "Retrieval returned no documents, so the isolation check below would pass on nothing"
         )

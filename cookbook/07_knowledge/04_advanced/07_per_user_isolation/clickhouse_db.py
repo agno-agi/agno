@@ -62,8 +62,7 @@ vector_db = Clickhouse(
     password=CLICKHOUSE_PASSWORD,
 )
 
-# Start clean, so the table is created with the owner column. Scoped reads
-# against a pre-isolation table name a column that is not there.
+# Start clean: a pre-isolation table has no owner column, so scoped reads fail.
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()
@@ -81,8 +80,7 @@ knowledge = Knowledge(
 if __name__ == "__main__":
 
     async def main() -> None:
-        # Alice and Bob upload private docs; the last upload has no user_id,
-        # which makes it shared / org-wide content.
+        # The upload with no user_id is shared content, visible to everyone.
         await knowledge.ainsert(
             name="alice_salary",
             text_content=ALICE_SALARY,
@@ -141,11 +139,6 @@ if __name__ == "__main__":
         print("AGENT-MEDIATED RETRIEVAL: the owner has to survive the handoff")
         print("=" * 60 + "\n")
 
-        # Everything above calls Knowledge directly. An application does not -
-        # it runs an agent, and the owner has to travel from the run context
-        # through the search tool into the vector DB. A dropped user_id becomes
-        # None, which is the admin view, so a broken handoff leaks silently
-        # instead of raising.
         alice_agent = Agent(
             name="Alice's Assistant",
             model=OpenAIResponses(id="gpt-5.5"),
@@ -163,15 +156,13 @@ if __name__ == "__main__":
         print("Alice's agent on 'What is Bob's salary?':")
         print(response.content)
 
-        # Assert on what retrieval actually returned, not on the model's prose:
-        # the references are the deterministic record of the isolation boundary.
+        # Assert on the references, not the model's prose - retrieval is the deterministic record.
         retrieved = " ".join(
             item["content"]
             for ref in (response.references or [])
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
         )
-        # Guard against a vacuous pass: empty references mean the agent never searched
         assert retrieved, (
             "Retrieval returned no documents, so the isolation check below would pass on nothing"
         )

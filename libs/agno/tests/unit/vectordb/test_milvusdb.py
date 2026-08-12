@@ -125,7 +125,7 @@ def test_create_collection(milvus_db, mock_milvus_client):
         assert kwargs["collection_name"] == "test_collection"
         fields = {f.name: f for f in kwargs["schema"].fields}
         assert fields["vector"].params["dim"] == milvus_db.dimensions
-        # Shared rows carry an explicit sentinel, so the owner column is never null.
+        # Shared rows use a sentinel value instead of null
         assert fields["user_id"].nullable is False
 
 

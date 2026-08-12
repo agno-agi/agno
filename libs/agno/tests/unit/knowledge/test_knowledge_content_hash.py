@@ -715,7 +715,7 @@ def test_document_content_hash_includes_metadata(knowledge):
 
 
 def test_owner_produces_different_hash_for_the_same_file():
-    """The id derived from this hash is the row key, so two owners must not collide."""
+    """Two owners uploading the same file must not collide."""
     knowledge = Knowledge(vector_db=MockVectorDb())
 
     alice = Content(name="report.txt", user_id="alice", file_data=FileData(filename="report.txt", content=b"a"))
@@ -725,7 +725,7 @@ def test_owner_produces_different_hash_for_the_same_file():
 
 
 def test_unowned_content_hash_backward_compatible():
-    """Content with no owner (isolation off, admin uploads, legacy rows) hashes as before."""
+    """Content with no owner retains its prior hash — backward compat."""
     knowledge = Knowledge(vector_db=MockVectorDb())
 
     unowned = Content(url="https://example.com/doc.pdf", name="Doc")
@@ -737,7 +737,7 @@ def test_unowned_content_hash_backward_compatible():
 
 
 def test_same_owner_same_content_produces_same_hash():
-    """Re-uploading still lands on the owner's own row rather than a new one."""
+    """Deduplication still works when the same owner re-uploads the same content."""
     knowledge = Knowledge(vector_db=MockVectorDb())
 
     first = Content(name="notes", user_id="alice", path="notes.md")
@@ -747,8 +747,7 @@ def test_same_owner_same_content_produces_same_hash():
 
 
 def test_empty_string_owner_is_a_real_owner():
-    """The guard is ``is not None``, so ``""`` leads the hash like any other
-    owner instead of collapsing onto the unowned row."""
+    """The guard is ``is not None``, so ``""`` hashes as an owner, not as unowned content."""
     knowledge = Knowledge(vector_db=MockVectorDb())
 
     empty_owner = Content(url="https://example.com/doc.pdf", name="Doc", user_id="")
@@ -758,8 +757,7 @@ def test_empty_string_owner_is_a_real_owner():
 
 
 def test_owner_produces_different_document_hash_for_the_same_page():
-    """``_should_skip`` dedups on the per-source id, so a second owner's crawl
-    of one page must not look like one that is already indexed."""
+    """Two owners crawling the same page must not collide on the document hash."""
     knowledge = Knowledge(vector_db=MockVectorDb())
     doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
 
@@ -770,6 +768,7 @@ def test_owner_produces_different_document_hash_for_the_same_page():
 
 
 def test_empty_string_owner_is_a_real_owner_for_document_hashes():
+    """The same ``""`` rule holds for document hashes."""
     knowledge = Knowledge(vector_db=MockVectorDb())
     doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
 

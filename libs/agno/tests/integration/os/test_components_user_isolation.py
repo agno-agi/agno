@@ -7,8 +7,7 @@ Validates that:
 - Users cannot run another user's DB-backed agent / team / workflow
 - Users cannot reference another user's component as a team member or
   workflow step, at any nesting depth
-- Endpoints that resolve a component before checking session ownership do not
-  leak its existence through a differing error
+- Routes that resolve a component before checking the session do not leak its existence
 
 Component persistence is implemented by the SQLite and Postgres adapters; these
 tests run against the SqliteDb-backed ``shared_db``.
@@ -31,9 +30,8 @@ TEST_OS_ID = "test-isolation-os"
 def create_token(user_id: str, scopes: list[str] | None = None) -> str:
     """Create a JWT token for the given user.
 
-    Default scopes cover the component endpoints (read / write / delete) plus
-    the agent / team / workflow routes that resolve DB-backed components. Pass
-    ``scopes=[...]`` explicitly to test narrower-scope behaviour.
+    Default scopes cover the component endpoints (read / write / delete) plus the
+    routes that resolve them. Pass ``scopes=[...]`` explicitly to test narrower-scope behaviour.
     """
     payload = {
         "sub": user_id,
@@ -74,9 +72,7 @@ def create_component(client, token: str, name: str, component_type: str, config:
     )
 
 
-# A DB-backed component config only becomes runnable once it carries a model;
-# the gate tests below use model-less configs because they stop at the 404
-# before any model is reached. The owner-can-run tests need a real one.
+# The gate tests 404 before a model is reached, so only the owner-can-run tests need a real one.
 RUNNABLE_MODEL = {"name": "OpenAIResponses", "id": "gpt-5.5", "provider": "OpenAI"}
 
 
@@ -84,8 +80,7 @@ RUNNABLE_MODEL = {"name": "OpenAIResponses", "id": "gpt-5.5", "provider": "OpenA
 def client(shared_db):
     """Isolation-enabled client backed by ``shared_db``.
 
-    No code-defined components are registered, so every agent / team / workflow
-    the routes return is DB-backed and therefore owner-scoped.
+    No code-defined components are registered, so every component the routes return is DB-backed.
     """
     agent_os = AgentOS(
         id=TEST_OS_ID,
@@ -240,9 +235,7 @@ class TestComponentResolutionIsolation:
         ],
     )
     def test_agent_routes_do_not_leak_component_existence(self, client, alice_agent, path):
-        """A route that resolves the agent before checking the session must not
-        answer differently for another user's component than for one that does
-        not exist -- the difference is an existence oracle."""
+        """Another user's component must answer exactly as a missing one -- otherwise it is an existence oracle."""
         token = create_token("user-b")
         method = "POST" if path.endswith("/fork") else "GET"
 
@@ -283,9 +276,8 @@ class TestComponentResolutionIsolation:
 class TestOwnerCanRunOwnComponents:
     """The isolation gate must block non-owners without breaking the owner.
 
-    The 404 checks above cannot tell "correctly denied another user" apart from
-    "route is broken for everyone", so these run an owner's own agent, team, and
-    workflow end-to-end (real model) and assert a completed run comes back.
+    The 404 checks above cannot tell a correct denial from a route that is broken for
+    everyone, so these run an owner's own components end-to-end against a real model.
     """
 
     def test_owner_can_run_own_agent(self, client):
@@ -332,9 +324,7 @@ class TestOwnerCanRunOwnComponents:
         assert resp.status_code == 201, resp.text
         team_id = resp.json()["component_id"]
 
-        # A team whose member fails to rehydrate still runs and returns 200, so
-        # assert the member actually resolved -- otherwise this passes even if
-        # member rehydration (the PR's mechanism) is broken.
+        # A team whose member fails to rehydrate still returns 200, so assert it resolved.
         detail = client.get(f"/teams/{team_id}", headers=auth_header(create_token("user-a")))
         assert detail.status_code == 200, detail.text
         assert member_id in [m.get("id") for m in detail.json().get("members", [])]

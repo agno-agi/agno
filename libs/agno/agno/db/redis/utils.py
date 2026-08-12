@@ -198,17 +198,14 @@ def remove_index_entries(
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given date, bucketed per ``user_id``.
 
-    Each session is attributed to its owning user. Sessions without a
-    ``user_id`` aggregate under the sentinel empty-string bucket.
+    Sessions without a ``user_id`` aggregate under the sentinel empty-string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data.
 
     Returns:
-        A list of per-user metrics records. Redis uses a deterministic key
-        ``{date}_{user_id}_daily`` so re-running the calculation for the
-        same (date, user) updates the same record.
+        List[dict]: A list of per-user metrics records.
     """
 
     def _empty_metric_record() -> Dict[str, Any]:
@@ -273,8 +270,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
         users_count = 0 if user_id == "" else 1
-        # Deterministic per-(date, user) ID so re-running the calculation
-        # updates the same record rather than producing duplicates.
+        # Create a deterministic ID based on date and user. This simplifies avoiding duplicates
         metric_id = f"{date_to_process.isoformat()}_{user_id}_daily"
 
         records.append(

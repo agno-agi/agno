@@ -1,15 +1,9 @@
 """Unit tests for the strict owner scope on knowledge-content deletes.
 
 Reads are inclusive: a scoped caller sees their own rows plus the shared /
-unowned ones. Deletes are strict: a scoped caller can only remove rows they
-own, so an admin-uploaded org-wide row survives ``user_id="alice"`` and is
-removed only by the unscoped (admin) call.
-
-Every Db adapter implements this contract; the embedded backends (SQLite,
-in-memory, JSON) are exercised end to end here so the suite needs no external
-services, and one adapter per predicate mechanism (SQLAlchemy statements via
-Postgres, Mongo filter documents, Redis read-then-delete) is covered by its own
-cases below.
+unowned ones. Deletes are strict: a scoped caller only removes rows they own, so
+an admin-uploaded org-wide row survives ``user_id="alice"`` and is removed only
+by the unscoped (admin) call.
 """
 
 from unittest.mock import MagicMock, Mock, patch
@@ -59,7 +53,6 @@ def seeded(db):
 
 class TestScopedDeleteIsStrict:
     def test_shared_row_survives_scoped_delete(self, seeded):
-        """The keystone: alice cannot delete an unowned, org-wide row."""
         seeded.delete_knowledge_content(SHARED, user_id="alice")
         assert seeded.get_knowledge_content(SHARED) is not None
 
@@ -76,7 +69,6 @@ class TestScopedDeleteIsStrict:
         assert seeded.get_knowledge_content(BOB) is not None
 
     def test_owned_row_deleted_by_admin(self, seeded):
-        """The unscoped path reaches owned rows too, not just the shared one."""
         seeded.delete_knowledge_content(ALICE, user_id=None)
         assert seeded.get_knowledge_content(ALICE) is None
 
@@ -102,8 +94,6 @@ class TestScopedDeleteIsStrict:
 
 
 class TestReadsStayInclusive:
-    """Guard: the strict delete must not have leaked into the read scope."""
-
     def test_scoped_read_still_sees_shared_row(self, seeded):
         assert seeded.get_knowledge_content(SHARED, user_id="alice") is not None
 
@@ -187,8 +177,7 @@ class TestMongoDeleteFilter:
 
 @pytest.fixture
 def redis_db():
-    # Scoped to this fixture: at module level it would skip the whole file,
-    # including the embedded-backend cases that need no dependency at all.
+    # Fixture-scoped: at module level this would skip the embedded-backend cases too.
     fakeredis = pytest.importorskip("fakeredis")
     from agno.db.redis.redis import RedisDb
 

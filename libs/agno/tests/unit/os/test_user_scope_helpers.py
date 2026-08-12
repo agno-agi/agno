@@ -138,11 +138,7 @@ class TestGetScopedUserId:
 
 
 class TestSchedulerOwnerHeader:
-    """The scheduler sentinel scopes to the owner the executor forwards.
-
-    The header is the executor's way of saying whose work a scheduled call is;
-    trusting it from anyone else would let any caller pick a scope.
-    """
+    """The scheduler sentinel scopes to the owner the executor forwards; other callers' headers are ignored."""
 
     @staticmethod
     def _with_header(request, owner):
@@ -465,8 +461,7 @@ class TestGetScopedUserIdFromParts:
         )
 
     def test_sa_self_scopes_regardless_of_isolation(self):
-        # The bug this guards: over the WS a service account was unscoped when
-        # isolation was off, while get_scoped_user_id self-scopes it.
+        # Regression: over the WS a service account was unscoped when isolation was off.
         assert (
             get_scoped_user_id_for_ws("sa:bot", jwt_enabled=True, is_admin=False, user_isolation_enabled=False)
             == "sa:bot"

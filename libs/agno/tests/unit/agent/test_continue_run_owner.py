@@ -1,8 +1,7 @@
 """Tests for the owner fallback used when a paused run is resumed.
 
-A resume rarely carries the owner — the caller replays the paused run, or only
-its id — and a routed Agent has no ``user_id`` of its own. Losing it resumes
-with ``user_id=None``, which is the unscoped admin view over every tenant.
+A resume rarely carries the owner, and losing it falls back to ``user_id=None`` — the
+unscoped admin view over every tenant.
 """
 
 from agno.agent._run import _resolve_continue_owner

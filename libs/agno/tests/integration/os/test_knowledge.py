@@ -169,8 +169,7 @@ def test_edit_content_success(test_app, mock_knowledge, mock_content_row):
     """Test successful content editing."""
     content_id = mock_content_row.id
 
-    # Route pre-checks ownership via aget_content_by_id; return the row so the
-    # scope gate passes.
+    # Route pre-checks ownership via aget_content_by_id
     mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     # Mock the return value of patch_content
@@ -208,7 +207,7 @@ def test_edit_content_with_invalid_reader(test_app, mock_knowledge, mock_content
     """Test content editing with invalid reader_id."""
     content_id = mock_content_row.id
     mock_knowledge.readers = {"valid_reader": Mock()}
-    # Route pre-checks ownership before validating the reader_id.
+    # Route pre-checks ownership before validating the reader_id
     mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     response = test_app.patch(
@@ -238,8 +237,7 @@ def test_get_content_list(test_app, mock_knowledge, mock_content_row):
 
 def test_get_content_by_id(test_app, mock_knowledge, mock_content):
     """Test getting content by ID."""
-    # Route reads Content via aget_content_by_id (not the raw KnowledgeRow),
-    # so return the Content fixture.
+    # Route reads Content via aget_content_by_id, not the raw KnowledgeRow
     mock_knowledge.aget_content_by_id.return_value = mock_content
 
     response = test_app.get(f"/knowledge/content/{mock_content.id}")
@@ -273,7 +271,7 @@ def test_get_content_by_id_not_found(test_app, mock_knowledge):
 def test_delete_content_by_id(test_app, mock_knowledge, mock_content_row):
     """Test deleting content by ID."""
     mock_knowledge.contents_db.get_knowledge_content.return_value = mock_content_row
-    # Route pre-checks ownership before deleting.
+    # Route pre-checks ownership before deleting
     mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     response = test_app.delete(f"/knowledge/content/{mock_content_row.id}")
@@ -282,13 +280,12 @@ def test_delete_content_by_id(test_app, mock_knowledge, mock_content_row):
     data = response.json()
     assert data["id"] == mock_content_row.id
 
-    # Verify knowledge.aremove_content_by_id was called. ``user_id=None`` because
-    # the test app has no auth wired, so ``get_scoped_user_id`` returns None.
+    # Verify knowledge.aremove_content_by_id was called, unscoped since the test app has no auth wired
     mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id, user_id=None)
 
 
 def test_edit_shared_content_is_forbidden(test_app, mock_knowledge, mock_content_row):
-    """A scoped caller may read shared (unowned) content but not modify it."""
+    """Test that a scoped caller cannot modify shared content."""
     mock_content_row.user_id = None
     mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
@@ -301,7 +298,7 @@ def test_edit_shared_content_is_forbidden(test_app, mock_knowledge, mock_content
 
 
 def test_delete_shared_content_is_forbidden(test_app, mock_knowledge, mock_content_row):
-    """The vector rows go with the metadata row, so the guard has to precede both."""
+    """Test that a scoped caller cannot delete shared content."""
     mock_content_row.user_id = None
     mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
@@ -314,7 +311,7 @@ def test_delete_shared_content_is_forbidden(test_app, mock_knowledge, mock_conte
 
 
 def test_delete_own_content_is_allowed_when_scoped(test_app, mock_knowledge, mock_content_row):
-    """The guard must not over-block: an owner still deletes their own content."""
+    """Test that a scoped caller can delete their own content."""
     mock_content_row.user_id = "alice"
     mock_knowledge.aget_content_by_id.return_value = mock_content_row
 

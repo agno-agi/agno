@@ -11262,7 +11262,7 @@ def get_workflow_by_id(
     try:
         from agno.utils.component_scope import component_owner_scope
 
-        # Scope to owner: a non-owner must not load another user's workflow component.
+        # Only resolve the workflow if owned by this user.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 
@@ -11338,6 +11338,7 @@ def get_workflows(
                             workflow_config["id"] = component_id
                         # Resolve DB-backed step executors under the workflow's owner scope.
                         with component_owner_scope(user_id):
+                            # Lenient on purpose: listings must show degraded components so they stay fixable.
                             workflow = Workflow.from_dict(workflow_config, db=db, registry=registry, strict=False)
                         workflow.id = component_id
                         workflow._version = component.get("current_version")

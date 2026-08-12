@@ -85,15 +85,11 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     - User isolation is not enabled (the opt-in
       ``AuthorizationConfig(user_isolation=True)`` flag is off).
     - The user has admin scope (admins see all data).
-    - The caller is the framework's own scheduler executor (authenticated
-      with the internal service token) firing an *unowned* schedule. The
-      sentinel ``__scheduler__`` identifies the *caller*, not the *owner* of
-      any work, so an owned schedule scopes to the owner the executor
-      forwards in ``SCHEDULE_OWNER_HEADER``.
+    - The caller is the scheduler executor firing an *unowned* schedule. An owned
+      schedule scopes to the owner forwarded in ``SCHEDULE_OWNER_HEADER``.
 
-    Raises 403 when isolation is on and the caller reached an agno auth
-    middleware but carries no identity — falling through to "no filtering"
-    there would hand an identity-less token every user's data.
+    Raises 403 when isolation is on and an authenticated caller carries no
+    identity, rather than falling through to unscoped.
 
     Returns the user_id string only when a regular (non-admin) user is
     authenticated AND user isolation is enabled.
@@ -137,22 +133,12 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return None
 
     if not user_id:
-        # Getting this far means an agno auth middleware ran -- nothing else
-        # puts ``user_isolation_enabled`` on request.state -- and it produced no
-        # identity. Fail closed instead of falling through to unscoped ("see
-        # everything"), which would make a malformed token on the
-        # ``validate=False`` path more permissive than a valid one with no sub.
+        # An agno auth middleware ran (nothing else sets ``user_isolation_enabled``)
+        # and produced no identity — fail closed instead of falling through to unscoped.
         raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
 
-    # Scheduler executor caller: the sentinel never means "scope to user
-    # __scheduler__" — that user does not exist. Scope to the schedule owner
-    # the executor forwarded, so a scheduled call reaches only that owner's
-    # data; a schedule can name any endpoint, and the internal service token
-    # carries broad scopes, so falling through unscoped would let one user's
-    # schedule act on another's. An unowned (system) schedule forwards no
-    # owner and stays unscoped. Without this, every scheduler-fired run,
-    # session, trace, and metric is attributed to ``__scheduler__`` instead of
-    # the owner, which is what users reported as the sessions/metrics gap.
+    # The sentinel identifies the caller, not an owner: scope to the schedule owner the
+    # executor forwarded. An unowned (system) schedule forwards none and stays unscoped.
     from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 
     if user_id == INTERNAL_SCHEDULER_USER_ID:
@@ -164,9 +150,8 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
 def _schedule_owner_from_header(request: Request) -> Optional[str]:
     """Read the owner the executor forwarded for the schedule it is firing.
 
-    The executor percent-encodes the value, so decode before use. A header that
-    survives the hop but carries no usable identity is refused rather than
-    treated as "unowned", which would widen the call to every user's data.
+    The executor percent-encodes the value, so decode before use. A header carrying
+    no usable identity is refused rather than treated as unowned.
     """
     from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
     from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
@@ -188,13 +173,10 @@ def get_scoped_user_id_for_ws(
     is_admin: bool,
     user_isolation_enabled: bool,
 ) -> Optional[str]:
-    """WebSocket counterpart of :func:`get_scoped_user_id`.
+    """WebSocket counterpart of :func:`get_scoped_user_id`, with the same precedence.
 
-    The workflow WebSocket handlers have no ``Request`` to read
-    ``request.state`` from, so they pass the auth flags explicitly. The
-    precedence mirrors :func:`get_scoped_user_id`: admins are unscoped, service
-    accounts self-scope regardless of the isolation flag, and human/JWT callers
-    scope only when isolation is enabled.
+    Workflow WebSocket handlers have no ``Request`` to read ``request.state`` from,
+    so the auth flags are passed explicitly.
     """
     if is_admin:
         return None

@@ -924,7 +924,7 @@ def from_dict(
     from agno.team import get_team_by_id
     from agno.utils.component_scope import get_component_owner_scope
 
-    # Resolve DB-backed members as the component owner (if scoped), so a stored
+    # Resolve DB-backed members as the component owner when a scope is set, so a stored
     # reference to another user's private component is not rehydrated here.
     owner_user_id = get_component_owner_scope()
 

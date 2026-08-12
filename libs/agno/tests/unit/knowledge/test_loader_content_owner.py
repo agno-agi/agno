@@ -1,9 +1,4 @@
-"""Tests that remote loaders keep the owner on the per-file entries of a folder upload.
-
-A folder upload expands into one Content row per file. Those rows are built from
-the parent Content, so dropping ``user_id`` there publishes a private bucket
-prefix to every user of the deployment.
-"""
+"""Tests that remote loaders keep the owner on the per-file entries of a folder upload."""
 
 from types import SimpleNamespace
 
@@ -23,9 +18,7 @@ def knowledge():
 def _capture_entries(knowledge, skip_owners=None):
     """Collect the entries a loader writes, short-circuiting the read/embed work.
 
-    ``skip_owners``, when given, collects the owner each ``_should_skip`` call is
-    scoped to. The guard has to look in the same bucket the write lands in, or a
-    scoped user's remote sync never sees its own rows and re-ingests every time.
+    ``skip_owners``, when given, records the owner each ``_should_skip`` call is scoped to.
     """
     captured = []
 
@@ -116,7 +109,6 @@ class TestS3FolderOwner:
 
     @pytest.mark.asyncio
     async def test_async_s3_folder_entries_inherit_owner(self, knowledge):
-        """The route only ever reaches the async loader, so it needs its own case."""
         captured = _capture_entries(knowledge)
 
         await knowledge._aload_from_s3(_s3_content(), upsert=False, skip_if_exists=True, config=None)
@@ -136,7 +128,6 @@ class TestGCSFolderOwner:
 
     @pytest.mark.asyncio
     async def test_async_gcs_folder_entries_inherit_owner(self, knowledge):
-        """See the matching S3 case: the route path is the async one."""
         captured = _capture_entries(knowledge)
 
         await knowledge._aload_from_gcs(_gcs_content(), upsert=False, skip_if_exists=True, config=None)
@@ -146,13 +137,7 @@ class TestGCSFolderOwner:
 
 
 class TestSkipCheckIsOwnerScoped:
-    """The dedup guard has to probe the bucket the write lands in.
-
-    ``_should_skip`` defaults ``user_id`` to None, which addresses the shared
-    bucket, so a loader that leaves the argument off checks shared rows while
-    writing owned ones - the guard can then never fire and every sync re-ingests
-    a full extra copy.
-    """
+    """``_should_skip`` defaults to the shared bucket, so an unscoped check never matches an owned row."""
 
     def test_s3_skip_check_is_scoped_to_the_owner(self, knowledge):
         skip_owners: list = []

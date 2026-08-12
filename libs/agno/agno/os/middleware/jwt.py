@@ -968,9 +968,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 request, token, method, path, origin, cors_allowed_origins, call_next
             )
 
-        # Check for internal service token (used by scheduler executor).
-        # See the matching block in ``agno.os.auth`` for the rationale on the
-        # ``INTERNAL_SCHEDULER_USER_ID`` sentinel.
+        # Check for internal service token (used by scheduler executor)
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True

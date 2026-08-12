@@ -54,11 +54,10 @@ class CouchbaseSearch(VectorDb):
     Couchbase Vector Database implementation with FTS (Full Text Search) index support.
     """
 
-    # Owner of a chunk, stored as an FTS field so the scope filter can prune by owner.
+    # Owner field on each document, indexed in FTS so a scoped search can prefilter on it.
     USER_ID_FIELD = "user_id"
 
-    # Stored in USER_ID_FIELD for the shared bucket (user_id=None), since FTS has no
-    # "field is missing" query so shared chunks are marked explicitly.
+    # Marks shared chunks (user_id=None). FTS has no "field is missing" query, so it is stored explicitly.
     SHARED_USER_ID = "__shared__"
 
     def __init__(
@@ -409,7 +408,7 @@ class CouchbaseSearch(VectorDb):
         """
         Update existing documents or insert new ones into the Couchbase bucket.
         """
-        # Scope the dedupe-delete to the caller's own chunks so re-upserting doesn't wipe another owner's chunk
+        # Scope the dedupe-delete so re-upserting doesn't wipe another owner's chunks
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -432,7 +431,7 @@ class CouchbaseSearch(VectorDb):
         self._validate_user_id(user_id)
         logger.info(f"Upserting {len(documents)} documents")
 
-        # Scope the dedupe-delete to the caller's own chunks (see _upsert).
+        # Scope the dedupe-delete so re-upserting doesn't wipe another owner's chunks
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -507,8 +506,7 @@ class CouchbaseSearch(VectorDb):
     ) -> List[Document]:
         """Search the Couchbase bucket for documents relevant to the query.
 
-        user_id scopes results to the caller's own chunks plus the shared
-        bucket; None applies no scope.
+        user_id scopes results to that user's chunks plus shared chunks; None applies no scope.
         """
         self._validate_user_id(user_id)
         if isinstance(filters, List):
@@ -520,7 +518,7 @@ class CouchbaseSearch(VectorDb):
             return []
 
         try:
-            # Scope the vector search to the caller's own chunks plus the shared bucket.
+            # Implement vector search using Couchbase FTS
             vector_search = VectorSearch.from_vector_query(
                 VectorQuery(
                     field_name="embedding",
@@ -628,15 +626,7 @@ class CouchbaseSearch(VectorDb):
             return False
 
     def _validate_user_id(self, user_id: Optional[str]) -> None:
-        """Reject a user_id the sentinel-based contract cannot tell apart from shared.
-
-        The shared bucket is a value stored in the document, not the absence of one, so a
-        caller whose real id is that value addresses the shared bucket outright: their
-        uploads publish org-wide, they read every other owner's shared content as their
-        own, and a scoped delete of theirs clears out of the shared bucket - which the
-        strict-delete contract says is nobody's to remove but an admin's. Refuse the
-        collision rather than store it; use None for shared/unscoped access.
-        """
+        """Reject a user_id that collides with SHARED_USER_ID; use None for shared/unscoped access."""
         if user_id == self.SHARED_USER_ID:
             raise ValueError(
                 f"user_id must not be '{self.SHARED_USER_ID}' - that value is reserved to mark content "
@@ -665,8 +655,7 @@ class CouchbaseSearch(VectorDb):
         # Clean content and generate ID
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode("utf-8")).hexdigest()
-        # Fold the owner into the KV id so two owners' identical content get
-        # distinct keys; user_id=None keeps the legacy shared id.
+        # Fold the owner into the id so two owners' identical content get distinct keys; None keeps the legacy id
         if user_id is not None:
             doc_id = md5(f"{doc_id}_{user_id}".encode("utf-8")).hexdigest()
 
@@ -730,10 +719,7 @@ class CouchbaseSearch(VectorDb):
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document exists in the bucket based on its content hash.
 
-        The owner is bound exactly (real id, or the shared sentinel for None). This is
-        the guard half of the upsert dedup pair, so None addresses the shared bucket
-        alone rather than every owner - the same bucket _delete_by_content_hash clears
-        for None.
+        The owner is bound exactly, so None checks the shared bucket alone rather than every owner.
         """
         self._validate_user_id(user_id)
         try:
@@ -1077,7 +1063,7 @@ class CouchbaseSearch(VectorDb):
     ) -> None:
         """Upsert documents asynchronously."""
         self._validate_user_id(user_id)
-        # Scope the dedupe-delete to the caller's own chunks (see _upsert).
+        # Scope the dedupe-delete so re-upserting doesn't wipe another owner's chunks
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -1188,10 +1174,7 @@ class CouchbaseSearch(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Search asynchronously, scoped to user_id (own OR shared).
-
-        None applies no scope.
-        """
+        """Search asynchronously, scoped to that user's chunks plus shared chunks; None applies no scope."""
         self._validate_user_id(user_id)
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
@@ -1201,7 +1184,7 @@ class CouchbaseSearch(VectorDb):
             log_error(f"[async] Failed to generate embedding for query: {query}")
             return []
         try:
-            # Scope the vector search to the caller's own chunks plus the shared bucket.
+            # Implement vector search using Couchbase FTS
             vector_search = VectorSearch.from_vector_query(
                 VectorQuery(
                     field_name="embedding",
@@ -1449,9 +1432,8 @@ class CouchbaseSearch(VectorDb):
 
         Args:
             content_id (str): The content ID to delete
-            user_id: When set, delete only the caller's own chunks (exact owner
-                match, shared bucket untouched). None deletes across all
-                owners.
+            user_id: When set, delete only this user's chunks, leaving shared ones. None deletes
+                across all owners.
 
         Returns:
             bool: True if documents were deleted, False otherwise
@@ -1463,7 +1445,6 @@ class CouchbaseSearch(VectorDb):
             named_parameters: Dict[str, Any] = {"content_id": content_id}
             base_clause = "content_id = $content_id OR recipes.content_id = $content_id"
             if user_id is not None:
-                # Scope to the owner exactly; shared bucket untouched.
                 where_clause = f"({base_clause}) AND {self.USER_ID_FIELD} = $user_id"
                 named_parameters["user_id"] = user_id
             else:
@@ -1490,7 +1471,7 @@ class CouchbaseSearch(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete
-            user_id: When set, scope the delete to the caller's own chunks.
+            user_id: Owner whose chunks to delete. None targets the shared bucket only.
 
         Returns:
             bool: True if documents were deleted, False otherwise
@@ -1498,8 +1479,6 @@ class CouchbaseSearch(VectorDb):
         try:
             log_debug(f"Couchbase VectorDB : Deleting documents with content_hash {content_hash}")
 
-            # Bind the owner exactly (real id, or the shared sentinel for None) so the
-            # dedupe-delete only clears the caller's own stale chunks
             named_parameters: Dict[str, Any] = {
                 "content_hash": content_hash,
                 "user_id": user_id if user_id is not None else self.SHARED_USER_ID,

@@ -72,11 +72,7 @@ def client(mock_db, settings):
 
 @pytest.fixture
 def scoped_client(mock_db, settings):
-    """Build a client whose requests carry a scope set, as the auth layer would.
-
-    The default ``client`` runs with auth disabled, so no scopes are attached
-    and the run-scope check is a no-op.
-    """
+    """Build a client whose requests carry a scope set, as the auth layer would."""
 
     def _make(scopes, authorization_enabled=True):
         app = FastAPI()
@@ -244,8 +240,7 @@ class TestDeleteSchedule:
         mock_db.delete_schedule = MagicMock(return_value=True)
         resp = client.delete("/schedules/sched-1")
         assert resp.status_code == 204
-        # Router passes ``user_id=get_scoped_user_id(request)`` — None when
-        # user_isolation is off (the default in this unit test).
+        # user_isolation is off here, so the router scopes the delete with ``user_id=None``.
         mock_db.delete_schedule.assert_called_once_with("sched-1", user_id=None)
 
     def test_delete_not_found(self, client, mock_db):
@@ -467,8 +462,7 @@ class TestScheduleCreateValidation:
 
 
 class TestScheduleNameUniqueness:
-    """A schedule name is unique per owner, not globally -- the router checks with a
-    scoped ``get_schedule_by_name`` and answers 409, so two users can both own one."""
+    """A schedule name is unique per owner, not globally."""
 
     def _body(self):
         return {"name": "nightly", "cron_expr": "0 9 * * *", "endpoint": "/agents/a1/runs"}
@@ -493,8 +487,7 @@ class TestScheduleNameUniqueness:
 
 
 class TestScheduleRunScope:
-    """The executor fires a schedule with the internal service token, so the
-    creator must hold the permission for the endpoint it targets."""
+    """The executor fires a schedule with the internal service token, so the creator must hold its scope."""
 
     def _body(self, endpoint="/agents/a1/runs"):
         return {"name": "test", "cron_expr": "0 9 * * *", "endpoint": endpoint}
@@ -504,8 +497,6 @@ class TestScheduleRunScope:
         assert resp.status_code == 403
 
     def test_non_run_endpoint_is_admin_only(self, scoped_client, mock_db):
-        """Any other route is an arbitrary first-party call once the executor
-        fires it with the internal service token."""
         body = self._body("/schedules/someone-elses")
         assert scoped_client(["schedules:write"]).post("/schedules", json=body).status_code == 403
         assert scoped_client(["agent_os:admin"]).post("/schedules", json=body).status_code == 201

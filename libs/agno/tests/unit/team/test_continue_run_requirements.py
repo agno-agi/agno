@@ -1040,7 +1040,7 @@ class TestResolveContinueOwnerTeam:
     def test_run_without_an_owner_stays_unscoped(self):
         from agno.team._run import _resolve_continue_owner_team
 
-        # No owner anywhere is the admin view — an owner must never be invented.
+        # No owner anywhere is the admin view.
         run = TeamRunOutput(run_id="r1", session_id="s")
 
         assert _resolve_continue_owner_team(run, run_id="r1", session=None) is None
@@ -1082,8 +1082,7 @@ class TestMemberContinueKwargsFromRunContext:
 
         rc = RunContext(run_id="r", session_id="s", user_id="alice")
 
-        # A member Agent has no user_id of its own, so without this the member
-        # half of a resumed run retrieves unscoped — the admin view.
+        # A member Agent has no user_id of its own, so without this it would retrieve unscoped.
         assert _member_continue_kwargs_from_run_context(rc)["user_id"] == "alice"
 
     def test_only_forwards_set_fields(self):

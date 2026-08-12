@@ -7187,8 +7187,7 @@ def continue_run_dispatch(
     team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
 
-    # Fall back to the owner the run paused with, so the resumed half retrieves
-    # under the same scope as the first half
+    # Fall back to the owner the run paused with, so the resume retrieves under the same scope
     if user_id is None:
         user_id = _resolve_continue_owner_team(run_response, run_id=run_id_resolved, session=team_session)
 
@@ -8873,9 +8872,8 @@ def acontinue_run_dispatch(  # type: ignore
 
     session_id_resolved, user_id = _initialize_session(team, session_id=session_id_resolved, user_id=user_id)
 
-    # Fall back to the owner the run paused with, so the resumed half retrieves
-    # under the same scope as the first half. This dispatch reads no session, so
-    # a run_id-only resume has nothing to fall back to.
+    # Fall back to the owner the run paused with, so the resume retrieves under the same scope.
+    # This dispatch reads no session, so a run_id-only resume has nothing to fall back to.
     if user_id is None:
         user_id = _resolve_continue_owner_team(run_response, run_id=run_id_resolved, session=None)
 

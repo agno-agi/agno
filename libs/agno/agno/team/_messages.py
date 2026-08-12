@@ -515,7 +515,7 @@ def get_system_message(
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
-            # See the matching comment in agno.agent._messages.
+            # Filter keys rendered into the prompt come from stored content, so scope them like retrieval
             build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": team.enable_agentic_knowledge_filters}
             build_context_kwargs.update(
                 get_user_id_kwarg(build_context_fn, run_context.user_id if run_context else team.user_id)
@@ -757,7 +757,7 @@ async def aget_system_message(
 
     # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        # Prefer the async builder: the sync one reads through get_content(), which raises on an async database
+        # Prefer async version if available for async databases
         abuild_context_fn = getattr(team.knowledge, "abuild_context", None)
         build_context_fn = getattr(team.knowledge, "build_context", None)
         scope_uid = run_context.user_id if run_context else team.user_id

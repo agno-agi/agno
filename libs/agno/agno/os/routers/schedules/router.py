@@ -55,16 +55,12 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
     def _require_endpoint_permission(request: Request, endpoint: str, method: str) -> None:
         """Require the caller's own permission for the endpoint a schedule targets.
 
-        The executor fires a schedule with the internal service token, which
-        carries full scopes. Without this check a caller holding only
-        ``schedules:write`` could drive a component it may not drive itself.
-        A run endpoint needs the matching ``<type>:run`` scope; any other route
-        is an arbitrary first-party call, so it is admin-only. ``method`` is part
-        of the target because the executor only treats POST as a run.
+        The executor fires schedules with the full-scope internal service token, so
+        ``schedules:write`` alone must not reach a component the caller cannot run: a POST
+        run endpoint needs the matching ``<type>:run`` scope, any other target is admin-only.
         """
         from agno.os.auth import build_insufficient_permissions_detail
 
-        # Only check authorization if it's enabled
         if not getattr(request.state, "authorization_enabled", False):
             return
 
@@ -125,8 +121,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ScheduleResponse]:
-        # ``None`` = no scoping (single-user / admin); a string = filter to that
-        # owner. See ``get_scoped_user_id`` for the full set of conditions.
+        # ``None`` means no scoping (admin / isolation off); a string filters to that owner.
         scoped_user_id = get_scoped_user_id(request)
         schedules, total_count = await _db_call(
             "get_schedules", enabled=enabled, limit=limit, page=page, user_id=scoped_user_id
@@ -157,17 +152,12 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             raise HTTPException(status_code=422, detail=f"Invalid timezone: {body.timezone}")
         _require_endpoint_permission(request, body.endpoint, body.method)
 
-        # When isolation is on, owner the schedule to the caller. Name-uniqueness
-        # check is scoped too — different users can share a schedule name.
-        # Falls back to ``request.state.user_id`` (the unscoped JWT sub) for the
-        # owner column, so even admin-created schedules carry the creator's id.
+        # Owner the schedule to the caller, falling back to the unscoped JWT sub so
+        # admin-created schedules still carry a creator id.
         scoped_user_id = get_scoped_user_id(request)
         creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
-        # The executor's own identity is not a real owner. Stamping it would
-        # attribute every fired run to it, and leaving the schedule unowned would
-        # give it the executor's unscoped reach, so refuse instead. Service
-        # accounts and MCP-OAuth clients are server-assigned identities that own
-        # their own sessions and memories, so they may own a schedule too.
+        # Neither owner is safe for the executor's identity: stamping it misattributes every
+        # fired run, leaving it unowned hands the schedule the executor's unscoped reach.
         from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 
         if creator_user_id == INTERNAL_SCHEDULER_USER_ID:
@@ -234,8 +224,8 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if not updates:
             return existing
 
-        # Re-check the scope when the target changes, so an existing schedule
-        # can't be repointed at a component the caller may not run.
+        # Re-check when the target changes, so a schedule can't be repointed at a component
+        # the caller may not run.
         if "endpoint" in updates or "method" in updates:
             _require_endpoint_permission(
                 request,
@@ -294,8 +284,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
 
-        # Re-arming a schedule puts its endpoint back on the poller, so it needs
-        # the same permission as creating it. Disabling never needs the check.
+        # Re-arming puts the endpoint back on the poller, so it needs the same permission as creating it.
         _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
 
         _check_scheduler_deps()
@@ -340,9 +329,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if not existing.get("enabled", True):
             raise HTTPException(status_code=409, detail="Schedule is disabled")
 
-        # Firing a stored schedule runs its endpoint under the internal service
-        # token, so the caller needs the same permission creating it would have
-        # required -- otherwise ``schedules:write`` alone reaches any target.
+        # Firing runs the endpoint under the internal service token, so re-check the caller's own permission.
         _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
 
         executor = getattr(request.app.state, "scheduler_executor", None)

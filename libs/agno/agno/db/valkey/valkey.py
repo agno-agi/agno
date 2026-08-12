@@ -1964,9 +1964,7 @@ class ValkeyDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): If provided, only deletes rows owned by this user, not unowned rows.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
@@ -2151,8 +2149,7 @@ class ValkeyDb(BaseDb):
             return
 
         if user_id is not None:
-            # Drop the ids that are not this owner's before the batch runs, so the
-            # pipeline below stays a single round trip.
+            # Filter to this owner's ids up front so the batch below stays one round trip.
             eval_run_ids = [
                 eval_run_id
                 for eval_run_id in eval_run_ids

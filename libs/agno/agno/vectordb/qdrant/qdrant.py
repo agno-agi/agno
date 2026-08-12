@@ -26,19 +26,8 @@ DEFAULT_SPARSE_MODEL = "Qdrant/bm25"
 class Qdrant(VectorDb):
     """Vector DB implementation powered by Qdrant - https://qdrant.tech/"""
 
-    # Per-user RAG isolation:
-    # Qdrant's vendor-recommended multi-tenancy uses a single collection with a
-    # tenant key in the payload, indexed with ``is_tenant=True`` so the engine
-    # stores tenant data contiguously and can prune by tenant before traversing
-    # the HNSW graph. We name the tenant field ``user_id``.
-    #
-    # Semantics:
-    # * Inserts with ``user_id`` stamp the column in the payload.
-    # * Inserts with ``user_id=None`` leave the column NULL — the SHARED bucket.
-    # * Searches with ``user_id=X`` use a Filter with ``should`` matching either
-    #   the caller's id OR is_empty(user_id). The shared bucket is always merged
-    #   into per-user reads — admin uploads stay discoverable.
-    # * Searches with ``user_id=None`` apply no scope (admin view, sees all).
+    # Tenant key in the payload, indexed with ``is_tenant=True``. Left empty when ``user_id`` is
+    # ``None`` — the shared bucket, which scoped searches read alongside the caller's own points.
     USER_ID_KEY: str = "user_id"
 
     def __init__(
@@ -151,10 +140,7 @@ class Qdrant(VectorDb):
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
 
-        # Whether this instance has ensured the tenant payload index on
-        # user_id. Knowledge only calls create() for collections that don't
-        # exist yet, so pre-v3 collections get the index ensured from the
-        # write paths instead — once per instance, the helper no-ops after.
+        # Whether the tenant payload index has been ensured, once per instance
         self._user_id_index_ensured: bool = False
 
         # Qdrant client kwargs
@@ -253,22 +239,14 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
-        # Outside the exists() branch: collections created before v3 never got
-        # the tenant index, and without it scoped reads scan instead of pruning.
-        # The helper is idempotent and swallows "already exists".
+        # Outside the exists() branch: collections created before v3 never got the tenant index
         self._ensure_user_id_payload_index_sync()
 
     def _ensure_user_id_payload_index_sync(self) -> None:
         """Create the tenant-style payload index on ``user_id``.
 
-        ``is_tenant=True`` tells Qdrant to store points sharing a tenant key
-        contiguously on disk — the engine can then prune by tenant before
-        walking the HNSW graph, which is what makes per-user reads cheap
-        on a single multi-tenant collection.
-
-        Once per instance: the flag is set even when the attempt fails, so a
-        server that rejects the index costs one logged round-trip, not one
-        per write.
+        Runs once per instance. The flag is set even when the attempt fails, so a server that
+        rejects the index costs one round-trip rather than one per write.
         """
         if self._user_id_index_ensured:
             return
@@ -378,13 +356,10 @@ class Qdrant(VectorDb):
         return False
 
     def _scoped_doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the deterministic point id so two users inserting the
-        same content get distinct ids. None keeps the stable base id.
+        """Fold the owner into the deterministic point id so two owners get distinct ids for the same content.
 
-        ``base_id`` is caller-controlled and variable length, so it is collapsed with
-        ``content_hash`` into a fixed-length digest before the owner is folded in -
-        otherwise the '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice')
-        collapse to the same point id, letting one owner overwrite the other's chunk.
+        ``base_id`` is digested with ``content_hash`` first to fix the '_' boundary: otherwise
+        ('doc_1', 'alice') and ('doc', '1_alice') collapse to one id. ``None`` keeps the base id.
         """
         doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
         if user_id is None:
@@ -406,12 +381,9 @@ class Qdrant(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
             batch_size (int): Batch size for inserting documents
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
-                ``None`` (default) writes to the shared bucket.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
-        # Knowledge only calls create() for collections that don't exist, so a
-        # pre-v3 collection would otherwise never get the tenant index — the
-        # write path ensures it (idempotent, once per instance).
+        # create() only runs for collections that don't exist, so pre-v3 ones are ensured here
         self._ensure_user_id_payload_index_sync()
         log_debug(f"Inserting {len(documents)} documents")
         points = []
@@ -443,9 +415,8 @@ class Qdrant(VectorDb):
                         iter(self.sparse_encoder.embed([document.content]))
                     ).as_object()  # type: ignore
 
-            # Create payload with document properties.
-            # ``user_id`` is a top-level payload field (not inside meta_data) so the
-            # tenant-style payload index can prune on it before HNSW traversal.
+            # Create payload with document properties
+            # ``user_id`` is top-level, not inside meta_data, so the tenant index can prune on it
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,
@@ -488,11 +459,9 @@ class Qdrant(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
-                ``None`` (default) writes to the shared bucket.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
-        # See ``insert`` — pre-v3 collections get the tenant index from the
-        # write path.
+        # See ``insert`` — pre-v3 collections get the tenant index from the write path
         await self._ensure_user_id_payload_index_async()
         log_debug(f"Inserting {len(documents)} documents asynchronously")
 
@@ -562,8 +531,7 @@ class Qdrant(VectorDb):
                         iter(self.sparse_encoder.embed([document.content]))
                     ).as_object()  # type: ignore
 
-            # Create payload with document properties.
-            # ``user_id`` is a top-level payload field (not inside meta_data).
+            # Create payload with document properties
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,
@@ -610,7 +578,7 @@ class Qdrant(VectorDb):
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
         log_debug("Redirecting the request to insert")
         if self.content_hash_exists(content_hash, user_id=user_id):
@@ -626,10 +594,7 @@ class Qdrant(VectorDb):
     ) -> None:
         """Upsert documents asynchronously."""
         log_debug("Redirecting the async request to async_insert")
-        # Same dedup pair as the sync path. Without it a re-upsert whose content
-        # split into fewer chunks leaves the surplus points behind, still
-        # answering searches, because their ids no longer collide with anything
-        # the new batch writes.
+        # Same dedup pair as the sync path: without it a re-upsert into fewer chunks strands the surplus points
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -648,8 +613,8 @@ class Qdrant(VectorDb):
             query (str): Query to search for
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
-            user_id (Optional[str]): Restrict results to the caller's chunks
-                plus the shared bucket. ``None`` means no scope (admin view).
+            user_id (Optional[str]): Restrict results to this owner's chunks plus the shared
+                bucket. ``None`` applies no scope
         """
 
         if isinstance(filters, List):
@@ -868,19 +833,11 @@ class Qdrant(VectorDb):
         return search_results
 
     def _user_scope_filter(self, user_id: Optional[str]) -> Optional[models.Filter]:
-        """Build the tenant scope predicate for a search/delete.
+        """Build the tenant scope predicate: this owner's points OR the shared bucket.
 
-        ``user_id=None`` returns ``None`` (no scope — admin view).
-
-        ``user_id="alice"`` returns a Filter that matches either:
-        * payload[user_id] == "alice"  (caller's own chunks), OR
-        * payload[user_id] is empty    (the shared/admin-uploaded bucket)
-
-        Using ``should`` (logical OR) is the documented Qdrant way to express
-        "this OR that". ``IsEmptyCondition`` matches both NULL and absent.
+        ``IsEmptyCondition`` matches a ``user_id`` that is null as well as one that is absent.
         """
-        # Only ``None`` means "no scope". An empty string is an owner like any
-        # other — treating it as unscoped would widen the read to every owner.
+        # Only ``None`` is unscoped — an empty string is an owner like any other
         if user_id is None:
             return None
         return models.Filter(
@@ -894,11 +851,9 @@ class Qdrant(VectorDb):
         )
 
     def _merge_filters(self, base: Optional[models.Filter], scope: Optional[models.Filter]) -> Optional[models.Filter]:
-        """Combine the user-supplied metadata filter with the tenant scope.
+        """Combine the metadata filter with the tenant scope.
 
-        Tenant scope is OR-based (caller's bucket OR shared), so we can't
-        flatten it into the user filter's ``must`` list. Instead nest it:
-        the result must match the metadata filter AND must match the scope.
+        The scope is OR-based, so it is nested rather than flattened into the metadata ``must`` list.
         """
         if scope is None:
             return base
@@ -938,8 +893,7 @@ class Qdrant(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection: {self.collection}")
             self.client.delete_collection(self.collection)
-            # The next collection under this name needs the tenant index
-            # ensured again — the once-per-instance flag must not survive.
+            # A re-created collection needs the tenant index ensured again
             self._user_id_index_ensured = False
 
     async def async_drop(self) -> None:
@@ -947,7 +901,7 @@ class Qdrant(VectorDb):
         if await self.async_exists():
             log_debug(f"Deleting collection asynchronously: {self.collection}")
             await self.async_client.delete_collection(self.collection)
-            # See ``drop`` — the ensure flag must not survive.
+            # See ``drop``
             self._user_id_index_ensured = False
 
     def exists(self) -> bool:
@@ -1083,13 +1037,13 @@ class Qdrant(VectorDb):
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """Delete all points that have the specified content_id in their payload.
 
-        Per-user isolation contract:
-        * ``user_id="alice"``: only Alice's chunks with this content_id are
-          removed. Bob's chunks (and shared chunks) under the same content_id
-          remain untouched. This is what stops Bob from guessing Alice's
-          content_id to wipe her data.
-        * ``user_id=None``: the admin view, deleting this content_id across
-          every owner. Mirrors LanceDB's unscoped semantic.
+        Args:
+            content_id (str): The content id to delete.
+            user_id (Optional[str]): Delete only this owner's points, leaving other owners' points
+                under the same content_id in place. ``None`` deletes across every owner.
+
+        Returns:
+            bool: True if points were deleted successfully, False otherwise.
         """
         try:
             log_info(f"Attempting to delete all points with content_id: {content_id} (user_id={user_id})")
@@ -1097,8 +1051,7 @@ class Qdrant(VectorDb):
             must_conditions: List[Any] = [
                 models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))
             ]
-            # ``None`` deletes across all owners; an empty string is an owner,
-            # so it still scopes — otherwise it would wipe every owner's rows.
+            # Only ``None`` is unscoped — an empty string is an owner and still scopes
             if user_id is not None:
                 must_conditions.append(
                     models.FieldCondition(key=self.USER_ID_KEY, match=models.MatchValue(value=user_id))
@@ -1155,11 +1108,8 @@ class Qdrant(VectorDb):
     def _content_hash_filter(self, content_hash: str, user_id: Optional[str] = None) -> Any:
         """Filter for one owner's points with this content hash.
 
-        Shared by the guard and the delete halves of the upsert dedup pair, so the
-        two cannot drift onto different buckets. Exact-owner scope, the same
-        predicate ``delete_by_content_id`` uses; None addresses the shared bucket
-        alone rather than every owner, because this is a dedup pair and not an
-        admin-wide lookup.
+        Shared by both halves of the upsert dedup pair so they cannot drift onto different buckets.
+        Unlike ``delete_by_content_id``, ``None`` addresses the shared bucket alone, not every owner.
         """
         must_conditions: List[Any] = [
             models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))
@@ -1175,9 +1125,8 @@ class Qdrant(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): Scope the check to the owner's own points, so a
-                different owner's identical upload is not judged a duplicate. None
-                scopes to the shared bucket (``is_empty(user_id)``).
+            user_id (Optional[str]): Scope the check to this owner's points, so another owner's
+                identical upload is not judged a duplicate. ``None`` scopes to the shared bucket.
 
         Returns:
             bool: True if points with the content hash exist, False otherwise.
@@ -1197,9 +1146,8 @@ class Qdrant(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Owner to scope the delete to. None scopes to the
-                shared bucket (``is_empty(user_id)``), so a re-ingest of content one
-                owner already holds never wipes another owner's identical points.
+            user_id (Optional[str]): Owner to scope the delete to. ``None`` scopes to the shared
+                bucket, so a re-ingest never wipes another owner's identical points.
 
         Returns:
             bool: True if points were deleted successfully, False otherwise.

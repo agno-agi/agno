@@ -1,13 +1,10 @@
 """Parity tests for ``calculate_date_metrics`` across every backend.
 
-Each adapter ships its own copy of the helper. After the per-user metrics
-refactor every copy must bucket by ``user_id`` identically -- drift means
-RBAC-on deployments see different metrics depending on backend.
-
-SQLite is the reference. ``STRICT`` backends must match it field for field
-once the ephemeral id/timestamp fields are stripped; ``LOOSE`` backends ship
-their own id/date/timestamp shapes, so only the per-user buckets and the
-aggregated numbers are compared.
+Each adapter ships its own copy of the helper, and every copy must bucket by
+``user_id`` identically. SQLite is the reference: ``STRICT`` backends match it
+field for field once the ephemeral id/timestamp fields are stripped, while
+``LOOSE`` backends ship their own id/date/timestamp shapes, so only the per-user
+buckets and the aggregated numbers are compared.
 """
 
 import importlib
@@ -23,8 +20,7 @@ STRICT = [
     "agno.db.mysql.utils",
     "agno.db.singlestore.utils",
     "agno.db.mongo.utils",
-    # These use deterministic per-(date, user_id) string ids instead of uuids;
-    # the ids are stripped before comparison so everything meaningful matches.
+    # These build deterministic per-(date, user_id) string ids instead of uuids; the ids are stripped anyway.
     "agno.db.redis.utils",
     "agno.db.valkey.utils",
     "agno.db.dynamo.utils",
@@ -66,8 +62,7 @@ def _calc(module_path: str):
 
 
 def _session(uid, runs=1, tokens=0, total=None, models=(("gpt-5", "openai"),)):
-    """A fake session row. Agent / team / workflow share the schema; only the
-    bucket the caller drops them into differs."""
+    """A fake session row. Agent, team and workflow sessions share this schema."""
     return {
         "user_id": uid,
         "runs": [{"model": m, "model_provider": p} for m, p in models for _ in range(runs)],
@@ -99,8 +94,7 @@ CASES = {
         team=[_session("alice", runs=2, tokens=5)],
         workflow=[_session("alice", runs=1, tokens=3)],
     ),
-    # Alice has all three, Bob agent + team, and an unowned workflow session
-    # lands in the empty-string bucket.
+    # The unowned workflow session lands in the empty-string bucket.
     "mixed_session_types_multi_user": _data(
         agent=[_session("alice", runs=1, tokens=10), _session("bob", runs=2, tokens=5)],
         team=[_session("alice", runs=3, tokens=4), _session("bob", runs=1, tokens=2)],
@@ -110,7 +104,6 @@ CASES = {
     "null_session_data": _data(agent=[{**_session("alice"), "session_data": None}]),
     # Sessions that never recorded token usage carry a NULL session_metrics.
     "null_session_metrics": _data(agent=[{**_session("alice"), "session_data": {"session_metrics": None}}]),
-    # One user spanning several models exercises the per-user model_metrics nesting.
     "multi_model_per_bucket": _data(
         agent=[_session("alice", runs=1, tokens=7, total=9, models=(("gpt-5", "openai"), ("claude-opus", "anthropic")))]
     ),
@@ -131,8 +124,7 @@ def test_strict_backend_matches_sqlite(module_path: str, case: str):
 @pytest.mark.parametrize("module_path", LOOSE)
 @pytest.mark.parametrize("case", CASES, ids=list(CASES))
 def test_loose_backend_buckets_and_counts_match_sqlite(module_path: str, case: str):
-    """Backends with their own id/date/timestamp shapes still owe the same
-    per-user bucket set and the same aggregated numbers as the reference."""
+    """Different id/date/timestamp shapes, but the same buckets and the same aggregated numbers."""
     backend = {r["user_id"]: r for r in _calc(module_path)(TARGET_DATE, CASES[case])}
     reference = {r["user_id"]: r for r in sqlite_calc(TARGET_DATE, CASES[case])}
 

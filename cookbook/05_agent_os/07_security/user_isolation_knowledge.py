@@ -6,8 +6,7 @@ Turn on AuthorizationConfig(user_isolation=True) so every knowledge content row
 is owned by the JWT subject, and a row with no owner is shared, org-wide
 content. The smoke proves the read scope, the 403 on shared content, the 404 on
 another user's content, and the admin bypass. Rows are seeded straight into the
-contents db because POST /knowledge/content also runs ingest, which has no
-vector db here and would leave every row with status "failed".
+contents db because the ingest run by POST /knowledge/content has no vector db.
 
 Prerequisites: none
 Run: .venvs/demo/bin/python cookbook/05_agent_os/07_security/user_isolation_knowledge.py

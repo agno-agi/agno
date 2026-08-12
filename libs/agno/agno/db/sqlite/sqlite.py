@@ -2487,9 +2487,7 @@ class SqliteDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Flatten into the bulk-upsert list.
+                # One record per user_id, plus the empty-string bucket for unowned sessions
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
@@ -2518,10 +2516,8 @@ class SqliteDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket — the router decides whether
-                that's appropriate (admins see all; non-admins are scoped).
+            user_id (Optional[str]): Return only this user's bucket. ``None`` returns every
+                bucket, including the empty-string unowned one.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2554,16 +2550,13 @@ class SqliteDb(BaseDb):
                 if not result:
                     return [], None
 
-                # Get the latest updated_at, scoped to whatever filter was
-                # applied — otherwise an admin's "give me everything" call
-                # could shadow a per-user view with a stale-looking timestamp.
+                # Get the latest updated_at, scoped to the same user filter
                 latest_stmt = select(func.max(table.c.updated_at))
                 if user_id is not None:
                     latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_updated_at = sess.execute(latest_stmt).scalar()
 
-            # Map the sentinel empty-string user_id back to None so API
-            # consumers don't have to know about the storage detail.
+            # Map the sentinel empty-string user_id back to None for API consumers
             rows: List[dict] = []
             for row in result:
                 row_dict = dict(row._mapping)
@@ -2577,20 +2570,15 @@ class SqliteDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # Reads scope on ``(user_id = :uid OR user_id IS NULL)`` — "rows I own,
-    # plus rows nobody owns (org-wide shared content)". Deletes are stricter:
-    # only ``user_id = :uid``, because shared content is not the caller's to
-    # remove. When ``user_id`` is ``None`` the predicate is dropped entirely
-    # (admin / RBAC-off / single-user view sees and removes everything).
+    # Reads also match unowned (shared) rows; deletes are strict to the owner. A ``None``
+    # user_id drops the predicate entirely.
 
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id``. Unowned rows are
-                shared content and are not the caller's to delete.
+            user_id (Optional[str]): When set, only delete the row if it is owned by this user.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2615,7 +2603,7 @@ class SqliteDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to get.
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): When set, match rows owned by this user or unowned rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2659,7 +2647,7 @@ class SqliteDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-            user_id (Optional[str]): Owner-scoping filter; see module note.
+            user_id (Optional[str]): When set, match rows owned by this user or unowned rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2680,7 +2668,7 @@ class SqliteDb(BaseDb):
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
 
-                # Owner scoping: "rows I own, plus shared rows (NULL owner)"
+                # Apply owner scoping if provided
                 if user_id is not None:
                     stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
@@ -4168,8 +4156,7 @@ class SqliteDb(BaseDb):
                 existing = sess.execute(existing_stmt).fetchone()
 
                 if existing is None:
-                    # Scoped lookup missed: if the row exists under another owner,
-                    # fail closed instead of falling through to a create (PK violation).
+                    # The row can exist under another owner: fail closed instead of creating
                     if user_id is not None:
                         unscoped = sess.execute(
                             select(table.c.component_id).where(table.c.component_id == component_id)
@@ -4426,8 +4413,7 @@ class SqliteDb(BaseDb):
                 ).scalar_one_or_none()
 
                 if existing is not None:
-                    # Generic wording: under user isolation this must not confirm
-                    # the existence of another user's component.
+                    # Generic wording: must not confirm another user's component exists
                     raise ValueError(f"Component ID {component_id} is not available")
 
                 # Check label uniqueness
@@ -5583,10 +5569,8 @@ class SqliteDb(BaseDb):
             raise e
 
     # -- Schedule methods --
-    # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
-    # routes can scope by owner. The executor pair (``claim_due_schedule`` /
-    # ``release_schedule``) intentionally has no user_id — the poller must be
-    # able to fire schedules across all users.
+    # ``claim_due_schedule`` / ``release_schedule`` take no user_id: the poller has to fire
+    # schedules across all users.
     def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
@@ -5689,9 +5673,7 @@ class SqliteDb(BaseDb):
             runs_table = self._get_table(table_type="schedule_runs")
             with self.Session() as sess, sess.begin():
                 if runs_table is not None:
-                    # Mirror the user_id guard on the cascade delete so we don't
-                    # nuke another user's runs if the schedule_id happens to be
-                    # shared (it shouldn't be, but defend in depth).
+                    # Mirror the owner guard on the cascade so another user's runs are kept
                     runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
                     if user_id is not None:
                         runs_delete = runs_delete.where(runs_table.c.user_id == user_id)

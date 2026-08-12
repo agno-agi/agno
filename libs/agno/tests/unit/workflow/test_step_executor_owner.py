@@ -1,11 +1,7 @@
-"""
-Unit tests for the owner a workflow step hands to its agent/team executor.
+"""Tests that a workflow step hands its agent/team executor the run-scoped owner.
 
-A Workflow carries the per-run owner on the RunContext, while ``Workflow.user_id``
-is only the instance-level default. A Team passes the ``user_id`` argument it was
-called with down to its members, so a step that forwards the stale instance
-default makes every member run unscoped (admin view over all tenants) or under
-the wrong owner.
+``Workflow.user_id`` is only the instance-level default — the per-run owner lives on the
+RunContext, and a Team forwards the ``user_id`` it was called with down to its members.
 """
 
 import asyncio
@@ -76,8 +72,6 @@ ALL_MODES = ["run", "run_stream", "arun", "arun_stream"]
 
 
 class TestStepExecutorOwner:
-    """The step must hand its executor the run-scoped owner, not Workflow.user_id."""
-
     @pytest.mark.parametrize("mode", ALL_MODES)
     def test_run_owner_reaches_team_executor(self, team, monkeypatch, mode):
         """The owner passed to workflow.run() reaches the team executor."""
@@ -113,7 +107,7 @@ class TestStepExecutorOwner:
 
     @pytest.mark.parametrize("mode", ALL_MODES)
     def test_no_owner_stays_unscoped(self, team, monkeypatch, mode):
-        """No owner anywhere stays unscoped, so shared content is not invented an owner."""
+        """With no owner anywhere, the executor is called unscoped."""
         captured: List[Optional[str]] = []
         _spy_team(captured, monkeypatch)
 

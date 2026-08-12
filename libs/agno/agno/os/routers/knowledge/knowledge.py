@@ -189,10 +189,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             elif url:
                 name = parsed_urls
 
-        # Capture owner at request time. The background task runs after the
-        # response goes back to the client, so ``request`` is unavailable
-        # there — the JWT-derived user_id has to be pinned onto Content now.
-        # ``None`` means shared / org-wide (admin upload, RBAC off).
+        # Pin the owner now: the background task runs after the response, with no ``request`` to read.
         scoped_user_id = get_scoped_user_id(request)
 
         content = Content(
@@ -360,8 +357,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Set name from path if not provided
         content_name = name or path
 
-        # See the matching upload_content route for why we capture user_id
-        # at request time and pin it onto Content before queuing the task.
+        # Pin the owner before queuing, same as the upload route: the background task has no ``request``.
         scoped_user_id = get_scoped_user_id(request)
 
         content = Content(
@@ -465,9 +461,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             reader_id=reader_id if reader_id and reader_id.strip() else None,
         )
 
-        # Pre-check ownership so the caller gets a 404 for someone else's row and
-        # a 403 for shared content, rather than the silent no-op the scoped
-        # ``apatch_content`` below would otherwise return.
+        # Pre-check ownership: the scoped patch below would otherwise silently no-op.
         scoped_user_id = get_scoped_user_id(request)
         existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
         if existing is None:
@@ -567,8 +561,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 headers=headers,
             )
 
-        # Scope by uploader: non-admin callers see their own + shared (NULL)
-        # rows. Admins / RBAC-off see everything.
+        # Non-admin callers see their own rows plus shared (NULL) ones.
         scoped_user_id = get_scoped_user_id(request)
         contents, count = await knowledge.aget_content(
             limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
@@ -644,8 +637,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_content_by_id(content_id=content_id, headers=headers)
 
-        # 404 (not 403) when the row exists but isn't owned by the caller —
-        # mirrors the pattern used for sessions/approvals: mask existence.
+        # 404 (not 403) when the row exists but isn't the caller's, to mask its existence.
         scoped_user_id = get_scoped_user_id(request)
         content = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
         if not content:
@@ -694,9 +686,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             await knowledge.delete_content_by_id(content_id=content_id, headers=headers)
         else:
-            # Pre-check existence under the caller's scope so we return 404
-            # instead of silently succeeding when the row exists but is owned
-            # by someone else.
+            # Pre-check existence under the caller's scope: the scoped delete below would silently succeed.
             existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
@@ -734,9 +724,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.delete_all_content(headers=headers)
 
-        # An admin bulk-delete clears EVERYTHING (no scoping). A non-admin's
-        # clears only their own rows: shared (unowned) content is readable but
-        # not deletable, same rule the single-item routes enforce with a 403.
+        # Admins clear everything; a non-admin clears only their own rows, never shared ones.
         scoped_user_id = get_scoped_user_id(request)
         await knowledge.aremove_all_content(user_id=scoped_user_id)
         return "success"
@@ -891,8 +879,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
-        # Scope vector retrieval to the caller's chunks plus the shared
-        # bucket. Admins / RBAC-off get ``None`` and see everything.
+        # Scope vector retrieval to the caller's chunks plus the shared bucket.
         scoped_user_id = get_scoped_user_id(http_request)
         results = await knowledge.asearch(
             query=request.query,
@@ -1329,7 +1316,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
-        # Filter key names are content, so scope them with the same gate the other routes use
+        # Filter keys come from content rows, so scope them too
         filters = await knowledge.aget_valid_filters(user_id=get_scoped_user_id(request))
 
         # Get remote content sources if available

@@ -210,19 +210,14 @@ def fetch_all_sessions_data(
 
 
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
-    """Calculate metrics for the given single date, bucketed per ``user_id``.
-
-    Each session is attributed to its owning user. Sessions without a
-    ``user_id`` aggregate under the sentinel empty-string bucket.
+    """Calculate metrics for the given single date, bucketed per user_id.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        A list of per-user metrics records. SurrealDB uses a deterministic
-        record ID of ``"{date}|{user_id}"`` so re-running the calculation
-        for the same (date, user) updates the same record.
+        List[dict]: One metrics record per user. Sessions with no user_id bucket under "".
     """
 
     def _empty_metric_record() -> Dict[str, Any]:
@@ -278,10 +273,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
 
     current_time = datetime.now(timezone.utc)
     completed = date_to_process < current_time.date()
-    # SurrealDB stores this as the record's ``date`` field, filtered on by
-    # get_metrics range queries. Must be date_to_process — the day this bucket
-    # aggregates — not current_time, or every backfilled day would be stamped
-    # as today and drop out of its own range query.
+    # Stamp the day being aggregated, not today, so backfilled days stay in get_metrics range queries
     date_at_midnight = datetime.combine(date_to_process, datetime.min.time(), tzinfo=timezone.utc)
 
     records: List[dict] = []
@@ -292,10 +284,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
         users_count = 0 if user_id == "" else 1
-        # Deterministic per-(date, user) ID so re-running calculation for the
-        # same window updates the same record. The empty-string bucket gets
-        # ``{date}|`` — the trailing pipe makes the unowned bucket distinct
-        # from any conceivable real user_id.
+        # Deterministic per-(date, user) ID, so re-calculating the same window upserts the same record
         record_id = f"{date_to_process.isoformat()}|{user_id}"
 
         records.append(

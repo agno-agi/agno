@@ -181,11 +181,7 @@ def test_other_table_types_are_untouched():
 
 
 def test_adding_a_table_type_needs_no_backend_changes(monkeypatch):
-    """Isolating another table is a one-line change to USER_ID_TABLE_TYPES.
-
-    Uses 'memories' as the stand-in: it has a user_id column in every adapter
-    schema, so it exercises the same path a future table type would take.
-    """
+    """Isolating another table is a change to USER_ID_TABLE_TYPES only — 'memories' stands in for a future one."""
     from agno.db.migrations.versions import v3_0_0
 
     db_file = os.path.join(tempfile.mkdtemp(), "test.db")
@@ -207,7 +203,7 @@ def test_adding_a_table_type_needs_no_backend_changes(monkeypatch):
 
     monkeypatch.setattr(v3_0_0, "USER_ID_TABLE_TYPES", ("evals", "memories"))
 
-    # After: the same backend functions add the column, with no other edit
+    # After: the same backend functions add the column
     assert v3_0_0.up(db, "memories", "agno_memories") is True
 
     conn = sqlite3.connect(db_file)
@@ -223,11 +219,8 @@ def test_adding_a_table_type_needs_no_backend_changes(monkeypatch):
 
 
 def test_table_type_the_backend_does_not_have_is_skipped(monkeypatch):
-    """A table type only some adapters support must be skipped, not raise.
-
-    The SQL adapters report an unknown table as version 2.0.0 rather than None, so
-    MigrationManager runs the migration anyway and it has to bow out on its own.
-    """
+    """A table type only some adapters support must be skipped, not raise: the SQL adapters report an
+    unknown table as version 2.0.0, so MigrationManager runs the migration anyway."""
     from agno.db.migrations.versions import v3_0_0
 
     db, _ = _new_db()
@@ -239,8 +232,7 @@ def test_table_type_the_backend_does_not_have_is_skipped(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_async_adapters_can_migrate_a_components_table():
-    """MigrationManager reads the table name off the db, so the async adapters need it
-    even though they cannot read or write components themselves."""
+    """MigrationManager reads the table name off the db, so the async adapters need one for components too."""
     db = AsyncSqliteDb(db_file=os.path.join(tempfile.mkdtemp(), "test_components.db"))
     assert db.components_table_name == "agno_components"
 
@@ -295,11 +287,8 @@ def test_revert_skips_on_old_sqlite(monkeypatch):
 
 
 def test_failed_revert_leaves_the_index_in_place():
-    """A revert that cannot drop the column must not leave the column unindexed.
-
-    SQLite commits DDL outside the session transaction, so the index drop sticks
-    even when the column drop fails.
-    """
+    """A revert that cannot drop the column must not leave it unindexed: SQLite commits DDL outside the
+    session transaction, so the index drop sticks even when the column drop fails."""
     db, db_file = _new_db()
 
     conn = sqlite3.connect(db_file)
@@ -377,8 +366,7 @@ def test_schedules_migration_restores_column_and_composite_index():
 
     assert "user_id" in _table_columns(db_file, SCHEDULES_TABLE)
     assert f"idx_{SCHEDULES_TABLE}_user_id" in _table_indexes(db_file, SCHEDULES_TABLE)
-    # A migrated table matches a fresh one: the (user_id, enabled, next_run_at)
-    # composite the listing path relies on is created too.
+    # The (user_id, enabled, next_run_at) composite the listing path uses comes back too
     assert SCHEDULES_COMPOSITE_INDEX in _table_indexes(db_file, SCHEDULES_TABLE)
     assert "user_id" in _table_columns(db_file, SCHEDULE_RUNS_TABLE)
     assert f"idx_{SCHEDULE_RUNS_TABLE}_user_id" in _table_indexes(db_file, SCHEDULE_RUNS_TABLE)
@@ -387,8 +375,7 @@ def test_schedules_migration_restores_column_and_composite_index():
 
 
 def test_schedules_revert_drops_composite_before_column():
-    """SQLite refuses DROP COLUMN while a multi-column index covers it — the
-    revert must drop the composite first or fail."""
+    """SQLite refuses DROP COLUMN while a multi-column index covers it, so the revert drops the composite first."""
     db, db_file = _new_db_with(["schedules"])
     assert SCHEDULES_COMPOSITE_INDEX in _table_indexes(db_file, SCHEDULES_TABLE)
 
@@ -420,8 +407,7 @@ def test_knowledge_migration_adds_user_id():
 
     assert "user_id" in _table_columns(db_file, KNOWLEDGE_TABLE)
     assert f"idx_{KNOWLEDGE_TABLE}_user_id" in _table_indexes(db_file, KNOWLEDGE_TABLE)
-    # linked_to still exists on this table, so the (user_id, linked_to)
-    # composite comes back too.
+    # linked_to still exists on this table, so the (user_id, linked_to) composite comes back too
     assert knowledge_composite in _table_indexes(db_file, KNOWLEDGE_TABLE)
     assert db.get_latest_schema_version(KNOWLEDGE_TABLE) == "3.0.0"
 

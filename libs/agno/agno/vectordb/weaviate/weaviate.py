@@ -33,9 +33,7 @@ class Weaviate(VectorDb):
     Weaviate class for managing vector operations with Weaviate vector database (v4 client).
     """
 
-    # Per-user RAG isolation. A scalar user_id property scopes each row to its owner.
-    # * Inserts with user_id stamp the property; user_id=None leaves it NULL (shared bucket).
-    # * Searches with user_id=X match own OR NULL; user_id=None sees all (admin view).
+    # Owner property. user_id=None writes to the shared (null) bucket and reads unscoped.
     USER_ID_KEY: str = "user_id"
 
     def __init__(
@@ -80,7 +78,7 @@ class Weaviate(VectorDb):
         self.collection = collection
         self.vector_index = vector_index
         self.distance = distance
-        # Whether the live collection has the user_id property; resolved lazily on first use.
+        # Whether the live collection supports isolation; resolved lazily on first use.
         self._owner_property_exists: Optional[bool] = None
 
         # Embedder setup
@@ -146,14 +144,14 @@ class Weaviate(VectorDb):
         return self.async_client  # type: ignore
 
     def _collection_properties(self) -> List[Property]:
-        """The collection schema; user_id is a first-class property the scope filter can match."""
+        """The properties of the collection schema."""
         return [
             Property(name="name", data_type=DataType.TEXT),
             Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
             Property(name="meta_data", data_type=DataType.TEXT),
             Property(name="content_id", data_type=DataType.TEXT),
             Property(name="content_hash", data_type=DataType.TEXT),
-            # FIELD tokenization so the scope filter matches the owner exactly (WORD would leak across owners).
+            # FIELD tokenization so the owner matches exactly; WORD would leak across owners.
             Property(name=self.USER_ID_KEY, data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
         ]
 
@@ -192,16 +190,9 @@ class Weaviate(VectorDb):
     def _user_id_property_exists(self) -> bool:
         """Whether the live collection can support per-user isolation.
 
-        Isolation needs BOTH create-time pieces: the ``user_id`` property AND
-        ``index_null_state=True`` — every shared-bucket filter runs
-        ``is_none(user_id)``, which Weaviate refuses without null-state
-        indexing ("Nullstate must be indexed to be filterable!"). Checking the
-        property alone would wave through a collection that had ``user_id``
-        bolted on later via ``add_property``: the gate would open and the
-        first ``is_none`` filter would then fail every ingest's dedup check.
-        ``index_null_state`` is immutable after creation, so such a collection
-        can only be recreated. Cached after the first lookup; the cached
-        answer is shared with the async paths.
+        Needs both the ``user_id`` property and ``index_null_state=True``, which the shared-bucket
+        ``is_none`` filters require and which is only settable at creation. Cached after the first
+        lookup.
         """
         if self._owner_property_exists is None:
             try:
@@ -216,11 +207,7 @@ class Weaviate(VectorDb):
                 null_state_indexed = bool(getattr(inverted_index, "index_null_state", False))
                 self._owner_property_exists = has_property and null_state_indexed
             except Exception:
-                # Inspection failed (connection, permissions, odd client
-                # response): assume migrated for THIS call only. Caching the
-                # assumption would let one blip permanently mask a real legacy
-                # collection — uncached, the next call re-inspects. The
-                # missing-collection case is handled conclusively above.
+                # Assume migrated for this call only; caching a blip would permanently mask a legacy collection.
                 log_warning(
                     f"Could not inspect collection '{self.collection}' for isolation support; "
                     "proceeding as migrated for this operation."
@@ -231,18 +218,14 @@ class Weaviate(VectorDb):
     def _require_owner_property(self, user_id: Optional[str]) -> bool:
         """Gate every ``user_id``-property reference on the live schema.
 
-        Returns True when the property exists, False when it is missing and the
-        operation is unscoped — the caller then falls back to pre-v3 queries that
-        never mention the property. A scoped operation on an unmigrated collection
-        raises instead of surfacing a raw client error (or silently returning
-        nothing).
+        Returns False when the property is missing and the call is unscoped, so the caller can fall
+        back to queries that never mention it. A scoped call on an unmigrated collection raises.
         """
         if self._user_id_property_exists():
             return True
         if user_id is None:
             return False
-        # The cached answer may predate a migration run while this process is
-        # alive — re-inspect once before refusing.
+        # The cache may predate a migration run in this process — re-inspect once before refusing.
         self._owner_property_exists = None
         if self._user_id_property_exists():
             return True
@@ -259,15 +242,11 @@ class Weaviate(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): The owner to check. This is the guard half of
-                the upsert dedup pair, so None scopes to the shared (null) bucket
-                alone rather than every owner - the same bucket
-                ``_delete_by_content_hash`` clears for None.
+            user_id (Optional[str]): The owner to check. ``None`` scopes to the shared (null)
+                bucket alone, the same bucket ``_delete_by_content_hash`` clears.
         """
         self._validate_user_id(user_id)
-        # Resolve the owner gate before the query: on an unmigrated collection the
-        # unscoped check falls back to matching on content_hash alone (pre-v3
-        # behaviour) so the dedup pair with ``_delete_by_content_hash`` stays consistent.
+        # Before the query: on an unmigrated collection the unscoped check matches content_hash alone.
         scope_to_owner = self._require_owner_property(user_id)
         collection = self.get_client().collections.get(self.collection)
         where = Filter.by_property("content_hash").equal(content_hash)
@@ -330,12 +309,10 @@ class Weaviate(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
-                None (default) writes to the shared bucket.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
-        # Only stamp the owner when the live schema has the property — writing it on an
-        # unmigrated collection would auto-create a differently-configured property.
+        # Only stamp when the schema has the property — Weaviate would auto-create a mis-configured one.
         stamp_owner = self._require_owner_property(user_id)
         log_debug(f"Inserting {len(documents)} documents into Weaviate.")
         collection = self.get_client().collections.get(self.collection)
@@ -349,7 +326,6 @@ class Weaviate(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            # Fold the owner into the id so two users' identical content get distinct uuids; None keeps the base id.
             record_id = self._scoped_record_id(base_id, content_hash, user_id)
             doc_uuid = uuid.UUID(hex=record_id[:32])
 
@@ -369,7 +345,6 @@ class Weaviate(VectorDb):
                 "content_hash": content_hash,
             }
             if stamp_owner:
-                # user_id is a first-class property so the scope filter can match it.
                 properties[self.USER_ID_KEY] = user_id
 
             collection.data.insert(
@@ -392,12 +367,10 @@ class Weaviate(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
-            user_id (Optional[str]): Owner of these chunks for per-user isolation.
-                None (default) writes to the shared bucket.
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
-        # Only stamp the owner when the live schema has the property — writing it on an
-        # unmigrated collection would auto-create a differently-configured property.
+        # Only stamp when the schema has the property — Weaviate would auto-create a mis-configured one.
         stamp_owner = self._require_owner_property(user_id)
         log_debug(f"Inserting {len(documents)} documents into Weaviate asynchronously.")
         if not documents:
@@ -458,11 +431,10 @@ class Weaviate(VectorDb):
                     cleaned_content = document.content.replace("\x00", "\ufffd")
                     # Include content_hash in ID to ensure uniqueness across different content hashes
                     base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                    # Fold the owner into the id so two users' identical content get distinct uuids; None keeps the base id.
                     record_id = self._scoped_record_id(base_id, content_hash, user_id)
                     doc_uuid = uuid.UUID(hex=record_id[:32])
 
-                    # Merge filters with metadata (parity with sync insert)
+                    # Merge filters with metadata
                     meta_data = document.meta_data or {}
                     if filters:
                         meta_data.update(filters)
@@ -479,7 +451,6 @@ class Weaviate(VectorDb):
                         "content_hash": content_hash,
                     }
                     if stamp_owner:
-                        # user_id is a first-class property so the scope filter can match it.
                         properties[self.USER_ID_KEY] = user_id
 
                     # Use the API correctly - properties, vector and uuid are separate parameters
@@ -508,8 +479,7 @@ class Weaviate(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         self._validate_user_id(user_id)
-        # Resolve the owner gate up front: a scoped upsert on an unmigrated
-        # collection must raise the clear error before any reads or writes.
+        # Up front so a scoped upsert on an unmigrated collection raises before any read or write.
         self._require_owner_property(user_id)
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         if self.content_hash_exists(content_hash, user_id=user_id):
@@ -534,8 +504,7 @@ class Weaviate(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         self._validate_user_id(user_id)
-        # Resolve the owner gate up front: a scoped upsert on an unmigrated
-        # collection must raise the clear error before any reads or writes.
+        # Up front so a scoped upsert on an unmigrated collection raises before any read or write.
         self._require_owner_property(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -556,8 +525,8 @@ class Weaviate(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. None means no scope (admin view).
+            user_id (Optional[str]): Restrict results to this user's chunks plus the shared
+                bucket. ``None`` applies no scope.
 
         Returns:
             List[Document]: List of matching documents.
@@ -590,8 +559,8 @@ class Weaviate(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
-            user_id (Optional[str]): Restrict results to the caller's chunks plus
-                the shared bucket. None means no scope (admin view).
+            user_id (Optional[str]): Restrict results to this user's chunks plus the shared
+                bucket. ``None`` applies no scope.
 
         Returns:
             List[Document]: List of matching documents.
@@ -617,8 +586,7 @@ class Weaviate(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
-        # Resolve the owner gate outside the try: a scoped search on an unmigrated
-        # collection must raise the clear error, not be swallowed into [].
+        # Outside the try so a scoped search raises instead of returning [].
         self._require_owner_property(user_id)
         try:
             query_embedding = self.embedder.get_embedding(query)
@@ -670,8 +638,7 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
-        # Resolve the owner gate outside the try: a scoped search on an unmigrated
-        # collection must raise the clear error, not be swallowed into [].
+        # Outside the try so a scoped search raises instead of returning [].
         self._require_owner_property(user_id)
 
         query_embedding = self.embedder.get_embedding(query)
@@ -716,8 +683,7 @@ class Weaviate(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
-        # Resolve the owner gate outside the try: a scoped search on an unmigrated
-        # collection must raise the clear error, not be swallowed into [].
+        # Outside the try so a scoped search raises instead of returning [].
         self._require_owner_property(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)
@@ -765,8 +731,7 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
-        # Resolve the owner gate outside the try: a scoped search on an unmigrated
-        # collection must raise the clear error, not be swallowed into [].
+        # Outside the try so a scoped search raises instead of returning [].
         self._require_owner_property(user_id)
 
         search_results = []
@@ -807,8 +772,7 @@ class Weaviate(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
-        # Resolve the owner gate outside the try: a scoped search on an unmigrated
-        # collection must raise the clear error, not be swallowed into [].
+        # Outside the try so a scoped search raises instead of returning [].
         self._require_owner_property(user_id)
         try:
             query_embedding = self.embedder.get_embedding(query)
@@ -863,8 +827,7 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
-        # Resolve the owner gate outside the try: a scoped search on an unmigrated
-        # collection must raise the clear error, not be swallowed into [].
+        # Outside the try so a scoped search raises instead of returning [].
         self._require_owner_property(user_id)
 
         query_embedding = self.embedder.get_embedding(query)
@@ -922,8 +885,7 @@ class Weaviate(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection '{self.collection}' from Weaviate.")
             self.get_client().collections.delete(self.collection)
-            # The next collection under this name is created with the owner
-            # property and null-state indexing — re-resolve the cache lazily.
+            # The next collection under this name is created with both — re-resolve lazily.
             self._owner_property_exists = None
 
     async def async_drop(self) -> None:
@@ -1008,13 +970,10 @@ class Weaviate(VectorDb):
 
         Args:
             content_id (str): The content ID to delete.
-            user_id (Optional[str]): Restrict the delete to the owner's chunks. Only None
-                deletes all chunks with this content_id regardless of owner.
+            user_id (Optional[str]): Restrict the delete to this owner's chunks. ``None`` ignores ownership.
         """
         self._validate_user_id(user_id)
-        # Resolve the owner gate before the try: a scoped delete on an unmigrated
-        # collection must raise the clear error, not be swallowed into False. An
-        # unscoped delete never references the property, so it needs no fallback.
+        # Before the try so a scoped delete raises instead of returning False; unscoped needs no fallback.
         self._require_owner_property(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)
@@ -1037,8 +996,8 @@ class Weaviate(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Restrict the delete to the owner's bucket. None
-                scopes to the shared bucket only so it can't wipe every owner.
+            user_id (Optional[str]): Restrict the delete to this owner's bucket. ``None`` scopes to
+                the shared bucket only so it can't wipe every owner.
         """
         self._validate_user_id(user_id)
         return self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -1146,23 +1105,19 @@ class Weaviate(VectorDb):
         return None
 
     def _validate_user_id(self, user_id: Optional[str]) -> None:
-        """Reject user_id values FIELD tokenization would fold into the shared (null) bucket.
+        """Reject owner values FIELD tokenization would fold into the shared (null) bucket.
 
-        Weaviate's FIELD tokenizer trims a value to a single token, so an empty or
-        whitespace-only owner indexes as null and is swept in by the is_none() half of
-        every scope clause, leaking that doc to every caller. Use None for unscoped access.
+        An empty or whitespace-only owner indexes as null and is swept in by the ``is_none`` half of
+        every scope clause. Use ``None`` for unscoped access.
         """
         if user_id is not None and user_id.strip() == "":
             raise ValueError("user_id must not be empty or whitespace-only")
 
     def _scoped_record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
-        """Fold the owner into the deterministic record id so two users inserting the
-        same content get distinct uuids. None keeps the stable base id.
+        """Fold the owner into the record id so two users' identical content get distinct uuids.
 
-        The base id is collapsed to a fixed-length digest here, before the owner is
-        folded in, so the owner cannot slide across the '_' boundary - otherwise
-        ('doc_1', 'alice') and ('doc', '1_alice') would fold to the same uuid and one
-        owner would overwrite the other's chunk.
+        ``None`` keeps the base id. The base id is digested before the owner is folded in so it
+        cannot slide across the '_' boundary: ('doc_1', 'alice') and ('doc', '1_alice') would collide.
         """
         record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
         if user_id is None:
@@ -1170,7 +1125,7 @@ class Weaviate(VectorDb):
         return md5(f"{record_id}_{user_id}".encode()).hexdigest()
 
     def _user_scope_filter(self, user_id: Optional[str]):
-        """Build the per-user read scope: user_id == X OR user_id IS NULL; only None (admin) returns no scope."""
+        """The per-user read scope: own rows OR shared (null). ``None`` returns no scope."""
         if user_id is None:
             return None
         return Filter.by_property(self.USER_ID_KEY).equal(user_id) | Filter.by_property(self.USER_ID_KEY).is_none(True)
@@ -1240,9 +1195,7 @@ class Weaviate(VectorDb):
                 # Merge existing metadata with new metadata
                 updated_properties = dict(current_properties)
 
-                # meta_data is stored as a JSON string (see insert); parse, merge and re-serialize so
-                # the property stays TEXT. Never emit a typeless `filters` object property here — insert
-                # folds filters into meta_data, and Weaviate rejects an empty/typeless object with a 422.
+                # meta_data is a JSON string: parse, merge, re-serialize. Emitting a typeless object property 422s.
                 existing_meta = updated_properties.get("meta_data")
                 if isinstance(existing_meta, str):
                     existing_meta = json.loads(existing_meta) if existing_meta else {}
@@ -1266,14 +1219,10 @@ class Weaviate(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Restrict the delete to the owner's chunks. None
-                scopes to the shared (null) bucket so a shared re-upsert never wipes a
-                scoped owner's identical-content row.
+            user_id (Optional[str]): Restrict the delete to this owner's chunks. ``None`` scopes to
+                the shared (null) bucket so a shared re-upsert never wipes an owner's row.
         """
-        # Resolve the owner gate before the try: a scoped delete on an unmigrated
-        # collection must raise, not be swallowed into False. When the property is
-        # missing the unscoped delete matches on content_hash alone (pre-v3
-        # behaviour) — the same rows ``content_hash_exists`` matched.
+        # Before the try so a scoped delete raises instead of returning False; unscoped matches content_hash alone.
         scope_to_owner = self._require_owner_property(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)

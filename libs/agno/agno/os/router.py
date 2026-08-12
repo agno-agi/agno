@@ -500,10 +500,9 @@ def get_websocket_router(
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
                     elif auth_user_id or ws_user_isolation_enabled:
-                        # Under isolation the client's own value never stands in for
-                        # an identity, so overwrite it even when the token carries no
-                        # subject: ``get_scoped_user_id_for_ws`` then scopes on
-                        # nothing rather than on a value the caller chose itself.
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
                         message["user_id"] = auth_user_id
 
                     ws_auth = WebSocketAuthContext(
@@ -525,10 +524,9 @@ def get_websocket_router(
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
                     elif auth_user_id or ws_user_isolation_enabled:
-                        # Under isolation the client's own value never stands in for
-                        # an identity, so overwrite it even when the token carries no
-                        # subject: ``get_scoped_user_id_for_ws`` then scopes on
-                        # nothing rather than on a value the caller chose itself.
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
                         message["user_id"] = auth_user_id
 
                     # Enforce workflow-level RBAC at reconnect just like
@@ -607,10 +605,9 @@ def get_websocket_router(
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
                     elif auth_user_id or ws_user_isolation_enabled:
-                        # Under isolation the client's own value never stands in for
-                        # an identity, so overwrite it even when the token carries no
-                        # subject: ``get_scoped_user_id_for_ws`` then scopes on
-                        # nothing rather than on a value the caller chose itself.
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
                         message["user_id"] = auth_user_id
 
                     ws_auth = WebSocketAuthContext(

@@ -48,10 +48,7 @@ class Content:
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     external_id: Optional[str] = None
-    # Uploader of this content. Set from the JWT sub by the route layer when
-    # ``user_isolation`` is on; ``None`` means shared / visible to all (admin
-    # uploads, system / library-mode ingestion, legacy data). Carried through
-    # to ``KnowledgeRow.user_id`` by ``Knowledge._build_knowledge_row``.
+    # Uploader of this content. ``None`` means shared with all users; persisted to ``KnowledgeRow.user_id``.
     user_id: Optional[str] = None
 
     @classmethod

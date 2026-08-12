@@ -2408,8 +2408,7 @@ async def resolve_agent(
 
     Raises HTTPException on all error paths.
     """
-    # Owner scope for DB-backed components: a non-admin caller may only resolve
-    # agents they own. None (admin / isolation off / no request) means unscoped.
+    # Owner scope for DB-backed components; no request means unscoped.
     scoped_user_id = None
     if request is not None:
         from agno.os.middleware.user_scope import get_scoped_user_id
@@ -2472,7 +2471,7 @@ async def resolve_team(
     strict: bool = True,
 ) -> Union[Team, RemoteTeam]:
     """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
-    # Owner scope for DB-backed components; see resolve_agent.
+    # Owner scope for DB-backed components; no request means unscoped.
     scoped_user_id = None
     if request is not None:
         from agno.os.middleware.user_scope import get_scoped_user_id
@@ -2542,7 +2541,7 @@ async def resolve_workflow(
     strict: bool = True,
 ) -> Union[Workflow, RemoteWorkflow]:
     """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
-    # Owner scope for DB-backed components; see resolve_agent.
+    # Owner scope for DB-backed components; no request means unscoped.
     scoped_user_id = None
     if request is not None:
         from agno.os.middleware.user_scope import get_scoped_user_id

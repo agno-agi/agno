@@ -257,7 +257,7 @@ def _owners(db) -> List[Optional[str]]:
 
 
 def _vector_search_filter(pipeline) -> Any:
-    """Return the ``$vectorSearch.filter`` from a captured pipeline (or a sentinel)."""
+    """Return the ``$vectorSearch.filter`` from a captured pipeline, or a sentinel if the key is absent."""
     for stage in pipeline:
         if "$vectorSearch" in stage:
             return stage["$vectorSearch"].get("filter", "NO_FILTER_KEY")
@@ -271,7 +271,7 @@ class TestWriteStampsOwner:
         mongo_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         doc = mongo_db._get_collection().find_one({"name": "alice-salary"})
         assert doc[USER_ID_FIELD] == "alice"
-        # Owner is NOT smuggled into the caller-controlled meta_data blob.
+        # Owner must not leak into the caller-controlled meta_data blob.
         assert USER_ID_FIELD not in (doc.get("meta_data") or {})
 
     def test_none_user_id_persisted_as_null(self, mongo_db):
@@ -286,8 +286,7 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """Two owners with byte-identical content keep DISTINCT _id, so neither ingest clobbers the other; a shared
-    (None) write keeps the base content id."""
+    """Two owners with identical content keep distinct ``_id``; a shared write keeps the base content id."""
 
     def test_two_owners_identical_content_get_distinct_id(self, mongo_db):
         mongo_db.insert(content_hash="same", documents=[_doc("d", "identical text")], user_id="alice")
@@ -295,7 +294,7 @@ class TestOwnerFoldedId:
 
         ids = [d["_id"] for d in mongo_db._get_collection().find({})]
         assert len(ids) == 2
-        assert len(set(ids)) == 2  # distinct -> no collision/overwrite
+        assert len(set(ids)) == 2
         assert _owners(mongo_db) == ["alice", "bob"]
 
     def test_shared_write_keeps_base_content_id(self, mongo_db):
@@ -306,8 +305,7 @@ class TestOwnerFoldedId:
 
 
 class TestSearchScope:
-    """The load-bearing contract: a scoped search pre-filters to the caller's own chunks OR the shared bucket
-    (user_id null); admin (None) applies none."""
+    """A scoped search pre-filters to the caller's chunks plus the shared bucket; ``None`` applies no filter."""
 
     @pytest.fixture
     def search_corpus(self, mongo_db):
@@ -324,8 +322,8 @@ class TestSearchScope:
 
         names = {d.name for d in results}
         assert "alice-salary" in names
-        assert "company-holidays" in names  # shared bucket visible
-        assert "bob-salary" not in names  # another owner never leaks
+        assert "company-holidays" in names
+        assert "bob-salary" not in names
 
     def test_bob_scope_excludes_alice(self, search_corpus):
         names = {d.name for d in search_corpus.search("salary", limit=10, user_id="bob")}
@@ -337,13 +335,12 @@ class TestSearchScope:
         names = {d.name for d in search_corpus.search("salary", limit=10, user_id=None)}
 
         sent_filter = _vector_search_filter(search_corpus._get_collection().last_pipeline)
-        assert sent_filter == "NO_FILTER_KEY"  # no scope key -> admin sees all
+        assert sent_filter == "NO_FILTER_KEY"
         assert {"alice-salary", "bob-salary", "company-holidays"} <= names
 
 
 class TestUpsertDedupScope:
-    """Owner-folded id means an upsert scopes to the writing owner's row: a second owner's identical-content upsert
-    cannot overwrite the first's."""
+    """An upsert scopes to the writing owner's row: identical content from another owner cannot overwrite it."""
 
     def test_two_owners_identical_content_both_survive(self, mongo_db):
         mongo_db.upsert(content_hash="same", documents=[_doc("d", "identical text")], user_id="alice")
@@ -360,7 +357,7 @@ class TestUpsertDedupScope:
     def test_same_owner_reupsert_is_idempotent(self, mongo_db):
         mongo_db.upsert(content_hash="same", documents=[_doc("d", "identical text")], user_id="alice")
         mongo_db.upsert(content_hash="same", documents=[_doc("d", "identical text")], user_id="alice")
-        assert mongo_db.get_count() == 1  # same folded _id -> replaced, not duplicated
+        assert mongo_db.get_count() == 1
 
 
 class TestDeleteScope:
@@ -384,7 +381,6 @@ class TestDeleteScope:
         assert "alice" not in owners
 
     def test_scoped_delete_by_foreign_owner_is_a_noop(self, content_id_corpus):
-        # carol owns nothing; her scoped delete removes no one else's chunks.
         assert content_id_corpus.delete_by_content_id("doc-1", user_id="carol") is True
         assert len(_owners(content_id_corpus)) == 3
 
@@ -394,7 +390,7 @@ class TestDeleteScope:
 
 
 class TestContentHashExistsScope:
-    """content_hash_exists is scoped so one owner's upload is not judged a duplicate of another's identical content."""
+    """content_hash_exists is scoped: identical content from another owner is not a duplicate."""
 
     def test_hash_scoped_to_owner(self, mongo_db):
         mongo_db.insert(content_hash="hx", documents=_alice_docs(), user_id="alice")
@@ -411,7 +407,7 @@ class TestContentHashExistsScope:
 
 
 class TestUpdateMetadataOwnership:
-    """update_metadata never lets a caller-supplied metadata write reassign the top-level owner field."""
+    """update_metadata must not let caller-supplied metadata reassign the top-level owner field."""
 
     def test_owner_field_is_not_reassignable_via_metadata(self, mongo_db):
         mongo_db.insert(content_hash="ha", documents=[_doc("alice-doc", "Alice secret", "doc-1")], user_id="alice")
@@ -419,8 +415,8 @@ class TestUpdateMetadataOwnership:
         mongo_db.update_metadata("doc-1", {USER_ID_FIELD: "bob", "team": "eng"})
 
         doc = mongo_db._get_collection().find_one({"content_id": "doc-1"})
-        assert doc[USER_ID_FIELD] == "alice"  # ownership unchanged
-        assert doc["meta_data"]["team"] == "eng"  # legitimate metadata applied
+        assert doc[USER_ID_FIELD] == "alice"
+        assert doc["meta_data"]["team"] == "eng"
 
 
 class TestAsyncIsolation:

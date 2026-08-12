@@ -115,21 +115,15 @@ attribute on the session item is preserved by the migration; call
 
 ### SingleStore note
 
-SingleStore requires every unique key to contain all shard-key columns, so the runs
-table uses `PRIMARY KEY (run_id, session_id)` with `SHARD KEY (session_id)`. A
-single-column `PRIMARY KEY (run_id)` is rejected outright with `ERROR 1744`, which
-means no SingleStore deployment can ever have had the narrower key — there is no data
-to migrate.
-
-The consequence to know about: on SingleStore `run_id` alone is **not** unique. If the
-same `run_id` is written under two different `session_id`s, both rows exist, and:
-
-- `get_run(run_id=...)` returns one of them, unordered
-- `upsert_run` with a new `session_id` inserts a second row rather than updating
-- `delete_run(run_id=...)` removes every copy, across sessions
-
-In normal use a `run_id` belongs to exactly one session, so none of this is reachable.
-The other SQL backends keep `PRIMARY KEY (run_id)` and are unaffected.
+SingleStore requires every unique key to contain the shard-key columns, so the runs
+table uses ``PRIMARY KEY (run_id, session_id)`` with ``SHARD KEY (session_id)``; a
+single-column ``PRIMARY KEY (run_id)`` is rejected with ``ERROR 1744``, so no
+deployment can have held the narrower key and there is nothing to migrate. The
+consequence is that ``run_id`` alone is not unique here: the same ``run_id`` under two
+``session_id``s leaves both rows in place, ``get_run`` returns one of them unordered,
+``upsert_run`` inserts instead of updating, and ``delete_run`` removes every copy
+across sessions. In normal use a ``run_id`` belongs to one session; the other SQL
+backends keep ``PRIMARY KEY (run_id)``.
 
 ### SurrealDB note
 
@@ -219,10 +213,10 @@ asyncio.run(MigrationManager(db).down(target_version="2.5.6"))
 
 ## Eval runs: per-user isolation
 
-The same `v3.0.0` migration adds a `user_id` column (and its index) to the eval runs
-table (`agno_eval_runs` by default). It backs per-user isolation in AgentOS: with
-`user_isolation` enabled a caller only sees their own eval runs, while admins and
-unscoped deployments keep seeing everything.
+The same `v3.0.0` migration adds an indexed `user_id` column to the eval runs table
+(`agno_eval_runs` by default). It backs per-user isolation in AgentOS: with
+`user_isolation` enabled a caller sees only their own eval runs; admins and unscoped
+deployments see everything.
 
 ```
 agno_eval_runs
@@ -231,17 +225,15 @@ agno_eval_runs
 └── user_id     TEXT (indexed)   -- NULL for runs created before v3.0
 ```
 
-Existing rows keep a `NULL` `user_id`. An unowned run stays visible to unscoped and
-admin callers and is invisible to a scoped one — nothing is deleted or reassigned.
-New runs are stamped with their owner right after the eval framework persists them.
+Existing rows keep a `NULL` `user_id` — nothing is deleted or reassigned. An unowned
+run stays visible to unscoped and admin callers and invisible to a scoped one. New
+runs are stamped with their owner on write.
 
-Schema-level work is only needed on the seven SQL adapters (`PostgresDb`,
-`AsyncPostgresDb`, `SqliteDb`, `AsyncSqliteDb`, `MySQLDb`, `AsyncMySQLDb`,
-`SingleStoreDb`). Every other adapter stores an eval run as a record and carries
-`user_id` without any schema change, so there is nothing for a migration to do —
-`MigrationManager` reports `No version found for table agno_eval_runs` and moves
-on without dispatching. `ClickhouseDb` is traces-only and implements no eval
-storage at all.
+Only the seven SQL adapters (`PostgresDb`, `AsyncPostgresDb`, `SqliteDb`,
+`AsyncSqliteDb`, `MySQLDb`, `AsyncMySQLDb`, `SingleStoreDb`) need schema work. The
+rest store an eval run as a record and carry `user_id` with no schema change, so
+`MigrationManager` logs `No version found for table agno_eval_runs` and moves on.
+`ClickhouseDb` is traces-only and stores no eval runs.
 
 It runs with the rest of the version — `MigrationManager(db).up()` — or on its own:
 
@@ -249,21 +241,20 @@ It runs with the rest of the version — `MigrationManager(db).up()` — or on i
 asyncio.run(MigrationManager(db).up(table_type="evals"))
 ```
 
-The column and index are added only when missing, so re-runs are safe. If the
-adapter schema for a table type does not declare `user_id`, that table is logged
-and skipped rather than failing the run.
+The column and index are added only when missing, so re-runs are safe; a table whose
+adapter schema does not declare `user_id` is logged and skipped rather than failing
+the run.
 
-Reverting drops the index and then the column. **Every row survives, but the
-`user_id` values in that column are destroyed** — re-running `up()` afterwards
-restores the column with `NULL` everywhere, not the previous owners. Take a
-backup first if the ownership data matters:
+Reverting drops the index and then the column. Every row survives, but **the `user_id`
+values are destroyed** — re-running `up()` restores the column with `NULL` everywhere,
+not the previous owners. Back up first if the ownership data matters:
 
 ```python
 asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="evals"))
 ```
 
-SQLite reverts need SQLite 3.35+ for `ALTER TABLE ... DROP COLUMN`; on older
-builds the revert logs and skips instead, matching `v2.5.6`'s behaviour.
+SQLite reverts need SQLite 3.35+ for `ALTER TABLE ... DROP COLUMN`; on older builds
+the revert logs and skips, matching `v2.5.6`'s behaviour.
 
 ## Breaking changes
 

@@ -1,7 +1,6 @@
 """Tests for per-user RAG isolation at the Knowledge wrapper layer.
 
-``user_id`` is not folded into the DSL filter machinery: each backend isolates
-natively, so Knowledge forwards ``user_id`` straight to ``vector_db.search``.
+``user_id`` is forwarded straight to ``vector_db.search`` instead of being merged into filters.
 """
 
 from typing import Any
@@ -24,15 +23,14 @@ def fake_vector_db():
         return []
 
     vdb.async_search.side_effect = _async_search
-    # Real None, so search() skips the SearchType branch instead of tripping
-    # over an auto-created mock attribute.
+    # Real None, so search() skips the SearchType branch instead of an auto-created mock attribute
     vdb.search_type = None
     return vdb
 
 
 @pytest.fixture
 def kb_named(fake_vector_db):
-    """Knowledge with a name, so the linked_to instance scope kicks in."""
+    """Knowledge with a name, so linked_to injection is enabled."""
     return Knowledge(name="docs", isolate_vector_search=True, vector_db=fake_vector_db)
 
 
@@ -43,8 +41,6 @@ def kb_unnamed(fake_vector_db):
 
 
 class TestSearchForwardsUserId:
-    """The owner reaches the backend as a top-level kwarg."""
-
     def test_user_id_string_forwarded(self, kb_unnamed, fake_vector_db):
         kb_unnamed.search(query="q", user_id="alice")
 
@@ -64,8 +60,6 @@ class TestSearchForwardsUserId:
 
 
 class TestAsearchForwardsUserId:
-    """Same contract for the async path."""
-
     @pytest.mark.asyncio
     async def test_user_id_string_forwarded(self, kb_unnamed, fake_vector_db):
         await kb_unnamed.asearch(query="q", user_id="alice")
@@ -81,7 +75,7 @@ class TestAsearchForwardsUserId:
 
 
 class TestLinkedToIndependentOfUserId:
-    """Instance scope goes into filters; owner scope rides as its own kwarg."""
+    """linked_to goes into filters; user_id rides as its own kwarg."""
 
     def test_linked_to_injected_when_named_and_isolate_on(self, kb_named, fake_vector_db):
         kb_named.search(query="q", user_id="alice")
@@ -122,8 +116,6 @@ class TestLinkedToIndependentOfUserId:
 
 
 class TestUserIdStaysOutOfMetaData:
-    """Owner identity is an explicit parameter, never a key in the JSONB blob."""
-
     def test_user_id_not_written_to_meta_data(self):
         kb = Knowledge(name="docs")
         docs = [Document(name="d", content="c", meta_data={})]
@@ -143,7 +135,6 @@ class TestUserIdStaysOutOfMetaData:
         assert "user_id" not in prepared[0].meta_data
 
     def test_caller_provided_user_id_in_meta_data_preserved(self):
-        """A caller's own user_id key is left exactly as they set it."""
         kb = Knowledge(name="docs")
         docs = [Document(name="d", content="c", meta_data={"user_id": "this-is-mine-not-yours"})]
 

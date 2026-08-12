@@ -749,8 +749,7 @@ class TestWorkflowRunE2EDependencies:
         finally:
             Agent.run = original_run  # type: ignore
 
-        # Each step resolves onto its own copy of the run context, so what step 1
-        # resolved does not persist into step 2
+        # Each step resolves onto its own copy of the run context, so Step 1's deps don't reach Step 2
         assert captured_per_step["Agent1"]["deps_after"] == {"agent1_key": "a1-val"}
         assert captured_per_step["Agent2"]["deps_after"] == {"agent2_key": "a2-val"}
 

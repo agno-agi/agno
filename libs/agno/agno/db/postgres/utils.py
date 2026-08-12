@@ -216,8 +216,7 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     results = []
     stmt = postgresql.insert(table)
 
-    # Columns to update in case of conflict.
-    # user_id is part of the unique key now; never overwrite it on conflict.
+    # Columns to update in case of conflict. user_id is part of the conflict key, so never overwrite it.
     update_columns = {
         col.name: stmt.excluded[col.name]
         for col in table.columns
@@ -252,8 +251,7 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     results = []
     stmt = postgresql.insert(table)
 
-    # Columns to update in case of conflict.
-    # user_id is part of the unique key now; never overwrite it on conflict.
+    # Columns to update in case of conflict. user_id is part of the conflict key, so never overwrite it.
     update_columns = {
         col.name: stmt.excluded[col.name]
         for col in table.columns
@@ -273,22 +271,15 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
 
 
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
-    """Calculate metrics for the given single date, bucketed per ``user_id``.
-
-    Each session is attributed to its owning user. Sessions without a
-    ``user_id`` (system / pre-RBAC / anonymous) aggregate under the sentinel
-    empty-string bucket — that bucket is what RBAC-off deployments see and
-    looks identical to the legacy global-metrics shape (one row per date).
+    """Calculate metrics for the given single date, bucketed per user.
 
     Args:
-        date_to_process: The date to calculate metrics for.
-        sessions_data: Sessions for this date, keyed by session_type
-            (``agent`` / ``team`` / ``workflow``).
+        date_to_process (date): The date to calculate metrics for.
+        sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        A list of per-user metrics records. One entry per distinct ``user_id``
-        seen on this date, plus optionally an empty-string-owner record if any
-        unowned sessions exist.
+        List[dict]: The calculated metrics, one record per user. Sessions without a
+            ``user_id`` are bucketed under ``""``.
     """
 
     def _empty_metric_record() -> Dict[str, Any]:
@@ -320,7 +311,6 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
 
-    # bucket_key = "" for unowned sessions; explicit user_id otherwise.
     per_user: Dict[str, Dict[str, Any]] = {}
 
     for session_type, sessions_count_key, runs_count_key in session_types:
@@ -354,9 +344,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
             model_id, model_provider = model.rsplit(":", 1)
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
-        # ``users_count`` in a per-user bucket is always 1 (or 0 for the
-        # unowned bucket — kept as 0 so legacy global-shape callers see the
-        # same number they always did when summing).
+        # One distinct user per bucket, and none for the unowned one, so summed counts stay correct.
         users_count = 0 if user_id == "" else 1
 
         records.append(

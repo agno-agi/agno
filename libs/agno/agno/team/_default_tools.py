@@ -1461,7 +1461,7 @@ def add_to_knowledge(team: "Team", query: str, result: str, user_id: Optional[st
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
-    # See the matching comment in agno.agent._default_tools.
+    # A custom Knowledge whose insert predates isolation raises on the user_id kwarg
     insert_kwargs: Dict[str, Any] = {
         "name": document_name,
         "text_content": document_content,
@@ -1723,7 +1723,7 @@ def get_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-            # Applied after the **kwargs merge: the owner comes from the run context, so caller kwargs must not win
+            # After the **kwargs merge so caller kwargs cannot override the run's owner
             knowledge_retriever_kwargs.update(
                 get_user_id_kwarg(
                     team.knowledge_retriever,
@@ -1749,7 +1749,6 @@ def get_relevant_docs_from_knowledge(
             num_documents = getattr(knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
-        # Owner scope comes from the run context; None is unscoped, see the Knowledge.search docstring
         retrieve_kwargs: Dict[str, Any] = {
             "query": query,
             "max_results": num_documents,
@@ -1824,7 +1823,7 @@ async def aget_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-            # Applied after the **kwargs merge: the owner comes from the run context, so caller kwargs must not win
+            # After the **kwargs merge so caller kwargs cannot override the run's owner
             knowledge_retriever_kwargs.update(
                 get_user_id_kwarg(
                     team.knowledge_retriever,
@@ -1860,7 +1859,6 @@ async def aget_relevant_docs_from_knowledge(
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
-        # See the sync variant above
         scope_user_id = run_context.user_id if run_context else team.user_id
         retrieve_kwargs: Dict[str, Any] = {
             "query": query,

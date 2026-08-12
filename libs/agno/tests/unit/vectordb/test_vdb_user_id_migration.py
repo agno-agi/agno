@@ -1,20 +1,9 @@
 """Tests for the v2 -> v3 vector-DB user-isolation migration scripts.
 
-v3 adds per-user RAG isolation. The migration scripts under
-``libs/agno/migrations/v2_to_v3/`` prepare EXISTING (pre-v3) vector stores:
-
-- SQL backends (pgvector / singlestore): add the ``user_id`` column so the new
-  code doesn't error on the old schema. NULL = shared, existing rows stay visible.
-- Sentinel backends (redis / couchbase / cassandra): stamp ``user_id="__shared__"``
-  onto existing vectors, which otherwise become INVISIBLE to scoped callers
-  (their filter has no "field absent" branch).
-
-These tests exercise the two backends that run without an external service:
-- redis via ``fakeredis`` (a real Redis implementation),
-- the SQL schema logic via SQLite (in-process; the ``inspect`` + ``ALTER`` path).
-
-The script modules define their migration functions at import (guarded by
-``if __name__ == "__main__"``), so we load them by path and call the functions.
+The scripts under ``libs/agno/migrations/v2_to_v3/`` add the ``user_id`` column on SQL
+backends (NULL = shared) and stamp ``user_id="__shared__"`` on sentinel backends, whose
+filters have no "field absent" branch and so cannot see un-stamped vectors. Only the
+backends that run without an external service are exercised here.
 """
 
 from __future__ import annotations
@@ -38,11 +27,6 @@ def _load(script_name: str) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-# --------------------------------------------------------------------------- #
-# Redis sentinel backfill (fakeredis — real behavior, no server)
-# --------------------------------------------------------------------------- #
 
 
 class TestRedisSentinelBackfill:
@@ -95,11 +79,6 @@ class TestRedisSentinelBackfill:
         mod.migrate_redis_index("empty_index")
 
 
-# --------------------------------------------------------------------------- #
-# Valkey sentinel backfill (fakeredis — Valkey speaks the Redis protocol)
-# --------------------------------------------------------------------------- #
-
-
 class TestValkeySentinelBackfill:
     def _client(self):
         fakeredis = pytest.importorskip("fakeredis")
@@ -143,11 +122,6 @@ class TestValkeySentinelBackfill:
         assert self._uid(client, f"{index}:d1") == ValkeyDB.SHARED_OWNER_TAG
 
 
-# --------------------------------------------------------------------------- #
-# SurrealDB schema migration (embedded mem:// — no server)
-# --------------------------------------------------------------------------- #
-
-
 class TestSurrealDbSchemaMigration:
     def _conn(self):
         surrealdb = pytest.importorskip("surrealdb")
@@ -173,10 +147,10 @@ class TestSurrealDbSchemaMigration:
         mod.migrate_surrealdb_collection(coll)
 
         assert "user_id" in self._fields(conn, coll)
-        # Existing record reads as NONE (shared) and a scoped read still works.
+        # The existing record reads as NONE (shared), so a scoped read still finds it.
         rows = conn.query(f"SELECT content, user_id FROM {coll} WHERE (user_id = 'alice' OR user_id = NONE);")
         rows = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], list) else rows
-        assert rows  # existing record still visible as shared
+        assert rows
 
     def test_idempotent(self):
         conn = self._conn()
@@ -189,16 +163,12 @@ class TestSurrealDbSchemaMigration:
         assert "user_id" in self._fields(conn, coll)
 
 
-# --------------------------------------------------------------------------- #
-# SQL schema migration logic (SQLite — in-process)
-# --------------------------------------------------------------------------- #
-
-
 class TestSqlSchemaMigrationLogic:
-    """The SQL migration's core behavior — 'add user_id unless it already exists' —
-    exercised against SQLite. (The pgvector/singlestore functions instantiate their
-    adapters, which need a live server; the column-inspection + ALTER logic they run
-    is validated here directly to keep it CI-safe.)"""
+    """The SQL migration's core behavior — 'add user_id unless it already exists' — against SQLite.
+
+    The pgvector/singlestore functions instantiate adapters that need a live server, so the
+    column-inspection + ALTER logic they run is exercised directly here.
+    """
 
     def _engine(self):
         return create_engine(f"sqlite:///{tempfile.mktemp(suffix='.db')}")
@@ -237,19 +207,11 @@ class TestSqlSchemaMigrationLogic:
         assert self._has_user_id(engine, "docs")
 
 
-# --------------------------------------------------------------------------- #
-# Weaviate schema migration (embedded — no external server)
-# --------------------------------------------------------------------------- #
-
-
 class TestWeaviateRefusesInPlaceMigration:
-    """Weaviate CANNOT be migrated in place: the shared filter needs a create-time
-    ``index_null_state`` that can't be added later, so merely adding the ``user_id``
-    property breaks ``Knowledge.insert`` irreparably. The migration must REFUSE a
-    pre-v3 collection with a recreate instruction — never add the property.
+    """Weaviate cannot be migrated in place: the shared filter needs a create-time ``index_null_state``.
 
-    Uses a mock Weaviate client (no server) so the guard runs in CI. ``weaviate`` is
-    imported by the migration at call time, so it must be importable.
+    It can't be added later, so the migration must refuse a pre-v3 collection with a recreate
+    instruction — adding the ``user_id`` property would leave ``Knowledge.insert`` broken.
     """
 
     def _mock_client(self, existing_props, exists=True):
@@ -284,7 +246,6 @@ class TestWeaviateRefusesInPlaceMigration:
             msg = str(exc.value).lower()
             assert "recreate" in msg
             assert "index_null_state" in msg
-            # It must NEVER add the property (that is the broken state).
             client.collections.get.return_value.config.add_property.assert_not_called()
         finally:
             self._restore()
@@ -309,11 +270,6 @@ class TestWeaviateRefusesInPlaceMigration:
             self._restore()
 
 
-# --------------------------------------------------------------------------- #
-# Qdrant optional owner assignment (in-memory — no server)
-# --------------------------------------------------------------------------- #
-
-
 class TestQdrantOwnerAssignment:
     def test_set_payload_assigns_owner_in_place(self):
         qdrant_client = pytest.importorskip("qdrant_client")
@@ -333,16 +289,11 @@ class TestQdrantOwnerAssignment:
         payload = lambda pid: client.retrieve("docs", [pid])[0].payload  # noqa: E731
         assert payload(1).get(Qdrant.USER_ID_KEY) is None  # existing = shared
 
-        # In-place assignment (what assign_qdrant_owner does via set_payload).
+        # What assign_qdrant_owner does via set_payload.
         client.set_payload(collection_name="docs", payload={Qdrant.USER_ID_KEY: "alice"}, points=[1])
 
-        assert payload(1).get(Qdrant.USER_ID_KEY) == "alice"  # assigned
+        assert payload(1).get(Qdrant.USER_ID_KEY) == "alice"
         assert payload(2).get(Qdrant.USER_ID_KEY) is None  # untouched, still shared
-
-
-# --------------------------------------------------------------------------- #
-# Script import safety (functions must load without side effects)
-# --------------------------------------------------------------------------- #
 
 
 class TestScriptsImportCleanly:
@@ -372,11 +323,6 @@ class TestScriptsImportCleanly:
         mod = _load(script)
         for fn in funcs:
             assert callable(getattr(mod, fn)), f"{script} missing {fn}"
-
-
-# --------------------------------------------------------------------------- #
-# LanceDB schema migration (fully in-process — no server)
-# --------------------------------------------------------------------------- #
 
 
 class TestLanceDbSchemaMigration:
@@ -444,27 +390,24 @@ class TestMilvusMigrationContract:
     """No-server guards: the migration must stay in sync with the adapter's constants."""
 
     def test_adapter_exposes_the_constants_the_migration_depends_on(self):
-        # If these are renamed/removed again (as USER_ID_KEY was), this fails loudly
-        # instead of letting the migration crash at call time in production.
+        # Renaming these again (as USER_ID_KEY was) must fail here, not at call time.
         milvus = pytest.importorskip("agno.vectordb.milvus.milvus")
         assert isinstance(milvus.USER_ID_FIELD, str) and milvus.USER_ID_FIELD
         assert isinstance(milvus.SHARED_USER_ID_VALUE, str) and milvus.SHARED_USER_ID_VALUE
 
     def test_migration_does_not_reference_the_removed_attribute(self):
-        # The crash was `Milvus.USER_ID_KEY`; make sure it never comes back.
-        # (Weaviate/Qdrant still expose USER_ID_KEY, so only the Milvus form is banned.)
+        # Only the Milvus form is banned — Weaviate/Qdrant still expose USER_ID_KEY.
         source = (_MIGRATIONS_DIR / "migrate_field_vectordbs.py").read_text()
         assert "Milvus.USER_ID_KEY" not in source, "migration references removed attribute Milvus.USER_ID_KEY"
         assert "SHARED_USER_ID_VALUE" in source, "migration must backfill the shared sentinel"
 
 
 class TestMilvusBackfill:
-    """Full backfill behavior on milvus-lite (skipped where milvus-lite is unavailable).
+    """Full backfill behavior on milvus-lite.
 
-    milvus-lite cannot ``AddCollectionField`` (returns UNIMPLEMENTED, like Milvus
-    <=2.5), so we pre-create the collection WITH a nullable ``user_id`` and insert
-    owner-less rows -- the exact state left right after ``add_collection_field`` on
-    a real 2.6+ server -- then exercise the migration's backfill loop.
+    milvus-lite cannot ``AddCollectionField`` (UNIMPLEMENTED, like Milvus <=2.5), so the
+    collection is pre-created with a nullable ``user_id`` and owner-less rows — the state a
+    real 2.6+ server is in right after ``add_collection_field``.
     """
 
     def _client_with_legacy_rows(self):
@@ -505,7 +448,7 @@ class TestMilvusBackfill:
         rows = client.query(collection_name="docs", filter="id != ''", output_fields=[USER_ID_FIELD])
         assert rows and all(r.get(USER_ID_FIELD) == SHARED_USER_ID_VALUE for r in rows)
 
-        # The whole point: existing rows are now reachable by a scoped search.
+        # Existing rows are now reachable by a scoped search.
         scoped = client.query(
             collection_name="docs",
             filter=f'{USER_ID_FIELD} == "alice" or {USER_ID_FIELD} == "{SHARED_USER_ID_VALUE}"',

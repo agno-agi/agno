@@ -774,9 +774,7 @@ def build_mcp_server(
             from agno.workflow.workflow import get_workflows
 
             registry = os.registry
-            # Owner scope for DB-backed components, exactly as the REST list routes do:
-            # a non-admin caller must not enumerate another user's private components here
-            # when it cannot over GET /agents.
+            # Owner scope for the DB-backed components, matching the REST list routes.
             scoped_user_id = _scoped_caller_user_id()
             agent_exclude = (registry.get_agent_ids() if registry else None) or None
             for a in _accessible(

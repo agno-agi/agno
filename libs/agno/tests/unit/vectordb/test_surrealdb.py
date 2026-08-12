@@ -104,10 +104,7 @@ def test_build_filter_condition(surrealdb_vector):
     result = surrealdb_vector._build_filter_condition(None)
     assert result == ""
 
-    # Test with filters. Keys are BOUND, not interpolated: splicing a caller's
-    # key into the query text lets ``{"name OR true": ...}`` disjoin the owner
-    # scope away and return every owner's rows. See
-    # test_surrealdb_user_isolation.TestFilterKeyCannotEscapeTheOwnerScope.
+    # Test with filters. Keys are bound, not interpolated, so a crafted key cannot widen the scope.
     filters = {"cuisine": "Thai", "type": "soup"}
     result = surrealdb_vector._build_filter_condition(filters)
     assert "AND meta_data[$filter_key_0] = $filter_value_0" in result
@@ -181,16 +178,12 @@ def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
 
 
 def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
-    # A doc with an id is upserted via UPSERT type::record() so a
-    # reader-assigned id is bound as a param; the owner is folded into the
-    # record id.
+    # Assign ids so the record id is deterministic
     for i, doc in enumerate(sample_documents):
         doc.id = f"doc-{i}"
     surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents, user_id="user1")
 
-    # The idempotent schema DEFINEs run first (pre-v3 tables would silently
-    # strip the owner without them), then the scoped dedup check, then one
-    # UPSERT per document.
+    # Schema DEFINEs first, then the scoped dedup check, then one UPSERT per document
     assert mock_surrealdb_client.query.call_count == 5
     assert "SELECT * FROM" in mock_surrealdb_client.query.call_args_list[1][0][0]
 
@@ -263,8 +256,7 @@ def test_delete(surrealdb_vector, mock_surrealdb_client):
 
 def test_extract_result(surrealdb_vector):
     """Test extract result method"""
-    # surrealdb >= 1.0 hands back the rows themselves - a list for a SELECT,
-    # a dict for INFO FOR DB - not the legacy {"status", "time", "result"} envelope.
+    # surrealdb >= 1.0 returns the rows directly, not the legacy {"result": ...} envelope
     assert surrealdb_vector._extract_result([{"id": 1}, {"id": 2}]) == [{"id": 1}, {"id": 2}]
     assert surrealdb_vector._extract_result([]) == []
     assert surrealdb_vector._extract_result({"tables": {}}) == {"tables": {}}
@@ -328,9 +320,7 @@ async def test_async_upsert(async_surrealdb_vector, mock_async_surrealdb_client,
         doc.id = f"doc-{i}"
     await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents, user_id="user1")
 
-    # The idempotent schema DEFINEs run first (pre-v3 tables would silently
-    # strip the owner without them), then the scoped dedup check, then one
-    # UPSERT per document.
+    # Schema DEFINEs first, then the scoped dedup check, then one UPSERT per document
     assert mock_async_surrealdb_client.query.await_count == 5
     assert "SELECT * FROM" in mock_async_surrealdb_client.query.await_args_list[1][0][0]
 

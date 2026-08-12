@@ -954,7 +954,7 @@ class Step:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
 
-        # Give this step its own run context, so options resolved here do not persist into the next step
+        # Shallow-copy run_context so options resolved here don't leak into the next step
         run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
@@ -1122,7 +1122,6 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            # The executor passes this owner down to its own members, so send the resolved one
                             user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
@@ -1154,7 +1153,7 @@ class Step:
                         response = self._execute_nested_workflow(
                             step_input=step_input,
                             session_id=session_id,
-                            # Workflow.run takes no run_context, so the resolved owner travels as an argument
+                            # Workflow.run takes no run_context, so the owner travels as an argument
                             user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
@@ -1286,7 +1285,7 @@ class Step:
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
-        # Give this step its own run context, so options resolved here do not persist into the next step
+        # Shallow-copy run_context so options resolved here don't leak into the next step
         run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
@@ -1466,7 +1465,6 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            # The executor passes this owner down to its own members, so send the resolved one
                             user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
@@ -1519,7 +1517,7 @@ class Step:
                         for event in self._execute_nested_workflow_stream(
                             step_input=step_input,
                             session_id=session_id,
-                            # Workflow.run takes no run_context, so the resolved owner travels as an argument
+                            # Workflow.run takes no run_context, so the owner travels as an argument
                             user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
@@ -1616,7 +1614,7 @@ class Step:
         logger.info(f"Executing async step (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
 
-        # Give this step its own run context, so options resolved here do not persist into the next step
+        # Shallow-copy run_context so options resolved here don't leak into the next step
         run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
@@ -1814,7 +1812,6 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            # The executor passes this owner down to its own members, so send the resolved one
                             user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
@@ -1846,7 +1843,7 @@ class Step:
                         response = await self._aexecute_nested_workflow(
                             step_input=step_input,
                             session_id=session_id,
-                            # Workflow.run takes no run_context, so the resolved owner travels as an argument
+                            # Workflow.run takes no run_context, so the owner travels as an argument
                             user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
@@ -1908,7 +1905,7 @@ class Step:
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
-        # Give this step its own run context, so options resolved here do not persist into the next step
+        # Shallow-copy run_context so options resolved here don't leak into the next step
         run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
@@ -2132,7 +2129,6 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            # The executor passes this owner down to its own members, so send the resolved one
                             user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,
                             stream=True,
@@ -2185,7 +2181,7 @@ class Step:
                         async for event in self._aexecute_nested_workflow_stream(
                             step_input=step_input,
                             session_id=session_id,
-                            # Workflow.run takes no run_context, so the resolved owner travels as an argument
+                            # Workflow.run takes no run_context, so the owner travels as an argument
                             user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,

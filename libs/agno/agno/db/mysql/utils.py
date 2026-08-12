@@ -130,8 +130,6 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
 
 # -- Metrics util methods --
-# Per-user aggregation: unique key is (user_id, date, aggregation_period).
-# Unowned sessions aggregate under the sentinel empty-string user_id.
 def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[dict]) -> list[dict]:
     """Bulk upsert metrics into the database.
 
@@ -148,13 +146,12 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
 
     results = []
 
-    # MySQL doesn't support RETURNING reliably across versions, so we
-    # insert-or-update per record and SELECT the result back.
+    # MySQL doesn't support returning in the same way as PostgreSQL
+    # We'll need to insert/update and then fetch the records
     for record in metrics_records:
         stmt = mysql.insert(table).values(record)
 
-        # Columns to update in case of conflict.
-        # user_id is part of the unique key now; never overwrite it on conflict.
+        # Columns to update in case of conflict. user_id is part of the unique key, so it is never overwritten.
         update_dict = {
             col.name: record.get(col.name)
             for col in table.columns
@@ -164,12 +161,9 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         stmt = stmt.on_duplicate_key_update(**update_dict)
         session.execute(stmt)
 
-    # No commit here: the caller owns the transaction (``self.Session() as sess, sess.begin():``).
-    # Committing mid-flow would close that transaction and the SELECT-back below would raise
-    # InvalidRequestError against a closed transaction — calculate_metrics catches it and
-    # /metrics silently returns empty.
+    # No commit here: the caller owns the transaction, and committing would close it before the SELECT below.
 
-    # Fetch the updated records — match by the full unique key (user_id, date, period).
+    # Fetch the updated records
     from sqlalchemy import and_, select
 
     for record in metrics_records:
@@ -203,10 +197,12 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
 
     results = []
 
+    # MySQL doesn't support returning in the same way as PostgreSQL
+    # We'll need to insert/update and then fetch the records
     for record in metrics_records:
         stmt = mysql.insert(table).values(record)
 
-        # user_id is part of the unique key now; never overwrite it on conflict.
+        # Columns to update in case of conflict. user_id is part of the unique key, so it is never overwritten.
         update_dict = {
             col.name: record.get(col.name)
             for col in table.columns
@@ -216,7 +212,7 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
         stmt = stmt.on_duplicate_key_update(**update_dict)
         await session.execute(stmt)
 
-    # Fetch the updated records — match by the full unique key.
+    # Fetch the updated records
     from sqlalchemy import and_, select
 
     for record in metrics_records:
@@ -238,17 +234,14 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given single date, bucketed per ``user_id``.
 
-    Each session is attributed to its owning user. Sessions without a
-    ``user_id`` aggregate under the sentinel empty-string bucket — that
-    bucket is what RBAC-off deployments see and looks identical to the
-    legacy global-metrics shape (one row per date).
+    Sessions without a ``user_id`` aggregate under the empty-string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        A list of per-user metrics records.
+        List[dict]: The calculated metrics, one record per user.
     """
 
     def _empty_metric_record() -> Dict[str, Any]:

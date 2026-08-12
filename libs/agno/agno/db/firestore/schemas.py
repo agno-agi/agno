@@ -157,16 +157,11 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "date"},
     {"key": "aggregation_period"},
-    # Owner of this metric bucket. Stored as the sentinel empty string for
-    # "no owner" so the unique key behaves predictably (Firestore treats
-    # missing fields as distinct). ``get_metrics`` maps ``""`` back to
-    # ``None`` on read.
+    # Rows with no owner use the empty-string sentinel so they fit the compound unique key below
     {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
-    # Unique key expanded to include user_id after per-user aggregation
-    # landed. The old (date, aggregation_period) constraint would reject
-    # the second per-user bucket for any date with > 1 distinct user.
+    # Composite index for metrics uniqueness (same as MongoDB)
     {
         "key": [("user_id", "ASCENDING"), ("date", "ASCENDING"), ("aggregation_period", "ASCENDING")],
         "collection_group": False,

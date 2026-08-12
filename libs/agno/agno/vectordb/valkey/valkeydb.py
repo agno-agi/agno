@@ -273,16 +273,12 @@ class ValkeyDB(VectorDb):
         sentinel would let a caller impersonate the shared bucket, a stored
         match-all tag would break the match-all query, braces can never be
         matched by a scope clause, wildcards match other owners' tags even
-        when escaped, surrounding whitespace is trimmed at index time so
-        ' alice' indexes as the tag 'alice' and is read by that owner, a NUL
-        byte or an over-long value is truncated at index time so
-        'victim\\x00attacker' indexes as 'victim' and writes into that owner's
-        view, and an empty string is an owner tag no scope clause can ever
-        match.
+        when escaped, and an empty string is an owner tag no scope clause can
+        ever match. Whitespace is trimmed and a NUL byte or over-long value
+        truncated at index time, so either would index as another owner's tag.
 
-        The TAG union character '|' is not rejected: ``_escape_tag_value``
-        escapes it at every interpolation site, and OIDC subject claims
-        ('auth0|...', 'google-oauth2|...') are legitimate owner ids.
+        '|' is allowed: it is escaped at every interpolation site and OIDC
+        subject ids contain it.
         """
         if user_id is None:
             return
@@ -312,10 +308,8 @@ class ValkeyDB(VectorDb):
         """Fold the owner into the deterministic id so two users uploading the
         same content get distinct keys. The shared bucket keeps the legacy id.
 
-        The base id is caller-controlled and variable length, so it is collapsed
-        to a fixed-length digest before the owner is folded in - otherwise the
-        '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to
-        the same key, letting one owner overwrite the other's chunk.
+        The base id is digested first so a variable-length id cannot shift the
+        '_' boundary and collide with another owner's key.
         """
         if user_id is None:
             return base_id
@@ -484,14 +478,9 @@ class ValkeyDB(VectorDb):
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document with the given content hash exists.
 
-        user_id set  -> only the caller's own chunks count, so another owner's
-        identical upload is not judged a duplicate. None -> the shared bucket
-        alone (the sentinel owner tag), never every owner.
-
-        This is the guard half of the upsert dedupe pair, so it matches exactly
-        the bucket ``_dedupe_query`` clears and never an owned chunk: otherwise a
-        shared publish is judged a duplicate on the strength of one tenant's
-        private copy and the shared bucket never receives it.
+        user_id set  -> only the caller's own chunks count. None -> the shared
+        bucket alone (the sentinel owner tag), never every owner; the same
+        bucket ``_dedupe_query`` clears.
         """
         # Outside the try: an invalid user_id must raise, not be swallowed into False.
         self._validate_user_id(user_id)
@@ -569,8 +558,7 @@ class ValkeyDB(VectorDb):
         """
         self._validate_user_id(user_id)
         try:
-            # Find and delete existing docs for this content_hash in the
-            # caller's bucket, then insert the new ones.
+            # Find and delete existing docs for this content_hash in the caller's bucket
             self._delete_by_query(self._dedupe_query(content_hash, user_id))
             # Insert new docs
             self.insert(content_hash, documents, filters, user_id=user_id)
@@ -971,10 +959,7 @@ class ValkeyDB(VectorDb):
     def _delete_by_tag_filter(self, tag_field: str, tag_value: str) -> bool:
         """Delete all documents matching a tag filter.
 
-        Deletes through ``_delete_by_query`` so the matches are paged to
-        exhaustion: a single FT.SEARCH page would leave every match past the
-        page behind while still reporting the delete succeeded, and those
-        survivors keep their owner tag and stay visible to every scoped reader.
+        Goes through ``_delete_by_query`` so matches past the first page are not left behind.
         """
         return self._delete_by_query(f"@{tag_field}:{{{_escape_tag_value(tag_value)}}}")
 

@@ -1,20 +1,15 @@
 # Per-User RAG Isolation
 
-One knowledge base, a private view per user. Alice and Bob each upload a
-private document, a third upload has no owner and is therefore shared, and
-`Knowledge.asearch(user_id=...)` scopes retrieval to the caller's own chunks
-plus the shared ones. `user_id=None` drops the scope - the admin view.
+One knowledge base, a private view per user. Alice and Bob each upload a private
+document, a third upload has no owner and is therefore shared, and
+`Knowledge.asearch(user_id=...)` scopes retrieval to the caller's own chunks plus the
+shared ones. `user_id=None` drops the scope - the admin view.
 
-Every example runs the same scenario against a different vector backend.
-
-Each one then repeats the check through an **agent**, which is how an
-application actually retrieves: `Agent(user_id="alice")` puts the owner on the
-run context, and it has to survive the hop into `search_knowledge_base` and
-down to the vector DB. That last hop is worth exercising explicitly - a
-dropped `user_id` becomes `None`, which is the admin view, so a broken handoff
-returns every user's chunks instead of raising. The agent section asserts on
-the documents retrieval returned (`RunOutput.references`) rather than on the
-model's prose, so the isolation check stays deterministic.
+Every example runs that scenario against a different vector backend, then repeats it
+through `Agent(user_id="alice")` and asserts on the documents in `RunOutput.references`.
+A dropped `user_id` becomes `None`, which is the admin view, so a broken handoff returns
+every user's chunks instead of raising - which is why the examples assert rather than
+rely on an error.
 
 ## Prerequisites
 
@@ -29,25 +24,25 @@ Redis and Valkey both bind port 6379, so run only one of them at a time.
 
 ## Examples
 
-| File                                          | Backend     | Isolation primitive                                                            |
-| --------------------------------------------- | ----------- | ------------------------------------------------------------------------------ |
-| [pgvector_db.py](./pgvector_db.py)            | PgVector    | Nullable `user_id` column, `WHERE user_id = X OR user_id IS NULL`              |
-| [lance_db.py](./lance_db.py)                  | LanceDB     | `user_id` column, `.where("user_id = X OR user_id IS NULL", prefilter=True)`   |
-| [chroma_db.py](./chroma_db.py)                | Chroma      | One collection per user (`{base}__{user_id}`), base collection = shared bucket |
-| [qdrant_db.py](./qdrant_db.py)                | Qdrant      | Indexed `user_id` payload field, `should` match + is-empty                     |
-| [milvus_db.py](./milvus_db.py)                | Milvus      | `user_id` scalar field, `__shared__` sentinel for unowned chunks               |
-| [mongo_db.py](./mongo_db.py)                  | MongoDB     | Top-level `user_id` field, `$match {$in: [X, null]}` before `$vectorSearch`    |
-| [weaviate_db.py](./weaviate_db.py)            | Weaviate    | `user_id` text property, `where` OR `is_none`                                  |
-| [opensearch_db.py](./opensearch_db.py)        | OpenSearch  | `user_id` keyword field, `term` OR `must_not exists`                            |
-| [redis_db.py](./redis_db.py)                  | Redis       | `user_id` TAG field, `__shared__` sentinel tag                                 |
-| [valkey_db.py](./valkey_db.py)                | Valkey      | `user_id` TAG field, `__shared__` sentinel tag                                 |
-| [clickhouse_db.py](./clickhouse_db.py)        | ClickHouse  | Non-nullable `String` column, `""` sentinel for shared                          |
-| [cassandra_db.py](./cassandra_db.py)          | Cassandra   | `user_id` metadata, `__shared__` sentinel for unowned chunks                   |
-| [couchbase_db.py](./couchbase_db.py)          | Couchbase   | Keyword-indexed FTS `user_id` field, `__shared__` sentinel                     |
-| [singlestore_db.py](./singlestore_db.py)      | SingleStore | Nullable `user_id` column, `WHERE user_id = X OR user_id IS NULL`              |
-| [surreal_db.py](./surreal_db.py)              | SurrealDB   | `user_id` field, dedicated `$scope_user_id` bind                               |
-| [pinecone_db.py](./pinecone_db.py)            | Pinecone    | `user_id` in vector metadata, `$or [{$eq: X}, {$exists: false}]` filter        |
-| [upstash_db.py](./upstash_db.py)              | Upstash     | `user_id` in metadata, `user_id = X OR HAS NOT FIELD user_id`                  |
+| File | Isolation Primitive |
+|------|---------------------|
+| [pgvector_db.py](./pgvector_db.py) | Nullable `user_id` column, `WHERE user_id = X OR user_id IS NULL` |
+| [lance_db.py](./lance_db.py) | `user_id` column, `.where("user_id = X OR user_id IS NULL", prefilter=True)` |
+| [chroma_db.py](./chroma_db.py) | One collection per user (`{base}__{user_id}`), base collection = shared bucket |
+| [qdrant_db.py](./qdrant_db.py) | Indexed `user_id` payload field, `should` match + is-empty |
+| [milvus_db.py](./milvus_db.py) | `user_id` scalar field, `__shared__` sentinel for unowned chunks |
+| [mongo_db.py](./mongo_db.py) | Top-level `user_id` field, `$match {$in: [X, null]}` before `$vectorSearch` |
+| [weaviate_db.py](./weaviate_db.py) | `user_id` text property, `where` OR `is_none` |
+| [opensearch_db.py](./opensearch_db.py) | `user_id` keyword field, `term` OR `must_not exists` |
+| [redis_db.py](./redis_db.py) | `user_id` TAG field, `__shared__` sentinel tag |
+| [valkey_db.py](./valkey_db.py) | `user_id` TAG field, `__shared__` sentinel tag |
+| [clickhouse_db.py](./clickhouse_db.py) | Non-nullable `String` column, `""` sentinel for shared |
+| [cassandra_db.py](./cassandra_db.py) | `user_id` metadata, `__shared__` sentinel for unowned chunks |
+| [couchbase_db.py](./couchbase_db.py) | Keyword-indexed FTS `user_id` field, `__shared__` sentinel |
+| [singlestore_db.py](./singlestore_db.py) | Nullable `user_id` column, `WHERE user_id = X OR user_id IS NULL` |
+| [surreal_db.py](./surreal_db.py) | `user_id` field, dedicated `$scope_user_id` bind |
+| [pinecone_db.py](./pinecone_db.py) | `user_id` in vector metadata, `$or [{$eq: X}, {$exists: false}]` filter |
+| [upstash_db.py](./upstash_db.py) | `user_id` in metadata, `user_id = X OR HAS NOT FIELD user_id` |
 
 ## Running
 
@@ -55,8 +50,8 @@ Redis and Valkey both bind port 6379, so run only one of them at a time.
 .venvs/demo/bin/python cookbook/07_knowledge/04_advanced/07_per_user_isolation/pgvector_db.py
 ```
 
-Run them one at a time - several share a default port with another example.
-Each drops its own collection on startup, so reruns are safe.
+Run them one at a time - several share a default port. Each drops its own
+collection on startup, so reruns are safe.
 
 ## Further Reading
 

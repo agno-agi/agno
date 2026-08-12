@@ -123,20 +123,16 @@ class ScheduleManager:
                 exists.  ``"raise"`` (default) raises ``ValueError``,
                 ``"skip"`` returns the existing schedule unchanged,
                 ``"update"`` overwrites the existing schedule with the
-                supplied values. The name is looked up within ``user_id``'s
-                scope, so two owners may each have a schedule of one name.
-            user_id: Owner of the schedule. ``None`` leaves it unowned, which
-                means the executor fires it unscoped -- pass an owner for
-                anything that should run as a particular user.
+                supplied values.
+            user_id: Owner of the schedule; names are unique per owner. ``None``
+                leaves it unowned and the executor fires it unscoped.
         """
         from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
 
-        # An owner has to be one the route will accept when the executor forwards
-        # it, or the schedule is stored only to fail on every fire. ``None`` is
-        # still fine -- that is an unowned schedule, which forwards no owner.
+        # A blank or sentinel owner would be rejected by the route on every fire
         if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
             raise ValueError(f"'{user_id}' is not a usable schedule owner")
 
@@ -213,15 +209,15 @@ class ScheduleManager:
         return self._to_schedule_list(schedules_data)
 
     def get(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
-        """Get a schedule by ID. ``user_id`` restricts it to that owner's rows."""
+        """Get a schedule by ID."""
         return self._to_schedule(self._call("get_schedule", schedule_id, user_id=user_id))
 
     def update(self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any) -> Optional[Schedule]:
-        """Update a schedule. ``user_id`` filters the row; it does not reassign it."""
+        """Update a schedule. ``user_id`` filters the row, it does not reassign the owner."""
         return self._to_schedule(self._call("update_schedule", schedule_id, user_id=user_id, **kwargs))
 
     def delete(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
-        """Delete a schedule. ``user_id`` restricts it to that owner's rows."""
+        """Delete a schedule."""
         return self._call("delete_schedule", schedule_id, user_id=user_id)
 
     def enable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
@@ -256,7 +252,7 @@ class ScheduleManager:
     def get_runs(
         self, schedule_id: str, limit: int = 20, page: int = 1, user_id: Optional[str] = None
     ) -> List[ScheduleRun]:
-        """Get run history for a schedule. ``user_id`` scopes it to one owner."""
+        """Get run history for a schedule."""
         result = self._call("get_schedule_runs", schedule_id, limit=limit, page=page, user_id=user_id)
         # get_schedule_runs returns (runs_list, total_count) tuple
         runs_data = result[0] if isinstance(result, tuple) else result
@@ -286,20 +282,16 @@ class ScheduleManager:
                 exists.  ``"raise"`` (default) raises ``ValueError``,
                 ``"skip"`` returns the existing schedule unchanged,
                 ``"update"`` overwrites the existing schedule with the
-                supplied values. The name is looked up within ``user_id``'s
-                scope, so two owners may each have a schedule of one name.
-            user_id: Owner of the schedule. ``None`` leaves it unowned, which
-                means the executor fires it unscoped -- pass an owner for
-                anything that should run as a particular user.
+                supplied values.
+            user_id: Owner of the schedule; names are unique per owner. ``None``
+                leaves it unowned and the executor fires it unscoped.
         """
         from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
 
-        # An owner has to be one the route will accept when the executor forwards
-        # it, or the schedule is stored only to fail on every fire. ``None`` is
-        # still fine -- that is an unowned schedule, which forwards no owner.
+        # A blank or sentinel owner would be rejected by the route on every fire
         if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
             raise ValueError(f"'{user_id}' is not a usable schedule owner")
 
@@ -376,15 +368,15 @@ class ScheduleManager:
         return self._to_schedule_list(schedules_data)
 
     async def aget(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
-        """Async get a schedule by ID. ``user_id`` restricts it to that owner's rows."""
+        """Async get a schedule by ID."""
         return self._to_schedule(await self._acall("get_schedule", schedule_id, user_id=user_id))
 
     async def aupdate(self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any) -> Optional[Schedule]:
-        """Async update a schedule. ``user_id`` filters the row; it does not reassign it."""
+        """Async update a schedule. ``user_id`` filters the row, it does not reassign the owner."""
         return self._to_schedule(await self._acall("update_schedule", schedule_id, user_id=user_id, **kwargs))
 
     async def adelete(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
-        """Async delete a schedule. ``user_id`` restricts it to that owner's rows."""
+        """Async delete a schedule."""
         return await self._acall("delete_schedule", schedule_id, user_id=user_id)
 
     async def aenable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
@@ -406,7 +398,7 @@ class ScheduleManager:
     async def aget_runs(
         self, schedule_id: str, limit: int = 20, page: int = 1, user_id: Optional[str] = None
     ) -> List[ScheduleRun]:
-        """Async get run history for a schedule. ``user_id`` scopes it to one owner."""
+        """Async get run history for a schedule."""
         result = await self._acall("get_schedule_runs", schedule_id, limit=limit, page=page, user_id=user_id)
         # get_schedule_runs returns (runs_list, total_count) tuple
         runs_data = result[0] if isinstance(result, tuple) else result

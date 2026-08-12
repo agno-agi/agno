@@ -1,7 +1,6 @@
 """Redis per-user RAG isolation contract.
 
-Owner lives in a top-level ``user_id`` TAG field; the ``__shared__`` sentinel is the
-shared bucket. The client and the redisvl ``SearchIndex`` are patched.
+Owner lives in a top-level ``user_id`` TAG field; the ``__shared__`` sentinel is the shared bucket.
 """
 
 from unittest.mock import MagicMock, patch
@@ -14,8 +13,7 @@ from agno.vectordb.search import SearchType
 
 from .conftest import DeterministicEmbedder
 
-# ``redisdb`` raises ImportError at import time when redis/redisvl are missing, so the
-# adapter import is deferred until after the skip.
+# The adapter import is deferred past the skip: ``redisdb`` raises ImportError without redisvl.
 pytest.importorskip("redisvl")
 
 from agno.vectordb.redis.redisdb import RedisDB  # noqa: E402
@@ -54,8 +52,7 @@ def redis_db():
             search_type=SearchType.vector,
         )
         db.index = index
-        # The mocked index cannot answer the live-schema probe, and these tests
-        # model a migrated (v3) index — prime the owner-field gate accordingly.
+        # The mocked index cannot answer the live-schema probe, so prime the owner-field gate.
         db._owner_field_exists = True
         yield db
 
@@ -91,8 +88,7 @@ class TestWriteStampsOwner:
         assert _loaded_docs(redis_db)[0][USER_ID_FIELD] == SHARED
 
     def test_caller_meta_data_cannot_spoof_owner(self, redis_db):
-        """``user_id`` / ``id`` in caller meta_data must not override the adapter-stamped owner or the owner-folded
-        key."""
+        """Caller meta_data must not override the adapter-stamped owner or the owner-folded key."""
         doc = Document(name="d", content="c", meta_data={"user_id": "attacker", "id": "evil"})
         doc.embedding = DeterministicEmbedder().get_embedding("c")
         redis_db.insert(content_hash="h1", documents=[doc], user_id="alice")
@@ -102,8 +98,7 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """The deterministic key folds the owner in, so two users uploading byte-identical content get DISTINCT keys and
-    cannot clobber each other."""
+    """The deterministic key folds the owner in, so identical content from two users lands on distinct keys."""
 
     _SAME = "The quarterly figure is identical for both owners."
 
@@ -124,13 +119,11 @@ class TestOwnerFoldedId:
         assert _loaded_docs(redis_db)[0]["id"] == "doc-1"
 
     def test_owner_boundary_cannot_be_shifted(self, redis_db):
-        """The base id is caller-controlled, so it is collapsed to a fixed-length digest before the owner is folded
-        in."""
+        """The caller-controlled base id is collapsed to a fixed-length digest before the owner is folded in."""
         assert redis_db._scoped_doc_id("doc_1", "alice") != redis_db._scoped_doc_id("doc", "1_alice")
 
     def test_shifted_boundary_does_not_overwrite_owner(self, redis_db):
-        """The consequence on the write path: alice's chunk key and the crafted owner's key are different keys, so
-        neither write clobbers the other."""
+        """On the write path the crafted owner lands on a different key, so neither write clobbers the other."""
         redis_db.insert(content_hash="h", documents=[_embedded("a", "x", doc_id="doc_1")], user_id="alice")
         alice_key = _loaded_docs(redis_db)[0]["id"]
         redis_db.index.load.reset_mock()
@@ -139,8 +132,7 @@ class TestOwnerFoldedId:
 
 
 class TestSearchScope:
-    """A scoped search filters to the caller's own chunks OR the shared bucket and never another user's; admin
-    (``None``) applies no scope."""
+    """A scoped search sees the caller's own chunks or the shared bucket; ``None`` applies no scope."""
 
     def test_user_scope_filter_builder(self, redis_db):
         assert str(redis_db._user_scope_filter("alice")) == "@user_id:{alice|__shared__}"
@@ -152,7 +144,7 @@ class TestSearchScope:
 
     def test_admin_search_has_no_scope(self, redis_db):
         redis_db.search(query="secret salary", limit=10, user_id=None)
-        # A wildcard filter == no owner scope; admin sees everything.
+        # A wildcard filter means no owner scope.
         assert _queried_filter(redis_db) == "*"
 
     @pytest.mark.asyncio
@@ -162,8 +154,7 @@ class TestSearchScope:
 
 
 class TestContentHashExistsScope:
-    """``content_hash_exists`` is the guard half of the upsert dedup pair, so it has to mean exactly what the dedup
-    delete means: a set owner checks that owner's chunks, ``None`` checks the shared bucket alone."""
+    """The dedup guard checks the bucket the dedup delete clears: the owner's chunks, or shared for ``None``."""
 
     def test_scoped_check_ands_the_owner(self, redis_db):
         redis_db.content_hash_exists("h1", user_id="alice")
@@ -174,8 +165,7 @@ class TestContentHashExistsScope:
         assert _queried_filter(redis_db) == "(@content_hash:{h1} @user_id:{__shared__})"
 
     def test_check_matches_the_dedup_delete_bucket(self, redis_db):
-        """The two halves are one guard: the check reuses ``_dedupe_filter``, so they can never drift onto different
-        buckets."""
+        """The check reuses ``_dedupe_filter``, so guard and delete cannot drift onto different buckets."""
         for owner in ("alice", None):
             redis_db.content_hash_exists("h1", user_id=owner)
             assert _queried_filter(redis_db) == str(redis_db._dedupe_filter("h1", owner))
@@ -195,8 +185,7 @@ class TestContentHashExistsScope:
 
 
 class TestUpsertDedupScope:
-    """The upsert dedup-delete is scoped to the writing owner's bucket: a scoped upsert dedups only that owner's
-    chunks, a shared upsert dedups only the shared bucket — one can never evict the other's identical content."""
+    """The upsert dedup-delete is scoped to the writing owner's bucket, so it cannot evict another owner's chunks."""
 
     def test_scoped_upsert_dedup_scoped_to_owner(self, redis_db):
         redis_db.upsert(content_hash="hc", documents=[_embedded("owned", "same")], user_id="alice")
@@ -221,8 +210,7 @@ class TestDeleteScope:
 
 
 class TestUserIdValidation:
-    """Reserved / structurally unsafe owner values are rejected up front so a caller can neither impersonate the
-    shared bucket nor break the TAG scope."""
+    """Reserved and structurally unsafe owner values are rejected up front."""
 
     @pytest.mark.parametrize(
         "bad",
@@ -242,7 +230,7 @@ class TestUserIdValidation:
     def test_rejects_unsafe_user_id(self, redis_db, bad):
         with pytest.raises(ValueError):
             redis_db._validate_user_id(bad)
-        # And the rejection is enforced on the write path, not just the helper.
+        # The rejection is enforced on the write path, not just in the helper.
         with pytest.raises(ValueError):
             redis_db.insert(content_hash="h", documents=[_embedded("a", "x")], user_id=bad)
         assert not redis_db.index.load.called
@@ -257,8 +245,7 @@ class TestUserIdValidation:
             "alice-1",
             "user_42",
             "alice@example.com",
-            # OIDC subject claims carry the TAG union character. _escape_tag_value
-            # escapes it when the scope clause is built, so they are real owners.
+            # OIDC subjects carry the TAG union character; the scope clause escapes it.
             "auth0|507f1f77bcf86cd799439011",
             "google-oauth2|103547991597142817347",
         ],
@@ -273,15 +260,12 @@ class TestUserIdValidation:
         ["user\U0001f600x", "user–x", "user’x", "Петя", "café", "user x"],
     )
     def test_non_ascii_owner_is_not_over_escaped(self, redis_db, owner):
-        """Escaping anything RediSearch does not treat as special leaves the backslash
-        in the query literally, so the clause hunts for a value never stored and the
-        owner silently cannot read their own chunks."""
+        """Over-escaping leaves a literal backslash in the query, so the owner cannot read their own chunks."""
         sent = str(redis_db._user_scope_filter(owner))
         assert sent == f"@user_id:{{{owner.replace(' ', chr(92) + ' ')}|__shared__}}"
 
     def test_oidc_subject_is_escaped_not_unioned(self, redis_db):
-        """A '|' in the owner must be a literal, not the TAG union operator, or the
-        scope widens to 'auth0' OR '507f...' OR shared and matches neither."""
+        """A '|' in the owner must stay a literal, not the TAG union operator, or the scope widens."""
         sent = str(redis_db._user_scope_filter("auth0|507f1f77bcf86cd799439011"))
         assert sent == "@user_id:{auth0\\|507f1f77bcf86cd799439011|__shared__}"
 
