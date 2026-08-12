@@ -757,8 +757,10 @@ async def stream_a2a_response(
     # delivery. Metrics are excluded - they already flow via .metrics / the history
     # message, so including them here would duplicate the blob.
     status_metadata: Optional[Dict[str, Any]] = None
-    if completion_event and getattr(completion_event, "metadata", None):
-        status_metadata = dict(completion_event.metadata)
+    if completion_event:
+        completion_metadata = getattr(completion_event, "metadata", None)
+        if completion_metadata:
+            status_metadata = dict(completion_metadata)
 
     # 3. Send final status event
     # If cancelled, send canceled status; otherwise send completed
