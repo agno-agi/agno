@@ -87,6 +87,16 @@ def _make_weaviate():
     return db, "_user_id_property_exists", db._require_owner_property
 
 
+def _make_opensearch():
+    pytest.importorskip("opensearchpy")
+    from agno.vectordb.opensearch import OpenSearch
+
+    db = OpenSearch(index_name="t", dimension=DIM, embedder=StubEmbedder())
+    # The gate inspects the live mapping, so the client must never reach a real cluster.
+    db._client = MagicMock()
+    return db, "_owner_field_is_exact", db._require_owner_field
+
+
 BACKENDS = {
     "pgvector": _make_pgvector,
     "clickhouse": _make_clickhouse,
@@ -94,6 +104,7 @@ BACKENDS = {
     "lancedb": _make_lancedb,
     "redis": _make_redis,
     "weaviate": _make_weaviate,
+    "opensearch": _make_opensearch,
 }
 
 

@@ -559,3 +559,158 @@ class TestLegacyIndexCompatibility:
         opensearch_db.insert("h_bob", [doc("bob", BOB)], user_id="bob")
 
         assert opensearch_db.client.mapping_updates == []
+
+
+def gated_db(mapping_response):
+    """An adapter whose live mapping is whatever the test says it is."""
+    db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=DeterministicEmbedder())
+    db._client = Mock()
+    db._client.indices.get_mapping.return_value = mapping_response
+    return db
+
+
+def mapping_for(index_name, user_id_type):
+    """A get_mapping response; ``user_id_type=None`` leaves the field out entirely."""
+    properties = {} if user_id_type is None else {"user_id": {"type": user_id_type}}
+    return {index_name: {"mappings": {"properties": properties}}}
+
+
+class TestOwnerFieldMappingGate:
+    """A scope filter is only honoured when the live mapping stores the owner as an exact term.
+
+    OpenSearch dynamic-maps a string as analyzed ``text``, so the first scoped write to an index
+    created before the field existed types it wrongly, and ``{"term": {"user_id": x}}`` then matches
+    that value's tokens: user_id="dave" also matches "Dave" and "dave smith".
+    """
+
+    def test_keyword_mapping_is_honoured(self):
+        db = gated_db(mapping_for(TEST_INDEX_NAME, "keyword"))
+
+        assert db._require_owner_field("alice") is True
+
+    def test_analyzed_mapping_refuses_a_scoped_operation(self):
+        db = gated_db(mapping_for(TEST_INDEX_NAME, "text"))
+
+        with pytest.raises(ValueError, match="recreate the index"):
+            db._require_owner_field("alice")
+
+    def test_a_keyword_subfield_does_not_rescue_an_analyzed_parent(self):
+        """The dynamic default is text with a .keyword subfield, but the filter names the parent."""
+        db = gated_db(
+            {
+                TEST_INDEX_NAME: {
+                    "mappings": {
+                        "properties": {"user_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}}}
+                    }
+                }
+            }
+        )
+
+        with pytest.raises(ValueError, match="recreate the index"):
+            db._require_owner_field("alice")
+
+    def test_analyzed_mapping_still_serves_an_unscoped_operation(self):
+        """Unscoped callers never name the field, so a wrong mapping cannot mismatch for them."""
+        db = gated_db(mapping_for(TEST_INDEX_NAME, "text"))
+
+        assert db._require_owner_field(None) is False
+
+    def test_an_absent_field_is_the_shared_bucket_not_a_refusal(self):
+        """The documented pre-v3 contract: no owners stored, so every document reads as shared."""
+        db = gated_db(mapping_for(TEST_INDEX_NAME, None))
+
+        assert db._require_owner_field("alice") is True
+
+    def test_an_alias_is_judged_by_every_index_it_resolves_to(self):
+        """get_mapping keys by concrete index, so the alias name is absent from its own response."""
+        db = gated_db(
+            {
+                "concrete-good": {"mappings": {"properties": {"user_id": {"type": "keyword"}}}},
+                "concrete-bad": {"mappings": {"properties": {"user_id": {"type": "text"}}}},
+            }
+        )
+
+        with pytest.raises(ValueError, match="recreate the index"):
+            db._require_owner_field("alice")
+
+    def test_an_alias_resolving_only_to_exact_indexes_is_honoured(self):
+        db = gated_db(
+            {
+                "concrete-a": {"mappings": {"properties": {"user_id": {"type": "keyword"}}}},
+                "concrete-b": {"mappings": {"properties": {"user_id": {"type": "keyword"}}}},
+            }
+        )
+
+        assert db._require_owner_field("alice") is True
+        # An alias can be repointed while the process lives, so its verdict is never cached.
+        assert db._owner_field_exact is None
+
+    def test_an_unreadable_mapping_does_not_refuse_and_is_not_cached(self):
+        """A blip must not permanently mask a real legacy index, so it is re-inspected next time."""
+        db = gated_db(None)
+        db._client.indices.get_mapping.side_effect = RuntimeError("cluster unreachable")
+
+        assert db._require_owner_field("alice") is True
+        assert db._owner_field_exact is None
+
+    def test_an_exact_mapping_is_inspected_once(self):
+        db = gated_db(mapping_for(TEST_INDEX_NAME, "keyword"))
+
+        for _ in range(3):
+            db._require_owner_field("alice")
+
+        assert db._client.indices.get_mapping.call_count == 1
+
+    def test_create_records_the_mapping_it_just_wrote(self):
+        db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=DeterministicEmbedder())
+        db._client = Mock()
+        db._client.indices.exists.return_value = False
+
+        db.create()
+
+        assert db._require_owner_field("alice") is True
+        assert db._client.indices.get_mapping.call_count == 0
+
+    def test_drop_forgets_the_mapping_of_the_index_it_removed(self):
+        db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=DeterministicEmbedder())
+        db._client = Mock()
+        db._client.indices.exists.return_value = True
+        db._owner_field_exact = True
+
+        db.drop()
+
+        assert db._owner_field_exact is None
+
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            lambda db: db.search("q", user_id="alice"),
+            lambda db: db.vector_search("q", user_id="alice"),
+            lambda db: db.keyword_search("q", user_id="alice"),
+            lambda db: db.hybrid_search("q", user_id="alice"),
+            lambda db: db.insert("h", [doc("alice", ALICE)], user_id="alice"),
+            lambda db: db.upsert("h", [doc("alice", ALICE)], user_id="alice"),
+            lambda db: db.content_hash_exists("h", user_id="alice"),
+            lambda db: db.delete_by_content_id("cid", user_id="alice"),
+        ],
+    )
+    def test_every_scoped_entry_point_is_gated(self, operation):
+        db = gated_db(mapping_for(TEST_INDEX_NAME, "text"))
+
+        with pytest.raises(ValueError, match="recreate the index"):
+            operation(db)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            lambda db: db.async_search("q", user_id="alice"),
+            lambda db: db.async_insert("h", [doc("alice", ALICE)], user_id="alice"),
+            lambda db: db.async_upsert("h", [doc("alice", ALICE)], user_id="alice"),
+        ],
+    )
+    async def test_every_scoped_async_entry_point_is_gated(self, operation):
+        db = gated_db(mapping_for(TEST_INDEX_NAME, "text"))
+
+        with pytest.raises(ValueError, match="recreate the index"):
+            await operation(db)

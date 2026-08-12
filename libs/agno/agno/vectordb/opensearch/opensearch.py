@@ -132,6 +132,8 @@ class OpenSearch(VectorDb):
         self.engine = engine
         self.distance = distance
         self.search_type = search_type
+        # Whether the live index can honour a user_id scope filter; resolved lazily on first use.
+        self._owner_field_exact: Optional[bool] = None
 
         # Connection configuration
         self.http_auth = http_auth
@@ -432,6 +434,7 @@ class OpenSearch(VectorDb):
             log_debug(f"Creating index: {self.index_name}")
             self.client.indices.create(index=self.index_name, body=self.mapping)
             log_info(f"Successfully created index: {self.index_name}")
+            self._owner_field_exact = True
         else:
             log_debug(f"Index {self.index_name} already exists")
 
@@ -445,6 +448,7 @@ class OpenSearch(VectorDb):
             log_debug(f"Creating index (async): {self.index_name}")
             await self.async_client.indices.create(index=self.index_name, body=self.mapping)
             log_info(f"Successfully created index (async): {self.index_name}")
+            self._owner_field_exact = True
         else:
             log_info(f"Index {self.index_name} already exists")
 
@@ -514,6 +518,8 @@ class OpenSearch(VectorDb):
             log_debug(f"Deleting index: {self.index_name}")
             self.client.indices.delete(index=self.index_name)
             log_info(f"Successfully deleted index: {self.index_name}")
+            # The next index under this name is created with the mapping — re-resolve lazily
+            self._owner_field_exact = None
         else:
             log_info(f"Index {self.index_name} does not exist, nothing to delete")
 
@@ -527,6 +533,7 @@ class OpenSearch(VectorDb):
             log_debug(f"Deleting index (async): {self.index_name}")
             await self.async_client.indices.delete(index=self.index_name)
             log_info(f"Successfully deleted index (async): {self.index_name}")
+            self._owner_field_exact = None
         else:
             log_info(f"Index {self.index_name} does not exist, nothing to delete")
 
@@ -947,6 +954,7 @@ class OpenSearch(VectorDb):
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
         self._execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data, user_id=user_id)
 
@@ -971,6 +979,7 @@ class OpenSearch(VectorDb):
             Uses batch embedding for improved performance.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
         await self._async_execute_bulk_operation(
             "insert", documents, self._prepare_bulk_insert_data, use_batch_embed=True, user_id=user_id
@@ -1012,6 +1021,7 @@ class OpenSearch(VectorDb):
             splits into fewer chunks leaves no surplus behind.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
@@ -1040,6 +1050,7 @@ class OpenSearch(VectorDb):
             chunks for this hash first.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
@@ -1497,6 +1508,7 @@ class OpenSearch(VectorDb):
             Uses the search type configured during initialization (vector, keyword, or hybrid).
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         search_methods = {
             SearchType.vector: self.vector_search,
             SearchType.keyword: self.keyword_search,
@@ -1560,6 +1572,7 @@ class OpenSearch(VectorDb):
             Generates query embedding and performs KNN search.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         return self._execute_search_with_timing("vector", query, limit, self._build_vector_query, filters, user_id)
 
     def keyword_search(
@@ -1585,6 +1598,7 @@ class OpenSearch(VectorDb):
             Uses multi-match query on content and name fields.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         return self._execute_search_with_timing("keyword", query, limit, self._build_keyword_query, filters, user_id)
 
     def hybrid_search(
@@ -1610,6 +1624,7 @@ class OpenSearch(VectorDb):
             Combines vector similarity (70% weight) and keyword relevance (30% weight).
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         return self._execute_search_with_timing("hybrid", query, limit, self._build_hybrid_query, filters, user_id)
 
     def _execute_search_with_timing(
@@ -1808,6 +1823,41 @@ class OpenSearch(VectorDb):
         """
         return self.engine != Engine.nmslib
 
+    def _owner_field_is_exact(self) -> bool:
+        """Whether the live index maps ``user_id`` in a way the scope filter can honour.
+
+        An absent field is fine: the docs carry no owner and read as the shared bucket, which
+        is what an index predating isolation is documented to do. A field mapped as anything
+        but keyword is not: it is analyzed, so the filter matches tokens rather than the id
+        and user_id="dave" also matches "Dave" and "dave smith".
+        """
+        if self._owner_field_exact is None:
+            try:
+                mappings = self.client.indices.get_mapping(index=self.index_name)
+                # Keyed by concrete index, never by the name asked for, so an alias or a
+                # wildcard resolves to several real indexes and each one has to be exact.
+                types = [
+                    index_mapping.get("mappings", {}).get("properties", {}).get(USER_ID_FIELD, {}).get("type")
+                    for index_mapping in mappings.values()
+                ]
+                answer = all(t in (None, "keyword") for t in types)
+                if set(mappings) != {self.index_name}:
+                    # An alias or a wildcard: it can be repointed while this process lives,
+                    # so the answer is about whatever it resolved to just now, not the name.
+                    return answer
+                self._owner_field_exact = answer
+            except opensearch_exceptions.NotFoundError:
+                # No live index yet, and the one that appears under this name may not be ours
+                return True
+            except Exception:
+                # Assume mapped, uncached: caching a failed inspection would mask a bad mapping
+                logger.warning(
+                    f"Could not inspect index '{self.index_name}' for the user_id mapping; "
+                    "proceeding as mapped for this operation."
+                )
+                return True
+        return self._owner_field_exact
+
     def _validate_user_id(self, user_id: Optional[str]) -> None:
         """
         Reject a user_id the field-absence contract cannot express.
@@ -1824,6 +1874,29 @@ class OpenSearch(VectorDb):
         """
         if user_id is not None and user_id.strip() == "":
             raise ValueError("user_id must not be empty or whitespace-only")
+
+    def _require_owner_field(self, user_id: Optional[str]) -> bool:
+        """Gate every owner-field reference on the live index mapping.
+
+        True when the mapping can honour a scope filter, False when it cannot and the
+        operation is unscoped. A scoped operation on an index that maps the field as
+        analyzed text raises rather than matching another owner's tokens.
+        """
+        if self._owner_field_is_exact():
+            return True
+        if user_id is None:
+            return False
+        # The cached answer may predate a reindex — re-inspect once before refusing
+        self._owner_field_exact = None
+        if self._owner_field_is_exact():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but index '{self.index_name}' does not support "
+            f"per-user isolation: it maps '{USER_ID_FIELD}' as analyzed text, so the scope "
+            "filter matches its tokens rather than the owner. A field type can only be set "
+            "when the index is created, so recreate the index and re-ingest — reindexing "
+            "into the same mapping is not sufficient."
+        )
 
     def _owner_filter(self, user_id: str) -> Dict[str, Any]:
         """
@@ -2128,6 +2201,7 @@ class OpenSearch(VectorDb):
             match exactly the chunks _delete_by_content_hash clears for the same user_id.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         return self._check_field_exists("content_hash", content_hash, self._exact_owner_scope(user_id))
 
     def delete_by_id(self, id: str) -> bool:
@@ -2223,6 +2297,7 @@ class OpenSearch(VectorDb):
             it, so removing shared chunks takes an unscoped call.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         content_id_term = {"term": {"content_id.keyword": content_id}}
 
         if user_id is None:
