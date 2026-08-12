@@ -230,3 +230,105 @@ class TestHeartbeatRouting:
             f"the draining run must finish inside stop_timeout, got {job and job['status']!r}"
         )
         assert not thread.is_alive()
+
+
+class TestPollLoopStartsLast:
+    @pytest.mark.asyncio
+    async def test_first_claim_sees_a_live_heartbeat_thread(self):
+        """start() must launch the heartbeat (and finish priming) BEFORE the
+        poll loop exists: a claimed job can block the loop immediately, and
+        a claim that races the prime re-enters the lazy table init the
+        priming exists to serialize."""
+        observed: List[bool] = []
+
+        class RecordingSyncStore:
+            def get_job(self, job_id, strict=False):
+                return None
+
+            def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):
+                return []
+
+            def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None):
+                observed.append(any(t.name.startswith("agno-heartbeat-") for t in threading.enumerate()))
+                return None
+
+            def heartbeat_jobs(self, worker_id, job_ids):
+                return 0
+
+        worker = QueueWorker(
+            store=_SyncStoreAdapter(RecordingSyncStore()),
+            resolve_component=lambda ctype, cid: None,
+            config=QueueConfig(durable=True, poll_interval=0.02),
+            stop_timeout=2,
+        )
+        await worker.start()
+        try:
+            for _ in range(100):
+                if observed:
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            await worker.stop()
+
+        assert observed, "the poll loop never claimed"
+        assert observed[0] is True, (
+            "the first claim ran before the heartbeat thread existed - a job "
+            "claimed in that window can block the loop with no live lease renewal"
+        )
+
+
+class TestUnclonableAsyncStoreFallsBackLoudly:
+    @pytest.mark.asyncio
+    async def test_loop_task_with_warning(self, caplog):
+        """An async persistent store the worker cannot clone (no db_url,
+        e.g. injected-engine construction) keeps the loop heartbeat - but
+        never silently: on this store a run blocking the loop CAN starve
+        its own lease."""
+
+        class EngineOnlyAsyncStore:
+            db_url = None
+
+            async def get_job(self, job_id, strict=False):
+                return None
+
+            async def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):
+                return []
+
+            async def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None):
+                return None
+
+            async def heartbeat_jobs(self, worker_id, job_ids):
+                return 0
+
+        with caplog.at_level("WARNING"):
+            worker = QueueWorker(
+                store=EngineOnlyAsyncStore(),
+                resolve_component=lambda ctype, cid: None,
+                config=QueueConfig(durable=True, poll_interval=0.02),
+                stop_timeout=2,
+            )
+            await worker.start()
+            try:
+                assert worker._heartbeat_task is not None
+                assert worker._heartbeat_thread is None
+            finally:
+                await worker.stop()
+
+        assert any("heartbeat runs on the event loop" in r.message for r in caplog.records), (
+            "the unclonable-store fallback must be loud - it reintroduces the starvation hazard"
+        )
+
+    @pytest.mark.asyncio
+    async def test_in_memory_store_stays_silent(self, caplog):
+        with caplog.at_level("WARNING"):
+            worker = QueueWorker(
+                store=InMemoryQueueStore(),
+                resolve_component=lambda ctype, cid: None,
+                config=QueueConfig(durable=True, poll_interval=0.02),
+                stop_timeout=2,
+            )
+            await worker.start()
+            await worker.stop()
+        assert not any("heartbeat runs on the event loop" in r.message for r in caplog.records), (
+            "in-memory is the documented-safe topology; warning there is noise"
+        )
