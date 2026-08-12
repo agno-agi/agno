@@ -21,7 +21,13 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import ComponentRehydrationError, InputCheckError, OutputCheckError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     get_auth_token_from_request,
@@ -1795,9 +1801,10 @@ def get_workflow_router(
 
         except InputCheckError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            # Handle unexpected runtime errors
-            raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+        # No blanket 500 (agents parity): the old except Exception swallowed
+        # every typed error - including HTTPException itself, converting 4xx
+        # into 500 - and echoed raw internals in the detail. Uncaught
+        # exceptions propagate to FastAPI's generic 500.
 
     @router.post(
         "/workflows/{workflow_id}/runs/{run_id}/continue",
@@ -2060,10 +2067,17 @@ def get_workflow_router(
                     final_status=getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
-            except InputCheckError as e:
+            # Same typed mapping as the agents continue endpoint: a
+            # race-losing continue (the run moved past PAUSED between the
+            # pre-check and dispatch) must answer 404/409/400 like the
+            # pre-check would have, never a blanket 500. Anything untyped
+            # propagates (FastAPI's 500, without echoing internals).
+            except RunNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except RunNotContinuableError as e:
+                raise HTTPException(status_code=409, detail=str(e))
+            except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Error continuing workflow run: {str(e)}")
 
     @router.post(
         "/workflows/{workflow_id}/runs/{run_id}/cancel",
