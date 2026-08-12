@@ -1366,10 +1366,14 @@ class QueueWorker:
         crash window that produces this state). Settle the ticket to match
         the row and close the stream view with the same status.
 
-        The row read resolves WHICH terminal status wins the ticket; if it
-        cannot be read, cancelled is assumed - the cancel crash window is
-        the only known producer of this state (completed rows cannot regain
-        a queued fresh ticket: enqueue refuses existing ids).
+        The row read resolves WHICH terminal status wins the ticket. If the
+        row cannot be read (or reads back non-terminal - a race), NOTHING is
+        settled: manufacturing a terminal status here could stamp a
+        cancelled ticket over a COMPLETED row (multi-attempt reclaim of a
+        run whose first attempt committed but crashed before settling).
+        Leaving the claim to go stale hands the job to the reconciling
+        sweep, which pre-reads the row and settles ticket and stream from
+        the truth.
         """
         from agno.run.base import RunStatus
 
@@ -1379,7 +1383,15 @@ class QueueWorker:
             run_output = await component.aget_run_output(job_id, job["session_id"], user_id=job.get("user_id"))
             raw = getattr(run_output, "status", None)
             row_status = raw.value if isinstance(raw, RunStatus) else raw
-        ticket_status = "completed" if str(row_status).lower() == "completed" else "cancelled"
+        normalized = str(row_status).lower() if row_status is not None else None
+        if normalized not in ("completed", "cancelled"):
+            log_error(
+                f"Job queue: claimed job {job_id} refused the RUNNING stamp as terminal but its run "
+                f"row could not be read back ({row_status!r}); leaving the claim to go stale for the "
+                "reconciling sweep instead of guessing a terminal status"
+            )
+            return
+        ticket_status = normalized
         await self._asettle_ticket(job_id, job["attempt"], ticket_status)
         with contextlib.suppress(Exception):
             from agno.os.event_streams import get_event_stream

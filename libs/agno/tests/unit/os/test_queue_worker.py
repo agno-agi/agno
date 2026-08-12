@@ -2348,3 +2348,38 @@ class TestTerminalRowClaim:
 
         assert len(agent.calls) == 1, f"{outcome_name}: execution must proceed"
         assert (await store.get_job("r1"))["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_row_leaves_claim_stale_instead_of_guessing(self, monkeypatch):
+        """Review catch: with max_attempts > 1, a COMPLETED row whose worker
+        crashed before settling reaches this branch on the reclaim - if the
+        row read then transiently fails, guessing 'cancelled' would settle
+        the ticket and stream as CANCELLED over a COMPLETED row. An
+        unreadable row must leave the claim to go stale for the reconciling
+        sweep, which settles from the truth."""
+        from agno.run.status_persist import RunPersistOutcome
+
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+
+        async def broken_read(run_id, session_id, user_id=None):
+            raise RuntimeError("session store briefly unreachable")
+
+        agent.aget_run_output = broken_read  # type: ignore[attr-defined]
+
+        async def refused_stamp(*args, **kwargs):
+            return RunPersistOutcome.TERMINAL_REFUSED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", refused_stamp)
+
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+
+        assert agent.calls == [], "execution must still be refused - the row IS terminal"
+        job = await store.get_job("r1")
+        assert job["status"] == "running", (
+            f"an unreadable row must leave the claim stale for the sweep, got {job['status']!r} - "
+            "never a manufactured terminal status"
+        )
