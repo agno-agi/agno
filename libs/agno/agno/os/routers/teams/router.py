@@ -1068,7 +1068,7 @@ def get_team_router(
                 registry=registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
-                strict=False
+                strict=False,
             )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
@@ -1166,7 +1166,7 @@ def get_team_router(
             registry=registry,
             create_fresh=True,
             user_id=get_scoped_user_id(request),
-            strict=False
+            strict=False,
         )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1297,7 +1297,6 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
-                    strict=False
                 )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1591,7 +1590,7 @@ def get_team_router(
                 registry=registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
-                strict=False
+                strict=False,
             )
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
@@ -1733,7 +1732,12 @@ def get_team_router(
 
             # Exclude teams whose IDs are owned by the registry
             exclude_ids = registry.get_team_ids() if registry else None
-            db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None, user_id=get_scoped_user_id(request))
+            db_teams = get_teams(
+                db=os.db,
+                registry=registry,
+                exclude_component_ids=exclude_ids or None,
+                user_id=get_scoped_user_id(request),
+            )
             if db_teams:
                 # Apply the same RBAC filtering to DB-loaded teams: without
                 # it, a caller whose scope excludes a team still saw its
@@ -1838,7 +1842,14 @@ def get_team_router(
             return TeamResponse.from_factory(factory)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, user_id=get_scoped_user_id(request))  # type: ignore[assignment]
+            team = get_team_by_id(
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+            )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
@@ -1891,7 +1902,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
-                    strict=False
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
@@ -1976,7 +1987,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
-                    strict=False
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
@@ -2043,7 +2054,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
-                    strict=False
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
@@ -2110,7 +2121,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
-                    strict=False
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")

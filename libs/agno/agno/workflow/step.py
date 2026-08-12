@@ -409,7 +409,14 @@ class Step:
                 from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    agent = get_agent_by_id(db=db, id=agent_id, version=pinned, registry=registry, strict=strict, user_id=get_component_owner_scope())
+                    agent = get_agent_by_id(
+                        db=db,
+                        id=agent_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
                         raise ComponentPinError(
@@ -429,7 +436,9 @@ class Step:
                         f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, which "
                         "was not found in the db; loading the agent's current version instead."
                     )
-                    agent = get_agent_by_id(db=db, id=agent_id, registry=registry, strict=False)
+                    agent = get_agent_by_id(
+                        db=db, id=agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
 
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:
@@ -507,7 +516,14 @@ class Step:
                 from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    team = get_team_by_id(db=db, id=team_id, version=pinned, registry=registry, strict=strict, user_id=get_component_owner_scope())
+                    team = get_team_by_id(
+                        db=db,
+                        id=team_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
                         raise ComponentPinError(
@@ -527,7 +543,9 @@ class Step:
                         f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, which "
                         "was not found in the db; loading the team's current version instead."
                     )
-                    team = get_team_by_id(db=db, id=team_id, registry=registry, strict=False)
+                    team = get_team_by_id(
+                        db=db, id=team_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
 
             # A pinned lenient load may still fall back to a code-defined team.
             if team is None and pinned is not None and registry and team_id:

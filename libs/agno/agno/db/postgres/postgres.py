@@ -4275,10 +4275,7 @@ class PostgresDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing_stmt = select(table).where(
-                    table.c.component_id == component_id,
-                    table.c.deleted_at.is_(None),
-                )
+                existing_stmt = select(table).where(table.c.component_id == component_id)
                 if user_id is not None:
                     existing_stmt = existing_stmt.where(table.c.user_id == user_id)
                 existing = sess.execute(existing_stmt).fetchone()
