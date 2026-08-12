@@ -26,6 +26,7 @@ def postgres_components_db(tmp_path):
         Column("created_at", BigInteger, nullable=False),
         Column("updated_at", BigInteger),
         Column("deleted_at", BigInteger),
+        Column("user_id", String),
     )
     metadata.create_all(engine)
 

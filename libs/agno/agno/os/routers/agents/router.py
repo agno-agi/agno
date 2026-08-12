@@ -1990,7 +1990,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
-                    strict=False
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -2057,7 +2057,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
-                    strict=False
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -2157,7 +2157,7 @@ def get_agent_router(
             registry=os.registry,
             create_fresh=True,
             user_id=get_scoped_user_id(request),
-            strict=False
+            strict=False,
         )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -2221,7 +2221,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
-                    strict=False
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")

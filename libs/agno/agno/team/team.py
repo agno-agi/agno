@@ -1836,7 +1836,9 @@ def get_team_by_id(
         except NotImplementedError:
             links = []
 
-        team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
+        # Resolve DB-backed members under the same owner scope as the team.
+        with component_owner_scope(user_id):
+            team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
         # Ensure team.id is set to the component_id
         team.id = id
         # Only fall back to the caller-provided db if the config didn't
@@ -1896,7 +1898,9 @@ def get_teams(
                         # components so they stay visible and fixable. Listings
                         # also show members at their current version; the
                         # per-version pin links are a detail-read concern.
-                        team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
+                        # Resolve DB-backed members under the same owner scope as the team.
+                        with component_owner_scope(user_id):
+                            team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
                         team.id = component_id
                         team._version = component.get("current_version")
                         team._stage = config.get("stage")

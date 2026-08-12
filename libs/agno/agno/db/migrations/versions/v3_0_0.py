@@ -337,8 +337,7 @@ def _build_run_rows(
     run_data_as_string: bool,
 ) -> List[Dict[str, Any]]:
     """Build runs-table rows from the runs found in a sessions table `runs` column."""
-    if isinstance(runs, str):
-        runs = json.loads(runs)
+    runs = _decode_run_data(runs)
     if not runs:
         return []
 
@@ -394,7 +393,7 @@ def _forget_runs_table(db) -> None:
 
 
 def _decode_run_data(value: Any) -> Any:
-    """Decode a run_data payload read back through a raw SQL SELECT.
+    """Decode a run_data or legacy runs payload read back through a raw SQL SELECT.
 
     A raw select skips the column's JSON deserializer, so SQLite — which stores
     the payload as a JSON string inside a JSON column — hands back both layers.
@@ -633,7 +632,7 @@ def _migrate_sqlite_sessions(db: BaseDb, table_name: str) -> bool:
 
             rows: List[Dict[str, Any]] = []
             for session_id, user_id, runs in batch:
-                rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=True))
+                rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
             if rows:
                 insert_stmt = sqlite.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
@@ -683,7 +682,7 @@ async def _migrate_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bo
 
             rows: List[Dict[str, Any]] = []
             for session_id, user_id, runs in batch:
-                rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=True))
+                rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
             if rows:
                 insert_stmt = sqlite.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])

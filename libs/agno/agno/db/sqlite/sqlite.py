@@ -41,13 +41,13 @@ from agno.db.sqlite.utils import (
 )
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
-    CustomJSONEncoder,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
     filter_context_runs,
+    json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
@@ -177,16 +177,16 @@ class SqliteDb(BaseDb):
         _engine: Optional[Engine] = db_engine
         if _engine is None:
             if db_url is not None:
-                _engine = create_engine(db_url)
+                _engine = create_engine(db_url, json_serializer=json_serializer)
             elif db_file is not None:
                 db_path = Path(db_file).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 db_file = str(db_path)
-                _engine = create_engine(f"sqlite:///{db_path}")
+                _engine = create_engine(f"sqlite:///{db_path}", json_serializer=json_serializer)
             else:
                 # If none of db_engine, db_url, or db_file are provided, create a db in the current directory
                 default_db_path = Path("./agno.db").resolve()
-                _engine = create_engine(f"sqlite:///{default_db_path}")
+                _engine = create_engine(f"sqlite:///{default_db_path}", json_serializer=json_serializer)
                 db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
@@ -956,7 +956,6 @@ class SqliteDb(BaseDb):
                 user_id=user_id,
                 run_index=run_index,
             )
-            row["run_data"] = json.dumps(row["run_data"], cls=CustomJSONEncoder)
 
             with self.Session() as sess, sess.begin():
                 # Backfill a monotonic run_index when the run arrives without one

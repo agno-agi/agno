@@ -985,7 +985,9 @@ def from_dict(
                         "was not found in the db; loading the member's current version instead."
                     )
                     if db is not None:
-                        agent = get_agent_by_id(id=agent_id, db=db, registry=registry, strict=False)
+                        agent = get_agent_by_id(
+                            id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -1049,7 +1051,9 @@ def from_dict(
                         "was not found in the db; loading the member's current version instead."
                     )
                     if db is not None:
-                        nested_team = get_team_by_id(id=team_id, db=db, registry=registry, strict=False)
+                        nested_team = get_team_by_id(
+                            id=team_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:
