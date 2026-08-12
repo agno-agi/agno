@@ -623,6 +623,9 @@ class Knowledge(RemoteKnowledge):
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
+        except ValueError:
+            # The adapters raise these outside their own catch-alls on purpose.
+            raise
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -662,6 +665,9 @@ class Knowledge(RemoteKnowledge):
             except NotImplementedError:
                 log_info("Vector db does not support async search")
                 return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
+        except ValueError:
+            # See the matching comment in ``search``.
+            raise
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
