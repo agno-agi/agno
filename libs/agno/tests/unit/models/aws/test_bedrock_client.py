@@ -114,6 +114,41 @@ class TestSessionTokenEnv:
             assert call_kwargs["aws_session_token"] is None
 
 
+class TestProvidedAsyncClient:
+    def test_async_client_returned_as_is(self):
+        provided = MagicMock()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        assert model.get_async_client() is provided
+
+    def test_async_client_does_not_require_aioboto3(self):
+        provided = MagicMock()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        with patch("agno.models.aws.bedrock.AIOBOTO3_AVAILABLE", False):
+            assert model.get_async_client() is provided
+
+    def test_async_client_takes_precedence_over_session(self):
+        mock_session, mock_creds, _ = _make_mock_session()
+        provided = MagicMock()
+        model = AwsBedrock(
+            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            session=mock_session,
+            async_client=provided,
+        )
+
+        assert model.get_async_client() is provided
+        mock_session.get_credentials.assert_not_called()
+        mock_creds.get_frozen_credentials.assert_not_called()
+
+    def test_async_client_not_created_when_none_provided(self):
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+
+        with patch("agno.models.aws.bedrock.AIOBOTO3_AVAILABLE", False):
+            with pytest.raises(ImportError, match="aioboto3"):
+                model.get_async_client()
+
+
 class TestSessionNullCredentials:
     def test_async_raises_on_null_credentials(self):
         try:

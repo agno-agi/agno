@@ -139,9 +139,12 @@ class AwsBedrock(Model):
         Returns:
             The async Bedrock client context manager.
         """
+        if self.async_client is not None:
+            return self.async_client
+
         if not AIOBOTO3_AVAILABLE:
             raise ImportError(
-                "`aioboto3` not installed. Please install using `pip install aioboto3` for async support."
+                "`aioboto3` not installed. Please install using `pip install aioboto3` or supply your own configured async_client."
             )
 
         # When using a boto3 session, create the aioboto3 session from it
