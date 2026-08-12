@@ -97,9 +97,12 @@ class RedisEventStream(BaseEventStream):
         async_redis_client: Async Redis client (``Redis`` or ``RedisCluster``).
         key_prefix: Prefix for all keys. Defaults to ``agno:os:events:``.
         ttl_seconds: TTL for per-run keys, refreshed while the run is active.
-            Mirrors the in-memory buffer's cleanup interval. Defaults to 3600.
+            Mirrors the wired in-memory buffer's cleanup interval (1800s) -
+            actually mirrors it: the old default of 3600 diverged.
         maxlen: Approximate max events retained per stream (XADD MAXLEN ~).
-            Mirrors the in-memory buffer's max_events_per_run. Defaults to 1000.
+            Mirrors the wired in-memory buffer's max_events_per_run (10000).
+            The old default of 1000 silently cut how far a reconnecting
+            /resume client could fall behind by 10x when switching backends.
         block_ms: How long ``tail()`` blocks per XREAD before re-checking run
             status. Bounds how long a tail can outlive a dead producer.
     """
@@ -108,8 +111,8 @@ class RedisEventStream(BaseEventStream):
         self,
         async_redis_client: Union["AsyncRedis", "AsyncRedisCluster"],
         key_prefix: str = "agno:os:events:",
-        ttl_seconds: int = 3600,
-        maxlen: int = 1000,
+        ttl_seconds: int = 1800,
+        maxlen: int = 10000,
         block_ms: int = 15000,
     ):
         if not _redis_available:
