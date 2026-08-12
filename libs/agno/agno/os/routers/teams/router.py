@@ -878,7 +878,6 @@ def get_team_router(
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
-                and not isinstance(team, RemoteTeam)
                 and component_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
@@ -1388,6 +1387,11 @@ def get_team_router(
             )
             if (
                 queue_worker is not None
+                # LIVE, unlike the submit gates' dead twin: the teams continue
+                # endpoint has no up-front remote rejection, so this is what
+                # routes remote teams past the durable branch (and narrows
+                # the union for the row read below)
+                and not isinstance(team, RemoteTeam)
                 and team_is_queueable
                 and not fork
                 and not regenerate
