@@ -3026,18 +3026,33 @@ class RedisDb(BaseDb):
     def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
         stale = self._q_server_now() - lock_grace_seconds
         exhausted: List[Dict[str, Any]] = []
-        for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=limit * 2):
-            job = self._q_load_job(_q_to_str(raw_id))
-            if (
-                job is not None
-                and job["status"] == "running"
-                and job.get("locked_at") is not None
-                and job["locked_at"] <= stale
-                and job["attempt"] >= job["max_attempts"]
-            ):
-                exhausted.append(job)
-                if len(exhausted) >= limit:
-                    break
+        # PAGE through the whole stale range: a fixed window (the old
+        # num=limit*2) made exhausted jobs sitting behind that many
+        # stale-but-reclaimable ones invisible on every tick - after a mass
+        # crash under a retry budget, terminal failures were starved
+        # indefinitely by the reclaim queue ahead of them. The stale range is
+        # finite and normally tiny (live jobs' heartbeats advance their zset
+        # score out of it), so walking it fully is bounded by the size of the
+        # very backlog the sweep exists to clear.
+        start = 0
+        page = max(limit * 2, 50)
+        while len(exhausted) < limit:
+            raw_ids = self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=start, num=page)
+            if not raw_ids:
+                break
+            for raw_id in raw_ids:
+                job = self._q_load_job(_q_to_str(raw_id))
+                if (
+                    job is not None
+                    and job["status"] == "running"
+                    and job.get("locked_at") is not None
+                    and job["locked_at"] <= stale
+                    and job["attempt"] >= job["max_attempts"]
+                ):
+                    exhausted.append(job)
+                    if len(exhausted) >= limit:
+                        break
+            start += len(raw_ids)
         return exhausted
 
     def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
