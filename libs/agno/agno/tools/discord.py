@@ -35,15 +35,15 @@ class DiscordTools(Toolkit):
 
         tools: List[Callable] = []
         if all or send_message:
-            tools.append(self.discord_send_message)
+            tools.append(self.send_discord_message)
         if all or get_channel_messages:
-            tools.append(self.discord_get_channel_messages)
+            tools.append(self.get_discord_channel_messages)
         if all or get_channel_info:
-            tools.append(self.discord_get_channel_info)
+            tools.append(self.get_discord_channel_info)
         if all or list_channels:
-            tools.append(self.discord_list_channels)
+            tools.append(self.list_discord_channels)
         if all or delete_message:
-            tools.append(self.discord_delete_message)
+            tools.append(self.delete_discord_message)
 
         super().__init__(name="discord", tools=tools, **kwargs)
 
@@ -54,7 +54,7 @@ class DiscordTools(Toolkit):
         response.raise_for_status()
         return response.json() if response.text else {}
 
-    def discord_send_message(self, channel_id: str, message: str) -> str:
+    def send_discord_message(self, channel_id: str, message: str) -> str:
         """Send a message to a Discord channel.
 
         Args:
@@ -72,7 +72,7 @@ class DiscordTools(Toolkit):
             logger.exception("Error sending message")
             return json.dumps({"error": f"Error sending message: {str(e)}"})
 
-    def discord_get_channel_info(self, channel_id: str) -> str:
+    def get_discord_channel_info(self, channel_id: str) -> str:
         """Get information about a Discord channel.
 
         Args:
@@ -88,7 +88,7 @@ class DiscordTools(Toolkit):
             logger.exception("Error getting channel info")
             return json.dumps({"error": f"Error getting channel info: {str(e)}"})
 
-    def discord_list_channels(self, guild_id: str) -> str:
+    def list_discord_channels(self, guild_id: str) -> str:
         """List all channels in a Discord server.
 
         Args:
@@ -104,7 +104,7 @@ class DiscordTools(Toolkit):
             logger.exception("Error listing channels")
             return json.dumps({"error": f"Error listing channels: {str(e)}"})
 
-    def discord_get_channel_messages(self, channel_id: str, limit: int = 100) -> str:
+    def get_discord_channel_messages(self, channel_id: str, limit: int = 100) -> str:
         """Get the message history of a Discord channel.
 
         Args:
@@ -121,7 +121,7 @@ class DiscordTools(Toolkit):
             logger.exception("Error getting messages")
             return json.dumps({"error": f"Error getting messages: {str(e)}"})
 
-    def discord_delete_message(self, channel_id: str, message_id: str) -> str:
+    def delete_discord_message(self, channel_id: str, message_id: str) -> str:
         """Delete a message from a Discord channel.
 
         Args:

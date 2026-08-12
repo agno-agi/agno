@@ -38,13 +38,13 @@ class WebexTools(Toolkit):
 
         tools: List[Callable] = []
         if send_message:
-            tools.append(self.webex_send_message)
+            tools.append(self.send_webex_message)
         if list_rooms:
-            tools.append(self.list_rooms)
+            tools.append(self.list_webex_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)
 
-    def webex_send_message(self, room_id: str, text: str) -> str:
+    def send_webex_message(self, room_id: str, text: str) -> str:
         """Send a message to a Webex room.
 
         Args:
@@ -61,7 +61,7 @@ class WebexTools(Toolkit):
             log_exception(f"Error sending message in room: {room_id}")
             return json.dumps({"error": str(e)})
 
-    def list_rooms(self) -> str:
+    def list_webex_rooms(self) -> str:
         """List all rooms in Webex.
 
         Returns:

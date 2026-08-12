@@ -7,10 +7,10 @@ SlackContextProvider exposes two tools to the calling agent:
 - `query_<id>(question)` — read the workspace (search, channel
   history, threads, user / channel lookups)
 - `update_<id>(instruction)` — post a message (resolves channel /
-  user names, then calls `slack_send_message` / `send_message_thread`)
+  user names, then calls `send_slack_message` / `send_slack_message_thread`)
 
 Separate sub-agents under the hood keep scopes minimal: read agents
-never see `slack_send_message`, and the write agent never sees history or
+never see `send_slack_message`, and the write agent never sees history or
 search tools. Uploads / downloads are off on both.
 
 This cookbook always runs the read prompt. If you set
