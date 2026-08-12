@@ -90,6 +90,7 @@ class TestListJobsPagination:
     def test_invalid_params_rejected(self, harness):
         assert harness.client.get("/queue/jobs", params={"status": "bogus"}).status_code == 400
         assert harness.client.get("/queue/jobs", params={"limit": 0}).status_code == 422
+        assert harness.client.get("/queue/jobs", params={"limit": 1001}).status_code == 422
         assert harness.client.get("/queue/jobs", params={"page": 0}).status_code == 422
         # Unknown sort fields are silently ignored, not rejected
         assert harness.client.get("/queue/jobs", params={"sort_by": "nope"}).status_code == 200

@@ -6480,6 +6480,9 @@ class PostgresDb(BaseDb):
                 stmt = stmt.where(table.c.status.in_(statuses))
             count_stmt = select(func.count()).select_from(stmt.alias())
             stmt = apply_sorting(stmt, table, sort_by, sort_order)
+            # Deterministic tiebreaker: timestamps are epoch seconds, so ties
+            # are common and would let rows move between pages otherwise
+            stmt = stmt.order_by(table.c.id)
             stmt = stmt.limit(limit).offset(max(page - 1, 0) * limit)
             with self.Session() as sess:
                 total_count = sess.execute(count_stmt).scalar() or 0

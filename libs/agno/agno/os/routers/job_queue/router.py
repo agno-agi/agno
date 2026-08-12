@@ -92,7 +92,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         status: Optional[List[str]] = Query(
             default=None, description="Status filter; repeatable to match any of several statuses"
         ),
-        limit: int = Query(default=20, description="Number of jobs to return per page", ge=1),
+        limit: int = Query(default=20, description="Number of jobs to return per page", ge=1, le=1000),
         page: int = Query(default=1, description="Page number for pagination", ge=1),
         sort_by: str = Query(default="created_at", description="Field to sort jobs by"),
         sort_order: SortOrder = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
