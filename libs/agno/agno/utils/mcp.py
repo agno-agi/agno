@@ -1,6 +1,5 @@
 import asyncio
 import json
-from functools import partial
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import uuid4
 
@@ -106,7 +105,6 @@ def get_entrypoint_for_tool(
     """
 
     async def call_tool(
-        tool_name: str,
         _agno_run_context: Optional["RunContext"] = None,
         _agno_agent: Optional["Agent"] = None,
         _agno_team: Optional["Team"] = None,
@@ -115,6 +113,11 @@ def get_entrypoint_for_tool(
         # Framework-injected params use the `_agno_` prefix so they cannot
         # collide with MCP tool arguments named "run_context", "agent" and
         # "team".
+        # The executed tool is pinned to the tool this entrypoint was built
+        # for: call-time arguments cannot change it. A model-supplied
+        # "tool_name" argument stays in **kwargs and is forwarded to the
+        # server as an ordinary argument of the declared tool.
+        tool_name = tool.name
 
         async def _call_with_session(active_session: ClientSession) -> ToolResult:
             try:
@@ -264,7 +267,7 @@ def get_entrypoint_for_tool(
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
             return ToolResult(content=f"Error: {e}")
 
-    return partial(call_tool, tool_name=tool.name)
+    return call_tool
 
 
 def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
