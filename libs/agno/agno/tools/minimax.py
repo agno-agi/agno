@@ -28,7 +28,7 @@ class MiniMaxTools(Toolkit):
         model: str = "MiniMax-H3",
         poll_interval: float = 5,
         max_wait_time: float = 600,
-        timeout: float = 30,
+        timeout: int = 30,
         enable_generate_video: bool = True,
         all: bool = False,
         **kwargs,
