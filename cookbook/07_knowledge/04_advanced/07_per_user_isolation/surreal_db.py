@@ -68,7 +68,8 @@ vector_db = SurrealDb(
     client=client, async_client=async_client, collection=COLLECTION_NAME
 )
 
-# Start clean: records left by an earlier run still carry their owner.
+# Start clean: records left by an earlier run still carry their owner and would
+# show up as extra results below.
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()

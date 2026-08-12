@@ -52,7 +52,7 @@ def show(label: str, results: List[Document]) -> None:
 
 vector_db = LanceDb(uri=DB_PATH, table_name=TABLE_NAME)
 
-# Start clean: rows from an earlier run keep their owner  and would show up as extra results
+# Start clean: rows from an earlier run keep their owner and would show up as extra results
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()

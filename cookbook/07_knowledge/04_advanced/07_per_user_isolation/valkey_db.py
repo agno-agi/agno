@@ -63,7 +63,7 @@ vector_db = ValkeyDB(
     search_type=SearchType.vector,
 )
 
-# Start clean: hashes from an earlier run keep their owner tag  and would show up as extra results.
+# Start clean: hashes from an earlier run keep their owner tag and would show up as extra results.
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()

@@ -51,7 +51,8 @@ def show(label: str, results: List[Document]) -> None:
 # Create Knowledge Base
 # ---------------------------------------------------------------------------
 
-# Start clean: rows from an earlier run still carry their owner.
+# Start clean: rows from an earlier run still carry their owner and would
+# show up as extra results below.
 vector_db = Qdrant(collection=COLLECTION_NAME, url=QDRANT_URL)
 if vector_db.exists():
     vector_db.drop()
