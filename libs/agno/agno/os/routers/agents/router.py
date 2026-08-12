@@ -987,9 +987,12 @@ def get_agent_router(
                         "accepting replica instead - bounded and observable, but NOT durable."
                     )
 
-            # Same input-error contract as the inline path: without this,
-            # the non-durable background fallback answered 500 for the exact
-            # payload the other doors answer 400
+            # Same input-error contract as the inline path: schema violations
+            # are refused up front (the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500), and guardrail
+            # refusals from the dispatch answer 400.
+            validate_seam_input(agent, message)
             try:
                 run_response = cast(
                     RunOutput,
@@ -1006,7 +1009,7 @@ def get_agent_router(
                         **kwargs,
                     ),
                 )
-            except (InputCheckError, ValueError) as e:
+            except InputCheckError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
@@ -1039,6 +1042,13 @@ def get_agent_router(
             if auth_token and isinstance(agent, RemoteAgent):
                 kwargs["auth_token"] = auth_token
 
+            # Schema violations are refused up front with the seams' shared
+            # check: the dispatch's own schema ValueError is
+            # indistinguishable from an internal one (e.g. storage code), so
+            # catching ValueError here would misclassify server failures as
+            # client errors and echo their internals - internal failures
+            # keep their generic 500 instead.
+            validate_seam_input(agent, message)
             try:
                 run_response = cast(
                     RunOutput,
@@ -1057,9 +1067,7 @@ def get_agent_router(
                 )
                 return run_response.to_dict()
 
-            # ValueError alongside InputCheckError: a bare schema ValueError
-            # from the dispatch is the same client mistake and must not 500
-            except (InputCheckError, ValueError) as e:
+            except InputCheckError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(

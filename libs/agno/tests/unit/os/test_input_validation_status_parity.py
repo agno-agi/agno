@@ -51,27 +51,52 @@ class TestSeamAnswers400:
 
 
 class TestInlineDoorsAnswer400:
-    def test_inline_bare_value_error_is_400(self, harness, monkeypatch):
-        """A bare schema ValueError from the dispatch was uncaught -> 500."""
-
-        async def raising_arun(self, **kwargs):
-            raise ValueError("Input required when input_schema is set")
-
-        monkeypatch.setattr(Agent, "arun", raising_arun)
+    def test_inline_schema_violation_is_400(self, harness):
+        """The inline non-stream door pre-validates with the seams' shared
+        check: a schema violation answers 400 BEFORE dispatch (it used to
+        surface as the dispatch's bare ValueError -> 500)."""
         resp = harness.client.post(
-            "/agents/qa-agent/runs", data={"message": "hi", "stream": "false", "background": "false"}
+            "/agents/qa-agent/runs",
+            data={"message": "not the schema shape", "stream": "false", "background": "false"},
         )
         assert resp.status_code == 400, f"expected 400, got {resp.status_code}: {resp.text[:200]}"
+        assert "schema" in resp.json()["detail"].lower()
 
-    def test_background_fallback_input_error_is_400(self, harness, monkeypatch):
+    def test_background_fallback_schema_violation_is_400(self, harness):
         """No queue worker: background=true drops to the non-durable
-        in-process fallback, which had no try/except at all -> 500."""
-
-        async def raising_arun(self, **kwargs):
-            raise InputCheckError("input not allowed by schema")
-
-        monkeypatch.setattr(Agent, "arun", raising_arun)
+        fallback, which had no input handling at all -> 500."""
         resp = harness.client.post(
-            "/agents/qa-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
+            "/agents/qa-agent/runs",
+            data={"message": "not the schema shape", "stream": "false", "background": "true"},
         )
         assert resp.status_code == 400, f"expected 400, got {resp.status_code}: {resp.text[:200]}"
+
+    def test_background_fallback_guardrail_refusal_is_400(self, harness, monkeypatch):
+        async def refusing_arun(self, **kwargs):
+            raise InputCheckError("input not allowed")
+
+        monkeypatch.setattr(Agent, "arun", refusing_arun)
+        resp = harness.client.post(
+            "/agents/qa-agent/runs",
+            data={"message": '{"quantity": 1, "reason": "ok"}', "stream": "false", "background": "true"},
+        )
+        assert resp.status_code == 400, f"expected 400, got {resp.status_code}: {resp.text[:200]}"
+
+
+class TestInternalValueErrorStays500:
+    def test_dispatch_value_error_is_not_misclassified_as_client_error(self, harness, monkeypatch):
+        """A downstream ValueError (e.g. storage code) is a SERVER failure:
+        catching ValueError at the router would answer 400 with the raw
+        message - misclassifying the failure and echoing internals the 5xx
+        policy suppresses."""
+
+        async def broken_arun(self, **kwargs):
+            raise ValueError("db not initialized at postgresql://ai:secret@db.internal/ai")
+
+        monkeypatch.setattr(Agent, "arun", broken_arun)
+        resp = harness.client.post(
+            "/agents/qa-agent/runs",
+            data={"message": '{"quantity": 1, "reason": "ok"}', "stream": "false", "background": "false"},
+        )
+        assert resp.status_code == 500, f"an internal ValueError must stay a 500, got {resp.status_code}"
+        assert "secret" not in resp.text, "the 500 body must not echo the exception message"
