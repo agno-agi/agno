@@ -213,19 +213,43 @@ class DynamoDb(BaseDb):
 
         return table_name
 
-    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+    def _ensure_schema_versions_table(self) -> None:
+        from agno.db.dynamo.schemas import SCHEMA_VERSIONS_TABLE_SCHEMA
+        from agno.db.dynamo.utils import create_table_if_not_exists
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; DynamoDB has no per-table versioning here so it
-        is ignored.
+        schema = SCHEMA_VERSIONS_TABLE_SCHEMA.copy()
+        schema["TableName"] = self.versions_table_name
+        create_table_if_not_exists(self.client, self.versions_table_name, schema)
+
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
+
+        Defaults to "2.0.0" when nothing is stamped yet, matching the SQL
+        adapters: an unstamped database is assumed pre-v3 so the
+        MigrationManager runs migrations. Returning None here would make the
+        manager skip the table entirely.
         """
-        return None
+        self._ensure_schema_versions_table()
+        response = self.client.get_item(
+            TableName=self.versions_table_name,
+            Key={"table_name": {"S": table_name}},
+        )
+        item = response.get("Item")
+        if not item:
+            return "2.0.0"
+        return item.get("version", {}).get("S") or "2.0.0"
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table."""
+        self._ensure_schema_versions_table()
+        self.client.put_item(
+            TableName=self.versions_table_name,
+            Item={
+                "table_name": {"S": table_name},
+                "version": {"S": version},
+                "updated_at": {"N": str(int(time.time()))},
+            },
+        )
 
     # --- Runs ---
 
