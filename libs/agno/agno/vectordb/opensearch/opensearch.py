@@ -979,7 +979,7 @@ class OpenSearch(VectorDb):
             Uses batch embedding for improved performance.
         """
         self._validate_user_id(user_id)
-        self._require_owner_field(user_id)
+        await asyncio.to_thread(self._require_owner_field, user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
         await self._async_execute_bulk_operation(
             "insert", documents, self._prepare_bulk_insert_data, use_batch_embed=True, user_id=user_id
@@ -1050,9 +1050,9 @@ class OpenSearch(VectorDb):
             chunks for this hash first.
         """
         self._validate_user_id(user_id)
-        self._require_owner_field(user_id)
-        if self.content_hash_exists(content_hash, user_id=user_id):
-            self._delete_by_content_hash(content_hash, user_id=user_id)
+        await asyncio.to_thread(self._require_owner_field, user_id)
+        if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
         await self._async_execute_bulk_operation(
             "upsert", documents, self._prepare_bulk_upsert_data, use_batch_embed=True, user_id=user_id
