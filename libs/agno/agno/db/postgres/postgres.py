@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db import mcp_oauth_store
-from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.db.base import BaseDb, ComponentType, SessionType, next_version_string, normalize_version
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
@@ -4207,7 +4207,7 @@ class PostgresDb(BaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        current_version: Optional[int] = None,
+        current_version: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -4496,7 +4496,7 @@ class PostgresDb(BaseDb):
                         raise ValueError(f"Label '{label}' already exists for {component_id}")
 
                 now = int(time.time())
-                version = 1
+                version = "1"  # versions are opaque strings; the initial one is the numeric string
 
                 # Create component
                 sess.execute(
@@ -4534,7 +4534,7 @@ class PostgresDb(BaseDb):
                                 link_kind=link["link_kind"],
                                 link_key=link["link_key"],
                                 child_component_id=link["child_component_id"],
-                                child_version=link["child_version"],
+                                child_version=normalize_version(link["child_version"]),
                                 position=link["position"],
                                 meta=link.get("meta"),
                                 created_at=now,
@@ -4560,7 +4560,7 @@ class PostgresDb(BaseDb):
     def get_config(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
@@ -4573,6 +4573,7 @@ class PostgresDb(BaseDb):
         Returns:
             Config dictionary or None if not found.
         """
+        version = normalize_version(version)
         try:
             configs_table = self._get_table(table_type="component_configs")
             components_table = self._get_table(table_type="components")
@@ -4619,7 +4620,7 @@ class PostgresDb(BaseDb):
                     stmt = (
                         select(configs_table)
                         .where(configs_table.c.component_id == component_id)
-                        .order_by(configs_table.c.version.desc())
+                        .order_by(configs_table.c.created_at.desc())
                         .limit(1)
                     )
 
@@ -4634,7 +4635,7 @@ class PostgresDb(BaseDb):
         self,
         component_id: str,
         config: Optional[Dict[str, Any]] = None,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
         stage: Optional[str] = None,
         notes: Optional[str] = None,
@@ -4663,6 +4664,7 @@ class PostgresDb(BaseDb):
             ValueError: If component doesn't exist, version not found, label conflict,
                         or attempting to update a published config.
         """
+        version = normalize_version(version)
         if stage is not None and stage not in {"draft", "published"}:
             raise ValueError(f"Invalid stage: {stage}")
 
@@ -4714,14 +4716,18 @@ class PostgresDb(BaseDb):
                     if stage is None:
                         stage = "draft"
 
-                    max_version = sess.execute(
-                        select(configs_table.c.version)
-                        .where(configs_table.c.component_id == component_id)
-                        .order_by(configs_table.c.version.desc())
-                        .limit(1)
-                    ).scalar()
+                    # Versions are opaque STRINGS; the auto-assigned counter is
+                    # numeric-aware in Python (lexicographic SQL ordering would
+                    # put '9' after '10') and skips non-numeric versions.
+                    existing_versions = (
+                        sess.execute(
+                            select(configs_table.c.version).where(configs_table.c.component_id == component_id)
+                        )
+                        .scalars()
+                        .all()
+                    )
 
-                    final_version = (max_version or 0) + 1
+                    final_version = next_version_string(existing_versions)
 
                     sess.execute(
                         configs_table.insert().values(
@@ -4789,7 +4795,7 @@ class PostgresDb(BaseDb):
                                 link_kind=link["link_kind"],
                                 link_key=link["link_key"],
                                 child_component_id=link["child_component_id"],
-                                child_version=link["child_version"],
+                                child_version=normalize_version(link["child_version"]),
                                 position=link["position"],
                                 meta=link.get("meta"),
                                 created_at=int(time.time()),
@@ -4818,7 +4824,7 @@ class PostgresDb(BaseDb):
     def delete_config(
         self,
         component_id: str,
-        version: int,
+        version: str,
     ) -> bool:
         """Delete a specific config version.
 
@@ -4835,6 +4841,7 @@ class PostgresDb(BaseDb):
         Raises:
             ValueError: If attempting to delete a published or current config.
         """
+        version = str(version)  # opaque string; tolerate int callers
         try:
             configs_table = self._get_table(table_type="component_configs")
             links_table = self._get_table(table_type="component_links")
@@ -4934,7 +4941,9 @@ class PostgresDb(BaseDb):
                         configs_table.c.updated_at,
                     )
 
-                stmt = stmt.where(configs_table.c.component_id == component_id).order_by(configs_table.c.version.desc())
+                stmt = stmt.where(configs_table.c.component_id == component_id).order_by(
+                    configs_table.c.created_at.desc()
+                )
 
                 results = sess.execute(stmt).mappings().all()
                 return [dict(row) for row in results]
@@ -4946,7 +4955,7 @@ class PostgresDb(BaseDb):
     def set_current_version(
         self,
         component_id: str,
-        version: int,
+        version: str,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -4964,6 +4973,7 @@ class PostgresDb(BaseDb):
         Raises:
             ValueError: If attempting to set a draft config as current.
         """
+        version = str(version)  # opaque string; tolerate int callers
         try:
             configs_table = self._get_table(table_type="component_configs")
             components_table = self._get_table(table_type="components")
@@ -5022,7 +5032,7 @@ class PostgresDb(BaseDb):
     def get_links(
         self,
         component_id: str,
-        version: int,
+        version: str,
         link_kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Get links for a config version.
@@ -5035,6 +5045,7 @@ class PostgresDb(BaseDb):
         Returns:
             List of link dictionaries, ordered by position.
         """
+        version = str(version)  # opaque string; tolerate int callers
         try:
             table = self._get_table(table_type="component_links")
             if table is None:
@@ -5062,7 +5073,7 @@ class PostgresDb(BaseDb):
     def get_dependents(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
@@ -5073,6 +5084,7 @@ class PostgresDb(BaseDb):
         Returns:
             List of link dictionaries showing what depends on this component.
         """
+        version = normalize_version(version)
         try:
             table = self._get_table(table_type="component_links")
             if table is None:
@@ -5093,16 +5105,16 @@ class PostgresDb(BaseDb):
     def _resolve_version(
         self,
         component_id: str,
-        version: Optional[int],
-    ) -> Optional[int]:
-        """Resolve a version number, handling None as 'current'.
+        version: Optional[str],
+    ) -> Optional[str]:
+        """Resolve a version, handling None as 'current'.
 
         Args:
             component_id: The component ID.
             version: Version number or None for current.
 
         Returns:
-            Resolved version number, or None if component missing/deleted or no current.
+            Resolved version, or None if component missing/deleted or no current.
         """
         if version is not None:
             return version
@@ -5127,10 +5139,10 @@ class PostgresDb(BaseDb):
     def load_component_graph(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
         *,
-        _visited: Optional[Set[Tuple[str, int]]] = None,
+        _visited: Optional[Set[Tuple[str, str]]] = None,
         _max_depth: int = 50,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
@@ -5149,6 +5161,7 @@ class PostgresDb(BaseDb):
             Dictionary with component, config, children, and resolved_versions.
             Returns None if component not found or depth exceeded.
         """
+        version = normalize_version(version)
         try:
             if _max_depth <= 0:
                 return None
@@ -5183,7 +5196,7 @@ class PostgresDb(BaseDb):
             links = self.get_links(component_id, resolved_version)
 
             children: List[Dict[str, Any]] = []
-            resolved_versions: Dict[str, Optional[int]] = {component_id: resolved_version}
+            resolved_versions: Dict[str, Optional[str]] = {component_id: resolved_version}
 
             for link in links:
                 child_id = link["child_component_id"]

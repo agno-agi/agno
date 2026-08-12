@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db import mcp_oauth_store
-from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.db.base import BaseDb, ComponentType, SessionType, next_version_string, normalize_version
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -4091,7 +4091,7 @@ class SqliteDb(BaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        current_version: Optional[int] = None,
+        current_version: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -4369,7 +4369,7 @@ class SqliteDb(BaseDb):
                         raise ValueError(f"Label '{label}' already exists for {component_id}")
 
                 now = int(time.time())
-                version = 1
+                version = "1"  # versions are opaque strings; the initial one is the numeric string
 
                 # Create component
                 sess.execute(
@@ -4407,7 +4407,7 @@ class SqliteDb(BaseDb):
                                 link_kind=link["link_kind"],
                                 link_key=link["link_key"],
                                 child_component_id=link["child_component_id"],
-                                child_version=link["child_version"],
+                                child_version=normalize_version(link["child_version"]),
                                 position=link["position"],
                                 meta=link.get("meta"),
                                 created_at=now,
@@ -4433,7 +4433,7 @@ class SqliteDb(BaseDb):
     def get_config(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
@@ -4446,6 +4446,7 @@ class SqliteDb(BaseDb):
         Returns:
             Config dictionary or None if not found.
         """
+        version = normalize_version(version)
         try:
             configs_table = self._get_table(table_type="component_configs")
             components_table = self._get_table(table_type="components")
@@ -4492,7 +4493,7 @@ class SqliteDb(BaseDb):
                     stmt = (
                         select(configs_table)
                         .where(configs_table.c.component_id == component_id)
-                        .order_by(configs_table.c.version.desc())
+                        .order_by(configs_table.c.created_at.desc())
                         .limit(1)
                     )
 
@@ -4507,7 +4508,7 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         config: Optional[Dict[str, Any]] = None,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
         stage: Optional[str] = None,
         notes: Optional[str] = None,
@@ -4536,6 +4537,7 @@ class SqliteDb(BaseDb):
             ValueError: If component doesn't exist, version not found, label conflict,
                         or attempting to update a published config.
         """
+        version = normalize_version(version)
         if stage is not None and stage not in {"draft", "published"}:
             raise ValueError(f"Invalid stage: {stage}")
 
@@ -4587,14 +4589,18 @@ class SqliteDb(BaseDb):
                     if stage is None:
                         stage = "draft"
 
-                    max_version = sess.execute(
-                        select(configs_table.c.version)
-                        .where(configs_table.c.component_id == component_id)
-                        .order_by(configs_table.c.version.desc())
-                        .limit(1)
-                    ).scalar()
+                    # Versions are opaque STRINGS; the auto-assigned counter is
+                    # numeric-aware in Python (lexicographic SQL ordering would
+                    # put '9' after '10') and skips non-numeric versions.
+                    existing_versions = (
+                        sess.execute(
+                            select(configs_table.c.version).where(configs_table.c.component_id == component_id)
+                        )
+                        .scalars()
+                        .all()
+                    )
 
-                    final_version = (max_version or 0) + 1
+                    final_version = next_version_string(existing_versions)
 
                     sess.execute(
                         configs_table.insert().values(
@@ -4658,7 +4664,7 @@ class SqliteDb(BaseDb):
                                 link_kind=link["link_kind"],
                                 link_key=link["link_key"],
                                 child_component_id=link["child_component_id"],
-                                child_version=link["child_version"],
+                                child_version=normalize_version(link["child_version"]),
                                 position=link["position"],
                                 meta=link.get("meta"),
                                 created_at=int(time.time()),
@@ -4687,7 +4693,7 @@ class SqliteDb(BaseDb):
     def delete_config(
         self,
         component_id: str,
-        version: int,
+        version: str,
     ) -> bool:
         """Delete a specific config version.
 
@@ -4704,6 +4710,7 @@ class SqliteDb(BaseDb):
         Raises:
             ValueError: If attempting to delete a published or current config.
         """
+        version = str(version)  # opaque string; tolerate int callers
         try:
             configs_table = self._get_table(table_type="component_configs")
             links_table = self._get_table(table_type="component_links")
@@ -4803,7 +4810,9 @@ class SqliteDb(BaseDb):
                         configs_table.c.updated_at,
                     )
 
-                stmt = stmt.where(configs_table.c.component_id == component_id).order_by(configs_table.c.version.desc())
+                stmt = stmt.where(configs_table.c.component_id == component_id).order_by(
+                    configs_table.c.created_at.desc()
+                )
 
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]
@@ -4815,7 +4824,7 @@ class SqliteDb(BaseDb):
     def set_current_version(
         self,
         component_id: str,
-        version: int,
+        version: str,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -4833,6 +4842,7 @@ class SqliteDb(BaseDb):
         Raises:
             ValueError: If attempting to set a draft config as current.
         """
+        version = str(version)  # opaque string; tolerate int callers
         try:
             configs_table = self._get_table(table_type="component_configs")
             components_table = self._get_table(table_type="components")
@@ -4888,7 +4898,7 @@ class SqliteDb(BaseDb):
     def get_links(
         self,
         component_id: str,
-        version: int,
+        version: str,
         link_kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Get links for a config version.
@@ -4901,6 +4911,7 @@ class SqliteDb(BaseDb):
         Returns:
             List of link dictionaries, ordered by position.
         """
+        version = str(version)  # opaque string; tolerate int callers
         try:
             table = self._get_table(table_type="component_links")
             if table is None:
@@ -4928,7 +4939,7 @@ class SqliteDb(BaseDb):
     def get_dependents(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
@@ -4939,6 +4950,7 @@ class SqliteDb(BaseDb):
         Returns:
             List of link dictionaries showing what depends on this component.
         """
+        version = normalize_version(version)
         try:
             table = self._get_table(table_type="component_links")
             if table is None:
@@ -4959,8 +4971,8 @@ class SqliteDb(BaseDb):
     def resolve_version(
         self,
         component_id: str,
-        version: Optional[int],
-    ) -> Optional[int]:
+        version: Optional[str],
+    ) -> Optional[str]:
         """Resolve a version number, handling NULL (current) case.
 
         Args:
@@ -4968,7 +4980,7 @@ class SqliteDb(BaseDb):
             version: Version number or None for current.
 
         Returns:
-            Resolved version number or None if component not found.
+            Resolved version or None if component not found.
         """
         if version is not None:
             return version
@@ -4991,7 +5003,7 @@ class SqliteDb(BaseDb):
     def load_component_graph(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
@@ -5004,6 +5016,7 @@ class SqliteDb(BaseDb):
         Returns:
             Dictionary with component, config, links, and resolved children.
         """
+        version = normalize_version(version)
         try:
             # Get component
             component = self.get_component(component_id)
@@ -5025,7 +5038,7 @@ class SqliteDb(BaseDb):
 
             # Resolve children recursively
             children = []
-            resolved_versions: Dict[str, Optional[int]] = {component_id: resolved_version}
+            resolved_versions: Dict[str, Optional[str]] = {component_id: resolved_version}
 
             for link in links:
                 child_version = self.resolve_version(

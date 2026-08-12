@@ -924,7 +924,7 @@ def from_dict(
     from agno.team import get_team_by_id
 
     # Member versions pinned by this team version's links (written by save()).
-    pinned_versions: Dict[str, Optional[int]] = {}
+    pinned_versions: Dict[str, Optional[str]] = {}
     for link in links or []:
         if link.get("link_kind") == "member" and link.get("child_component_id"):
             child_id = link["child_component_id"]
@@ -1550,7 +1550,7 @@ def load(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     label: Optional[str] = None,
-    version: Optional[int] = None,
+    version: Optional[str] = None,
     strict: bool = False,
 ) -> Optional["Team"]:
     """

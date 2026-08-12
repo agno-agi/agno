@@ -613,7 +613,7 @@ def get_team_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
-        version: Optional[int] = Form(None, description="Team version to use for this run"),
+        version: Optional[str] = Form(None, description="Team version to use for this run"),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),

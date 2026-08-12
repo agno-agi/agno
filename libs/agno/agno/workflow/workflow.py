@@ -532,7 +532,7 @@ class Workflow:
         self.add_session_state_to_context = add_session_state_to_context
 
         # Component metadata (set by get_workflows during DB loading)
-        self._version: Optional[int] = None
+        self._version: Optional[str] = None
         self._stage: Optional[str] = None
 
         self.cache_session = cache_session
@@ -1214,7 +1214,7 @@ class Workflow:
         db: "BaseDb",
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         strict: bool = False,
     ) -> Optional["Workflow"]:
         """
@@ -11227,7 +11227,7 @@ class Workflow:
 def get_workflow_by_id(
     db: "BaseDb",
     id: str,
-    version: Optional[int] = None,
+    version: Optional[str] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
     strict: bool = False,

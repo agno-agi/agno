@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -227,7 +227,7 @@ class WorkflowSummaryResponse(BaseModel):
     is_factory: bool = Field(False, description="Whether this workflow is a factory")
     factory_input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for factory_input")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
-    current_version: Optional[int] = Field(None, description="Current published version number")
+    current_version: Optional[str] = Field(None, description="Current published version")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
 
     @classmethod
@@ -831,15 +831,22 @@ class ComponentResponse(BaseModel):
     component_type: ComponentType
     name: Optional[str] = None
     description: Optional[str] = None
-    current_version: Optional[int] = None
+    current_version: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
     updated_at: Optional[int] = None
 
+    @field_validator("current_version", mode="before")
+    @classmethod
+    def _current_version_to_str(cls, v):
+        # Versions are opaque strings; rows written before the retype (and
+        # old callers) carry ints - coerce, never reject
+        return str(v) if v is not None else v
+
 
 class ConfigCreate(BaseModel):
     config: Dict[str, Any] = Field(..., description="The configuration data")
-    version: Optional[int] = Field(None, description="Optional version number")
+    version: Optional[str] = Field(None, description="Optional version")
     label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
     stage: str = Field("draft", description="Stage: 'draft' or 'published'")
     notes: Optional[str] = Field(None, description="Optional notes")
@@ -849,7 +856,7 @@ class ConfigCreate(BaseModel):
 
 class ComponentConfigResponse(BaseModel):
     component_id: str
-    version: int
+    version: str
     label: Optional[str] = None
     stage: str
     config: Dict[str, Any]
@@ -857,13 +864,20 @@ class ComponentConfigResponse(BaseModel):
     created_at: int
     updated_at: Optional[int] = None
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def _version_to_str(cls, v):
+        # Versions are opaque strings; rows written before the retype (and
+        # old callers) carry ints - coerce, never reject
+        return str(v) if v is not None else v
+
 
 class ComponentUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     component_type: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
-    current_version: Optional[int] = None
+    current_version: Optional[str] = None
 
 
 class ConfigUpdate(BaseModel):

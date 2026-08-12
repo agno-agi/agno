@@ -45,7 +45,7 @@ class TeamResponse(BaseModel):
     is_factory: bool = False
     factory_input_schema: Optional[Dict[str, Any]] = None
     is_component: bool = False
-    current_version: Optional[int] = None
+    current_version: Optional[str] = None
     stage: Optional[str] = None
 
     @classmethod

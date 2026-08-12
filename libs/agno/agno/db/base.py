@@ -30,6 +30,26 @@ class ComponentType(str, Enum):
     WORKFLOW = "workflow"
 
 
+def normalize_version(version: Any) -> Optional[str]:
+    """Component versions are OPAQUE STRINGS on every surface. Callers built
+    against the old integer typing may still pass ints - coerce, never
+    compare an int against the String column."""
+    return None if version is None else str(version)
+
+
+def next_version_string(existing_versions: Any) -> str:
+    """The next auto-assigned config version. Auto-assigned versions stay
+    numeric strings ('1', '2', ...): the counter is max(numeric existing)+1,
+    and non-numeric version strings (allowed - versions are opaque) are
+    simply skipped by it."""
+    highest = 0
+    for value in existing_versions or []:
+        s = str(value)
+        if s.isdigit():
+            highest = max(highest, int(s))
+    return str(highest + 1)
+
+
 class BaseDb(ABC):
     """Base abstract class for all our Database implementations."""
 
@@ -800,7 +820,7 @@ class BaseDb(ABC):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        current_version: Optional[int] = None,
+        current_version: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -901,7 +921,7 @@ class BaseDb(ABC):
     def get_config(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
@@ -920,7 +940,7 @@ class BaseDb(ABC):
         self,
         component_id: str,
         config: Optional[Dict[str, Any]] = None,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
         stage: Optional[str] = None,
         notes: Optional[str] = None,
@@ -954,7 +974,7 @@ class BaseDb(ABC):
     def delete_config(
         self,
         component_id: str,
-        version: int,
+        version: str,
     ) -> bool:
         """Delete a specific config version.
 
@@ -993,7 +1013,7 @@ class BaseDb(ABC):
     def set_current_version(
         self,
         component_id: str,
-        version: int,
+        version: str,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -1017,7 +1037,7 @@ class BaseDb(ABC):
     def get_links(
         self,
         component_id: str,
-        version: int,
+        version: str,
         link_kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Get links for a config version.
@@ -1035,7 +1055,7 @@ class BaseDb(ABC):
     def get_dependents(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
@@ -1051,7 +1071,7 @@ class BaseDb(ABC):
     def load_component_graph(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.

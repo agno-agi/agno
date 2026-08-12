@@ -454,7 +454,7 @@ class TestCreateConfig:
 
         assert response.status_code == 201
         data = response.json()
-        assert data["version"] == 1
+        assert data["version"] == "1"
 
     def test_create_config_handles_value_error(self, client, mock_db):
         """Test create_config returns 400 on ValueError."""
@@ -490,7 +490,7 @@ class TestGetCurrentConfig:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["version"] == 2
+        assert data["version"] == "2"
 
     def test_get_current_config_not_found(self, client, mock_db):
         """Test get_current_config returns 404 when no current config."""
@@ -523,7 +523,7 @@ class TestGetConfigVersion:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["version"] == 3
+        assert data["version"] == "3"
 
     def test_get_config_version_not_found(self, client, mock_db):
         """Test get_config_version returns 404 when version not found."""
@@ -629,7 +629,7 @@ class TestSetCurrentConfig:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["current_version"] == 3
+        assert data["current_version"] == "3"
 
     def test_set_current_config_not_found(self, client, mock_db):
         """Test set_current_config returns 404 when version not found."""

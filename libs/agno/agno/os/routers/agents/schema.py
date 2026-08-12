@@ -43,7 +43,7 @@ class AgentResponse(BaseModel):
     input_schema: Optional[Dict[str, Any]] = None
     factory_input_schema: Optional[Dict[str, Any]] = None  # JSON Schema for factory_input
     is_component: bool = False
-    current_version: Optional[int] = None
+    current_version: Optional[str] = None
     stage: Optional[str] = None
 
     @classmethod

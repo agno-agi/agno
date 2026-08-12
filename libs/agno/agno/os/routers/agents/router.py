@@ -683,7 +683,7 @@ def get_agent_router(
             os.agents,
             os.db,
             registry,
-            version=int(version) if version else None,
+            version=version,
             request=request,
             user_id=user_id,
             session_id=session_id,

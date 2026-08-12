@@ -446,7 +446,7 @@ def attach_routes(
     )
     async def update_config(
         component_id: str = Path(description="Component ID"),
-        version: int = Path(description="Version number"),
+        version: str = Path(description="Version"),
         body: ConfigUpdate = Body(description="Config fields to update"),
     ) -> ComponentConfigResponse:
         try:
@@ -505,7 +505,7 @@ def attach_routes(
     )
     async def get_config_version(
         component_id: str = Path(description="Component ID"),
-        version: int = Path(description="Version number"),
+        version: str = Path(description="Version"),
     ) -> ComponentConfigResponse:
         try:
             config = db.get_config(component_id, version=version)
@@ -528,7 +528,7 @@ def attach_routes(
     )
     async def delete_config_version(
         component_id: str = Path(description="Component ID"),
-        version: int = Path(description="Version number"),
+        version: str = Path(description="Version"),
     ) -> None:
         try:
             # Resolve version number
@@ -554,7 +554,7 @@ def attach_routes(
     )
     async def set_current_config(
         component_id: str = Path(description="Component ID"),
-        version: int = Path(description="Version number"),
+        version: str = Path(description="Version"),
     ) -> ComponentResponse:
         try:
             success = db.set_current_version(component_id, version=version)

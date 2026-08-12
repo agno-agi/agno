@@ -677,7 +677,7 @@ class Team:
         )
 
         # Component metadata (set by get_teams during DB loading)
-        self._version: Optional[int] = None
+        self._version: Optional[str] = None
         self._stage: Optional[str] = None
 
     @property
@@ -1571,7 +1571,7 @@ class Team:
         db: "BaseDb",
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         strict: bool = False,
     ) -> Optional["Team"]:
         return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
@@ -1780,7 +1780,7 @@ class Team:
 def get_team_by_id(
     db: "BaseDb",
     id: str,
-    version: Optional[int] = None,
+    version: Optional[str] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
     strict: bool = False,

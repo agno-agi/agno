@@ -331,7 +331,7 @@ class Step:
         step_link_key = config.get("step_id") or config.get("name")
         qualified_link_key = f"{step_link_key}{branch_suffix}" if step_link_key else None
 
-        def _pinned_version(child_id: Optional[str], link_kind: str) -> Optional[int]:
+        def _pinned_version(child_id: Optional[str], link_kind: str) -> Optional[str]:
             child_links = [
                 link
                 for link in links or []

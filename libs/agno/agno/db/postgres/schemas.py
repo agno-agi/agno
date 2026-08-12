@@ -209,7 +209,7 @@ COMPONENT_TABLE_SCHEMA = {
     "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
     "name": {"type": String, "nullable": True, "index": True},
     "description": {"type": Text, "nullable": True},
-    "current_version": {"type": Integer, "nullable": True, "index": True},
+    "current_version": {"type": String, "nullable": True, "index": True},
     "metadata": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
@@ -218,7 +218,7 @@ COMPONENT_TABLE_SCHEMA = {
 
 COMPONENT_CONFIGS_TABLE_SCHEMA = {
     "component_id": {"type": String, "primary_key": True, "foreign_key": "components.component_id"},
-    "version": {"type": Integer, "primary_key": True},
+    "version": {"type": String, "primary_key": True},
     "label": {"type": String, "nullable": True},  # stable|v1.2.0|pre-refactor
     "stage": {"type": String, "nullable": False, "default": "draft", "index": True},  # draft|published
     "config": {"type": JSONB, "nullable": False},
@@ -230,11 +230,11 @@ COMPONENT_CONFIGS_TABLE_SCHEMA = {
 
 COMPONENT_LINKS_TABLE_SCHEMA = {
     "parent_component_id": {"type": String, "nullable": False},
-    "parent_version": {"type": Integer, "nullable": False},
+    "parent_version": {"type": String, "nullable": False},
     "link_kind": {"type": String, "nullable": False, "index": True},
     "link_key": {"type": String, "nullable": False},
     "child_component_id": {"type": String, "nullable": False, "foreign_key": "components.component_id"},
-    "child_version": {"type": Integer, "nullable": True},
+    "child_version": {"type": String, "nullable": True},
     "position": {"type": Integer, "nullable": False},
     "meta": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True, "index": True},

@@ -92,7 +92,7 @@ class WorkflowResponse(BaseModel):
     is_factory: bool = Field(False, description="Whether this workflow is a factory")
     factory_input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for factory_input")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
-    current_version: Optional[int] = Field(None, description="Current published version number")
+    current_version: Optional[str] = Field(None, description="Current published version")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
 
     @classmethod

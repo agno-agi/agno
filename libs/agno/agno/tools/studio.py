@@ -571,29 +571,31 @@ class StudioTools(Toolkit):
                 return not self._runner_tools._db_component_exists(component_type, component_id)
         return False
 
-    def _edit_base_version(self, component_id: str) -> Optional[int]:
+    def _edit_base_version(self, component_id: str) -> Optional[str]:
         """Version to base an edit on: the latest draft when versioning is
         enabled, else None (the current published version)."""
         if not self.enable_versions:
             return None
         return self._latest_draft_version(component_id)
 
-    def _latest_draft_version(self, component_id: str) -> Optional[int]:
+    def _latest_draft_version(self, component_id: str) -> Optional[str]:
         if self.db is None:
             return None
         configs = self.db.list_configs(component_id, include_config=False)
-        drafts: List[int] = [
-            c["version"] for c in configs if c.get("stage") == "draft" and isinstance(c.get("version"), int)
-        ]
-        return max(drafts) if drafts else None
+        drafts: List[str] = [str(c["version"]) for c in configs if c.get("stage") == "draft" and c.get("version")]
+        if not drafts:
+            return None
+        # Versions are opaque strings; auto-assigned ones are numeric, so
+        # pick the latest numeric-aware (lexicographic puts '9' after '10')
+        return max(drafts, key=lambda v: (v.isdigit(), int(v) if v.isdigit() else 0, v))
 
-    def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
+    def _load_agent_from_db(self, agent_id: str, version: Optional[str] = None) -> Optional["Agent"]:
         return self._runner_tools._load_agent_from_db(agent_id, version=version)
 
-    def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
+    def _load_team_from_db(self, team_id: str, version: Optional[str] = None) -> Optional["Team"]:
         return self._runner_tools._load_team_from_db(team_id, version=version)
 
-    def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
+    def _load_workflow_from_db(self, workflow_id: str, version: Optional[str] = None) -> Optional["Workflow"]:
         return self._runner_tools._load_workflow_from_db(workflow_id, version=version)
 
     # ------------------------------------------------------------------
@@ -1317,7 +1319,7 @@ class StudioTools(Toolkit):
             return json.dumps({"error": f"Team not found: {team_id}"})
 
         try:
-            replaced_pins: Optional[Dict[str, int]] = None
+            replaced_pins: Optional[Dict[str, str]] = None
             team = team.deep_copy()
             if getattr(team, "id", None) is None:
                 team.id = team_id
@@ -1439,7 +1441,7 @@ class StudioTools(Toolkit):
             wf.db = self.db
             if description is not None:
                 wf.description = description
-            replaced_pins: Optional[Dict[str, int]] = None
+            replaced_pins: Optional[Dict[str, str]] = None
             if step_specs is not None:
                 steps, err = self._build_steps(step_specs)
                 if err is not None:
@@ -1495,13 +1497,14 @@ class StudioTools(Toolkit):
             logger.exception("Failed to list versions")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    def get_version(self, component_id: str, version: Optional[int] = None) -> str:
+    def get_version(self, component_id: str, version: Optional[str] = None) -> str:
         """Get a specific config version. If version is omitted, returns the current version.
 
         Args:
             component_id (str): The component id.
-            version (Optional[int]): Version number, or omit for the current version.
+            version (Optional[str]): Version number, or omit for the current version.
         """
+        version = str(version) if version is not None else None  # versions are opaque strings; tolerate int callers
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured."})
         try:
@@ -1513,15 +1516,16 @@ class StudioTools(Toolkit):
             logger.exception("Failed to get version")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    def publish_component(self, component_id: str, version: Optional[int] = None) -> str:
+    def publish_component(self, component_id: str, version: Optional[str] = None) -> str:
         """Promote a draft to published (and make it the current version).
 
         Args:
             component_id (str): The component id.
-            version (Optional[int]): The draft version to publish. If omitted, publishes the
+            version (Optional[str]): The draft version to publish. If omitted, publishes the
                 latest draft. Re-publishing an already-published version is a no-op and
                 returns status "already_published".
         """
+        version = str(version) if version is not None else None  # versions are opaque strings; tolerate int callers
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured."})
         try:
@@ -1531,7 +1535,10 @@ class StudioTools(Toolkit):
                 drafts = [c for c in configs if c.get("stage") == "draft"]
                 if not drafts:
                     return json.dumps({"error": "No draft version to publish."})
-                target = max(d.get("version", 0) for d in drafts)
+                target = max(
+                    (str(d.get("version")) for d in drafts if d.get("version")),
+                    key=lambda v: (v.isdigit(), int(v) if v.isdigit() else 0, v),
+                )
             else:
                 # Explicit version: validate it exists and is not already published.
                 match = next((c for c in configs if c.get("version") == target), None)
@@ -1555,13 +1562,14 @@ class StudioTools(Toolkit):
             logger.exception("Failed to publish component")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    def set_current_version(self, component_id: str, version: int) -> str:
+    def set_current_version(self, component_id: str, version: str) -> str:
         """Roll back to a previously published version (make it current).
 
         Args:
             component_id (str): The component id.
-            version (int): A published version to set as current.
+            version (str): A published version to set as current.
         """
+        version = str(version)  # versions are opaque strings; tolerate int callers
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured."})
         try:
@@ -1573,13 +1581,14 @@ class StudioTools(Toolkit):
             logger.exception("Failed to set current version")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    def delete_version(self, component_id: str, version: int) -> str:
+    def delete_version(self, component_id: str, version: str) -> str:
         """Delete a draft config version. Published and current versions cannot be deleted.
 
         Args:
             component_id (str): The component id.
-            version (int): The draft version to delete.
+            version (str): The draft version to delete.
         """
+        version = str(version)  # versions are opaque strings; tolerate int callers
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured."})
         try:
@@ -2032,19 +2041,19 @@ class StudioTools(Toolkit):
         """Async variant of list_versions."""
         return await self._run_sync_tool(self.list_versions, component_id)
 
-    async def aget_version(self, component_id: str, version: Optional[int] = None) -> str:
+    async def aget_version(self, component_id: str, version: Optional[str] = None) -> str:
         """Async variant of get_version."""
         return await self._run_sync_tool(self.get_version, component_id, version=version)
 
-    async def apublish_component(self, component_id: str, version: Optional[int] = None) -> str:
+    async def apublish_component(self, component_id: str, version: Optional[str] = None) -> str:
         """Async variant of publish_component."""
         return await self._run_sync_tool(self.publish_component, component_id, version=version)
 
-    async def aset_current_version(self, component_id: str, version: int) -> str:
+    async def aset_current_version(self, component_id: str, version: str) -> str:
         """Async variant of set_current_version."""
         return await self._run_sync_tool(self.set_current_version, component_id, version)
 
-    async def adelete_version(self, component_id: str, version: int) -> str:
+    async def adelete_version(self, component_id: str, version: str) -> str:
         """Async variant of delete_version."""
         return await self._run_sync_tool(self.delete_version, component_id, version)
 
@@ -2149,7 +2158,7 @@ class StudioTools(Toolkit):
 
     def _bind_child_to_target_db(
         self, child: Any, target_db: "BaseDb", noun: str, require_published: bool = True
-    ) -> tuple[Any, Optional[int]]:
+    ) -> tuple[Any, Optional[str]]:
         """The object a stored reference will actually reload from ``target_db``,
         with the version to pin it at.
 
@@ -2253,13 +2262,13 @@ class StudioTools(Toolkit):
             raise ValueError(f"{noun} '{child_id}' in db '{db_label}' cannot be rebuilt: {e}") from e
         if rebound is None:
             raise ValueError(f"{noun} '{child_id}' could not be loaded from db '{db_label}'.")
-        return rebound, (resolved_version if isinstance(resolved_version, int) else None)
+        return rebound, (str(resolved_version) if resolved_version is not None else None)
 
     def _bind_members_to_target_db(
         self, members: List[Any], target_db: "BaseDb", require_published: bool = True
-    ) -> tuple[List[Any], Dict[str, int]]:
+    ) -> tuple[List[Any], Dict[str, str]]:
         bound: List[Any] = []
-        pins: Dict[str, int] = {}
+        pins: Dict[str, str] = {}
         for member in members:
             rebound, version = self._bind_child_to_target_db(
                 member, target_db, "Member", require_published=require_published
@@ -2271,8 +2280,8 @@ class StudioTools(Toolkit):
 
     def _bind_steps_to_target_db(
         self, steps: List[Any], target_db: "BaseDb", require_published: bool = True
-    ) -> Dict[str, int]:
-        pins: Dict[str, int] = {}
+    ) -> Dict[str, str]:
+        pins: Dict[str, str] = {}
         for step in steps:
             for attr, noun in (("agent", "Step agent"), ("team", "Step team")):
                 child = getattr(step, attr, None)
@@ -2448,7 +2457,7 @@ class StudioTools(Toolkit):
         self,
         component: Component,
         replaced_keys: Optional[Set[str]] = None,
-        pinned_children: Optional[Dict[str, int]] = None,
+        pinned_children: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Persist an edited component.
 
@@ -2519,7 +2528,7 @@ class StudioTools(Toolkit):
         self,
         component: Component,
         db: Optional["BaseDb"] = None,
-        pinned_versions: Optional[Dict[str, int]] = None,
+        pinned_versions: Optional[Dict[str, str]] = None,
     ) -> Optional[List[Dict[str, Any]]]:
         """Member/step links for a component snapshot, pinned at each child's
         current stored version in the SAME db the snapshot is written to.
@@ -2546,7 +2555,7 @@ class StudioTools(Toolkit):
         def code_defined(child_id: Optional[str], candidates: List[Any]) -> bool:
             return any(getattr(candidate, "id", None) == child_id for candidate in candidates)
 
-        def current_version(child_id: Optional[str], expected_type: Optional[str] = None) -> Optional[int]:
+        def current_version(child_id: Optional[str], expected_type: Optional[str] = None) -> Optional[str]:
             if not child_id:
                 return None
             if pinned_versions is not None and child_id in pinned_versions:
@@ -2567,7 +2576,9 @@ class StudioTools(Toolkit):
             except NotImplementedError:
                 return None
             version = row.get("version") if isinstance(row, dict) else None
-            return version if isinstance(version, int) else None
+            # Versions are opaque strings; the old isinstance-int guard would
+            # filter every version out and silently drop the link
+            return str(version) if version is not None else None
 
         links: List[Dict[str, Any]] = []
         if isinstance(component, Team):
@@ -2694,7 +2705,7 @@ class StudioTools(Toolkit):
         )
         return result.get("version")
 
-    def _sync_component_row(self, component_id: str, version: Optional[int]) -> None:
+    def _sync_component_row(self, component_id: str, version: Optional[str]) -> None:
         """Bring the component row's name/description/metadata in line with a
         newly published config version."""
         if self.db is None:

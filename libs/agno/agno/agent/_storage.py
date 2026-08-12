@@ -1331,7 +1331,7 @@ def load(
     db: BaseDb,
     registry: Optional[Registry] = None,
     label: Optional[str] = None,
-    version: Optional[int] = None,
+    version: Optional[str] = None,
     strict: bool = False,
 ) -> Optional[Agent]:
     """

@@ -4203,7 +4203,7 @@ class AsyncPostgresDb(AsyncBaseDb):
     def get_config(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
@@ -4212,7 +4212,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         component_id: str,
         config: Optional[Dict[str, Any]] = None,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
         stage: Optional[str] = None,
         notes: Optional[str] = None,
@@ -4223,7 +4223,7 @@ class AsyncPostgresDb(AsyncBaseDb):
     def delete_config(
         self,
         component_id: str,
-        version: int,
+        version: str,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4237,14 +4237,14 @@ class AsyncPostgresDb(AsyncBaseDb):
     def set_current_version(
         self,
         component_id: str,
-        version: int,
+        version: str,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
     def get_links(
         self,
         component_id: str,
-        version: int,
+        version: str,
         link_kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
@@ -4252,14 +4252,14 @@ class AsyncPostgresDb(AsyncBaseDb):
     def get_dependents(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
     def load_component_graph(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")

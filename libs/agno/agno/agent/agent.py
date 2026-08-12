@@ -575,7 +575,7 @@ class Agent:
         self.metadata = metadata
 
         # Component metadata (set by get_agents during DB loading)
-        self._version: Optional[int] = None
+        self._version: Optional[str] = None
         self._stage: Optional[str] = None
 
         from agno.utils.callables import is_callable_factory
@@ -955,7 +955,7 @@ class Agent:
         db: "BaseDb",
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         strict: bool = False,
     ) -> Optional["Agent"]:
         return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
@@ -1718,7 +1718,7 @@ class Agent:
 def get_agent_by_id(
     db: "BaseDb",
     id: str,
-    version: Optional[int] = None,
+    version: Optional[str] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
     strict: bool = False,

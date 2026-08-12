@@ -930,8 +930,8 @@ class TestWritePathFidelity:
 
         version = parent.save(db=db)
 
-        assert version == 1
-        links = db.get_links(component_id="parent-wf", version=1)
+        assert version == "1", "versions are opaque strings; auto-assigned ones are numeric strings"
+        links = db.get_links(component_id="parent-wf", version=1)  # int callers coerce at the adapter
         nested = [link for link in links if link["child_component_id"] == "sub-wf"]
         assert nested and nested[0]["child_version"] is not None
 

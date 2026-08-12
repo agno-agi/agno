@@ -1392,7 +1392,7 @@ def get_workflow_router(
     async def get_workflow(
         workflow_id: str,
         request: Request,
-        version: Optional[int] = Query(None, description="Workflow version to retrieve"),
+        version: Optional[str] = Query(None, description="Workflow version to retrieve"),
     ) -> WorkflowResponse:
         # Factory workflows: return factory metadata directly
         factory = find_factory_by_id(workflow_id, os.workflows)
@@ -1470,7 +1470,7 @@ def get_workflow_router(
             None, description="Session ID for conversation continuity. If not provided, a new session is created"
         ),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
-        version: Optional[int] = Form(None, description="Workflow version to use for this run"),
+        version: Optional[str] = Form(None, description="Workflow version to use for this run"),
         factory_input: Optional[str] = Form(
             None,
             description="JSON object with factory-specific parameters for dynamic workflow construction",

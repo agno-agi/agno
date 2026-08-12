@@ -904,7 +904,7 @@ class StudioRunnerTools(Toolkit):
         component_id: str,
         config: Dict[str, Any],
         _seen: Optional[set] = None,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> None:
         """Refuse to rebuild a component whose config needs the absent registry.
 
@@ -974,7 +974,7 @@ class StudioRunnerTools(Toolkit):
         component_type: str,
         component_id: str,
         rebuild_leniently: Callable[[], Any],
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> Exception:
         """The refusal to raise when strict rehydration rejects a dispatch.
 
@@ -1003,7 +1003,7 @@ class StudioRunnerTools(Toolkit):
         config: Dict[str, Any],
         component_type: str,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> None:
         """Every dispatch guard for the component type, in refusal-priority order."""
         self._require_matching_db(config, component, component_type, component_id)
@@ -1209,7 +1209,7 @@ class StudioRunnerTools(Toolkit):
         config: Dict[str, Any],
         component_type: str,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> None:
         """Check each referenced member or step executor against its OWN config.
 
@@ -1233,9 +1233,9 @@ class StudioRunnerTools(Toolkit):
         component_type: str,
         component_id: str,
         seen: set,
-        configs: Dict[tuple, Tuple[Optional[Dict[str, Any]], Optional[int]]],
+        configs: Dict[tuple, Tuple[Optional[Dict[str, Any]], Optional[str]]],
         depth: int = 0,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> None:
         """Check this component's references, then theirs, down to the leaves.
 
@@ -1284,7 +1284,7 @@ class StudioRunnerTools(Toolkit):
                 checked_occurrences.add(occurrence)
                 checks.append((ref_type, ref_id, ref_version, target))
         else:
-            pins: Dict[str, Optional[int]] = {}
+            pins: Dict[str, Optional[str]] = {}
             for link in links:
                 child_id = link.get("child_component_id")
                 if child_id:
@@ -1397,7 +1397,7 @@ class StudioRunnerTools(Toolkit):
     @staticmethod
     def _occurrence_pin(
         links: List[Dict[str, Any]], link_kind: str, link_key: Optional[str], child_id: str
-    ) -> Optional[int]:
+    ) -> Optional[str]:
         """The version pinned for one step occurrence.
 
         The exact branch-qualified key wins; without an exact match the
@@ -1760,7 +1760,7 @@ class StudioRunnerTools(Toolkit):
                 walk(step)
 
     def _load_agent_from_db(
-        self, agent_id: str, version: Optional[int] = None, for_dispatch: bool = False
+        self, agent_id: str, version: Optional[str] = None, for_dispatch: bool = False
     ) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict.
 
@@ -1809,7 +1809,7 @@ class StudioRunnerTools(Toolkit):
         return agent
 
     def _load_team_from_db(
-        self, team_id: str, version: Optional[int] = None, for_dispatch: bool = False
+        self, team_id: str, version: Optional[str] = None, for_dispatch: bool = False
     ) -> Optional["Team"]:
         from agno.db.base import ComponentType
 
@@ -1859,7 +1859,7 @@ class StudioRunnerTools(Toolkit):
         return team
 
     def _load_workflow_from_db(
-        self, workflow_id: str, version: Optional[int] = None, for_dispatch: bool = False
+        self, workflow_id: str, version: Optional[str] = None, for_dispatch: bool = False
     ) -> Optional["Workflow"]:
         from agno.db.base import ComponentType
 
@@ -1911,7 +1911,7 @@ class StudioRunnerTools(Toolkit):
     def _load_config_from_db(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         component_type: Optional["ComponentType"] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component's config by id. See _load_config_row_from_db."""
@@ -1921,9 +1921,9 @@ class StudioRunnerTools(Toolkit):
     def _load_config_row_from_db(
         self,
         component_id: str,
-        version: Optional[int] = None,
+        version: Optional[str] = None,
         component_type: Optional["ComponentType"] = None,
-    ) -> Optional[Tuple[Dict[str, Any], Optional[int]]]:
+    ) -> Optional[Tuple[Dict[str, Any], Optional[str]]]:
         """Load a component's config and its resolved version in one read.
 
         The resolved version feeds the links fetch and the dispatch guards, so
@@ -1953,9 +1953,9 @@ class StudioRunnerTools(Toolkit):
         if not isinstance(config, dict):
             return None
         resolved_version = row.get("version")
-        return config, (resolved_version if isinstance(resolved_version, int) else None)
+        return config, (str(resolved_version) if resolved_version is not None else None)
 
-    def _load_links_from_db(self, component_id: str, version: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _load_links_from_db(self, component_id: str, version: Optional[str] = None) -> List[Dict[str, Any]]:
         """Links for a component's resolved config version.
 
         Member and step links carry the child versions pinned at save time, so
