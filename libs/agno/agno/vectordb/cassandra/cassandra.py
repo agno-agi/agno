@@ -110,22 +110,33 @@ class Cassandra(VectorDb):
             )
 
     def _has_unmigrated_rows(self) -> Optional[bool]:
-        """Sample check if any rows exist without user_id in metadata_s.
+        """Check if any rows exist without user_id in metadata_s using CONTAINS KEY.
+
+        Compares total row count vs rows with user_id key. If total > with_key,
+        unmigrated rows exist.
 
         Returns True if unmigrated rows found, False if all rows have user_id, None on error.
         """
         try:
-            query = f"SELECT metadata_s FROM {self.keyspace}.{self.table_name} LIMIT 10"
-            result = self.session.execute(query)
-            rows = list(result)
-            if not rows:
+            # 1. Count total rows
+            total_query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name}"
+            total_result = self.session.execute(total_query)
+            total_count = total_result.one()[0]
+
+            if total_count == 0:
                 # Empty table - will be created with user_id
                 return False
-            for row in rows:
-                metadata = getattr(row, "metadata_s", {})
-                if USER_ID_METADATA_KEY not in metadata:
-                    return True
-            return False
+
+            # 2. Count rows that have user_id key
+            with_key_query = (
+                f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
+                f"WHERE metadata_s CONTAINS KEY '{USER_ID_METADATA_KEY}' ALLOW FILTERING"
+            )
+            with_key_result = self.session.execute(with_key_query)
+            with_key_count = with_key_result.one()[0]
+
+            # 3. If total > with_key, some rows are missing user_id
+            return total_count > with_key_count
         except Exception:
             return None
 
