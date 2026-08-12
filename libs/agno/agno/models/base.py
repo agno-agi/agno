@@ -496,7 +496,7 @@ class Model(ABC):
             return None
 
         try:
-            with open(cache_file, "r") as f:
+            with open(cache_file, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
 
             # Check TTL if set (None means no expiration)
@@ -518,7 +518,7 @@ class Model(ABC):
                 "is_streaming": is_streaming,
                 "result": result.to_dict(),
             }
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
@@ -534,7 +534,7 @@ class Model(ABC):
         }
 
         try:
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
@@ -3066,7 +3066,7 @@ class Model(ABC):
             # message with the media artifacts which throws error for some models
             media_message = Message(
                 role="user",
-                content="Take note of the following content",
+                content="The tool call above generated the attached media.",
                 images=all_images if all_images else None,
                 videos=all_videos if all_videos else None,
                 audio=all_audio if all_audio else None,

@@ -170,6 +170,12 @@ def set_learning_machine(agent: Agent) -> None:
             agent.learning.db = agent.db
         if agent.learning.model is None:
             agent.learning.model = agent.model
+        if (
+            agent.learning.learned_knowledge
+            and agent.learning.knowledge is None
+            and getattr(agent, "knowledge", None) is not None
+        ):
+            agent.learning.knowledge = agent.knowledge
         agent._learning = agent.learning
 
         # PROPOSE/HITL modes need chat history for multi-turn confirmation

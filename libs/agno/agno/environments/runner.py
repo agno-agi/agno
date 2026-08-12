@@ -541,6 +541,12 @@ def _writes_off_learning_config(config: Any) -> Any:
     for flag in vars(config_copy):
         if flag.startswith("agent_can_") and not flag.startswith("agent_can_search"):
             setattr(config_copy, flag, False)
+    # Entity memory's 2.8.4 revamp replaced its per-op agent_can_* flags with a
+    # single enable_agent_tools gating all four tools (three of which write), so
+    # severing writes means severing the toolset. Entity data still reaches the
+    # attempt through the injected context block.
+    if type(config_copy).__name__ == "EntityMemoryConfig" and hasattr(config_copy, "enable_agent_tools"):
+        config_copy.enable_agent_tools = False
     config_model = getattr(config_copy, "model", None)
     if config_model is not None and hasattr(config_model, "cache_response"):
         config_copy.model = _cache_off_copy(config_model)
