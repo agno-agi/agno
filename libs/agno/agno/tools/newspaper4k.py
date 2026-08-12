@@ -1,5 +1,5 @@
 import json
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_warning
@@ -38,7 +38,7 @@ class Newspaper4kTools(Toolkit):
 
         super().__init__(name="newspaper4k_tools", tools=tools, **kwargs)
 
-    def get_article_data(self, url: str) -> Optional[Dict[str, object]]:
+    def get_article_data(self, url: str) -> Optional[Dict[str, Any]]:
         """Read and get article data from a URL.
 
         Args:
