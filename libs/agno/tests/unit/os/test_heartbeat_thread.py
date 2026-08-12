@@ -243,6 +243,12 @@ class TestPollLoopStartsLast:
 
         class RecordingSyncStore:
             def get_job(self, job_id, strict=False):
+                # A slow prime: on the broken ordering the poll loop is
+                # already scheduled and claims DURING this call (start() is
+                # suspended awaiting it), deterministically observing a
+                # world with no heartbeat thread. On the fixed ordering the
+                # poll loop does not exist yet.
+                time.sleep(0.3)
                 return None
 
             def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):

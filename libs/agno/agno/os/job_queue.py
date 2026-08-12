@@ -441,7 +441,7 @@ class QueueWorker:
         if not isinstance(db_url, str) or not db_url:
             return None
         try:
-            return type(self.store)(
+            clone = type(self.store)(
                 db_url=db_url,
                 db_schema=getattr(self.store, "db_schema", None),
                 job_table=getattr(self.store, "job_table_name", None),
@@ -449,6 +449,18 @@ class QueueWorker:
         except Exception as e:
             log_warning(f"Could not build a heartbeat-thread instance of {type(self.store).__name__}: {e}")
             return None
+        # The clone must verifiably address the SAME rows: a store type whose
+        # table/schema did not round-trip through this constructor call would
+        # beat a default table - silently renewing nothing, which is worse
+        # than the loud loop-task fallback.
+        for attr in ("db_schema", "job_table_name"):
+            if getattr(clone, attr, None) != getattr(self.store, attr, None):
+                log_warning(
+                    f"Heartbeat-thread instance of {type(self.store).__name__} does not target the "
+                    f"same {attr} as the worker's store; falling back to the loop-task heartbeat"
+                )
+                return None
+        return clone
 
     def _start_heartbeat_thread(self, beat: Any, owned_store: Any = None) -> None:
         """Run lease renewal on a dedicated daemon thread.
