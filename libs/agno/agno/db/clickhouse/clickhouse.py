@@ -251,10 +251,14 @@ class ClickhouseDb(BaseDb):
             return False
 
     def get_latest_schema_version(self, table_name: str) -> Optional[str]:
+        # Defaults to "2.0.0" when nothing is stamped, matching the other SQL
+        # adapters: the MigrationManager treats None as "skip this table", so
+        # returning None here would make migrations unreachable on databases
+        # that have not been stamped yet.
         try:
             qualified = self._get_table("versions")
             if qualified is None:
-                return None
+                return "2.0.0"
             res = self._client.query(
                 f"SELECT version FROM {qualified} FINAL WHERE table_name = %(t)s LIMIT 1",
                 parameters={"t": table_name},
@@ -263,7 +267,7 @@ class ClickhouseDb(BaseDb):
                 return res.result_rows[0][0]
         except Exception as e:
             log_debug(f"get_latest_schema_version failed: {e}")
-        return None
+        return "2.0.0"
 
     def upsert_schema_version(self, table_name: str, version: str) -> None:
         now = datetime.now(timezone.utc)

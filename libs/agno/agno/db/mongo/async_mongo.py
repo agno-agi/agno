@@ -575,18 +575,26 @@ class AsyncMongoDb(AsyncBaseDb):
             aggregate_cursor_or_coro = await aggregate_cursor_or_coro
         return await aggregate_cursor_or_coro.to_list(length=length)
 
-    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+    async def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; MongoDB is schemaless so it is ignored.
+        Defaults to "2.0.0" when nothing is stamped yet, matching the SQL
+        adapters: an unstamped database is assumed pre-v3 so the
+        MigrationManager runs migrations. Returning None here would make the
+        manager skip the table entirely.
         """
-        return None
+        doc = await self.database[self.versions_table_name].find_one({"table_name": table_name})
+        if doc is None:
+            return "2.0.0"
+        return doc.get("version") or "2.0.0"
 
-    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+    async def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Record the schema version stamp for the given table."""
+        await self.database[self.versions_table_name].update_one(
+            {"table_name": table_name},
+            {"$set": {"table_name": table_name, "version": version, "updated_at": int(time.time())}},
+            upsert=True,
+        )
 
     async def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
         """Unset the legacy ``runs`` field from session documents.
