@@ -273,6 +273,32 @@ class PathSecurityError(AgnoError):
         self.error_id = "path_security_error"
 
 
+class ComponentRehydrationError(AgnoError):
+    """Raised when a persisted component cannot be fully reconstructed.
+
+    A serialized agent, team or workflow references objects that live outside
+    its config (tools, schemas, knowledge, dbs, member components). When such
+    a reference cannot be resolved from the provided registry or database, the
+    component would silently run with less than what was saved - no tools,
+    missing members, no persistence. Deserialization raises this error instead,
+    when the caller asks for strict reconstruction with ``strict=True``.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, status_code=422)
+        self.type = "component_rehydration_error"
+        self.error_id = "component_rehydration_error"
+
+
+class ComponentPinError(ComponentRehydrationError):
+    """Raised when an explicitly pinned component version cannot be satisfied.
+
+    A parent component's links pin a child at an exact stored version. When
+    that version is missing or fails to rebuild, the refusal names the pin and
+    the remedy (re-save the parent), which no broader guard can improve on.
+    """
+
+
 class RunNotFoundError(RuntimeError):
     """Raised when a run_id cannot be found in the session.
 
