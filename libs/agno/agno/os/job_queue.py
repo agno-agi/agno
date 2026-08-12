@@ -246,11 +246,16 @@ def payload_is_queueable(payload: Any) -> bool:
     cannot carry (media BaseModel instances, dynamically-built output_schema
     classes, arbitrary objects in kwargs) would either fail the enqueue INSERT
     or come back as lossy strings - such submissions must fall back to the
-    non-durable path instead of 500ing or corrupting the run."""
+    non-durable path instead of 500ing or corrupting the run.
+
+    allow_nan=False: Python's json serializes NaN/Infinity by default, but
+    they are NOT valid JSON - Postgres JSONB rejects them at INSERT, so a
+    NaN-carrying payload would pass this gate and then 500 the submit, the
+    exact failure the gate exists to prevent."""
     import json as _json
 
     try:
-        _json.dumps(payload)
+        _json.dumps(payload, allow_nan=False)
         return True
     except (TypeError, ValueError):
         return False

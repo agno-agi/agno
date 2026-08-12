@@ -2254,3 +2254,21 @@ class TestDrainLifecycle:
             f"ticket must settle failed after the persisted drain, got {(await store.get_job('r1'))['status']} - "
             "RUNNING here means the second cancel interrupted the persist and the drain guarantee broke"
         )
+
+
+class TestPayloadQueueableGate:
+    def test_nan_and_infinity_are_not_queueable(self):
+        """Python's json serializes NaN/Infinity by default but they are NOT
+        valid JSON: Postgres JSONB rejects them at INSERT, so a NaN payload
+        passing this gate 500s the submit instead of falling back to the
+        non-durable path the gate exists to provide."""
+        from agno.os.job_queue import payload_is_queueable
+
+        assert payload_is_queueable({"input": "hi", "kwargs": {"x": float("nan")}}) is False
+        assert payload_is_queueable({"input": "hi", "kwargs": {"x": float("inf")}}) is False
+
+    def test_plain_json_payloads_still_pass(self):
+        from agno.os.job_queue import payload_is_queueable
+
+        assert payload_is_queueable({"input": "hi", "kwargs": {"x": 1.5, "y": [1, "a", None, True]}}) is True
+        assert payload_is_queueable({"input": "hi", "kwargs": {"obj": object()}}) is False
