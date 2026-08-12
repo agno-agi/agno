@@ -1964,8 +1964,11 @@ async def acontinue_via_queue(
 
 def validate_seam_input(component: Any, input: Any) -> None:
     """Mirror arun's input_schema validation at the durable seams: the inline
-    path 422s on schema violations, so a 202 for the same payload (failing
-    only later, inside the worker) would be a contract divergence."""
+    non-stream path answers 400 on schema violations (InputCheckError /
+    ValueError from the run dispatch), so a 202 for the same payload (failing
+    only later, inside the worker) would be a contract divergence - and so
+    would a different status. This helper used to answer 422 on the false
+    premise that the inline path did; one payload, one status: 400."""
     schema = getattr(component, "input_schema", None)
     if schema is None:
         return
@@ -1978,7 +1981,7 @@ def validate_seam_input(component: Any, input: Any) -> None:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Input failed schema validation: {str(e)[:300]}")
+        raise HTTPException(status_code=400, detail=f"Input failed schema validation: {str(e)[:300]}")
 
 
 async def _atomic_append_run(

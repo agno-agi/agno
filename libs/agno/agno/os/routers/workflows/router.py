@@ -1572,7 +1572,7 @@ def get_workflow_router(
                     )
                 )
                 if stream_queueable:
-                    # 202/stream-accept must honor input_schema like the inline path
+                    # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(workflow, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.run.base import RunStatus as _RS
@@ -1681,7 +1681,7 @@ def get_workflow_router(
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
             ):
-                # 202 must honor input_schema exactly like the inline path 422s
+                # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(workflow, message)
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
@@ -1757,15 +1757,21 @@ def get_workflow_router(
                         "accepting replica instead - bounded and observable, but NOT durable."
                     )
 
-            run_response = await workflow.arun(
-                input=message,
-                session_id=session_id,
-                user_id=user_id,
-                stream=False,
-                background=True,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
+            # Same input-error contract as the inline path: without this,
+            # the non-durable background fallback answered 500 for the exact
+            # payload the other doors answer 400
+            try:
+                run_response = await workflow.arun(
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                    background=True,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+            except (InputCheckError, ValueError) as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
                 content={
@@ -1805,7 +1811,9 @@ def get_workflow_router(
                 )
                 return run_response.to_dict()
 
-        except InputCheckError as e:
+        # ValueError alongside InputCheckError: a bare schema ValueError
+        # from the dispatch is the same client mistake and must not 500
+        except (InputCheckError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e))
         # No blanket 500 (agents parity): the old except Exception swallowed
         # every typed error - including HTTPException itself, converting 4xx

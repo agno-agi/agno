@@ -783,7 +783,7 @@ def get_agent_router(
                     )
                 )
                 if stream_queueable:
-                    # 202/stream-accept must honor input_schema like the inline path
+                    # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(agent, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.os.event_streams import get_event_stream as _ges
@@ -905,7 +905,7 @@ def get_agent_router(
                 # than 400ing a submission that worked before durable mode
                 and not (base64_images or base64_audios or base64_videos or input_files)
             ):
-                # 202 must honor input_schema exactly like the inline path 422s
+                # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(agent, message)
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
@@ -987,21 +987,27 @@ def get_agent_router(
                         "accepting replica instead - bounded and observable, but NOT durable."
                     )
 
-            run_response = cast(
-                RunOutput,
-                await agent.arun(  # type: ignore[misc]
-                    input=message,
-                    session_id=session_id,
-                    user_id=user_id,
-                    images=base64_images if base64_images else None,
-                    audio=base64_audios if base64_audios else None,
-                    videos=base64_videos if base64_videos else None,
-                    files=input_files if input_files else None,
-                    stream=False,
-                    background=True,
-                    **kwargs,
-                ),
-            )
+            # Same input-error contract as the inline path: without this,
+            # the non-durable background fallback answered 500 for the exact
+            # payload the other doors answer 400
+            try:
+                run_response = cast(
+                    RunOutput,
+                    await agent.arun(  # type: ignore[misc]
+                        input=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=input_files if input_files else None,
+                        stream=False,
+                        background=True,
+                        **kwargs,
+                    ),
+                )
+            except (InputCheckError, ValueError) as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
                 content={
@@ -1051,7 +1057,9 @@ def get_agent_router(
                 )
                 return run_response.to_dict()
 
-            except InputCheckError as e:
+            # ValueError alongside InputCheckError: a bare schema ValueError
+            # from the dispatch is the same client mistake and must not 500
+            except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
