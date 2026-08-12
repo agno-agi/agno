@@ -34,13 +34,13 @@ from agno.db.sqlite.utils import (
 )
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
-    CustomJSONEncoder,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
     filter_context_runs,
+    json_serializer,
     merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
     validate_pagination,
@@ -147,16 +147,16 @@ class AsyncSqliteDb(AsyncBaseDb):
         _engine: Optional[AsyncEngine] = db_engine
         if _engine is None:
             if db_url is not None:
-                _engine = create_async_engine(db_url)
+                _engine = create_async_engine(db_url, json_serializer=json_serializer)
             elif db_file is not None:
                 db_path = Path(db_file).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 db_file = str(db_path)
-                _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+                _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", json_serializer=json_serializer)
             else:
                 # If none of db_engine, db_url, or db_file are provided, create a db in the current directory
                 default_db_path = Path("./agno.db").resolve()
-                _engine = create_async_engine(f"sqlite+aiosqlite:///{default_db_path}")
+                _engine = create_async_engine(f"sqlite+aiosqlite:///{default_db_path}", json_serializer=json_serializer)
                 db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
@@ -757,7 +757,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 user_id=user_id,
                 run_index=run_index,
             )
-            row["run_data"] = json.dumps(row["run_data"], cls=CustomJSONEncoder)
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Backfill a monotonic run_index when the run arrives without one
@@ -2248,7 +2247,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             # Stamp first so failed runs are throttled too instead of retried on every read
             self._metrics_refreshed_at = time.time()
 
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -2344,7 +2343,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 except Exception as e:
                     log_warning(f"Could not refresh metrics before reading them: {str(e)}")
 
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return [], None
 
