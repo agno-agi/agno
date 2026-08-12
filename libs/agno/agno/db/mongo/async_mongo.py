@@ -653,7 +653,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 {"$sort": {"_ri": -1, "_ca": -1}},
                 {"$limit": limit},
             ]
-            docs = await runs_collection.aggregate(pipeline).to_list(length=limit)
+            docs = await self._aggregate_to_list(runs_collection, pipeline, length=limit)
             run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
             run_docs.reverse()  # back to chronological order
             return run_docs
@@ -663,7 +663,7 @@ class AsyncMongoDb(AsyncBaseDb):
             {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
-        docs = await runs_collection.aggregate(pipeline).to_list(length=None)
+        docs = await self._aggregate_to_list(runs_collection, pipeline)
         return [doc["run_data"] for doc in docs if "run_data" in doc]
 
     async def _get_sessions_runs_docs(
