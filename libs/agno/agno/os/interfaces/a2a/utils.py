@@ -753,6 +753,16 @@ async def stream_a2a_response(
         elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent, WorkflowCancelledEvent)):
             cancelled_event = event
 
+    # Collect metadata (metrics + caller-stamped RunCompletedEvent.metadata) so it
+    # can ride the terminal status-update below - the client reads metadata there.
+    final_metadata: Optional[Dict[str, Any]] = None
+    if completion_event:
+        final_metadata = {}
+        if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
+            final_metadata["metrics"] = completion_event.metrics.to_dict()  # type: ignore
+        if hasattr(completion_event, "metadata") and completion_event.metadata:
+            final_metadata.update(completion_event.metadata)
+
     # 3. Send final status event
     # If cancelled, send canceled status; otherwise send completed
     if cancelled_event:
@@ -773,6 +783,7 @@ async def stream_a2a_response(
             context_id=context_id,
             status=TaskStatus(state=TaskState.completed),
             final=True,
+            metadata=final_metadata if final_metadata else None,
         )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=final_status_event)
     yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
@@ -809,7 +820,6 @@ async def stream_a2a_response(
         return
 
     # Build from completion_event if available, otherwise use accumulated content
-    final_metadata: Optional[Dict[str, Any]] = None
     if completion_event:
         final_content = completion_event.content if completion_event.content else accumulated_content
 
@@ -872,13 +882,8 @@ async def stream_a2a_response(
                 )
             )
 
-        # Handle all other data as Message metadata
-        final_metadata = {}
-        if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
-            final_metadata["metrics"] = completion_event.metrics.to_dict()  # type: ignore
-        if hasattr(completion_event, "metadata") and completion_event.metadata:
-            final_metadata.update(completion_event.metadata)
-
+        # Metadata is delivered on the terminal status-update above; kept on the
+        # message here too to preserve existing message-level metadata behaviour.
         final_message = A2AMessage(
             message_id=message_id,
             role=Role.agent,
@@ -906,7 +911,6 @@ async def stream_a2a_response(
         status=TaskStatus(state=TaskState.completed),
         history=[final_message],
         artifacts=artifacts if artifacts else None,
-        metadata=final_metadata if final_metadata else None,
     )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
     yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"

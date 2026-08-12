@@ -407,21 +407,20 @@ class TestStreamMessage:
             assert content_events[1].content == " World"
 
     @pytest.mark.asyncio
-    async def test_stream_message_task_metadata_survives_completed_status_update(self):
-        """Regression test: a "status-update" reporting completion (final=True)
-        arrives before the authoritative "task" event that carries the final
-        message parts and any Task-level metadata. map_stream_events_to_run_events
-        must not stop on the status-update, or that metadata is silently dropped."""
+    async def test_stream_message_terminal_status_update_carries_metadata(self):
+        """Regression test: out-of-band metadata rides the final=True status-update
+        (the A2A spec's terminal event). map_stream_events_to_run_events must read
+        event.metadata off that terminal event and forward it onto RunCompletedEvent,
+        rather than dropping it."""
         with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
 
             async def mock_aiter_lines():
                 lines = [
                     '{"result": {"kind": "status-update", "taskId": "task-123", "status": {"state": "working"}}}',
                     '{"result": {"kind": "message", "messageId": "m1", "parts": [{"kind": "text", "text": "Hello"}]}}',
-                    '{"result": {"kind": "status-update", "taskId": "task-123", "status": {"state": "completed"}, "final": true}}',
                     (
-                        '{"result": {"kind": "task", "id": "task-123", '
-                        '"history": [{"role": "agent", "parts": [{"kind": "text", "text": "Hello"}]}], '
+                        '{"result": {"kind": "status-update", "taskId": "task-123", '
+                        '"status": {"state": "completed"}, "final": true, '
                         '"metadata": {"refetch_model": true}}}'
                     ),
                 ]

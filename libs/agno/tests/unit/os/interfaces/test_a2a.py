@@ -1,9 +1,8 @@
 """Unit tests for the A2A interface's stream_a2a_response function.
 
 Regression coverage for: RunCompletedEvent.metadata (e.g. sources, refetch_model
-set by a caller's post-processing step) must be forwarded onto the final Task's
-own metadata field, not just onto the nested agent message inside Task.history -
-the A2A client reads Task-level metadata for the "task" kind event.
+set by a caller's post-processing step) must ride the terminal final=True
+status-update event, which the A2A client reads as the run's out-of-band metadata.
 """
 
 import json
@@ -35,9 +34,20 @@ def _parse_sse_events(raw: str):
     return parsed
 
 
+def _final_status_update(events):
+    """Return the terminal final=True status-update event's result."""
+    finals = [
+        e["result"]
+        for e in events
+        if e.get("result", {}).get("kind") == "status-update" and e["result"].get("final") is True
+    ]
+    assert len(finals) == 1
+    return finals[0]
+
+
 class TestStreamA2AResponseMetadata:
     @pytest.mark.asyncio
-    async def test_run_completed_metadata_forwarded_onto_task(self):
+    async def test_run_completed_metadata_rides_terminal_status_update(self):
         stream = _agent_stream(
             RunStartedEvent(run_id="run-1", session_id="ctx-1"),
             RunContentEvent(content="Hello", run_id="run-1", session_id="ctx-1"),
@@ -52,16 +62,13 @@ class TestStreamA2AResponseMetadata:
         chunks = [chunk async for chunk in stream_a2a_response(stream, request_id="req-1")]
         events = _parse_sse_events("".join(chunks))
 
-        task_events = [e for e in events if e.get("result", {}).get("kind") == "task"]
-        assert len(task_events) == 1
-
-        task_result = task_events[0]["result"]
-        assert task_result["metadata"] == {"sources": {"llm_sources": []}, "refetch_model": True}
+        final = _final_status_update(events)
+        assert final["metadata"] == {"sources": {"llm_sources": []}, "refetch_model": True}
 
     @pytest.mark.asyncio
-    async def test_run_completed_without_metadata_omits_task_metadata_field(self):
-        """No metadata set means the Task's metadata field is omitted (exclude_none),
-        not sent as an empty dict - avoids ballooning every response with noise."""
+    async def test_run_completed_without_metadata_omits_status_metadata_field(self):
+        """No metadata set means the terminal status-update's metadata field is
+        omitted (exclude_none), not sent as an empty dict."""
         stream = _agent_stream(
             RunStartedEvent(run_id="run-1", session_id="ctx-1"),
             RunContentEvent(content="Hi", run_id="run-1", session_id="ctx-1"),
@@ -71,6 +78,5 @@ class TestStreamA2AResponseMetadata:
         chunks = [chunk async for chunk in stream_a2a_response(stream, request_id="req-1")]
         events = _parse_sse_events("".join(chunks))
 
-        task_events = [e for e in events if e.get("result", {}).get("kind") == "task"]
-        assert len(task_events) == 1
-        assert "metadata" not in task_events[0]["result"]
+        final = _final_status_update(events)
+        assert "metadata" not in final
