@@ -62,7 +62,7 @@ coordinator = Agent(
     ],
     instructions=[
         "Answer normal project questions directly.",
-        "For research-heavy work, use slack_send_message_thread in the current Slack thread.",
+        "For research-heavy work, use send_slack_message_thread in the current Slack thread.",
         f"Address the Researcher with the real Slack mention <@{researcher_user_id}>.",
         "Include a self-contained research request after the mention.",
     ],
