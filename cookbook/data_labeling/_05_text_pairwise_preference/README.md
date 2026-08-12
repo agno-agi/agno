@@ -13,6 +13,17 @@ the data shape used for RLHF/DPO preference datasets.
   typed verdicts, both-orderings position debiasing, self-preference recusal,
   gold-pair calibration, and an agreement gate that routes contested pairs to
   human review.
+- `jury_calibrated.py` — calibration-first jury: three jurors are first
+  scored on a balanced gold set (5 gold=a / 5 gold=b, both orderings) for
+  gold accuracy, Brier score on verbalized confidence, and position bias;
+  jurors below the accuracy floor are dropped, the survivors vote with
+  accuracy-derived weights, and every record carries per-juror attribution.
+- `jury_hardened.py` — jury hardened for adversarial inputs and juror
+  failure: candidate answers are fenced as data-not-instructions (one demo
+  pair embeds a prompt injection so the run shows it losing on merits), a
+  juror that cannot produce a valid verdict abstains instead of crashing
+  the batch, and records proceed on a 2-of-3 quorum with per-record
+  voted / abstained / failed attribution.
 
 ## When to use
 
@@ -30,7 +41,11 @@ python cookbook/data_labeling/_05_text_pairwise_preference/basic.py
 python cookbook/data_labeling/_05_text_pairwise_preference/with_rubric.py
 python cookbook/data_labeling/_05_text_pairwise_preference/with_rationale.py
 python cookbook/data_labeling/_05_text_pairwise_preference/dpo_jury.py
+python cookbook/data_labeling/_05_text_pairwise_preference/jury_calibrated.py
+python cookbook/data_labeling/_05_text_pairwise_preference/jury_hardened.py
 ```
 
 Requires `GOOGLE_API_KEY`. `dpo_jury.py` additionally requires `OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, and `MISTRAL_API_KEY`.
+`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, and `MISTRAL_API_KEY`. `jury_calibrated.py`
+and `jury_hardened.py` additionally require `OPENAI_API_KEY` and
+`ANTHROPIC_API_KEY`.

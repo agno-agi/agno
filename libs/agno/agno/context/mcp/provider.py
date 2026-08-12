@@ -69,9 +69,16 @@ class MCPContextProvider(ContextProvider):
         base_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
         resolved_id = id or f"mcp_{_sanitize_id(server_name)}"
-        super().__init__(id=resolved_id, name=name or server_name, mode=mode, model=model)
+        super().__init__(
+            id=resolved_id,
+            name=name or server_name,
+            mode=mode,
+            model=model,
+            stream_sub_agent_events=stream_sub_agent_events,
+        )
         self.server_name = server_name
         self.transport: Transport = transport
         self.command = command

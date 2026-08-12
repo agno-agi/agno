@@ -1145,7 +1145,9 @@ class StepRequirement:
         # Executor HITL fields
         if self.requires_executor_input:
             result["requires_executor_input"] = self.requires_executor_input
-            result["executor_requirements"] = self.executor_requirements
+            result["executor_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in (self.executor_requirements or [])
+            ]
             result["executor_id"] = self.executor_id
             result["executor_name"] = self.executor_name
             result["executor_run_id"] = self.executor_run_id
