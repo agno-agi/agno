@@ -113,11 +113,15 @@ class QueueConfig:
     # worker heartbeat refreshes locks, so this can stay small - but it is
     # coupled to the drain timeout below: the worker requires
     # stop_timeout < lock_grace_seconds (a drain that can outlive the lease
-    # guarantees a peer reclaims a still-draining run mid-drain). Caveat: the
-    # heartbeat runs on the event loop - a run doing SYNC blocking work (sync
-    # model client / sync tool) that starves the loop past this grace will be
-    # swept as dead and its eventual completion fenced out (reported failed
-    # despite finishing). Keep blocking work in threads, or raise this grace.
+    # guarantees a peer reclaims a still-draining run mid-drain). On the
+    # production (sync-wrapped) stores the heartbeat runs on a dedicated
+    # thread, so a run doing SYNC blocking work (sync model client / sync
+    # tool) can no longer starve its own lease - sync I/O releases the GIL,
+    # so the thread keeps beating while the event loop is blocked. Blocking
+    # work still delays the loop-bound machinery (cancellation checkpoints,
+    # timeout enforcement, event publishing) - bounded staleness, and worth
+    # keeping in threads regardless. Residual: a C extension that holds the
+    # GIL without releasing it can still starve the heartbeat thread.
     lock_grace_seconds: int = 60
     poll_interval: float = 1.0
     # Terminal jobs older than this are deleted by the worker's retention
