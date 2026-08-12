@@ -2256,6 +2256,24 @@ class TestDrainLifecycle:
         )
 
 
+class TestRetryDelayFullJitter:
+    def test_first_retry_actually_jitters(self):
+        """The old lower bound of `base` made attempt 1's range [base, base]:
+        zero jitter, so a fleet failing together retried in lockstep at
+        exactly base seconds - the herd the config's promised "full jitter"
+        exists to break up."""
+        worker = make_worker(InMemoryQueueStore(), None, make_config(retry_delay_seconds=30))
+        samples = {worker._retry_delay(1) for _ in range(200)}
+        assert all(0 <= s <= 30 for s in samples)
+        assert len(samples) > 1, "attempt 1 must jitter, not return exactly base every time"
+
+    def test_backoff_grows_and_caps(self):
+        worker = make_worker(InMemoryQueueStore(), None, make_config(retry_delay_seconds=30))
+        assert all(0 <= worker._retry_delay(3) <= 120 for _ in range(50))
+        assert all(0 <= worker._retry_delay(50) <= 300 for _ in range(50)), "capped at 10x base"
+        assert make_worker(InMemoryQueueStore(), None, make_config(retry_delay_seconds=0))._retry_delay(1) == 0
+
+
 class TestPayloadQueueableGate:
     def test_nan_and_infinity_are_not_queueable(self):
         """Python's json serializes NaN/Infinity by default but they are NOT

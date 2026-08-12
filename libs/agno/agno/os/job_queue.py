@@ -1180,20 +1180,23 @@ class QueueWorker:
         return RunPersistOutcome.UPDATED
 
     def _retry_delay(self, attempt: int) -> int:
-        """Exponential backoff with jitter, capped at 10x the base (the base
-        acts as the minimum delay; the shutdown-drain requeue intentionally
-        uses the flat base with no backoff).
+        """FULL-jitter exponential backoff, capped at 10x the base (the
+        shutdown-drain requeue intentionally uses the flat base with no
+        backoff).
 
-        config.retry_delay_seconds is the BASE delay; attempt N waits up to
-        base * 2**(N-1), jittered uniformly to avoid a thundering herd of
-        retries when many workers fail together."""
+        config.retry_delay_seconds is the BASE delay; attempt N waits
+        uniformly in [0, min(base * 2**(N-1), base * 10)] - the AWS
+        full-jitter shape. The old lower bound of `base` made attempt 1's
+        range [base, base]: zero jitter, so a fleet-wide failure retried in
+        lockstep at exactly base seconds - precisely the herd the jitter
+        exists to break up."""
         import random
 
         base = self.config.retry_delay_seconds
         if base <= 0:
             return 0  # explicit no-backoff configuration (tests, dev loops)
         ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
-        return random.randint(base, max(base, ceiling))
+        return random.randint(0, ceiling)
 
     @staticmethod
     def _is_permanent_failure(exc: BaseException, continuation_component: Optional[str] = None) -> bool:
