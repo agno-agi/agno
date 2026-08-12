@@ -899,7 +899,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["store_events"] = agent.store_events
     # Skip events_to_skip as it contains RunEvent enums
 
-    # --- Role and culture settings ---
+    # --- Role settings ---
     if agent.role is not None:
         config["role"] = agent.role
     # --- Team and workflow settings ---
@@ -1243,8 +1243,6 @@ def from_dict(
         stream_events=config.get("stream_events"),
         store_events=config.get("store_events", False),
         role=config.get("role"),
-        # --- Culture settings ---
-        # culture_manager=config.get("culture_manager"),  # TODO
         # --- Metadata ---
         metadata=config.get("metadata"),
         # --- Compression settings ---

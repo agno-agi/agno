@@ -776,7 +776,7 @@ def merge_background_metrics(
 ) -> None:
     """Merge background task metrics into run_metrics on the main thread.
 
-    Each background task (memory, culture, learning) accumulates metrics into its
+    Each background task (memory, learning) accumulates metrics into its
     own isolated RunMetrics collector. After all tasks complete, this function
     merges those collectors into the real run_metrics — avoiding concurrent
     mutation of shared state.

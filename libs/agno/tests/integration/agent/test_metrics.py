@@ -674,13 +674,6 @@ def test_no_memory_key_without_memory():
     assert "memory_model" not in response.metrics.details
 
 
-def test_no_culture_key_without_culture():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
-    response = agent.run("Hello")
-
-    assert "culture_model" not in response.metrics.details
-
-
 def test_eval_duration_tracked():
     eval_hook = AgentAsJudgeEval(
         name="Duration Eval",

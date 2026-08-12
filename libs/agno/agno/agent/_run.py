@@ -494,7 +494,7 @@ def _run(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                # Start memory creation in background thread
+                # 7. Start background futures (memory, learning)
                 from agno.agent import _managers
 
                 memory_future = _managers.start_memory_future(
@@ -774,7 +774,7 @@ def _run_stream(
     8. Reason about the task if reasoning is enabled
     9. Process model response
     10. Parse response with parser model if provided
-    11. Wait for background memory creation and cultural knowledge creation
+    11. Wait for background memory creation
     12. Create session summary
     13. Cleanup and store the run response and session
     """
@@ -1070,7 +1070,7 @@ def _run_stream(
                         **kwargs,
                     )
 
-                # 8. Wait for background memory creation and cultural knowledge creation
+                # 11. Wait for background memory creation
                 yield from wait_for_thread_tasks_stream(
                     memory_future=memory_future,  # type: ignore
                     learning_future=learning_future,  # type: ignore

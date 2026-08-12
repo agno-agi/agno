@@ -555,7 +555,7 @@ def _writes_off_learning_config(config: Any) -> Any:
 def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
     """A per-attempt writes-severed copy of a LearningMachine.
 
-    Learned knowledge is global state exactly like culture, so its READS -- the
+    Learned knowledge is global state, so its READS -- the
     <learning_system> block, the search tools, store reads through the caller's
     knowledge and db -- survive the attempt (`source_db` carries the caller's db
     onto a machine that had none). Every write engine is severed: the
@@ -567,7 +567,7 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
     flag pass can reach them. Per-user reads still come back empty: the attempt
     runs a fresh rollout user. One deliberate prompt deviation follows from the
     severing: store context blocks that mention their update tools lose those
-    sentences, exactly like the agentic memory/culture tool blocks -- write-tool
+    sentences, exactly like the agentic memory tool blocks -- write-tool
     text describes tools the attempt does not have."""
     from agno.learn.config import (
         DecisionLogConfig,
@@ -769,7 +769,7 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
     (Agent.initialize_agent) run UNCHANGED against them, and only then severs
     write paths. It never writes a resolved read-shaping flag
     (add_memories_to_context, add_session_summary_to_context,
-    add_culture_to_context, add_learnings_to_context): production computes those
+    add_learnings_to_context): production computes those
     lazily from write signals plus manager presence, and with the inputs swapped
     first the attempt resolves them exactly as a fresh production user would --
     empty per-user reads render production's own empty states, not an absent
@@ -781,9 +781,8 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
       learning stores) reads from a fresh empty InMemoryDb under a fresh rollout
       user id; the memory manager copy is rebound to the fresh db.
     - Global read-only stores keep the caller's data: knowledge and skills stay
-      shared (retrieval goes through knowledge.vector_db, not agent.db), the
-      culture manager copy keeps the caller's culture db, and a configured
-      LearningMachine copy keeps the caller's db for its global learned-knowledge
+      shared (retrieval goes through knowledge.vector_db, not agent.db), and a
+      configured LearningMachine copy keeps the caller's db for its global learned-knowledge
       reads. These are the read paths deliberately NOT backed by the isolated db,
       which is why their write engines must be severed below -- empty inputs
       cannot neutralize a write into a shared store.
@@ -795,7 +794,7 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
       them, never onto the caller's instances.
 
     Severed after resolution, and only because they act on the world: memory
-    capture and the agentic memory tool, knowledge and culture write tools and
+    capture and the agentic memory tool, knowledge write tools and
     post-run writes, learning extraction and save tools, the session-summary
     WRITE (an extra LLM call per attempt; the read resolves naturally and a
     fresh session has no summary to render), and save_response_to_file (K
@@ -947,12 +946,12 @@ async def arun_rollouts(
     session and user ids, the response cache off -- and then production's own
     resolver runs unchanged against those inputs, so the attempt's prompt is the
     prompt a fresh production user would get, by construction. Only write paths are
-    severed afterwards: memory capture, knowledge/culture/learning writes, the
+    severed afterwards: memory capture, knowledge/learning writes, the
     session-summary write, save_response_to_file. Knowledge READS survive: retrieval
     goes through knowledge.vector_db, not agent.db, so a RAG agent retrieves
-    normally inside a rollout -- and culture and learned-knowledge reads survive the
-    same way, through writes-severed copies of the culture manager and the
-    LearningMachine that keep the caller's db. Memory READS resolve against the
+    normally inside a rollout -- and learned-knowledge reads survive the
+    same way, through writes-severed copies of the LearningMachine that keep
+    the caller's db. Memory READS resolve against the
     attempt's empty db under a fresh rollout user, so they render production's own
     fresh-user empty states -- per-user state from the caller's world must not leak
     into a sample. The full field inventory lives on _isolate_attempt.
