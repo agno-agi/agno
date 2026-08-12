@@ -2219,9 +2219,13 @@ async def aprepare_accepted_or_abort(
             await event_stream.register_run(run_id, RunStatus.pending)
             await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
         log_error(f"Run {run_id}: acceptance aborted - run-row prepare failed ({e}); ticket cancelled")
+        # The detail names the exception TYPE only: prepare failures are
+        # store failures, and their str() carries driver internals
+        # (connection strings, SQL fragments, hostnames) that belong in the
+        # server log above, never on the wire.
         raise HTTPException(
             status_code=500,
-            detail=f"Run acceptance aborted: the run row could not be prepared ({str(e)[:200]}); "
+            detail=f"Run acceptance aborted: the run row could not be prepared ({type(e).__name__}); "
             "the queued job was cancelled and will not execute. Retry the submission.",
         )
 
