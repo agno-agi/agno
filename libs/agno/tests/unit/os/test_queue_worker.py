@@ -2290,3 +2290,61 @@ class TestPayloadQueueableGate:
 
         assert payload_is_queueable({"input": "hi", "kwargs": {"x": 1.5, "y": [1, "a", None, True]}}) is True
         assert payload_is_queueable({"input": "hi", "kwargs": {"obj": object()}}) is False
+
+
+class TestTerminalRowClaim:
+    """The cancel crash window: acancel_queued persists the CANCELLED row
+    first, crashes before the ticket tombstone lands, and a worker later
+    claims the still-queued ticket. Executing it ran a cancelled run's side
+    effects and settled the ticket completed over a CANCELLED row - a
+    permanent ticket/row divergence nothing revisits. The RUNNING stamp's
+    TERMINAL_REFUSED outcome already detects the state for free."""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_row_skips_execution_and_settles_ticket(self, monkeypatch):
+        from agno.run.status_persist import RunPersistOutcome
+
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+
+        async def fake_get_run_output(run_id, session_id, user_id=None):
+            return SimpleNamespace(status=RunStatus.cancelled)
+
+        agent.aget_run_output = fake_get_run_output  # type: ignore[attr-defined]
+
+        async def refused_stamp(*args, **kwargs):
+            return RunPersistOutcome.TERMINAL_REFUSED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", refused_stamp)
+
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+
+        assert agent.calls == [], "a cancelled run's side effects must never execute"
+        job = await store.get_job("r1")
+        assert job["status"] == "cancelled", f"the ticket must honor the terminal row, got {job['status']!r}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("outcome_name", ["UPDATED", "UNAVAILABLE", "MISSING"])
+    async def test_non_terminal_stamp_outcomes_still_execute(self, monkeypatch, outcome_name):
+        """Only the guard's exact terminal set (completed/cancelled) skips:
+        ERROR rows and unfenced stores keep executing - the operator requeue
+        re-drive depends on it."""
+        from agno.run.status_persist import RunPersistOutcome
+
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+
+        async def stamping(*args, **kwargs):
+            return getattr(RunPersistOutcome, outcome_name)
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", stamping)
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+
+        assert len(agent.calls) == 1, f"{outcome_name}: execution must proceed"
+        assert (await store.get_job("r1"))["status"] == "completed"

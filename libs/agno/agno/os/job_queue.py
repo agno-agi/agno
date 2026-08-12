@@ -1360,6 +1360,42 @@ class QueueWorker:
             extra.pop(reserved, None)
         return extra
 
+    async def _ahonor_terminal_row(self, component: Any, job: Dict[str, Any]) -> None:
+        """A claimed FRESH job whose run row is already terminal: never
+        execute (see the RUNNING-stamp refusal in _execute_claimed for the
+        crash window that produces this state). Settle the ticket to match
+        the row and close the stream view with the same status.
+
+        The row read resolves WHICH terminal status wins the ticket; if it
+        cannot be read, cancelled is assumed - the cancel crash window is
+        the only known producer of this state (completed rows cannot regain
+        a queued fresh ticket: enqueue refuses existing ids).
+        """
+        from agno.run.base import RunStatus
+
+        job_id = job["id"]
+        row_status: Optional[str] = None
+        with contextlib.suppress(Exception):
+            run_output = await component.aget_run_output(job_id, job["session_id"], user_id=job.get("user_id"))
+            raw = getattr(run_output, "status", None)
+            row_status = raw.value if isinstance(raw, RunStatus) else raw
+        ticket_status = "completed" if str(row_status).lower() == "completed" else "cancelled"
+        await self._asettle_ticket(job_id, job["attempt"], ticket_status)
+        with contextlib.suppress(Exception):
+            from agno.os.event_streams import get_event_stream
+
+            await asyncio.shield(
+                get_event_stream().complete_run(
+                    job_id,
+                    RunStatus.completed if ticket_status == "completed" else RunStatus.cancelled,
+                    generation=job.get("attempt"),
+                )
+            )
+        log_warning(
+            f"Job queue: claimed job {job_id} has a terminal run row ({row_status}); "
+            f"skipped execution and settled the ticket {ticket_status}"
+        )
+
     async def _asettle_ticket(
         self, job_id: str, attempt: int, status: str, error: Optional[str] = None, shielded: bool = False
     ) -> bool:
@@ -1558,10 +1594,12 @@ class QueueWorker:
             # its own status once it actually starts executing.
             if component is not None and not payload.get("continue"):
                 from agno.run.base import RunStatus as _RS
+                from agno.run.status_persist import RunPersistOutcome as _RPO
                 from agno.run.status_persist import apersist_run_status as _aps
 
+                stamp_outcome = None
                 try:
-                    await _aps(
+                    stamp_outcome = await _aps(
                         component,
                         job.get("component_type", ""),
                         session_id=job["session_id"],
@@ -1577,6 +1615,19 @@ class QueueWorker:
                         f"Job queue: RUNNING stamp failed for job {job_id} (worker={self.worker_id}, "
                         f"attempt={attempt}): {e}"
                     )
+                if stamp_outcome is _RPO.TERMINAL_REFUSED:
+                    # The run row is already COMPLETED/CANCELLED (the guard's
+                    # exact terminal set - ERROR rows pass, so operator
+                    # requeue re-drives are unaffected). The canonical
+                    # producer is the cancel crash window: acancel_queued
+                    # persists the CANCELLED row first, and a crash before
+                    # the ticket tombstone leaves a queued ticket over the
+                    # terminal row. Executing it ran a cancelled run's side
+                    # effects and settled the ticket completed over a
+                    # CANCELLED row - a permanent divergence nothing
+                    # revisits. Honor the row instead.
+                    await self._ahonor_terminal_row(component, job)
+                    return
             if is_stream:
                 execution = self._execute_streaming(component, job)
             elif payload.get("continue"):
