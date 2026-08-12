@@ -106,6 +106,17 @@ def _is_team_instance(candidate: Any) -> bool:
     return isinstance(candidate, Team)
 
 
+def _set_workflow_id_on_executor(executor: Any, workflow_id: Optional[str]) -> None:
+    """Mark an Agent or Team tree as belonging to a workflow."""
+    if workflow_id is None or not isinstance(executor, (Agent, Team)):
+        return
+
+    executor.workflow_id = workflow_id
+    if isinstance(executor, Team) and isinstance(executor.members, list):
+        for member in executor.members:
+            _set_workflow_id_on_executor(member, workflow_id)
+
+
 class UnresolvableCallableError(RuntimeError):
     """Raised when a lenient-load placeholder for an unresolved callable executes.
 
@@ -959,6 +970,16 @@ class Step:
         else:
             raise ValueError("No executor configured")
 
+    def _set_active_executor_workflow_id(
+        self,
+        workflow_run_response: Optional["WorkflowRunOutput"],
+        run_context: Optional[RunContext],
+    ) -> None:
+        workflow_id = getattr(workflow_run_response, "workflow_id", None) or getattr(
+            run_context, "workflow_id", None
+        )
+        _set_workflow_id_on_executor(self.active_executor, workflow_id)
+
     def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[RunMetrics]:
         """Extract metrics from agent or team response"""
         if hasattr(response, "metrics") and response.metrics:
@@ -1022,6 +1043,7 @@ class Step:
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
+        self._set_active_executor_workflow_id(workflow_run_response, run_context)
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -1349,6 +1371,7 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
+        self._set_active_executor_workflow_id(workflow_run_response, run_context)
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -1674,6 +1697,7 @@ class Step:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
+        self._set_active_executor_workflow_id(workflow_run_response, run_context)
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -1961,6 +1985,7 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
+        self._set_active_executor_workflow_id(workflow_run_response, run_context)
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
