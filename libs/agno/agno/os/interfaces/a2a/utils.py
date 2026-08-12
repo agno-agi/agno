@@ -753,15 +753,12 @@ async def stream_a2a_response(
         elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent, WorkflowCancelledEvent)):
             cancelled_event = event
 
-    # Collect metadata (metrics + caller-stamped RunCompletedEvent.metadata) so it
-    # can ride the terminal status-update below - the client reads metadata there.
-    final_metadata: Optional[Dict[str, Any]] = None
-    if completion_event:
-        final_metadata = {}
-        if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
-            final_metadata["metrics"] = completion_event.metrics.to_dict()  # type: ignore
-        if hasattr(completion_event, "metadata") and completion_event.metadata:
-            final_metadata.update(completion_event.metadata)
+    # Caller-stamped metadata rides the terminal status-update for out-of-band
+    # delivery. Metrics are excluded - they already flow via .metrics / the history
+    # message, so including them here would duplicate the blob.
+    status_metadata: Optional[Dict[str, Any]] = None
+    if completion_event and getattr(completion_event, "metadata", None):
+        status_metadata = dict(completion_event.metadata)
 
     # 3. Send final status event
     # If cancelled, send canceled status; otherwise send completed
@@ -783,7 +780,7 @@ async def stream_a2a_response(
             context_id=context_id,
             status=TaskStatus(state=TaskState.completed),
             final=True,
-            metadata=final_metadata if final_metadata else None,
+            metadata=status_metadata if status_metadata else None,
         )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=final_status_event)
     yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
@@ -882,8 +879,13 @@ async def stream_a2a_response(
                 )
             )
 
-        # Metadata is delivered on the terminal status-update above; kept on the
-        # message here too to preserve existing message-level metadata behaviour.
+        # Handle all other data as Message metadata
+        final_metadata: Dict[str, Any] = {}
+        if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
+            final_metadata["metrics"] = completion_event.metrics.to_dict()  # type: ignore
+        if hasattr(completion_event, "metadata") and completion_event.metadata:
+            final_metadata.update(completion_event.metadata)
+
         final_message = A2AMessage(
             message_id=message_id,
             role=Role.agent,

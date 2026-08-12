@@ -156,8 +156,8 @@ async def map_stream_events_to_run_events(
             )
 
         elif event.is_final:
-            # Terminal event per the A2A spec; forward any metadata the server
-            # attached to it onto the completed event.
+            # final=true marks the end of the stream; forward any metadata the
+            # server attached to it onto the completed event.
             final_content = event.content if event.content else accumulated_content
             yield RunCompletedEvent(
                 content=final_content,
@@ -268,8 +268,8 @@ async def map_stream_events_to_team_run_events(
             )
 
         elif event.is_final:
-            # Terminal event per the A2A spec; forward any metadata the server
-            # attached to it onto the completed event.
+            # final=true marks the end of the stream; forward any metadata the
+            # server attached to it onto the completed event.
             final_content = event.content if event.content else accumulated_content
             yield TeamRunCompletedEvent(
                 content=final_content,
@@ -380,10 +380,12 @@ async def map_stream_events_to_workflow_run_events(
             )
 
         elif event.is_final:
-            # Use content from final event or accumulated content
+            # final=true marks the end of the stream; forward any metadata the
+            # server attached to it onto the completed event.
             final_content = event.content if event.content else accumulated_content
             yield WorkflowCompletedEvent(
                 content=final_content,
+                metadata=event.metadata,
                 run_id=run_id,
                 session_id=session_id,
                 workflow_id=workflow_id,
