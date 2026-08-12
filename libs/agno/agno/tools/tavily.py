@@ -246,7 +246,14 @@ class TavilyTools(Toolkit):
             return json.dumps({"error": f"Error extracting content: {e}"})
 
     def _format_extract_markdown(self, results: List[Dict[str, Any]]) -> str:
-        """Format extraction results as markdown."""
+        """Format extraction results as markdown.
+
+        Args:
+            results: List of extraction result dictionaries from Tavily API.
+
+        Returns:
+            str: Formatted markdown content.
+        """
         output = []
 
         for result in results:
@@ -264,7 +271,14 @@ class TavilyTools(Toolkit):
         return "".join(output) if output else "No content extracted."
 
     def _format_extract_text(self, results: List[Dict[str, Any]]) -> str:
-        """Format extraction results as plain text."""
+        """Format extraction results as plain text.
+
+        Args:
+            results: List of extraction result dictionaries from Tavily API.
+
+        Returns:
+            str: Formatted plain text content.
+        """
         output = []
 
         for result in results:
