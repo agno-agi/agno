@@ -475,6 +475,10 @@ async def team_continue_response_streamer(
         )
         yield format_sse_event(error_response)
 
+    except asyncio.CancelledError:
+        # Sibling-streamer parity: every other streamer ends quietly on
+        # client disconnect (the finalizer above already settled the stream)
+        return
     except Exception as e:
         import traceback
 
@@ -653,7 +657,12 @@ def get_team_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
+        # No raw message content in logs: user input can carry PII/secrets
+        # and belongs in the run record, not the log stream
+        logger.debug(
+            f"Creating team run: {session_id=} {monitor=} {user_id=} {team_id=} "
+            f"files={len(files) if files else 0} message_len={len(message) if message else 0}"
+        )
 
         team = await resolve_team(
             team_id,
@@ -708,9 +717,15 @@ def get_team_router(
                         logger.exception(f"Error processing video {file.filename}")
                         continue
                 elif file_category == "document":
-                    document_file = process_document(file)
-                    if document_file is not None:
-                        document_files.append(document_file)
+                    # Agents parity: one unparseable document must not 500
+                    # the whole submission - skip it, loudly
+                    try:
+                        document_file = process_document(file)
+                        if document_file is not None:
+                            document_files.append(document_file)
+                    except Exception as e:
+                        logger.error(f"Error processing file {file.filename}: {str(e)}")
+                        continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
