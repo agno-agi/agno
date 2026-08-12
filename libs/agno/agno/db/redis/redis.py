@@ -2659,6 +2659,26 @@ class RedisDb(BaseDb):
     def _q_job_key(self, job_id: str) -> str:
         return self._q_key(f"job:{job_id}")
 
+    def _q_server_now(self) -> int:
+        """Redis server time as an integer epoch, for LEASE math.
+
+        Lease decisions must be anchored to ONE clock (the Postgres store
+        anchors to the database's NOW() for exactly this reason). With
+        worker wall clocks, a replica whose clock runs fast sees healthy
+        leases as expired and sweeps live runs - and since the sweep steals
+        the lock, the victim's own completion is fenced out and its run is
+        reported failed despite having finished; with multi-attempt budgets
+        that skew-triggered false sweep means duplicate side-effect
+        execution. TIME is the Redis server's clock, identical for every
+        worker on the shared store, so claim/heartbeat/sweep all agree.
+
+        Not applied to queue_stats' age arithmetic or the retention
+        cleanup cutoff; those only shift reporting/retention by the skew,
+        never ownership (mirroring the Postgres store's scope).
+        """
+        seconds, _microseconds = self.redis_client.time()
+        return int(seconds)
+
     def _q_idem_key(self, user_id: Optional[str], idempotency_key: str) -> str:
         """Collision-free dedup key for the (user, idempotency-key) tuple.
 
@@ -2701,11 +2721,16 @@ class RedisDb(BaseDb):
         # attach to another tenant's run) - mirrors the Postgres index
         idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
 
+        job_key = self._q_job_key(job["id"])
+
         for _ in range(10):
             with self.redis_client.pipeline() as pipe:
                 try:
+                    # The job key is always WATCHed: the MULTI below SETs it,
+                    # and a racing enqueue of the same id must not silently
+                    # overwrite (see the existence check further down).
                     if idem_key is not None:
-                        pipe.watch(idem_key)
+                        pipe.watch(job_key, idem_key)
                         existing_id = pipe.get(idem_key)
                         if existing_id is not None:
                             existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
@@ -2719,13 +2744,24 @@ class RedisDb(BaseDb):
                             # attach hands the caller that job's identifiers
                             # and live event stream) - never attach; fall
                             # through and take the key over inside the MULTI
+                    else:
+                        pipe.watch(job_key)
 
                     if max_depth and max_depth > 0:
                         queued = int(self.redis_client.zcard(self._q_key("queued")))
                         if queued >= max_depth:
-                            if idem_key is not None:
-                                pipe.unwatch()
+                            pipe.unwatch()
                             return {"accepted": False, "reason": "queue_full", "job": None}
+
+                    # Existing document under this id: mirror Postgres, where
+                    # id is the primary key - a collision is a programming
+                    # error (ids are server-minted uuid4), never a client
+                    # dedup. Silently SETting would reset a live ticket to
+                    # queued/attempt-0 - two executors, the first one's
+                    # completion fenced out.
+                    if pipe.exists(job_key):
+                        pipe.unwatch()
+                        raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
 
                     pipe.multi()
                     if idem_key is not None:
@@ -2753,7 +2789,7 @@ class RedisDb(BaseDb):
         them indefinitely (foreign entries stay queued at the front). Each
         page is pre-filtered with one pipelined MGET; the CAS inside
         _q_try_claim remains the only authority."""
-        now = int(time.time())
+        now = self._q_server_now()
         stale = now - lock_grace_seconds
 
         job = self._q_scan_claim(
@@ -2908,7 +2944,7 @@ class RedisDb(BaseDb):
                     # was status="running" but in NO zset: invisible to reclaim
                     # and sweep alike, a permanent zombie.
                     if job["status"] == "running":
-                        pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or int(time.time())})
+                        pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or self._q_server_now()})
                     else:
                         pipe.zrem(self._q_key("running"), job_id)
                     if job["status"] == "queued":
@@ -2924,7 +2960,7 @@ class RedisDb(BaseDb):
         from agno.db.schemas.jobs import QueueWriteOutcome
 
         count = 0
-        now = int(time.time())
+        now = self._q_server_now()
         for job_id in job_ids:
             job = self._q_load_job(job_id)
             if job is None:
@@ -2941,7 +2977,7 @@ class RedisDb(BaseDb):
     def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
         from agno.db.schemas.jobs import QueueWriteOutcome
 
-        now = int(time.time())
+        now = self._q_server_now()
 
         def _complete(job: Dict[str, Any]) -> None:
             job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
@@ -2954,7 +2990,7 @@ class RedisDb(BaseDb):
     ) -> Optional[str]:
         from agno.db.schemas.jobs import QueueWriteOutcome
 
-        now = int(time.time())
+        now = self._q_server_now()
         outcome_status: Dict[str, str] = {}
 
         def _retry(job: Dict[str, Any]) -> None:
@@ -2987,7 +3023,7 @@ class RedisDb(BaseDb):
         if status not in ("completed", "cancelled", "failed"):
             return False
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -3015,7 +3051,7 @@ class RedisDb(BaseDb):
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -3037,7 +3073,7 @@ class RedisDb(BaseDb):
             return False
 
     def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
-        stale = int(time.time()) - lock_grace_seconds
+        stale = self._q_server_now() - lock_grace_seconds
         exhausted: List[Dict[str, Any]] = []
         for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=limit * 2):
             job = self._q_load_job(_q_to_str(raw_id))
@@ -3062,7 +3098,7 @@ class RedisDb(BaseDb):
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         stale = now - lock_grace_seconds
         try:
             with self.redis_client.pipeline() as pipe:
@@ -3100,7 +3136,7 @@ class RedisDb(BaseDb):
         if status not in ("completed", "cancelled", "paused", "failed"):
             return False
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -3156,7 +3192,7 @@ class RedisDb(BaseDb):
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -3208,7 +3244,7 @@ class RedisDb(BaseDb):
 
         job_key = self._q_job_key(job_id)
         for _ in range(10):
-            now = int(time.time())
+            now = self._q_server_now()
             try:
                 with self.redis_client.pipeline() as pipe:
                     pipe.watch(job_key)

@@ -5289,8 +5289,21 @@ class AsyncPostgresDb(AsyncBaseDb):
                     "completed_at": None,
                     "updated_at": now,
                 }
-                await sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                # RETURNING resolves the DB-clock stamps to concrete ints: the
+                # timestamp values are SQL expressions (_db_epoch), and copying
+                # them into the returned dict verbatim would hand callers
+                # unserializable Cast objects where Redis/InMemory return ints.
+                stamped = (
+                    await sess.execute(
+                        update(table)
+                        .where(table.c.id == job_id)
+                        .values(**values)
+                        .returning(table.c.available_at, table.c.updated_at)
+                    )
+                ).fetchone()
                 job.update(values)
+                if stamped is not None:
+                    job["available_at"], job["updated_at"] = stamped[0], stamped[1]
                 return {"outcome": "queued", "job": job}
 
     async def queue_stats(self) -> Dict[str, Any]:
