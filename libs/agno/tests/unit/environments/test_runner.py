@@ -1198,7 +1198,7 @@ class FakeLearnedKnowledge:
 async def test_learning_reads_survive_hermetic_attempts():
     # Regression pin: nulling agent.learning severed global learned-knowledge READS
     # -- the <learning_system> block, the search_learnings tool, the store read
-    # path -- when only the writes must go. Learned knowledge is global state like
+    # path -- when only the writes must go. Learned knowledge is global state,
     # so attempts read it exactly as production does.
     from agno.learn import LearningMachine
     from agno.learn.config import LearnedKnowledgeConfig
