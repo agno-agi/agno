@@ -128,6 +128,18 @@ All migrations are **idempotent** — re-running is safe: the schema scripts ski
 store that already has the `user_id` field, and the sentinel backfills skip
 vectors that already carry a `user_id`.
 
+> ⚠️ **Weaviate is the one backend that cannot be migrated — by design.**
+> Running the script against a pre-v3 collection **refuses and changes nothing**
+> (this is the expected outcome, not a failure of the script): the required
+> `index_null_state=True` setting is create-time-only in Weaviate. The error
+> message contains the recreate recipe — `vector_db.drop()`, `vector_db.create()`,
+> re-ingest with owners. **Never add the `user_id` property to an existing
+> Weaviate collection by hand**: the collection will report as migrated while
+> every subsequent ingest fails irreparably (see the Weaviate note below).
+> In the batch `run()`, a Weaviate refusal does not block other backends —
+> their migrations still run, and the failure summary lists Weaviate for
+> manual follow-up.
+
 Each script also exposes its functions for programmatic use (they are import-safe;
 the runner only fires under `if __name__ == "__main__"`), e.g.:
 
