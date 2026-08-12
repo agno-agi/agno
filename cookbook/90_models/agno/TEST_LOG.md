@@ -46,18 +46,33 @@ reassembled correctly. No provider SDK loaded.
 
 ### mcp_tools.py
 
-**Status:** PASS
+**Status:** UNVERIFIED
 
-**Description:** Agent on `openai/gpt-5.4` (BYOK via staging) connected to a local MCP
-server (`http://localhost:8787/mcp`, Streamable HTTP) exposing a `web_search` tool.
+**Description:** Agent on `openai/gpt-5.4` uses `AgnoTools` to discover and call the
+hosted `web_search` tool through the Agno Gateway MCP endpoint.
 
-**Result:** The gateway model issued a `web_search` tool call, the MCP server returned
-live DuckDuckGo results, and the agent summarized them. MCP tools work unchanged through
-the gateway (they are forwarded as standard OpenAI tools/tool_calls).
+**Result:** Not run after migrating the cookbook from raw `MCPTools` with a local URL
+to the hosted `AgnoTools` wrapper.
 
 **Notes:**
 - The cookbook file is named `mcp_tools.py`, not `mcp.py`, on purpose: a module named
   `mcp.py` shadows the `mcp` package and breaks the import.
+
+---
+
+### web_search_benchmark.py
+
+**Status:** FAIL (Gateway search upstream returned no usable results)
+
+**Description:** Measures the actual `AgnoTools` hosted `web_search` path against
+`DuckDuckGoTools.web_search` without an LLM, alternating request order and reporting
+setup time, success rate, median, p95, mean, range, output size, and throttling/errors.
+
+**Result:** Gateway setup took 0.059s, but all 10 measured calls returned `No results
+found` in 0.089-0.171s. `DuckDuckGoTools` succeeded 10/10 with 1.198s median and
+2.423s p95 latency. The fast Gateway timings are failed responses, not faster searches.
+A direct diagnostic request to the same DuckDuckGo HTML endpoint returned its HTTP 202
+bot challenge, which the current Worker treats as a successful HTTP response.
 
 ---
 

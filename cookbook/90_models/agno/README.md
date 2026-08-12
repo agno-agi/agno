@@ -62,6 +62,7 @@ Agent(model="agno:openai/gpt-5.4")
 | `bring_your_own_key.py` | BYOK: provider key by prefix, or explicit `api_key=` |
 | `tool_use.py` | Function calling: single, parallel, streaming, and async |
 | `mcp_tools.py` | Hosted Agno tools selected by name with `AgnoTools` |
+| `web_search_benchmark.py` | Compare hosted MCP web-search latency with `DuckDuckGoTools` |
 | `structured_output.py` | Typed responses with `output_schema` (native + JSON mode) |
 | `metrics.py` | Per-message and aggregated token metrics |
 | `image_input.py` | Image input to a vision model |

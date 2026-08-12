@@ -19,7 +19,8 @@ from agno.utils.reasoning import extract_thinking_content
 
 # The Agno gateway endpoint (OpenAI chat-completions compatible). Override with
 # AGNO_GATEWAY_BASE_URL for testing.
-DEFAULT_BASE_URL = "https://gateway.agno.com/v1"
+DEFAULT_BASE_URL = "http://localhost:8787/v1"
+# DEFAULT_BASE_URL = "https://gateway.agno.com/v1"
 
 # Default model. Models are addressed as "<provider>/<model>", e.g. "openai/gpt-5.4".
 DEFAULT_AGNO_MODEL = "openai/gpt-5.4"
