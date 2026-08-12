@@ -140,21 +140,22 @@ class Cohere(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         _request_params: Dict[str, Any] = {}
-        if self.temperature:
+        if self.temperature is not None:
             _request_params["temperature"] = self.temperature
         if self.max_tokens:
             _request_params["max_tokens"] = self.max_tokens
-        if self.top_k:
+        if self.top_k is not None:
             _request_params["k"] = self.top_k
+        # Cohere's `p` accepts 0.01-0.99, so a 0.0 is out of range; only forward truthy values.
         if self.top_p:
             _request_params["p"] = self.top_p
-        if self.seed:
+        if self.seed is not None:
             _request_params["seed"] = self.seed
         if self.logprobs:
             _request_params["logprobs"] = self.logprobs
-        if self.frequency_penalty:
+        if self.frequency_penalty is not None:
             _request_params["frequency_penalty"] = self.frequency_penalty
-        if self.presence_penalty:
+        if self.presence_penalty is not None:
             _request_params["presence_penalty"] = self.presence_penalty
 
         if response_format:

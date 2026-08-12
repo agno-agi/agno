@@ -16,7 +16,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
@@ -136,26 +136,41 @@ class Steps:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Steps":
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
 
-        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+                return Loop.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Parallel":
-                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+                return Parallel.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Steps":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Condition":
-                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+                return Condition.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Router":
-                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
 
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
@@ -357,6 +372,10 @@ class Steps:
 
         except RunCancelledException:
             raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
             logger.exception("Steps execution failed")
             return StepOutput(
@@ -525,6 +544,10 @@ class Steps:
 
         except RunCancelledException:
             raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
             logger.exception("Steps streaming failed")
             error_result = StepOutput(
@@ -649,6 +672,10 @@ class Steps:
             )
 
         except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
             raise
         except Exception as e:
             logger.exception("Async steps execution failed")
@@ -816,6 +843,10 @@ class Steps:
             )
 
         except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
             raise
         except Exception as e:
             logger.exception("Async steps streaming failed")
