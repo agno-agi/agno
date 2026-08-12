@@ -190,7 +190,7 @@ def _usability(trust: Optional[Dict[str, Any]]) -> str:
         return "degraded"
     claims = trust.get("claims")
     cited = any(
-        isinstance(claim, dict) and bool(claim.get("citation_urls"))
+        isinstance(claim, dict) and bool(claim.get("citations") or claim.get("citation_urls"))
         for claim in (claims if isinstance(claims, list) else [])
     )
     confidence = trust.get("confidence")
@@ -207,6 +207,7 @@ def _public_trust(value: Any) -> Optional[Dict[str, Any]]:
         "reasoning": _redact_text(str(value.get("reasoning", "")))[:500],
         "source_count": len(sources) if isinstance(sources, list) else 0,
         "claim_count": len(claims) if isinstance(claims, list) else 0,
+        "claims_truncated": isinstance(claims, list) and len(claims) > 10,
         "sources": [
             {
                 "url": _redact_text(str(item.get("url", "")))[:500],
@@ -236,12 +237,16 @@ def _public_result(result: Dict[str, Any], content_limit: int) -> Dict[str, Any]
             key: run.get(key) for key in ("id", "web_search_agent_id", "status", "effort", "interaction_id")
         }
     if isinstance(output, dict):
-        trust = _public_trust(output.get("trust"))
+        raw_trust = output.get("trust")
+        trust = _public_trust(raw_trust)
         rendered["output"] = {
             "type": output.get("type"),
             "content": _bounded_content(output.get("content"), content_limit),
             "trust": trust,
-            "usability": _usability(trust),
+            # Classify from the complete SDK trust payload before bounding the
+            # model-visible claim list, so a citation after claim 10 still
+            # contributes to the grounded/degraded verdict.
+            "usability": _usability(raw_trust if isinstance(raw_trust, dict) else None),
         }
     else:
         # Failure envelope on the success path: surface the error, not fake output.

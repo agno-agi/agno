@@ -688,6 +688,23 @@ def test_result_completed_degraded_when_uncited(tools):
     assert out["output"]["usability"] == "degraded"
 
 
+def test_result_uses_all_claims_for_grounding_before_bounding_public_claims(tools):
+    result = completed_result_dict(with_citation=False)
+    trust = result["output"]["trust"]
+    trust["claims"] = trust["claims"] * 11
+    trust["claims"][10]["citations"] = [{"url": "https://example.com/source"}]
+
+    reader = tools._sync_client.with_options.return_value
+    reader.agents.runs.get.return_value = make_run(status="completed")
+    reader.agents.runs.result.return_value = make_result(result)
+
+    out = json.loads(tools.get_agent_run_result("task_run_abc"))
+    assert out["output"]["usability"] == "grounded"
+    assert out["output"]["trust"]["claim_count"] == 11
+    assert out["output"]["trust"]["claims_truncated"] is True
+    assert len(out["output"]["trust"]["claims"]) == 10
+
+
 def test_result_failed(tools):
     err = Mock()
     err.message = "boom"
