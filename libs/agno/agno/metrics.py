@@ -16,7 +16,6 @@ class ModelType(str, Enum):
     MEMORY_MODEL = "memory_model"
     REASONING_MODEL = "reasoning_model"
     SESSION_SUMMARY_MODEL = "session_summary_model"
-    CULTURE_MODEL = "culture_model"
     LEARNING_MODEL = "learning_model"
     COMPRESSION_MODEL = "compression_model"
     FOLLOWUP_MODEL = "followup_model"

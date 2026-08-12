@@ -496,7 +496,6 @@ _ISOLATE_FIELD_ACTIONS: Dict[str, str] = {
     "learning": "writes-severed-copy",  # global reads keep the caller's db; every write engine cut
     "memory_manager": "fresh-db-rebind",  # per-user state: reads come from the attempt's empty db
     "session_summary_manager": "isolated-copy",  # resolution binds the attempt model on the copy
-    "culture_manager": "read-only-rebind",  # culture is global knowledge: reads survive
     "compression_manager": "isolated-copy",
     "fallback_config": "cache-off-copies",
     "reasoning_agent": "recursive-isolate",
@@ -852,23 +851,6 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
         agent.session_summary_manager = _isolated_manager_copy(session_summary_manager)
 
     # -- inputs: global read-only stores keep the caller's data -------------
-    culture_manager = getattr(agent, "culture_manager", None)
-    if culture_manager is not None:
-        agent.culture_manager = _isolated_manager_copy(
-            culture_manager, db=source_db if getattr(culture_manager, "db", None) is None else None
-        )
-    elif source_db is not None and (
-        getattr(agent, "add_culture_to_context", None)
-        or getattr(agent, "update_cultural_knowledge", False)
-        or getattr(agent, "enable_agentic_culture", False)
-    ):
-        # Production reads would come straight off agent.db; the attempt's db is
-        # fresh, so an explicit manager bound to the caller's db keeps the reads
-        # identical to a fresh production user's.
-        from agno.culture.manager import CultureManager
-
-        agent.culture_manager = CultureManager(db=source_db)
-
     learning = getattr(agent, "learning", None)
     if learning is not None and learning is not False:
         from agno.learn.machine import LearningMachine
@@ -914,9 +896,8 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
         agent.initialize_agent()
 
     # -- sever write and side-effect paths ----------------------------------
-    # SAFETY-CRITICAL: the culture and learning read paths above DELIBERATELY
-    # share the caller's db, so the flags severed here (update_cultural_knowledge,
-    # enable_agentic_culture) and the learning process/aprocess noops in
+    # SAFETY-CRITICAL: the learning read path above DELIBERATELY shares the
+    # caller's db, so the learning process/aprocess noops in
     # _read_only_learning_machine are the ONLY barrier between an attempt and a
     # write into the caller's real store. The shared-db read path depends on
     # these severs; do not remove them in any future refactor.
@@ -924,8 +905,6 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
     agent.enable_user_memories = False  # deprecated alias of update_memory_on_run
     agent.enable_agentic_memory = False  # the update_user_memory tool and its prompt block
     agent.update_knowledge = False  # the knowledge write tool: agent.knowledge stays shared
-    agent.update_cultural_knowledge = False  # the post-run write into the caller's culture store
-    agent.enable_agentic_culture = False  # the culture write tool and its prompt block
     agent.enable_session_summaries = False  # the post-run summary write, an extra LLM call
     agent.save_response_to_file = None  # K attempts would race-write the caller's file
 

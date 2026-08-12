@@ -79,7 +79,6 @@ class StubRolloutAgent:
         db=None,
         knowledge=None,
         learning=None,
-        culture_manager=None,
         memory_manager=None,
         reasoning_model=None,
         parser_model=None,
@@ -95,7 +94,6 @@ class StubRolloutAgent:
         self.db = db
         self.knowledge = knowledge
         self.learning = learning
-        self.culture_manager = culture_manager
         self.memory_manager = memory_manager
         self.reasoning_model = reasoning_model
         self.parser_model = parser_model
@@ -107,8 +105,6 @@ class StubRolloutAgent:
         self.enable_user_memories = True
         self.enable_agentic_memory = True
         self.update_knowledge = True
-        self.update_cultural_knowledge = True
-        self.enable_agentic_culture = True
 
     def deep_copy(self):
         # Mirrors Agent.deep_copy's sharing rule for what matters here: db, models,
@@ -129,7 +125,6 @@ class StubRolloutAgent:
                 "model_cache": self.model.cache_response if self.model is not None else None,
                 "knowledge": self.knowledge,
                 "learning": self.learning,
-                "culture_manager": self.culture_manager,
                 "memory_manager": self.memory_manager,
                 "reasoning_model": self.reasoning_model,
                 "parser_model": self.parser_model,
@@ -139,8 +134,6 @@ class StubRolloutAgent:
                 "enable_user_memories": self.enable_user_memories,
                 "enable_agentic_memory": self.enable_agentic_memory,
                 "update_knowledge": self.update_knowledge,
-                "update_cultural_knowledge": self.update_cultural_knowledge,
-                "enable_agentic_culture": self.enable_agentic_culture,
                 "session_state": dict(self.session_state or {}),
                 "instructions": self.instructions,
             }
@@ -258,14 +251,11 @@ def _masked_start(run_input, snapshot):
         "model": None if snapshot["model"] is None else (snapshot["model"].id, snapshot["model"].cache_response),
         "knowledge": snapshot["knowledge"],
         "learning": snapshot["learning"],
-        "culture_manager": snapshot["culture_manager"],
         "memory_manager": snapshot["memory_manager"],
         "update_memory_on_run": snapshot["update_memory_on_run"],
         "enable_user_memories": snapshot["enable_user_memories"],
         "enable_agentic_memory": snapshot["enable_agentic_memory"],
         "update_knowledge": snapshot["update_knowledge"],
-        "update_cultural_knowledge": snapshot["update_cultural_knowledge"],
-        "enable_agentic_culture": snapshot["enable_agentic_culture"],
     }
 
 
@@ -291,20 +281,18 @@ async def test_hermetic_identical_start():
 
 
 async def test_hermetic_live_agent_full_override_set():
-    # The live-agent branch on STUB agents: db-bound state cut, culture rebound to a
-    # read-only copy, memory rebound to the attempt's fresh db, secondary-model
-    # caches disabled on copies -- and the caller's instance untouched afterwards.
+    # The live-agent branch on STUB agents: db-bound state cut, memory rebound to
+    # the attempt's fresh db, secondary-model caches disabled on copies -- and the
+    # caller's instance untouched afterwards.
     # The REAL-Agent twin below covers the fields this stub cannot model.
     recorder = Recorder()
     caller_db = object()
-    culture_manager = StubManager(db=object())
     memory_manager = StubManager()
     live = StubRolloutAgent(
         recorder,
         model=StubModel(cache_response=True),
         db=caller_db,
         learning=object(),
-        culture_manager=culture_manager,
         memory_manager=memory_manager,
         reasoning_model=StubModel(cache_response=True, id="reasoning"),
         parser_model=StubModel(cache_response=True, id="parser"),
@@ -320,16 +308,10 @@ async def test_hermetic_live_agent_full_override_set():
         assert snapshot["agent"] is not live
         assert isinstance(snapshot["db"], InMemoryDb)
         assert snapshot["learning"] is None
-        # Culture READS survive: a manager copy, never the caller's object.
-        assert snapshot["culture_manager"] is not None
-        assert snapshot["culture_manager"] is not culture_manager
-        assert snapshot["culture_manager"].db is culture_manager.db
         # Memory is per-user state: the manager copy reads the attempt's fresh db.
         assert snapshot["memory_manager"] is not None
         assert snapshot["memory_manager"] is not memory_manager
         assert snapshot["memory_manager"].db is snapshot["db"]
-        assert snapshot["update_cultural_knowledge"] is False
-        assert snapshot["enable_agentic_culture"] is False
         assert snapshot["model_cache"] is False
         for secondary_name in ("reasoning_model", "parser_model", "output_model"):
             secondary = snapshot[secondary_name]
@@ -337,11 +319,9 @@ async def test_hermetic_live_agent_full_override_set():
             assert secondary is not getattr(live, secondary_name)
     # The caller's live agent keeps its configuration.
     assert live.db is caller_db
-    assert live.culture_manager is culture_manager
     assert live.memory_manager is memory_manager
     assert live.model.cache_response is True
     assert live.reasoning_model.cache_response is True
-    assert live.update_cultural_knowledge is True
 
 
 # ---------------------------------------------------------------------------
@@ -1110,8 +1090,9 @@ async def test_error_storm_detected_by_error_type_on_real_agent():
 
 
 async def test_hermetic_real_agent_full_override_set(tmp_path):
-    from agno.compression.manager import CompressionManager
     from agno.culture.manager import CultureManager
+
+    from agno.compression.manager import CompressionManager
     from agno.session import SessionSummaryManager
     from agno.skills.agent_skills import Skills
 
@@ -1805,9 +1786,10 @@ async def test_write_isolation_deep_freeze(tmp_path):
     # learning machine over a shared store, reasoning agent, fallback models,
     # warm caches, save file. Snapshot the caller's reachable graph before and
     # after; zero caller-side mutations, no save file, no cache replay.
-    from agno.compression.manager import CompressionManager
     from agno.culture.manager import CultureManager
     from agno.db.schemas.culture import CulturalKnowledge
+
+    from agno.compression.manager import CompressionManager
     from agno.learn import LearningMachine
     from agno.learn.config import LearnedKnowledgeConfig, LearningMode
     from agno.memory import MemoryManager

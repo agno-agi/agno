@@ -50,7 +50,6 @@ class MigrationManager:
             "metrics": "metrics_table_name",
             "evals": "eval_table_name",
             "knowledge": "knowledge_table_name",
-            "culture": "culture_table_name",
             "approvals": "approvals_table_name",
         }
 
@@ -149,7 +148,6 @@ class MigrationManager:
             "metrics": "metrics_table_name",
             "evals": "eval_table_name",
             "knowledge": "knowledge_table_name",
-            "culture": "culture_table_name",
             "approvals": "approvals_table_name",
         }
 

@@ -181,9 +181,6 @@ def get_tools(
         )
         agent_tools.extend(learning_tools)
 
-    if agent.enable_agentic_culture:
-        agent_tools.append(_default_tools.get_update_cultural_knowledge_function(agent, async_mode=False))
-
     if agent.enable_agentic_state:
         agent_tools.append(
             Function(
@@ -313,9 +310,6 @@ async def aget_tools(
             run_context=run_context,
         )
         agent_tools.extend(learning_tools)
-
-    if agent.enable_agentic_culture:
-        agent_tools.append(_default_tools.get_update_cultural_knowledge_function(agent, async_mode=True))
 
     if agent.enable_agentic_state:
         agent_tools.append(

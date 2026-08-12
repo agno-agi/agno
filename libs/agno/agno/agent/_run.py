@@ -371,7 +371,7 @@ def _run(
     11. Store media if enabled
     12. Convert the response to the structured format if needed
     13. Execute post-hooks
-    14. Wait for background memory creation and cultural knowledge creation
+    14. Wait for background memory creation
     15. Create session summary
     16. Cleanup and store the run response and session
     """
@@ -395,7 +395,6 @@ def _run(
 
     memory_future = None
     learning_future = None
-    cultural_knowledge_future = None
     agent_session: Optional[AgentSession] = None
 
     try:
@@ -515,13 +514,6 @@ def _run(
                     run_context=run_context,
                 )
 
-                # Start cultural knowledge creation in background thread
-                cultural_knowledge_future = _managers.start_cultural_knowledge_future(
-                    agent,
-                    run_messages=run_messages,
-                    existing_future=cultural_knowledge_future,
-                )
-
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 5. Reason about the task
@@ -577,12 +569,11 @@ def _run(
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     wait_for_open_threads(
                         memory_future=memory_future,  # type: ignore
-                        cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
                         learning_future=learning_future,  # type: ignore
                     )
                     merge_background_metrics(
                         run_response.metrics,
-                        collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                        collect_background_metrics(memory_future, learning_future),
                     )
 
                     return handle_agent_run_paused(
@@ -620,15 +611,14 @@ def _run(
                 # Check for cancellation
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 11. Wait for background memory creation and cultural knowledge creation
+                # 14. Wait for background memory creation
                 wait_for_open_threads(
                     memory_future=memory_future,  # type: ignore
-                    cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
                     learning_future=learning_future,  # type: ignore
                 )
                 merge_background_metrics(
                     run_response.metrics,
-                    collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                    collect_background_metrics(memory_future, learning_future),
                 )
 
                 # 12. Create session summary
@@ -738,7 +728,7 @@ def _run(
                 return run_response
     finally:
         # Cancel background futures on error (wait_for_open_threads handles waiting on success)
-        for future in (memory_future, cultural_knowledge_future, learning_future):
+        for future in (memory_future, learning_future):
             if future is not None and not future.done():
                 future.cancel()
                 try:
@@ -807,7 +797,6 @@ def _run_stream(
 
     memory_future = None
     learning_future = None
-    cultural_knowledge_future = None
     agent_session: Optional[AgentSession] = None
 
     try:
@@ -928,13 +917,6 @@ def _run_stream(
                     run_context=run_context,
                 )
 
-                # Start cultural knowledge creation in background thread
-                cultural_knowledge_future = _managers.start_cultural_knowledge_future(
-                    agent,
-                    run_messages=run_messages,
-                    existing_future=cultural_knowledge_future,
-                )
-
                 # Start the Run by yielding a RunStarted event
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -1041,7 +1023,6 @@ def _run_stream(
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     yield from wait_for_thread_tasks_stream(
                         memory_future=memory_future,  # type: ignore
-                        cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
                         learning_future=learning_future,  # type: ignore
                         stream_events=stream_events,
                         run_response=run_response,
@@ -1051,7 +1032,7 @@ def _run_stream(
                     )
                     merge_background_metrics(
                         run_response.metrics,
-                        collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                        collect_background_metrics(memory_future, learning_future),
                     )
 
                     # Handle the paused run
@@ -1092,7 +1073,6 @@ def _run_stream(
                 # 8. Wait for background memory creation and cultural knowledge creation
                 yield from wait_for_thread_tasks_stream(
                     memory_future=memory_future,  # type: ignore
-                    cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
                     learning_future=learning_future,  # type: ignore
                     stream_events=stream_events,
                     run_response=run_response,
@@ -1102,7 +1082,7 @@ def _run_stream(
                 )
                 merge_background_metrics(
                     run_response.metrics,
-                    collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                    collect_background_metrics(memory_future, learning_future),
                 )
 
                 # 9. Create session summary
@@ -1281,7 +1261,7 @@ def _run_stream(
                 yield run_error
     finally:
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
-        for future in (memory_future, cultural_knowledge_future, learning_future):
+        for future in (memory_future, learning_future):
             if future is not None and not future.done():
                 future.cancel()
                 try:
@@ -1530,7 +1510,6 @@ async def _arun(
 
     memory_task = None
     learning_task = None
-    cultural_knowledge_task = None
     agent_session: Optional[AgentSession] = None
 
     # Set up retry logic
@@ -1655,13 +1634,6 @@ async def _arun(
                     run_context=run_context,
                 )
 
-                # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
-                cultural_knowledge_task = await _managers.astart_cultural_knowledge_task(
-                    agent,
-                    run_messages=run_messages,
-                    existing_task=cultural_knowledge_task,
-                )
-
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1724,12 +1696,11 @@ async def _arun(
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     await await_for_open_threads(
                         memory_task=memory_task,
-                        cultural_knowledge_task=cultural_knowledge_task,
                         learning_task=learning_task,
                     )
                     merge_background_metrics(
                         run_response.metrics,
-                        collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                        collect_background_metrics(memory_task, learning_task),
                     )
                     return await ahandle_agent_run_paused(
                         agent,
@@ -1769,12 +1740,11 @@ async def _arun(
                 # 14. Wait for background memory creation
                 await await_for_open_threads(
                     memory_task=memory_task,
-                    cultural_knowledge_task=cultural_knowledge_task,
                     learning_task=learning_task,
                 )
                 merge_background_metrics(
                     run_response.metrics,
-                    collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                    collect_background_metrics(memory_task, learning_task),
                 )
 
                 # 15. Create session summary
@@ -1909,12 +1879,6 @@ async def _arun(
             memory_task.cancel()
             try:
                 await memory_task
-            except asyncio.CancelledError:
-                pass
-        if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
-            cultural_knowledge_task.cancel()
-            try:
-                await cultural_knowledge_task
             except asyncio.CancelledError:
                 pass
         if learning_task is not None and not learning_task.done():
@@ -2287,7 +2251,6 @@ async def _arun_stream(
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_task = None
-    cultural_knowledge_task = None
     learning_task = None
     agent_session: Optional[AgentSession] = None
 
@@ -2422,13 +2385,6 @@ async def _arun_stream(
                     run_context=run_context,
                 )
 
-                # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
-                cultural_knowledge_task = await _managers.astart_cultural_knowledge_task(
-                    agent,
-                    run_messages=run_messages,
-                    existing_task=cultural_knowledge_task,
-                )
-
                 # 8. Reason about the task if reasoning is enabled
                 async for item in ahandle_reasoning_stream(
                     agent,
@@ -2536,7 +2492,6 @@ async def _arun_stream(
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     async for item in await_for_thread_tasks_stream(
                         memory_task=memory_task,
-                        cultural_knowledge_task=cultural_knowledge_task,
                         learning_task=learning_task,
                         stream_events=stream_events,
                         run_response=run_response,
@@ -2547,7 +2502,7 @@ async def _arun_stream(
                         yield item
                     merge_background_metrics(
                         run_response.metrics,
-                        collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                        collect_background_metrics(memory_task, learning_task),
                     )
 
                     async for item in ahandle_agent_run_paused_stream(  # type: ignore[assignment]
@@ -2580,7 +2535,6 @@ async def _arun_stream(
                 # 11. Wait for background memory creation
                 async for item in await_for_thread_tasks_stream(
                     memory_task=memory_task,
-                    cultural_knowledge_task=cultural_knowledge_task,
                     learning_task=learning_task,
                     stream_events=stream_events,
                     run_response=run_response,
@@ -2591,7 +2545,7 @@ async def _arun_stream(
                     yield item
                 merge_background_metrics(
                     run_response.metrics,
-                    collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                    collect_background_metrics(memory_task, learning_task),
                 )
 
                 # 12. Create session summary
@@ -2806,13 +2760,6 @@ async def _arun_stream(
             memory_task.cancel()
             try:
                 await memory_task
-            except asyncio.CancelledError:
-                pass
-
-        if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
-            cultural_knowledge_task.cancel()
-            try:
-                await cultural_knowledge_task
             except asyncio.CancelledError:
                 pass
 

@@ -181,19 +181,6 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces") -> dict[str, 
     }
 
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "name": {"type": String, "nullable": False, "index": True},
-    "summary": {"type": String, "nullable": True},
-    "content": {"type": JSON, "nullable": True},
-    "metadata": {"type": JSON, "nullable": True},
-    "input": {"type": String, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
-}
-
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": String, "nullable": False, "primary_key": True},
     "version": {"type": String, "nullable": False},
@@ -404,7 +391,6 @@ def get_table_schema_definition(
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "components": COMPONENTS_TABLE_SCHEMA,
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,

@@ -147,7 +147,7 @@ def get_system_message(
     """
 
     # Extract values from run_context
-    from agno.agent._init import set_culture_manager, set_memory_manager
+    from agno.agent._init import set_memory_manager
 
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
@@ -353,68 +353,7 @@ def get_system_message(
                 "</updating_user_memories>\n\n"
             )
 
-    # 3.3.10 Then add cultural knowledge to the system prompt
-    if agent.add_culture_to_context:
-        _culture_manager_not_set = False
-        if not agent.culture_manager:
-            set_culture_manager(agent)
-            _culture_manager_not_set = True
-
-        cultural_knowledge = agent.culture_manager.get_all_knowledge()  # type: ignore
-
-        if cultural_knowledge and len(cultural_knowledge) > 0:
-            system_message_content += (
-                "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
-                "for your reasoning, communication, and decision-making. "
-                "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
-                "emerged across agents and teams. It encodes collective experience — including preferred "
-                "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
-                "When performing any task:\n"
-                "- **Reference Cultural Knowledge** to align with shared norms and best practices.\n"
-                "- **Apply it contextually**, not mechanically — adapt principles to the current situation.\n"
-                "- **Preserve consistency** with cultural values (tone, reasoning, and style) unless explicitly told otherwise.\n"
-                "- **Extend it** when you discover new insights — your outputs may become future Cultural Knowledge.\n"
-                "- **Clarify conflicts** if Cultural Knowledge appears to contradict explicit user instructions.\n\n"
-                "Your goal is to act not only intelligently but also *culturally coherently* — reflecting the "
-                "collective intelligence of the system.\n\n"
-                "Below is the currently available Cultural Knowledge for this context:\n\n"
-            )
-            system_message_content += "<cultural_knowledge>"
-            for _knowledge in cultural_knowledge:  # type: ignore
-                system_message_content += "\n---"
-                system_message_content += f"\nName: {_knowledge.name}"
-                system_message_content += f"\nSummary: {_knowledge.summary}"
-                system_message_content += f"\nContent: {_knowledge.content}"
-            system_message_content += "\n</cultural_knowledge>\n"
-        else:
-            system_message_content += (
-                "You have the capability to access shared **Cultural Knowledge**, which normally provides "
-                "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
-                "is currently available in this session.\n"
-                "Proceed thoughtfully and document any useful insights you create — they may become future "
-                "Cultural Knowledge for others.\n\n"
-            )
-
-        if _culture_manager_not_set:
-            agent.culture_manager = None
-
-        if agent.enable_agentic_culture:
-            system_message_content += (
-                "\n<contributing_to_culture>\n"
-                "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
-                "\n"
-                "When to contribute:\n"
-                "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
-                "- You correct or clarify an existing cultural entry.\n"
-                "- You capture a guardrail, decision rationale, postmortem lesson, or example template.\n"
-                "- You identify missing context that should persist across sessions or teams.\n"
-                "\n"
-                "Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-                "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
-                "</contributing_to_culture>\n\n"
-            )
-
-    # 3.3.11 Then add a summary of the interaction to the system prompt
+    # 3.3.10 Then add a summary of the interaction to the system prompt
     if agent.add_session_summary_to_context and session.summary is not None:
         system_message_content += "Here is a brief summary of your previous interactions:\n\n"
         system_message_content += "<summary_of_previous_interactions>\n"
@@ -505,7 +444,7 @@ async def aget_system_message(
     """
 
     # Extract values from run_context
-    from agno.agent._init import has_async_db, set_culture_manager, set_memory_manager
+    from agno.agent._init import has_async_db, set_memory_manager
 
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
@@ -715,68 +654,7 @@ async def aget_system_message(
                 "</updating_user_memories>\n\n"
             )
 
-    # 3.3.10 Then add cultural knowledge to the system prompt
-    if agent.add_culture_to_context:
-        _culture_manager_not_set = False
-        if not agent.culture_manager:
-            set_culture_manager(agent)
-            _culture_manager_not_set = True
-
-        cultural_knowledge = await agent.culture_manager.aget_all_knowledge()  # type: ignore
-
-        if cultural_knowledge and len(cultural_knowledge) > 0:
-            system_message_content += (
-                "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
-                "for your reasoning, communication, and decision-making.\n\n"
-                "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
-                "emerged across agents and teams. It encodes collective experience — including preferred "
-                "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
-                "When performing any task:\n"
-                "- **Reference Cultural Knowledge** to align with shared norms and best practices.\n"
-                "- **Apply it contextually**, not mechanically — adapt principles to the current situation.\n"
-                "- **Preserve consistency** with cultural values (tone, reasoning, and style) unless explicitly told otherwise.\n"
-                "- **Extend it** when you discover new insights — your outputs may become future Cultural Knowledge.\n"
-                "- **Clarify conflicts** if Cultural Knowledge appears to contradict explicit user instructions.\n\n"
-                "Your goal is to act not only intelligently but also *culturally coherently* — reflecting the "
-                "collective intelligence of the system.\n\n"
-                "Below is the currently available Cultural Knowledge for this context:\n\n"
-            )
-            system_message_content += "<cultural_knowledge>"
-            for _knowledge in cultural_knowledge:  # type: ignore
-                system_message_content += "\n---"
-                system_message_content += f"\nName: {_knowledge.name}"
-                system_message_content += f"\nSummary: {_knowledge.summary}"
-                system_message_content += f"\nContent: {_knowledge.content}"
-            system_message_content += "\n</cultural_knowledge>\n"
-        else:
-            system_message_content += (
-                "You have the capability to access shared **Cultural Knowledge**, which normally provides "
-                "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
-                "is currently available in this session.\n"
-                "Proceed thoughtfully and document any useful insights you create — they may become future "
-                "Cultural Knowledge for others.\n\n"
-            )
-
-        if _culture_manager_not_set:
-            agent.culture_manager = None
-
-        if agent.enable_agentic_culture:
-            system_message_content += (
-                "\n<contributing_to_culture>\n"
-                "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
-                "\n"
-                "When to contribute:\n"
-                "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
-                "- You correct or clarify an existing cultural entry.\n"
-                "- You capture a guardrail, decision rationale, postmortem lesson, or example template.\n"
-                "- You identify missing context that should persist across sessions or teams.\n"
-                "\n"
-                "Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-                "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
-                "</contributing_to_culture>\n\n"
-            )
-
-    # 3.3.11 Then add a summary of the interaction to the system prompt
+    # 3.3.10 Then add a summary of the interaction to the system prompt
     if agent.add_session_summary_to_context and session.summary is not None:
         system_message_content += "Here is a brief summary of your previous interactions:\n\n"
         system_message_content += "<summary_of_previous_interactions>\n"

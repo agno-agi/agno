@@ -1084,12 +1084,6 @@ def from_dict(
     #     from agno.session import SessionSummaryManager
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
-    # --- Handle CultureManager reconstruction ---
-    # TODO: implement culture manager deserialization
-    # if "culture_manager" in config and isinstance(config["culture_manager"], dict):
-    #     from agno.culture import CultureManager
-    #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
-
     # --- Handle Knowledge reconstruction ---
     # Knowledge is stored as a reference by name and resolved from the registry,
     # since it holds live db/vector_db connections that cannot be serialized.
