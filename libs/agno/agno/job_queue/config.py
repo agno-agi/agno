@@ -73,6 +73,20 @@ class QueueConfig:
             work from any replica. Only replaces in-memory defaults: an
             explicitly configured cancellation manager or event stream is never
             overridden. Also works against Valkey (Redis-protocol compatible).
+
+    Multi-replica uniformity: the timing and budget fields
+    (``lock_grace_seconds``, ``stop_timeout_seconds``, ``retention_seconds``,
+    ``max_attempts``, ``timeout_seconds``) must be configured UNIFORMLY across
+    every replica sharing one queue table. Each is applied by whichever
+    replica performs the action - the claimer's grace sets its heartbeat
+    cadence while the sweeper's grace judges staleness, ``max_attempts`` is
+    stamped per-ticket by the accepting replica, and the smallest
+    ``retention_seconds`` in the fleet wins the hourly cleanup - so divergent
+    values (including transiently, during a rolling deploy) can falsely sweep
+    a healthy peer's runs or delete tickets early. When changing
+    ``lock_grace_seconds`` on a live fleet, only ever RAISE it, and roll the
+    sweeping replicas first: a replica sweeping with a smaller grace than its
+    peers heartbeat with judges their live leases stale.
     """
 
     max_concurrency: Optional[int] = None

@@ -364,6 +364,11 @@ def format_sse_event_with_index(
         return f"event: message\ndata: {clean_json}\n\n"
 
 
+# Idle window between tail items before a keepalive (and the settled-ticket
+# truth probe) fires; module-level so tests can shrink it.
+_TAIL_IDLE_RECHECK_SECONDS = 30.0
+
+
 def sse_error_frame(message: str) -> str:
     """A wire-safe SSE error frame.
 
@@ -421,8 +426,39 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
     try:
         while True:
             try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=_TAIL_IDLE_RECHECK_SECONDS)
             except asyncio.TimeoutError:
+                # Idle recheck. If the durable ticket has SETTLED while the
+                # stream never received its terminal sentinel (a lost
+                # terminal write - the producer died between settling the
+                # ticket and closing the stream), nothing will ever end this
+                # tail: it used to keepalive silently until the stream state
+                # expired. Tell the client the truth instead, once, and end -
+                # the complete output is guaranteed via the run row.
+                closed_frame: Optional[str] = None
+                with contextlib.suppress(Exception):
+                    from agno.os.job_queue import get_active_queue_worker, ticket_status_to_api
+
+                    worker = get_active_queue_worker()
+                    job = await worker.store.get_job(run_id) if worker is not None else None
+                    if (
+                        job is not None
+                        and job.get("job_type", "run") == "run"
+                        and job.get("status") in ("completed", "failed", "cancelled")
+                    ):
+                        stream_status = await event_stream.get_run_status(run_id)
+                        if stream_status is None or stream_status in (RunStatus.pending, RunStatus.running):
+                            payload = {
+                                "event": "stream_expired",
+                                "run_id": run_id,
+                                "status": ticket_status_to_api(job.get("status", "")) or "ERROR",
+                                "message": "The run finished but its stream lost the terminal event; "
+                                "poll the run for the complete output.",
+                            }
+                            closed_frame = f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+                if closed_frame is not None:
+                    yield closed_frame
+                    return
                 yield ": keepalive\n\n"
                 continue
             if item is None:
