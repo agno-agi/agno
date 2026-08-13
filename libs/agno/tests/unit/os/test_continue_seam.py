@@ -859,6 +859,33 @@ class TestInlineContinueReopensStream:
         )
 
 
+class TestDeclinedReopenLeavesStreamAlone:
+    """reopen_run's contract: False means the status already moved past
+    PAUSED and the caller must NOT overwrite that newer state. The helper
+    used to ignore the result and stamp RUNNING anyway - resurrecting a
+    settled stream until the streamer's finally healed it."""
+
+    @pytest.mark.asyncio
+    async def test_completed_stream_is_not_stamped_running(self, monkeypatch):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+        # A racing writer already finished the leg: PAUSED -> COMPLETED
+        await stream.register_run("r1", RunStatus.running)
+        await stream.complete_run("r1", RunStatus.completed)
+
+        await amark_continue_stream_running("r1")
+
+        assert await stream.get_run_status("r1") == RunStatus.completed, (
+            "a declined reopen must leave the settled stream alone, not stamp RUNNING over it"
+        )
+
+
 class TestInlineContinueSeedsExpiredCounter:
     """Inline door: an inline continue of a paused run whose
     stream state expired (deploy/restart) must seed the counter from the run
@@ -921,3 +948,36 @@ class TestInlineContinueSeedsExpiredCounter:
         assert reads == [], "a live counter must not cost a session read"
         idx = await stream.add_event("r1", RunContentEvent(content="b", run_id="r1"))
         assert idx == 1
+
+
+class TestPausedGate409CarriesEscapeHatch:
+    @pytest.mark.asyncio
+    async def test_paused_ticket_409_names_the_row_missing_escape(self):
+        """When the run ROW is lost while its paused ticket survives,
+        background=true fails not-found and falls through to this gate:
+        without the escape-hatch sentence, the 409 told the caller to do
+        exactly what it just did (a self-referential dead end)."""
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        store._jobs["r-lostrow"] = QueuedJob(
+            id="r-lostrow",
+            component_type="agent",
+            component_id="a1",
+            session_id="s1",
+            payload={},
+            status="paused",
+        ).to_dict()
+        worker = SimpleNamespace(store=store)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await araise_if_ticket_owns_continue(worker, "r-lostrow", component_type="agent", component_id="a1")
+
+        assert excinfo.value.status_code == 409
+        assert "requeue the ticket" in excinfo.value.detail, (
+            "the 409 must carry the cancel+requeue escape hatch for the lost-row corner"
+        )

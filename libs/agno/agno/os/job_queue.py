@@ -8,7 +8,7 @@ the corresponding runtime pieces, including the DB-backed queue worker
 import asyncio
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -22,9 +22,11 @@ def apply_queue_config(config: QueueConfig) -> None:
 
     Sets the background concurrency cap, and - when ``config.redis`` is given -
     wires the cross-container transports (cancellation manager + event stream)
-    from shared Redis clients. Transports are only wired over in-memory
-    defaults: explicitly configured backends are never replaced, so granular
-    configuration always wins.
+    from shared Redis clients. Transports are only wired over the never
+    explicitly-set process defaults: any backend installed via
+    ``set_event_stream``/``set_cancellation_manager`` (including an in-memory
+    one, e.g. a test double) is never replaced, so granular configuration
+    always wins.
     """
     from agno.run.concurrency import set_background_max_concurrency
 
@@ -57,16 +59,18 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
         sync_client = SyncRedis.from_url(url)
         async_client = AsyncRedis.from_url(url)
 
-    # Control in: distributed cancellation. Never clobber a custom manager.
-    from agno.run.cancel import get_cancellation_manager, set_cancellation_manager
-    from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+    # Control in: distributed cancellation. Never clobber an explicitly
+    # configured manager - the explicit-set flag is the authority, because an
+    # explicitly passed in-memory manager (or subclass, e.g. a test double) is
+    # indistinguishable by type from the default it replaced.
+    from agno.run.cancel import cancellation_manager_explicitly_set, set_cancellation_manager
     from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager
 
     cancellation_wired = False
     cancellation_prefix = (
         f"{coordination.key_prefix}:run:cancellation:" if coordination.key_prefix else "agno:run:cancellation:"
     )
-    if isinstance(get_cancellation_manager(), InMemoryRunCancellationManager):
+    if not cancellation_manager_explicitly_set():
         set_cancellation_manager(
             RedisRunCancellationManager(
                 redis_client=sync_client, async_redis_client=async_client, key_prefix=cancellation_prefix
@@ -77,14 +81,13 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     else:
         log_debug("Queue coordination: keeping explicitly configured cancellation manager")
 
-    # Events out: Redis event stream. Never clobber a custom stream; the
-    # explicit AgentOS(event_stream=...) parameter is applied after this and
-    # wins by ordering.
-    from agno.os.event_streams import InMemoryEventStream, RedisEventStream, get_event_stream, set_event_stream
+    # Events out: Redis event stream. Same rule: only the never-explicitly-set
+    # process default is replaced.
+    from agno.os.event_streams import RedisEventStream, event_stream_explicitly_set, set_event_stream
 
     event_stream_wired = False
     stream_prefix = f"{coordination.key_prefix}:os:events:" if coordination.key_prefix else "agno:os:events:"
-    if isinstance(get_event_stream(), InMemoryEventStream):
+    if not event_stream_explicitly_set():
         set_event_stream(RedisEventStream(async_client, key_prefix=stream_prefix))
         event_stream_wired = True
         log_debug("Queue coordination: Redis event stream configured")
@@ -111,6 +114,21 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 
 # Default timeout (in seconds) when stopping the worker
 _DEFAULT_STOP_TIMEOUT = 30
+
+
+def resolve_stop_timeout(config: QueueConfig) -> int:
+    """The drain timeout queue_lifespan hands the worker.
+
+    An explicit config.stop_timeout_seconds was already validated strictly
+    below lock_grace_seconds at construction. None means the worker default,
+    clamped below the lease grace - so every lock_grace the config validator
+    accepts also boots (3..30 used to pass validation and then die at
+    lifespan startup on the worker's stop_timeout < lock_grace invariant).
+    """
+    if config.stop_timeout_seconds is not None:
+        return config.stop_timeout_seconds
+    return min(_DEFAULT_STOP_TIMEOUT, max(1, config.lock_grace_seconds - 1))
+
 
 # The replica's active queue worker, set by queue_lifespan. Exists for
 # continue doors that have no Request/app in scope (MCP tools, AG-UI resume,
@@ -165,6 +183,61 @@ def normalize_idempotency_key(raw: Any) -> Any:
     return raw
 
 
+# Ticket statuses -> the API's RunStatus vocabulary. ONE mapping for every
+# surface that answers from a ticket (poll fallback, duplicate-202 bodies):
+# the API has no "FAILED" (RunStatus.error.value is "ERROR") and no "QUEUED",
+# and a client switch on status must never see a value the run endpoints
+# cannot also produce.
+_TICKET_STATUS_TO_API = {
+    "queued": "PENDING",
+    "running": "RUNNING",
+    "paused": "PAUSED",
+    "completed": "COMPLETED",
+    "failed": "ERROR",
+    "cancelled": "CANCELLED",
+}
+
+
+def ticket_status_to_api(ticket_status: str) -> Optional[str]:
+    """Map a queue-ticket status to the API's run-status vocabulary.
+
+    None for unknown statuses - callers decide their own fallback (the poll
+    fallback keeps its 404; the duplicate-202 branches pass the raw value
+    through rather than inventing a mapping for a store bug).
+    """
+    return _TICKET_STATUS_TO_API.get(ticket_status)
+
+
+def ensure_duplicate_matches_component(existing: Dict[str, Any], component_type: str, component_id: Any) -> None:
+    """Refuse an Idempotency-Key duplicate that belongs to a different component.
+
+    The dedup namespace is (idempotency_key, user_id) only, so a key reused on
+    another component's submit route would otherwise be answered with the
+    ORIGINAL component's run - a 202 (or live stream attach) whose ids then 404
+    through this route's poll endpoint, because the ticket poll fallback does
+    enforce component identity. Idempotency keys retry the same submission;
+    they never alias a different one.
+
+    The response deliberately omits the original ticket's identity: in
+    unauthenticated deployments the key namespace is shared across clients,
+    and the mismatch detail belongs in server logs, not on the wire.
+    """
+    if existing.get("component_type") == component_type and existing.get("component_id") == component_id:
+        return
+    from fastapi import HTTPException
+
+    log_warning(
+        f"Idempotency-Key reuse across components: key on ticket "
+        f"{existing.get('component_type')}/{existing.get('component_id')} was replayed against "
+        f"{component_type}/{component_id}; refusing with 409"
+    )
+    raise HTTPException(
+        status_code=409,
+        detail="Idempotency-Key was already used by a different component; "
+        "reuse a key only to retry the identical submission",
+    )
+
+
 def payload_is_queueable(payload: Any) -> bool:
     """True when the job payload survives a JSON round-trip as-is.
 
@@ -173,11 +246,16 @@ def payload_is_queueable(payload: Any) -> bool:
     cannot carry (media BaseModel instances, dynamically-built output_schema
     classes, arbitrary objects in kwargs) would either fail the enqueue INSERT
     or come back as lossy strings - such submissions must fall back to the
-    non-durable path instead of 500ing or corrupting the run."""
+    non-durable path instead of 500ing or corrupting the run.
+
+    allow_nan=False: Python's json serializes NaN/Infinity by default, but
+    they are NOT valid JSON - Postgres JSONB rejects them at INSERT, so a
+    NaN-carrying payload would pass this gate and then 500 the submit, the
+    exact failure the gate exists to prevent."""
     import json as _json
 
     try:
-        _json.dumps(payload)
+        _json.dumps(payload, allow_nan=False)
         return True
     except (TypeError, ValueError):
         return False
@@ -259,7 +337,8 @@ class QueueWorker:
     One worker per AgentOS replica. SKIP LOCKED claiming arbitrates between
     replicas with zero coordination. The worker also:
     - heartbeats its in-flight jobs (lock_grace stays small without live runs
-      being reclaimed),
+      being reclaimed) - from a dedicated thread on sync-wrapped stores, so a
+      run blocking the event loop cannot starve its own lease,
     - sweeps exhausted stale jobs to failed, persisting the terminal error on
       the run row FIRST so pollers never see a stuck RUNNING run,
     - enforces the per-run timeout,
@@ -298,15 +377,159 @@ class QueueWorker:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._heartbeat_thread: Optional[Any] = None
+        self._heartbeat_stop: Optional[Any] = None
         self._in_flight: Dict[str, asyncio.Task] = {}
 
     async def start(self) -> None:
         if self._running:
             return
         self._running = True
+        # Lease renewal runs on a DEDICATED THREAD wherever the store allows
+        # it: a liveness signal must not depend on the health of the thing
+        # whose liveness it certifies. The old loop-task heartbeat died
+        # exactly when it mattered - a run doing sync blocking work (sync
+        # tool, sync model client, CPU-bound parse) starved the loop past
+        # lock_grace and a peer swept a healthy worker; sync I/O releases
+        # the GIL, so a thread keeps beating precisely when the loop cannot.
+        if isinstance(self.store, _SyncStoreAdapter):
+            # Prime the store's lazy table init from the loop's thread pool
+            # first: the sync Postgres adapter's first _get_table is not
+            # safe under two first-callers, and the heartbeat thread is
+            # about to become a second caller.
+            with contextlib.suppress(Exception):
+                await self.store.get_job(self.worker_id)
+            self._start_heartbeat_thread(self.store._store.heartbeat_jobs)
+        else:
+            # Async persistent stores (e.g. AsyncPostgresDb) face the same
+            # starvation hazard, but their engines/connections are
+            # loop-affine - the worker's own instance must never be touched
+            # off-loop. Clone a second instance for the thread's PRIVATE
+            # event loop instead.
+            thread_store = self._clone_store_for_heartbeat_thread()
+            if thread_store is not None:
+                # Prime the worker's OWN store first (symmetric with the sync
+                # branch): the clone is a distinct instance with its own lazy
+                # table cache, and without an existing table its first beat
+                # could race the poll loop's first call into concurrent
+                # CREATE TABLE IF NOT EXISTS (checkfirst is not atomic).
+                # After this, both instances only reflect an existing table.
+                with contextlib.suppress(Exception):
+                    await self.store.get_job(self.worker_id)
+                self._start_heartbeat_thread(thread_store.heartbeat_jobs, owned_store=thread_store)
+            else:
+                from agno.job_queue.store import InMemoryQueueStore
+
+                if not isinstance(self.store, InMemoryQueueStore):
+                    # Unclonable async store: fall back to the loop task and
+                    # say so - on this store a run blocking the loop CAN
+                    # starve its own lease.
+                    log_warning(
+                        f"Durable queue heartbeat runs on the event loop for {type(self.store).__name__} "
+                        "(no db_url to build a thread-local instance from): a run doing sync blocking "
+                        "work can starve its own lease past lock_grace_seconds and be falsely swept. "
+                        "Keep blocking work in threads, or use a store constructed from a db_url."
+                    )
+                # The in-memory store keeps the loop task silently: its
+                # asyncio.Lock must only be awaited on the loop, and it is
+                # the one topology where the hazard is structurally
+                # impossible - single-process means any peer sweeper shares
+                # the starved loop.
+                self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        # The poll loop starts LAST, in every branch: it must never race the
+        # prime into the store's lazy table init, and a claimed job must
+        # never begin executing (and potentially block the loop) before the
+        # heartbeat exists.
         self._task = asyncio.create_task(self._poll_loop())
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         log_info(f"Job queue worker started (worker={self.worker_id}, poll={self.config.poll_interval}s)")
+
+    def _clone_store_for_heartbeat_thread(self) -> Optional[Any]:
+        """A second instance of an async persistent store, owned by the
+        heartbeat thread's private event loop. Async engines and connections
+        are loop-affine, so the worker's own instance cannot be shared with
+        the thread; a clone built from the same db_url can. None when the
+        store cannot be cloned (no db_url - e.g. injected engine, or the
+        in-memory store)."""
+        db_url = getattr(self.store, "db_url", None)
+        if not isinstance(db_url, str) or not db_url:
+            return None
+        try:
+            clone = type(self.store)(
+                db_url=db_url,
+                db_schema=getattr(self.store, "db_schema", None),
+                job_table=getattr(self.store, "job_table_name", None),
+            )
+        except Exception as e:
+            log_warning(f"Could not build a heartbeat-thread instance of {type(self.store).__name__}: {e}")
+            return None
+        # The clone must verifiably address the SAME rows: a store type whose
+        # table/schema did not round-trip through this constructor call would
+        # beat a default table - silently renewing nothing, which is worse
+        # than the loud loop-task fallback.
+        for attr in ("db_schema", "job_table_name"):
+            if getattr(clone, attr, None) != getattr(self.store, attr, None):
+                log_warning(
+                    f"Heartbeat-thread instance of {type(self.store).__name__} does not target the "
+                    f"same {attr} as the worker's store; falling back to the loop-task heartbeat"
+                )
+                return None
+        return clone
+
+    def _start_heartbeat_thread(self, beat: Any, owned_store: Any = None) -> None:
+        """Run lease renewal on a dedicated daemon thread.
+
+        ``beat`` is the store's heartbeat_jobs - either sync (called
+        directly) or async (driven on the thread's private event loop; see
+        _clone_store_for_heartbeat_thread). ``owned_store`` is closed by the
+        thread on exit when given.
+        """
+        import threading
+
+        self._heartbeat_stop = threading.Event()
+        stop_event = self._heartbeat_stop
+        interval = max(1.0, self.config.lock_grace_seconds / 3)
+
+        def _beat() -> None:
+            # Same contract as the loop-task heartbeat: beat whatever is in
+            # flight, survive store errors loudly, and keep beating through
+            # the drain (stop() only sets the event after the drain settles).
+            # Idle ticks with nothing in flight are no-ops. The private loop
+            # exists only for an owned (async-clone) store; the sync path
+            # never yields a coroutine.
+            loop = asyncio.new_event_loop() if owned_store is not None else None
+            try:
+                while not stop_event.wait(interval):
+                    try:
+                        job_ids = self._in_flight_snapshot()
+                        if job_ids:
+                            result = beat(self.worker_id, job_ids)
+                            if loop is not None and inspect.iscoroutine(result):
+                                loop.run_until_complete(result)
+                    except Exception as e:
+                        log_error(f"Job queue heartbeat error: {e}")
+            finally:
+                if loop is not None:
+                    with contextlib.suppress(Exception):
+                        engine = getattr(owned_store, "db_engine", None)
+                        if engine is not None and hasattr(engine, "dispose"):
+                            loop.run_until_complete(engine.dispose())
+                    loop.close()
+
+        self._heartbeat_thread = threading.Thread(target=_beat, name=f"agno-heartbeat-{self.worker_id}", daemon=True)
+        self._heartbeat_thread.start()
+
+    def _in_flight_snapshot(self) -> List[str]:
+        # Called from the heartbeat thread while the loop mutates the dict:
+        # list() over a dict resized mid-iteration raises RuntimeError, so
+        # retry - the window is nanoseconds and the set is tiny. No lock:
+        # the store's own CAS (locked_by + running) already makes a stale
+        # entry a harmless no-op.
+        for _ in range(3):
+            try:
+                return list(self._in_flight.keys())
+            except RuntimeError:
+                continue
+        return []
 
     async def stop(self) -> None:
         self._running = False
@@ -358,6 +581,18 @@ class QueueWorker:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._heartbeat_task, timeout=5)
         self._heartbeat_task = None
+        # The heartbeat THREAD is only signalled here, after the drain and
+        # straggler cleanup: in-flight runs need live leases for the whole
+        # stop_timeout window. join in a worker thread so a beat in a slow
+        # store call cannot block the loop; the thread is a daemon, so a
+        # join timeout leaks nothing past process exit.
+        if self._heartbeat_thread is not None:
+            self._heartbeat_stop.set()  # type: ignore[union-attr]
+            await asyncio.to_thread(self._heartbeat_thread.join, 5)
+            if self._heartbeat_thread.is_alive():
+                log_warning("Job queue heartbeat thread did not stop within 5s (daemon; reaped at process exit)")
+            self._heartbeat_thread = None
+            self._heartbeat_stop = None
         log_info("Job queue worker stopped")
 
     async def _poll_loop(self) -> None:
@@ -382,6 +617,11 @@ class QueueWorker:
                 await asyncio.sleep(self.config.poll_interval)
 
     async def _heartbeat_loop(self) -> None:
+        # FALLBACK only (see start()): sync-wrapped stores and clonable async
+        # stores beat from the dedicated thread, which survives a starved
+        # event loop. This loop task cannot - acceptable for the in-memory
+        # store (single process = the sweeper shares the starved loop) and
+        # warned about loudly for unclonable async stores.
         interval = max(1.0, self.config.lock_grace_seconds / 3)
         # Runs while claiming OR draining: stop() flips _running BEFORE the
         # drain, and the old `while self._running` condition killed the
@@ -940,20 +1180,23 @@ class QueueWorker:
         return RunPersistOutcome.UPDATED
 
     def _retry_delay(self, attempt: int) -> int:
-        """Exponential backoff with jitter, capped at 10x the base (the base
-        acts as the minimum delay; the shutdown-drain requeue intentionally
-        uses the flat base with no backoff).
+        """FULL-jitter exponential backoff, capped at 10x the base (the
+        shutdown-drain requeue intentionally uses the flat base with no
+        backoff).
 
-        config.retry_delay_seconds is the BASE delay; attempt N waits up to
-        base * 2**(N-1), jittered uniformly to avoid a thundering herd of
-        retries when many workers fail together."""
+        config.retry_delay_seconds is the BASE delay; attempt N waits
+        uniformly in [0, min(base * 2**(N-1), base * 10)] - the AWS
+        full-jitter shape. The old lower bound of `base` made attempt 1's
+        range [base, base]: zero jitter, so a fleet-wide failure retried in
+        lockstep at exactly base seconds - precisely the herd the jitter
+        exists to break up."""
         import random
 
         base = self.config.retry_delay_seconds
         if base <= 0:
             return 0  # explicit no-backoff configuration (tests, dev loops)
         ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
-        return random.randint(base, max(base, ceiling))
+        return random.randint(0, ceiling)
 
     @staticmethod
     def _is_permanent_failure(exc: BaseException, continuation_component: Optional[str] = None) -> bool:
@@ -1116,6 +1359,54 @@ class QueueWorker:
         for reserved in ("input", "session_id", "user_id", "run_id", "stream", "stream_events", "yield_run_output"):
             extra.pop(reserved, None)
         return extra
+
+    async def _ahonor_terminal_row(self, component: Any, job: Dict[str, Any]) -> None:
+        """A claimed FRESH job whose run row is already terminal: never
+        execute (see the RUNNING-stamp refusal in _execute_claimed for the
+        crash window that produces this state). Settle the ticket to match
+        the row and close the stream view with the same status.
+
+        The row read resolves WHICH terminal status wins the ticket. If the
+        row cannot be read (or reads back non-terminal - a race), NOTHING is
+        settled: manufacturing a terminal status here could stamp a
+        cancelled ticket over a COMPLETED row (multi-attempt reclaim of a
+        run whose first attempt committed but crashed before settling).
+        Leaving the claim to go stale hands the job to the reconciling
+        sweep, which pre-reads the row and settles ticket and stream from
+        the truth.
+        """
+        from agno.run.base import RunStatus
+
+        job_id = job["id"]
+        row_status: Optional[str] = None
+        with contextlib.suppress(Exception):
+            run_output = await component.aget_run_output(job_id, job["session_id"], user_id=job.get("user_id"))
+            raw = getattr(run_output, "status", None)
+            row_status = raw.value if isinstance(raw, RunStatus) else raw
+        normalized = str(row_status).lower() if row_status is not None else None
+        if normalized not in ("completed", "cancelled"):
+            log_error(
+                f"Job queue: claimed job {job_id} refused the RUNNING stamp as terminal but its run "
+                f"row could not be read back ({row_status!r}); leaving the claim to go stale for the "
+                "reconciling sweep instead of guessing a terminal status"
+            )
+            return
+        ticket_status = normalized
+        await self._asettle_ticket(job_id, job["attempt"], ticket_status)
+        with contextlib.suppress(Exception):
+            from agno.os.event_streams import get_event_stream
+
+            await asyncio.shield(
+                get_event_stream().complete_run(
+                    job_id,
+                    RunStatus.completed if ticket_status == "completed" else RunStatus.cancelled,
+                    generation=job.get("attempt"),
+                )
+            )
+        log_warning(
+            f"Job queue: claimed job {job_id} has a terminal run row ({row_status}); "
+            f"skipped execution and settled the ticket {ticket_status}"
+        )
 
     async def _asettle_ticket(
         self, job_id: str, attempt: int, status: str, error: Optional[str] = None, shielded: bool = False
@@ -1315,10 +1606,12 @@ class QueueWorker:
             # its own status once it actually starts executing.
             if component is not None and not payload.get("continue"):
                 from agno.run.base import RunStatus as _RS
+                from agno.run.status_persist import RunPersistOutcome as _RPO
                 from agno.run.status_persist import apersist_run_status as _aps
 
+                stamp_outcome = None
                 try:
-                    await _aps(
+                    stamp_outcome = await _aps(
                         component,
                         job.get("component_type", ""),
                         session_id=job["session_id"],
@@ -1334,6 +1627,19 @@ class QueueWorker:
                         f"Job queue: RUNNING stamp failed for job {job_id} (worker={self.worker_id}, "
                         f"attempt={attempt}): {e}"
                     )
+                if stamp_outcome is _RPO.TERMINAL_REFUSED:
+                    # The run row is already COMPLETED/CANCELLED (the guard's
+                    # exact terminal set - ERROR rows pass, so operator
+                    # requeue re-drives are unaffected). The canonical
+                    # producer is the cancel crash window: acancel_queued
+                    # persists the CANCELLED row first, and a crash before
+                    # the ticket tombstone leaves a queued ticket over the
+                    # terminal row. Executing it ran a cancelled run's side
+                    # effects and settled the ticket completed over a
+                    # CANCELLED row - a permanent divergence nothing
+                    # revisits. Honor the row instead.
+                    await self._ahonor_terminal_row(component, job)
+                    return
             if is_stream:
                 execution = self._execute_streaming(component, job)
             elif payload.get("continue"):
@@ -1546,10 +1852,17 @@ async def araise_if_ticket_owns_continue(
         return
     status = job.get("status")
     if status == "paused":
+        # The message carries its own escape hatch: when the run ROW is
+        # missing while this paused ticket survives (a lost row after a
+        # session-store fault), background=true itself fails not-found and
+        # falls through to this gate - without the second sentence the 409
+        # told the caller to do exactly what it just did, a dead end.
         raise HTTPException(
             status_code=409,
             detail=f"Run {run_id} was submitted through the durable queue; continue it with "
-            "background=true (the queue owns its continuations)",
+            "background=true (the queue owns its continuations). If background=true cannot "
+            "find the run, its row is missing while the ticket survives: cancel the run and "
+            "requeue the ticket from the /queue operations surface.",
         )
     if status in ("queued", "running"):
         raise HTTPException(
@@ -1721,8 +2034,11 @@ async def acontinue_via_queue(
 
 def validate_seam_input(component: Any, input: Any) -> None:
     """Mirror arun's input_schema validation at the durable seams: the inline
-    path 422s on schema violations, so a 202 for the same payload (failing
-    only later, inside the worker) would be a contract divergence."""
+    non-stream path answers 400 on schema violations (InputCheckError /
+    ValueError from the run dispatch), so a 202 for the same payload (failing
+    only later, inside the worker) would be a contract divergence - and so
+    would a different status. This helper used to answer 422 on the false
+    premise that the inline path did; one payload, one status: 400."""
     schema = getattr(component, "input_schema", None)
     if schema is None:
         return
@@ -1735,7 +2051,7 @@ def validate_seam_input(component: Any, input: Any) -> None:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Input failed schema validation: {str(e)[:300]}")
+        raise HTTPException(status_code=400, detail=f"Input failed schema validation: {str(e)[:300]}")
 
 
 async def _atomic_append_run(
@@ -1973,9 +2289,13 @@ async def aprepare_accepted_or_abort(
             await event_stream.register_run(run_id, RunStatus.pending)
             await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
         log_error(f"Run {run_id}: acceptance aborted - run-row prepare failed ({e}); ticket cancelled")
+        # The detail names the exception TYPE only: prepare failures are
+        # store failures, and their str() carries driver internals
+        # (connection strings, SQL fragments, hostnames) that belong in the
+        # server log above, never on the wire.
         raise HTTPException(
             status_code=500,
-            detail=f"Run acceptance aborted: the run row could not be prepared ({str(e)[:200]}); "
+            detail=f"Run acceptance aborted: the run row could not be prepared ({type(e).__name__}); "
             "the queued job was cancelled and will not execute. Retry the submission.",
         )
 
@@ -1987,6 +2307,8 @@ async def aticket_poll_fallback(
     component_type: str,
     component_id: Optional[str],
     user_id: Optional[str],
+    *,
+    user_scoped: bool,
 ) -> Optional[Dict[str, Any]]:
     """Tenant-authorized ticket view for run polls that found no run row.
 
@@ -1998,10 +2320,19 @@ async def aticket_poll_fallback(
     202-shaped body.
 
     Every identity check fails CLOSED (None = keep the 404): the ticket must
-    be a run, belong to the path component and the queried session, and be
-    visible to the scoped user under the same predicate the session read
-    uses (owner match, or an ownerless ticket). A guessable run_id must not
-    leak another tenant's run existence.
+    be a run, belong to the path component and the queried session, and -
+    when ``user_scoped`` - be visible to the scoped user under the same
+    predicate the session read uses (owner match, or an ownerless ticket).
+    A guessable run_id must not leak another tenant's run existence.
+
+    ``user_scoped`` is the explicit scoping mode (required keyword so no
+    caller can leave it implicit): ``get_scoped_user_id`` returns None for
+    BOTH an admin/unscoped principal (no filtering anywhere - the session
+    read this fallback mirrors applies none) and would be
+    indistinguishable from an anonymous owner value. Pass
+    ``user_scoped=False`` for the former; ``user_id`` is then ignored.
+    Treating None as an owner value here used to 404 accepted user-owned
+    runs for every admin poll inside the ticket-before-run-row window.
     """
     if queue_worker is None:
         return None
@@ -2018,17 +2349,10 @@ async def aticket_poll_fallback(
         return None
     # Same visibility predicate as the session read: (user_id == scoped) OR
     # row user is NULL. A ticket owned by a DIFFERENT user stays a 404.
-    if job.get("user_id") is not None and job.get("user_id") != user_id:
+    # Unscoped mode applies no user filter, exactly like the session read.
+    if user_scoped and job.get("user_id") is not None and job.get("user_id") != user_id:
         return None
-    status_map = {
-        "queued": "PENDING",
-        "running": "RUNNING",
-        "paused": "PAUSED",
-        "completed": "COMPLETED",
-        "failed": "ERROR",
-        "cancelled": "CANCELLED",
-    }
-    status = status_map.get(job.get("status", ""))
+    status = ticket_status_to_api(job.get("status", ""))
     if status is None:
         return None
     body: Dict[str, Any] = {"run_id": run_id, "session_id": session_id, "status": status}
@@ -2113,7 +2437,9 @@ async def queue_lifespan(app: Any, agent_os: Any):
                 return resolved
         return None
 
-    worker = QueueWorker(store=store, resolve_component=resolve_component, config=config)
+    worker = QueueWorker(
+        store=store, resolve_component=resolve_component, config=config, stop_timeout=resolve_stop_timeout(config)
+    )
     app.state.queue_worker = worker
     set_active_queue_worker(worker)
     try:

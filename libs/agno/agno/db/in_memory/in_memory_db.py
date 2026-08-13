@@ -37,23 +37,23 @@ class InMemoryDb(BaseDb):
         self._eval_runs: List[Dict[str, Any]] = []
         self._knowledge: List[Dict[str, Any]] = []
         self._cultural_knowledge: List[Dict[str, Any]] = []
+        self._schema_versions: Dict[str, str] = {}
 
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
         return True
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; this adapter is in-process and has no versioning.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        return self._schema_versions.get(table_name, "2.0.0")
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table."""
+        self._schema_versions[table_name] = version
 
     # -- Session methods --
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:

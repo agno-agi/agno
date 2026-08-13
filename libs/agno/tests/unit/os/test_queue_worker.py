@@ -1019,6 +1019,49 @@ class TestConfigValidation:
             with pytest.raises(ValueError):
                 QueueConfig(durable=True, **{k: v for k, v in kwargs.items() if k != "durable"})
 
+    def test_stop_timeout_validated_against_lock_grace_at_construction(self):
+        """The worker requires stop_timeout < lock_grace. An explicit config
+        value violating that must fail HERE, at config construction - not as
+        a mysterious crash during lifespan startup."""
+        from agno.job_queue.config import QueueConfig
+
+        with pytest.raises(ValueError, match="strictly below"):
+            QueueConfig(durable=True, lock_grace_seconds=10, stop_timeout_seconds=10)
+        with pytest.raises(ValueError):
+            QueueConfig(durable=True, stop_timeout_seconds=0)
+        assert QueueConfig(durable=True, lock_grace_seconds=10, stop_timeout_seconds=9).stop_timeout_seconds == 9
+
+    @pytest.mark.asyncio
+    async def test_small_lock_grace_boots_the_lifespan(self):
+        """lock_grace_seconds between 3 and 30 passed config validation and
+        then crashed the app at lifespan startup on the worker's fixed
+        default stop_timeout (30). The lifespan now derives a drain timeout
+        strictly below the lease grace, and an explicit
+        stop_timeout_seconds plumbs through to the worker."""
+        from types import SimpleNamespace
+
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import queue_lifespan
+
+        for config, expected_stop in (
+            (QueueConfig(durable=True, db=InMemoryQueueStore(), lock_grace_seconds=10, poll_interval=0.05), 9),
+            (
+                QueueConfig(
+                    durable=True,
+                    db=InMemoryQueueStore(),
+                    lock_grace_seconds=10,
+                    stop_timeout_seconds=5,
+                    poll_interval=0.05,
+                ),
+                5,
+            ),
+        ):
+            app = SimpleNamespace(state=SimpleNamespace())
+            agent_os = SimpleNamespace(queue=config, db=None, agents=[], teams=[], workflows=[])
+            async with queue_lifespan(app, agent_os):
+                assert app.state.queue_worker.stop_timeout == expected_stop
+
     def test_multi_attempt_is_first_class(self):
         """The interim experimental opt-in is GONE: the save and stream fences closed the
         two-producer races (run-row saves and stream writes), so
@@ -2210,4 +2253,133 @@ class TestDrainLifecycle:
         assert (await store.get_job("r1"))["status"] == "failed", (
             f"ticket must settle failed after the persisted drain, got {(await store.get_job('r1'))['status']} - "
             "RUNNING here means the second cancel interrupted the persist and the drain guarantee broke"
+        )
+
+
+class TestRetryDelayFullJitter:
+    def test_first_retry_actually_jitters(self):
+        """The old lower bound of `base` made attempt 1's range [base, base]:
+        zero jitter, so a fleet failing together retried in lockstep at
+        exactly base seconds - the herd the config's promised "full jitter"
+        exists to break up."""
+        worker = make_worker(InMemoryQueueStore(), None, make_config(retry_delay_seconds=30))
+        samples = {worker._retry_delay(1) for _ in range(200)}
+        assert all(0 <= s <= 30 for s in samples)
+        assert len(samples) > 1, "attempt 1 must jitter, not return exactly base every time"
+
+    def test_backoff_grows_and_caps(self):
+        worker = make_worker(InMemoryQueueStore(), None, make_config(retry_delay_seconds=30))
+        assert all(0 <= worker._retry_delay(3) <= 120 for _ in range(50))
+        assert all(0 <= worker._retry_delay(50) <= 300 for _ in range(50)), "capped at 10x base"
+        assert make_worker(InMemoryQueueStore(), None, make_config(retry_delay_seconds=0))._retry_delay(1) == 0
+
+
+class TestPayloadQueueableGate:
+    def test_nan_and_infinity_are_not_queueable(self):
+        """Python's json serializes NaN/Infinity by default but they are NOT
+        valid JSON: Postgres JSONB rejects them at INSERT, so a NaN payload
+        passing this gate 500s the submit instead of falling back to the
+        non-durable path the gate exists to provide."""
+        from agno.os.job_queue import payload_is_queueable
+
+        assert payload_is_queueable({"input": "hi", "kwargs": {"x": float("nan")}}) is False
+        assert payload_is_queueable({"input": "hi", "kwargs": {"x": float("inf")}}) is False
+
+    def test_plain_json_payloads_still_pass(self):
+        from agno.os.job_queue import payload_is_queueable
+
+        assert payload_is_queueable({"input": "hi", "kwargs": {"x": 1.5, "y": [1, "a", None, True]}}) is True
+        assert payload_is_queueable({"input": "hi", "kwargs": {"obj": object()}}) is False
+
+
+class TestTerminalRowClaim:
+    """The cancel crash window: acancel_queued persists the CANCELLED row
+    first, crashes before the ticket tombstone lands, and a worker later
+    claims the still-queued ticket. Executing it ran a cancelled run's side
+    effects and settled the ticket completed over a CANCELLED row - a
+    permanent ticket/row divergence nothing revisits. The RUNNING stamp's
+    TERMINAL_REFUSED outcome already detects the state for free."""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_row_skips_execution_and_settles_ticket(self, monkeypatch):
+        from agno.run.status_persist import RunPersistOutcome
+
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+
+        async def fake_get_run_output(run_id, session_id, user_id=None):
+            return SimpleNamespace(status=RunStatus.cancelled)
+
+        agent.aget_run_output = fake_get_run_output  # type: ignore[attr-defined]
+
+        async def refused_stamp(*args, **kwargs):
+            return RunPersistOutcome.TERMINAL_REFUSED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", refused_stamp)
+
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+
+        assert agent.calls == [], "a cancelled run's side effects must never execute"
+        job = await store.get_job("r1")
+        assert job["status"] == "cancelled", f"the ticket must honor the terminal row, got {job['status']!r}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("outcome_name", ["UPDATED", "UNAVAILABLE", "MISSING"])
+    async def test_non_terminal_stamp_outcomes_still_execute(self, monkeypatch, outcome_name):
+        """Only the guard's exact terminal set (completed/cancelled) skips:
+        ERROR rows and unfenced stores keep executing - the operator requeue
+        re-drive depends on it."""
+        from agno.run.status_persist import RunPersistOutcome
+
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+
+        async def stamping(*args, **kwargs):
+            return getattr(RunPersistOutcome, outcome_name)
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", stamping)
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+
+        assert len(agent.calls) == 1, f"{outcome_name}: execution must proceed"
+        assert (await store.get_job("r1"))["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_row_leaves_claim_stale_instead_of_guessing(self, monkeypatch):
+        """Review catch: with max_attempts > 1, a COMPLETED row whose worker
+        crashed before settling reaches this branch on the reclaim - if the
+        row read then transiently fails, guessing 'cancelled' would settle
+        the ticket and stream as CANCELLED over a COMPLETED row. An
+        unreadable row must leave the claim to go stale for the reconciling
+        sweep, which settles from the truth."""
+        from agno.run.status_persist import RunPersistOutcome
+
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+
+        async def broken_read(run_id, session_id, user_id=None):
+            raise RuntimeError("session store briefly unreachable")
+
+        agent.aget_run_output = broken_read  # type: ignore[attr-defined]
+
+        async def refused_stamp(*args, **kwargs):
+            return RunPersistOutcome.TERMINAL_REFUSED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", refused_stamp)
+
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+
+        assert agent.calls == [], "execution must still be refused - the row IS terminal"
+        job = await store.get_job("r1")
+        assert job["status"] == "running", (
+            f"an unreadable row must leave the claim stale for the sweep, got {job['status']!r} - "
+            "never a manufactured terminal status"
         )
