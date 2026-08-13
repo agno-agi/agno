@@ -660,6 +660,10 @@ class CouchbaseSearch(VectorDb):
             # Also check top-level properties (for simpler mappings)
             if self.USER_ID_FIELD in mapping.get("properties", {}):
                 return True
+            # Also check default_mapping.properties (for indexes using default_mapping mode)
+            default_mapping = mapping.get("default_mapping", {})
+            if self.USER_ID_FIELD in default_mapping.get("properties", {}):
+                return True
             return False
         except SearchIndexNotFoundException:
             # Index doesn't exist yet — can't verify if user's definition has user_id
