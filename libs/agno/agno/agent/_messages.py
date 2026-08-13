@@ -212,49 +212,8 @@ def get_system_message(
     # 3.2.1 Add instructions for using markdown
     if agent.markdown and output_schema is None:
         additional_information.append("Use markdown to format your answers.")
-    # 3.2.2 Add the current datetime
-    if agent.add_datetime_to_context:
-        from datetime import datetime
 
-        tz = None
-
-        if agent.timezone_identifier:
-            try:
-                from zoneinfo import ZoneInfo
-
-                tz = ZoneInfo(agent.timezone_identifier)
-            except Exception as e:
-                log_warning(f"Invalid timezone identifier: {str(e)}")
-
-        time = datetime.now(tz) if tz else datetime.now()
-
-        if agent.datetime_format:
-            formatted_time = time.strftime(agent.datetime_format)
-        else:
-            formatted_time = str(time)
-
-        additional_information.append(f"The current time is {formatted_time}.")
-
-    # 3.2.3 Add the current location
-    if agent.add_location_to_context:
-        from agno.utils.location import get_location
-
-        location = get_location()
-        if location:
-            location_str = ", ".join(
-                filter(
-                    None,
-                    [
-                        location.get("city"),
-                        location.get("region"),
-                        location.get("country"),
-                    ],
-                )
-            )
-            if location_str:
-                additional_information.append(f"Your approximate location is: {location_str}.")
-
-    # 3.2.4 Add agent name if provided
+    # 3.2.2 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
 
@@ -571,49 +530,8 @@ async def aget_system_message(
     # 3.2.1 Add instructions for using markdown
     if agent.markdown and output_schema is None:
         additional_information.append("Use markdown to format your answers.")
-    # 3.2.2 Add the current datetime
-    if agent.add_datetime_to_context:
-        from datetime import datetime
 
-        tz = None
-
-        if agent.timezone_identifier:
-            try:
-                from zoneinfo import ZoneInfo
-
-                tz = ZoneInfo(agent.timezone_identifier)
-            except Exception as e:
-                log_warning(f"Invalid timezone identifier: {str(e)}")
-
-        time = datetime.now(tz) if tz else datetime.now()
-
-        if agent.datetime_format:
-            formatted_time = time.strftime(agent.datetime_format)
-        else:
-            formatted_time = str(time)
-
-        additional_information.append(f"The current time is {formatted_time}.")
-
-    # 3.2.3 Add the current location
-    if agent.add_location_to_context:
-        from agno.utils.location import get_location
-
-        location = get_location()
-        if location:
-            location_str = ", ".join(
-                filter(
-                    None,
-                    [
-                        location.get("city"),
-                        location.get("region"),
-                        location.get("country"),
-                    ],
-                )
-            )
-            if location_str:
-                additional_information.append(f"Your approximate location is: {location_str}.")
-
-    # 3.2.4 Add agent name if provided
+    # 3.2.2 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
 
@@ -1200,6 +1118,62 @@ async def aget_user_message(
 # ---------------------------------------------------------------------------
 
 
+def _get_dynamic_context_message(agent: "Agent") -> Optional[Message]:
+    """Build a message containing per-turn dynamic context (datetime, location).
+
+    Appended near the end of the messages list (after history, before the user
+    message) rather than embedded in the system message, so that:
+    - It works regardless of whether a custom system_message is set.
+    - The system message stays byte-identical across requests, preserving
+      prompt cache hits.
+    """
+    parts: List[str] = []
+
+    if agent.add_datetime_to_context:
+        from datetime import datetime
+
+        tz = None
+        if agent.timezone_identifier:
+            try:
+                from zoneinfo import ZoneInfo
+
+                tz = ZoneInfo(agent.timezone_identifier)
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
+
+        time = datetime.now(tz) if tz else datetime.now()
+
+        if agent.datetime_format:
+            formatted_time = time.strftime(agent.datetime_format)
+        else:
+            formatted_time = str(time)
+
+        parts.append(f"The current time is {formatted_time}.")
+
+    if agent.add_location_to_context:
+        from agno.utils.location import get_location
+
+        location = get_location()
+        if location:
+            location_str = ", ".join(
+                filter(
+                    None,
+                    [
+                        location.get("city"),
+                        location.get("region"),
+                        location.get("country"),
+                    ],
+                )
+            )
+            if location_str:
+                parts.append(f"Your approximate location is: {location_str}.")
+
+    if not parts:
+        return None
+
+    return Message(role="system", content="\n".join(parts))
+
+
 def get_run_messages(
     agent: Agent,
     *,
@@ -1318,6 +1292,13 @@ def get_run_messages(
             log_debug(f"Adding {len(history_copy)} messages from history")
 
             run_messages.messages += history_copy
+
+    # 3.5 Add per-turn dynamic context (datetime, location) as a trailing message.
+    # Placed after history and before the user message so the system message and
+    # history stay byte-identical across requests, preserving prompt cache hits.
+    dynamic_context_message = _get_dynamic_context_message(agent)
+    if dynamic_context_message is not None:
+        run_messages.messages.append(dynamic_context_message)
 
     # 4. Add user message to run_messages
     user_message: Optional[Message] = None
@@ -1524,6 +1505,13 @@ async def aget_run_messages(
             log_debug(f"Adding {len(history_copy)} messages from history")
 
             run_messages.messages += history_copy
+
+    # 3.5 Add per-turn dynamic context (datetime, location) as a trailing message.
+    # Placed after history and before the user message so the system message and
+    # history stay byte-identical across requests, preserving prompt cache hits.
+    dynamic_context_message = _get_dynamic_context_message(agent)
+    if dynamic_context_message is not None:
+        run_messages.messages.append(dynamic_context_message)
 
     # 4. Add user message to run_messages
     user_message: Optional[Message] = None
