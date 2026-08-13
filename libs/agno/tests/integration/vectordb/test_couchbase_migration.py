@@ -22,7 +22,7 @@ couchbase = pytest.importorskip("couchbase")
 
 from couchbase.auth import PasswordAuthenticator  # noqa: E402
 from couchbase.cluster import Cluster  # noqa: E402
-from couchbase.exceptions import BucketNotFoundException  # noqa: E402
+from couchbase.exceptions import BucketDoesNotExistException  # noqa: E402
 from couchbase.management.buckets import BucketSettings, BucketType  # noqa: E402
 from couchbase.management.collections import CollectionSpec  # noqa: E402
 from couchbase.management.search import SearchIndex  # noqa: E402
@@ -103,7 +103,7 @@ def couchbase_cluster() -> Generator[Cluster, None, None]:
     try:
         bucket_mgr.drop_bucket(BUCKET)
         time.sleep(2)
-    except BucketNotFoundException:
+    except BucketDoesNotExistException:
         pass
 
     # Create test bucket
