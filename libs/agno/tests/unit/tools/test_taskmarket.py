@@ -1,5 +1,6 @@
 """Unit tests for TaskMarketTools."""
 
+from datetime import datetime, timezone
 import json
 from subprocess import CompletedProcess
 from unittest.mock import AsyncMock, Mock, patch
@@ -165,6 +166,54 @@ def test_create_task_checks_base_wallet_then_calls_cli_once():
     assert create_args[:3] == ["taskmarket", "task", "create"]
     assert "--confirm" not in create_args
     assert "--reward" in create_args
+
+
+def test_create_task_does_not_recompute_approved_deadline():
+    """Confirmation must use the deadline that the user actually approved."""
+    tools = TaskMarketTools()
+    fixed_now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+    with patch("agno.tools.taskmarket.datetime") as datetime_type:
+        datetime_type.now.return_value = fixed_now
+        preview = json.loads(
+            tools.preview_task(
+                description="Collect and verify a short report",
+                reward_usdc="0.50",
+                duration_hours=24,
+                tags="research,verification",
+                max_spend_usdc="0.55",
+            )
+        )
+
+        def unexpected_now_call(*args, **kwargs):
+            raise AssertionError("confirmation recomputed the approved deadline")
+
+        datetime_type.now.side_effect = unexpected_now_call
+        deposit = CompletedProcess(
+            args=["taskmarket", "deposit"],
+            returncode=0,
+            stdout='{"ok":true,"data":{"network":"Base","chainId":8453,"currency":"USDC"}}',
+            stderr="",
+        )
+        created = CompletedProcess(
+            args=["taskmarket", "task", "create"],
+            returncode=0,
+            stdout='{"ok":true,"data":{"id":"0xcreated"}}',
+            stderr="",
+        )
+        with patch("agno.tools.taskmarket.subprocess.run", side_effect=[deposit, created]):
+            result = tools.create_task(
+                description="Collect and verify a short report",
+                reward_usdc="0.50",
+                duration_hours=24,
+                tags="research,verification",
+                max_spend_usdc="0.55",
+                confirm=True,
+                confirmation_token=preview["preview"]["confirmationToken"],
+            )
+
+    result_data = json.loads(result)
+    assert result_data["preview"]["deadlineUtc"] == preview["preview"]["deadlineUtc"]
 
 
 def test_create_task_does_not_retry_unknown_cli_failure():

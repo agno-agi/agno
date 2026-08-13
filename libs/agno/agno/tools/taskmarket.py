@@ -162,18 +162,17 @@ class TaskMarketTools(Toolkit):
         the payment rail, this method returns ``retry: false`` and an unknown
         settlement state instead of retrying automatically.
         """
-        preview, error = self._build_preview(
-            description=description,
-            reward_usdc=reward_usdc,
-            duration_hours=duration_hours,
-            tags=tags,
-            max_spend_usdc=max_spend_usdc,
-            mode=mode,
-        )
-        if error:
-            return self._json_error(error, notSubmitted=True, retry=False)
-
         if not confirm:
+            preview, error = self._build_preview(
+                description=description,
+                reward_usdc=reward_usdc,
+                duration_hours=duration_hours,
+                tags=tags,
+                max_spend_usdc=max_spend_usdc,
+                mode=mode,
+            )
+            if error:
+                return self._json_error(error, notSubmitted=True, retry=False)
             preview_with_token = self._remember_preview(preview)
             return self._json(
                 {
@@ -191,19 +190,35 @@ class TaskMarketTools(Toolkit):
                 retry=False,
             )
 
-        approved_preview = self._pending_previews.pop(confirmation_token, None)
+        approved_preview = self._pending_previews.get(confirmation_token)
         if approved_preview is None:
             return self._json_error(
                 "confirmation_token is unknown or already used; preview the exact task again",
                 notSubmitted=True,
                 retry=False,
             )
-        if not self._same_preview_request(preview, approved_preview):
+
+        # Validate the confirmed request without rebuilding the deadline. A
+        # fresh ``datetime.now()`` here would make an otherwise exact preview
+        # appear to have changed while the user was approving it.
+        request_preview, error = self._build_preview(
+            description=description,
+            reward_usdc=reward_usdc,
+            duration_hours=duration_hours,
+            tags=tags,
+            max_spend_usdc=max_spend_usdc,
+            mode=mode,
+            include_deadline=False,
+        )
+        if error:
+            return self._json_error(error, notSubmitted=True, retry=False)
+        if not self._same_preview_request(request_preview, approved_preview):
             return self._json_error(
                 "create arguments do not match the approved preview; preview the exact task again",
                 notSubmitted=True,
                 retry=False,
             )
+        self._pending_previews.pop(confirmation_token, None)
         preview = approved_preview
 
         max_spend = Decimal(preview["maxSpendUsdc"])
@@ -381,6 +396,7 @@ class TaskMarketTools(Toolkit):
         tags: Union[str, Sequence[str]],
         max_spend_usdc: str,
         mode: str,
+        include_deadline: bool = True,
     ) -> Tuple[Dict[str, Any], Optional[str]]:
         if not isinstance(description, str) or not description.strip() or len(description) > 10000:
             return {}, "description must be a non-empty string of at most 10000 characters"
@@ -412,14 +428,14 @@ class TaskMarketTools(Toolkit):
             duration_float = float(duration)
             if not math.isfinite(duration_float):
                 return {}, "duration_hours must be a positive finite number within the supported date range"
-            deadline = datetime.now(timezone.utc) + timedelta(hours=duration_float)
+            duration_delta = timedelta(hours=duration_float)
+            deadline = datetime.now(timezone.utc) + duration_delta if include_deadline else None
         except (OverflowError, ValueError):
             return {}, "duration_hours must be a positive finite number within the supported date range"
         preview = {
             "description": description,
             "rewardUsdc": self._format_usdc(reward),
             "durationHours": self._format_duration(duration),
-            "deadlineUtc": deadline.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "tags": normalized_tags,
             "mode": mode,
             "maxSpendUsdc": self._format_usdc(max_spend),
@@ -429,6 +445,8 @@ class TaskMarketTools(Toolkit):
             "relayBufferUsdc": self._format_usdc(RELAY_BUFFER_USDC),
             "network": {"name": "Base", "chainId": BASE_CHAIN_ID, "asset": "USDC"},
         }
+        if deadline is not None:
+            preview["deadlineUtc"] = deadline.replace(microsecond=0).isoformat().replace("+00:00", "Z")
         return preview, None
 
     def _remember_preview(self, preview: Dict[str, Any]) -> Dict[str, Any]:
