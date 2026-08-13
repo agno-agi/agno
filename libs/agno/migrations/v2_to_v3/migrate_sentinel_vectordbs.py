@@ -222,20 +222,51 @@ def migrate_couchbase() -> None:
             log_warning(f"Couchbase: could not fetch FTS index '{search_index_name}': {e}. Skipping FTS update.")
             return
 
-        # Check if user_id is already in the mapping
+        # Check if user_id already exists ANYWHERE in the mapping
         params = existing_index.params or {}
         mapping = params.get("mapping", {})
         types = mapping.get("types", {})
-        type_key = f"{scope_name}.{collection_name}"
-        type_mapping = types.get(type_key, {})
-        properties = type_mapping.get("properties", {})
+        default_mapping = mapping.get("default_mapping", {})
 
-        if field in properties:
-            log_info(f"Couchbase: FTS index '{search_index_name}' already has '{field}' field. No update needed.")
+        def has_field_in_properties(props: dict) -> bool:
+            return field in props
+
+        # Check all type mappings
+        for type_name, type_def in types.items():
+            if has_field_in_properties(type_def.get("properties", {})):
+                log_info(
+                    f"Couchbase: FTS index '{search_index_name}' already has '{field}' in type '{type_name}'. No update needed."
+                )
+                return
+
+        # Check default_mapping
+        if has_field_in_properties(default_mapping.get("properties", {})):
+            log_info(
+                f"Couchbase: FTS index '{search_index_name}' already has '{field}' in default_mapping. No update needed."
+            )
             return
 
-        # Add user_id field with keyword analyzer for exact match
-        log_info(f"Couchbase: adding '{field}' field to FTS index '{search_index_name}'...")
+        # Detect which mapping mode the index uses
+        doc_config = params.get("doc_config", {})
+        mode = doc_config.get("mode", "scope.collection.type_field")
+
+        # Find where to add user_id based on existing mappings
+        target_type_key = None
+        if types:
+            # Use the first existing type mapping (user's actual index structure)
+            target_type_key = next(iter(types.keys()))
+        elif default_mapping.get("enabled"):
+            # Index uses default_mapping mode
+            target_type_key = None  # Will add to default_mapping
+        else:
+            # Fallback to scope.collection convention
+            target_type_key = f"{scope_name}.{collection_name}"
+
+        log_info(
+            f"Couchbase: adding '{field}' field to FTS index '{search_index_name}' "
+            f"(target: {target_type_key or 'default_mapping'}, mode: {mode})..."
+        )
+
         user_id_field_def = {
             "enabled": True,
             "fields": [
@@ -256,14 +287,27 @@ def migrate_couchbase() -> None:
         updated_params = deepcopy(params)
         if "mapping" not in updated_params:
             updated_params["mapping"] = {}
-        if "types" not in updated_params["mapping"]:
-            updated_params["mapping"]["types"] = {}
-        if type_key not in updated_params["mapping"]["types"]:
-            updated_params["mapping"]["types"][type_key] = {"dynamic": False, "enabled": True, "properties": {}}
-        if "properties" not in updated_params["mapping"]["types"][type_key]:
-            updated_params["mapping"]["types"][type_key]["properties"] = {}
 
-        updated_params["mapping"]["types"][type_key]["properties"][field] = user_id_field_def
+        if target_type_key is None:
+            # Add to default_mapping
+            if "default_mapping" not in updated_params["mapping"]:
+                updated_params["mapping"]["default_mapping"] = {"dynamic": True, "enabled": True, "properties": {}}
+            if "properties" not in updated_params["mapping"]["default_mapping"]:
+                updated_params["mapping"]["default_mapping"]["properties"] = {}
+            updated_params["mapping"]["default_mapping"]["properties"][field] = user_id_field_def
+        else:
+            # Add to specific type mapping
+            if "types" not in updated_params["mapping"]:
+                updated_params["mapping"]["types"] = {}
+            if target_type_key not in updated_params["mapping"]["types"]:
+                updated_params["mapping"]["types"][target_type_key] = {
+                    "dynamic": False,
+                    "enabled": True,
+                    "properties": {},
+                }
+            if "properties" not in updated_params["mapping"]["types"][target_type_key]:
+                updated_params["mapping"]["types"][target_type_key]["properties"] = {}
+            updated_params["mapping"]["types"][target_type_key]["properties"][field] = user_id_field_def
 
         updated_index = SearchIndex(
             name=existing_index.name,
