@@ -1740,7 +1740,7 @@ class TestStudioEmbedding:
         out = _loads(studio.delete_agent("Radar Scout"))
         assert "error" in out
         assert "radar-scout" in out["error"]
-        assert _loads(studio.delete_agent("radar-scout"))["status"] == "deleted"
+        assert _loads(studio.delete_agent("radar-scout"))["status"] == "archived"
 
     def test_edit_reaches_db_component_shadowed_by_code_defined_name(self, registry, db):
         # A code-defined component NAMED like a DB component's id must not make
@@ -3056,7 +3056,8 @@ def test_dispatch_never_mixes_config_and_links_from_different_versions(tmp_path)
 
     db = SqliteDb(db_file=str(tmp_path / "race.db"))
     member = Agent(id="rv-m", name="M", description="v1")
-    Team(id="rv-t", name="T", members=[member]).save(db=db)
+    persisted_team = Team(id="rv-t", name="T", members=[member])
+    persisted_team.save(db=db)
 
     runner = StudioRunnerTools(registry=Registry(), db=db)
     real_get_config = db.get_config
@@ -3068,7 +3069,7 @@ def test_dispatch_never_mixes_config_and_links_from_different_versions(tmp_path)
             state["raced"] = True
             member.description = "v2"
             member.save(db=db)
-            Team(id="rv-t", name="T", members=[member]).save(db=db)
+            persisted_team.save(db=db)
         return row
 
     db.get_config = racy_get_config
