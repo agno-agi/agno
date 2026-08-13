@@ -134,6 +134,9 @@ class CouchbaseSearch(VectorDb):
         self._async_scope: Optional[AsyncScope] = None
         self._async_collection: Optional[AsyncCollection] = None
 
+        # Whether the FTS index has the user_id field; resolved lazily and cached
+        self._owner_field_exists: Optional[bool] = None
+
     @property
     def cluster(self) -> Cluster:
         """Create or retrieve the Couchbase cluster connection."""
@@ -322,6 +325,7 @@ class CouchbaseSearch(VectorDb):
             user_id: Owner of the chunks for per-user isolation. None means shared.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         log_debug(f"Inserting {len(documents)} documents")
 
         docs_to_insert: Dict[str, Any] = {}
@@ -429,6 +433,7 @@ class CouchbaseSearch(VectorDb):
             user_id: Owner of the chunks for per-user isolation. None means shared.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         logger.info(f"Upserting {len(documents)} documents")
 
         # Scope the dedupe-delete so re-upserting doesn't wipe another owner's chunks
@@ -509,6 +514,7 @@ class CouchbaseSearch(VectorDb):
         user_id scopes results to that user's chunks plus shared chunks; None applies no scope.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
             filters = None
@@ -633,6 +639,71 @@ class CouchbaseSearch(VectorDb):
                 "shared with every user"
             )
 
+    def _fts_has_user_id_field(self) -> Optional[bool]:
+        """Check if the FTS index mapping includes the user_id field.
+
+        Returns None when the index cannot be inspected (not found, connection issue).
+        """
+        try:
+            if self.is_global_level_index:
+                mgr = self.cluster.search_indexes()
+            else:
+                mgr = self.scope.search_indexes()
+            index_def = mgr.get_index(self.search_index_name)
+            # Navigate the FTS mapping to find user_id
+            mapping = index_def.params.get("mapping", {})
+            types = mapping.get("types", {})
+            for type_mapping in types.values():
+                props = type_mapping.get("properties", {})
+                if self.USER_ID_FIELD in props:
+                    return True
+            # Also check top-level properties (for simpler mappings)
+            if self.USER_ID_FIELD in mapping.get("properties", {}):
+                return True
+            # Also check default_mapping.properties (for indexes using default_mapping mode)
+            default_mapping = mapping.get("default_mapping", {})
+            if self.USER_ID_FIELD in default_mapping.get("properties", {}):
+                return True
+            return False
+        except SearchIndexNotFoundException:
+            # Index doesn't exist yet — can't verify if user's definition has user_id
+            return None
+        except Exception:
+            return None
+
+    def _user_id_field_exists(self) -> bool:
+        """Cached check for whether the FTS index has the user_id field."""
+        if self._owner_field_exists is None:
+            answer = self._fts_has_user_id_field()
+            if answer is None:
+                log_warning(
+                    f"Could not inspect Couchbase FTS index '{self.search_index_name}' for the "
+                    f"'{self.USER_ID_FIELD}' field; proceeding as migrated for this operation."
+                )
+                return True
+            self._owner_field_exists = answer
+        return self._owner_field_exists
+
+    def _require_owner_field(self, user_id: Optional[str]) -> bool:
+        """Gate scoped operations on whether the FTS index supports user_id filtering.
+
+        Returns True when the field is indexed, False when missing and unscoped.
+        Raises on a scoped call against an unmigrated index.
+        """
+        if self._user_id_field_exists():
+            return True
+        if user_id is None:
+            return False
+        # Re-inspect once in case the index was updated
+        self._owner_field_exists = None
+        if self._user_id_field_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but Couchbase FTS index '{self.search_index_name}' "
+            f"does not have the '{self.USER_ID_FIELD}' field mapped. Run the v2 -> v3 migration "
+            "(libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py) to update the index."
+        )
+
     def prepare_doc(self, content_hash: str, document: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Prepare a document for insertion into Couchbase.
@@ -722,6 +793,7 @@ class CouchbaseSearch(VectorDb):
         The owner is bound exactly, so None checks the shared bucket alone rather than every owner.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             # Use N1QL query to check if document with given content_hash exists
             named_parameters: Dict[str, Any] = {
@@ -963,6 +1035,7 @@ class CouchbaseSearch(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         logger.info(f"[async] Inserting {len(documents)} documents")
 
         async_collection_instance = await self.get_async_collection()
@@ -1063,6 +1136,7 @@ class CouchbaseSearch(VectorDb):
     ) -> None:
         """Upsert documents asynchronously."""
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         # Scope the dedupe-delete so re-upserting doesn't wipe another owner's chunks
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -1176,6 +1250,7 @@ class CouchbaseSearch(VectorDb):
     ) -> List[Document]:
         """Search asynchronously, scoped to that user's chunks plus shared chunks; None applies no scope."""
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
             filters = None
@@ -1439,6 +1514,7 @@ class CouchbaseSearch(VectorDb):
             bool: True if documents were deleted, False otherwise
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             log_debug(f"Couchbase VectorDB : Deleting documents with content_id {content_id}")
 

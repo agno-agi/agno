@@ -200,6 +200,9 @@ class ValkeyDB(VectorDb):
         self._glide_client: Optional[GlideClient] = glide_client
         self._client_initialized: bool = glide_client is not None
 
+        # Whether the live index schema has the owner field; resolved lazily and cached
+        self._owner_field_exists: Optional[bool] = None
+
         log_debug(f"Initialized ValkeyDB with index '{self.index_name}'")
 
     def _get_client(self) -> GlideClient:
@@ -413,6 +416,45 @@ class ValkeyDB(VectorDb):
                     break
         return names
 
+    def _user_id_field_exists(self) -> bool:
+        """Cached check for whether the live index schema contains the owner tag field.
+
+        An inconclusive inspection (connection failure, etc.) assumes "migrated" for
+        this call alone and does not cache.
+        """
+        if self._owner_field_exists is None:
+            try:
+                answer = self.USER_ID_FIELD in self._indexed_field_names()
+                self._owner_field_exists = answer
+            except Exception:
+                log_warning(
+                    f"Could not inspect Valkey index '{self.index_name}' for the "
+                    f"'{self.USER_ID_FIELD}' field; proceeding as migrated for this operation."
+                )
+                return True
+        return self._owner_field_exists
+
+    def _require_owner_field(self, user_id: Optional[str]) -> bool:
+        """Gate every owner-tag reference on the live index schema.
+
+        Returns True when the field is indexed, False when it is missing and the
+        operation is unscoped. A scoped operation on a pre-v3 index raises rather
+        than matching nothing.
+        """
+        if self._user_id_field_exists():
+            return True
+        if user_id is None:
+            return False
+        # The cached answer may predate an index rebuild — re-inspect once before refusing
+        self._owner_field_exists = None
+        if self._user_id_field_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but Valkey index '{self.index_name}' predates per-user "
+            f"isolation and has no '{self.USER_ID_FIELD}' field. Recreate the index "
+            "and run the v2 -> v3 migration (libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py)."
+        )
+
     def create(self) -> None:
         """Create the Valkey index if it does not exist."""
         try:
@@ -424,6 +466,7 @@ class ValkeyDB(VectorDb):
                     prefixes=[self.prefix],
                 )
                 glide_ft.create(client, self.index_name, schema, options)
+                self._owner_field_exists = None  # Reset cache after index creation
                 log_debug(f"Created Valkey index: {self.index_name}")
             else:
                 log_debug(f"Valkey index already exists: {self.index_name}")
@@ -484,6 +527,7 @@ class ValkeyDB(VectorDb):
         """
         # Outside the try: an invalid user_id must raise, not be swallowed into False.
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             client = self._get_client()
             query = self._dedupe_query(content_hash, user_id)
@@ -506,6 +550,7 @@ class ValkeyDB(VectorDb):
     ) -> None:
         """Insert documents into the Valkey index."""
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             client = self._get_client()
             for doc in documents:
@@ -557,6 +602,7 @@ class ValkeyDB(VectorDb):
         caller's bucket), then insert new docs.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             # Find and delete existing docs for this content_hash in the caller's bucket
             self._delete_by_query(self._dedupe_query(content_hash, user_id))
@@ -666,6 +712,7 @@ class ValkeyDB(VectorDb):
             raise ValueError("Hybrid search is currently unsupported for Valkey")
         # Outside the try: an invalid user_id must raise, not be swallowed into [].
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             if filters and isinstance(filters, List):
                 filters = self._filter_exprs_to_dict(cast(List[FilterExpr], filters))
@@ -705,6 +752,7 @@ class ValkeyDB(VectorDb):
             user_id (Optional[str]): Scope results to this owner plus shared chunks.
                 None applies no scope (admin view).
         """
+        self._require_owner_field(user_id)
         try:
             client = self._get_client()
             query_embedding = self.embedder.get_embedding(query)
@@ -758,6 +806,7 @@ class ValkeyDB(VectorDb):
             FT.SEARCH, so query punctuation cannot alter the filter or user-scope
             clauses. A query with no alphanumeric terms matches every chunk in scope.
         """
+        self._require_owner_field(user_id)
         try:
             client = self._get_client()
             escaped_query = _escape_query_text(query)
@@ -798,6 +847,8 @@ class ValkeyDB(VectorDb):
             # Also delete all keys with the prefix
             self._delete_all_keys()
             log_debug(f"Deleted Valkey index: {self.index_name}")
+            # Next index under this name may differ — re-resolve lazily
+            self._owner_field_exists = None
             return True
         except Exception as e:
             if "not found" in str(e).lower():
@@ -813,6 +864,7 @@ class ValkeyDB(VectorDb):
         result = await asyncio.to_thread(self.drop)
         if not result:
             raise RuntimeError(f"Failed to drop Valkey index: {self.index_name}")
+        # sync drop() already cleared the cache
 
     def exists(self) -> bool:
         """Check if the Valkey index exists."""
@@ -893,6 +945,7 @@ class ValkeyDB(VectorDb):
         the shared bucket). None -> the admin view, deleting across every owner.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             if user_id is None:
                 return self._delete_by_tag_filter("content_id", content_id)

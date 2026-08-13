@@ -37,7 +37,7 @@ Two things decide whether a backend needs work:
 | **surrealdb** | `SCHEMAFUL` field | `NONE` | visible; new owner-writes silently dropped until field exists | schema — `DEFINE FIELD IF NOT EXISTS` |
 | **redis** | hash TAG field | `"__shared__"` | **invisible** until backfilled | data backfill |
 | **valkey** | hash TAG field | `"__shared__"` | **invisible** until backfilled | data backfill |
-| **couchbase** | document field | `"__shared__"` | **invisible** until backfilled | data backfill (N1QL UPDATE) |
+| **couchbase** | document field + FTS index | `"__shared__"` | **invisible** until backfilled + FTS updated | data backfill (N1QL UPDATE) + FTS index update (see note) |
 | **cassandra** | `metadata_s` map | `"__shared__"` | **invisible** until backfilled | data backfill (CQL map update) |
 | **qdrant** | payload field (schemaless) | absent | visible | none (optional owner assignment) |
 | **upstash** | metadata key (schemaless) | absent | visible | none |
@@ -71,6 +71,13 @@ Two things decide whether a backend needs work:
 
 > **opensearch note:** mappings are dynamic — a scoped read uses `must_not exists` on `user_id`,
 > which matches existing (field-absent) documents, and new owner-writes auto-create the mapping.
+
+> **Couchbase note (FTS index update required):** Couchbase uses a separate FTS (Full-Text Search)
+> index for vector search. Stamping `user_id` on documents via N1QL is not enough — the FTS index
+> must also be updated to include `user_id` as a keyword-indexed field, otherwise `TermQuery` on
+> `user_id` returns 0 results. The migration script updates the FTS index automatically if you
+> provide `search_index_name` in the config. If omitted, you must manually add the `user_id` field
+> to your FTS index mapping with `analyzer: "keyword"` and wait for reindexing.
 
 > **lightrag / llamaindex / langchaindb:** these wrap an external index and store no per-vector
 > `user_id` in Agno, so there is nothing to backfill and scoped calls fail closed. Isolation for

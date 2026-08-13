@@ -37,6 +37,8 @@ valkey_config: Dict[str, Any] = {
 # ------------------------------------------
 
 # ------------ Setup for Couchbase ------------
+# The FTS index MUST be updated to include user_id for scoped search to work.
+# Provide the search_index_name so the migration can add user_id to its mapping.
 couchbase_config: Dict[str, Any] = {
     # "connection_string": "couchbase://localhost",
     # "username": "Administrator",
@@ -44,7 +46,7 @@ couchbase_config: Dict[str, Any] = {
     # "bucket_name": "my_bucket",
     # "scope_name": "my_scope",
     # "collection_name": "my_collection",
-    # "search_index_name": "my_fts_index",
+    # "search_index_name": "my_fts_index",  # Required: FTS index to update
 }
 # -----------------------------------------
 
@@ -147,12 +149,23 @@ def migrate_valkey_index(index_name: str) -> None:
 
 
 def migrate_couchbase() -> None:
-    """Stamp the shared sentinel onto every Couchbase document lacking a ``user_id``."""
+    """Stamp the shared sentinel onto Couchbase documents and update the FTS index.
+
+    Two steps are required for Couchbase migration:
+    1. N1QL UPDATE to stamp user_id='__shared__' on existing documents
+    2. FTS index update to add user_id field so TermQuery can filter on it
+
+    Without step 2, scoped search returns 0 results because FTS cannot query
+    a field that is not in its index mapping.
+    """
     try:
+        from copy import deepcopy
         from datetime import timedelta
+        from time import sleep
 
         from couchbase.auth import PasswordAuthenticator
         from couchbase.cluster import Cluster
+        from couchbase.management.search import SearchIndex
         from couchbase.options import ClusterOptions
 
         from agno.vectordb.couchbase.couchbase import CouchbaseSearch
@@ -164,26 +177,24 @@ def migrate_couchbase() -> None:
 
         field = CouchbaseSearch.USER_ID_FIELD
         sentinel = CouchbaseSearch.SHARED_USER_ID
+        bucket_name = couchbase_config["bucket_name"]
+        scope_name = couchbase_config["scope_name"]
+        collection_name = couchbase_config["collection_name"]
+        search_index_name = couchbase_config.get("search_index_name")
 
-        log_info(
-            f"Starting shared-sentinel backfill for Couchbase "
-            f"{couchbase_config['bucket_name']}.{couchbase_config['scope_name']}.{couchbase_config['collection_name']}"
-        )
+        log_info(f"Starting Couchbase migration for {bucket_name}.{scope_name}.{collection_name}")
 
         auth = PasswordAuthenticator(couchbase_config["username"], couchbase_config["password"])
         cluster = Cluster(couchbase_config["connection_string"], ClusterOptions(auth))
         cluster.wait_until_ready(timedelta(seconds=10))
 
-        keyspace = (
-            f"`{couchbase_config['bucket_name']}`.`{couchbase_config['scope_name']}`."
-            f"`{couchbase_config['collection_name']}`"
-        )
-        # N1QL UPDATE only rows that don't yet have the owner field -> idempotent.
+        # 1. N1QL UPDATE only rows that don't yet have the owner field -> idempotent
+        keyspace = f"`{bucket_name}`.`{scope_name}`.`{collection_name}`"
         from couchbase.options import QueryOptions
 
         query = f"UPDATE {keyspace} SET {field} = $sentinel WHERE {field} IS MISSING OR {field} IS NULL"
         result = cluster.query(query, QueryOptions(named_parameters={"sentinel": sentinel}, metrics=True))
-        # Drain the result so the mutation executes.
+        # Drain the result so the mutation executes
         for _ in result.rows():
             pass
         try:
@@ -192,8 +203,132 @@ def migrate_couchbase() -> None:
             mutated = "?"
         log_info(f"Couchbase: backfilled {mutated} documents with {field}='{sentinel}'.")
 
+        # 2. Update FTS index to include user_id field
+        if not search_index_name:
+            log_warning(
+                "Couchbase: search_index_name not provided. Documents are stamped but FTS index "
+                "was NOT updated. Scoped search will return 0 results until you manually add "
+                f"the '{field}' field to your FTS index mapping with analyzer='keyword'."
+            )
+            return
+
+        bucket = cluster.bucket(bucket_name)
+        scope = bucket.scope(scope_name)
+        search_mgr = scope.search_indexes()
+
+        try:
+            existing_index = search_mgr.get_index(search_index_name)
+        except Exception as e:
+            log_warning(f"Couchbase: could not fetch FTS index '{search_index_name}': {e}. Skipping FTS update.")
+            return
+
+        # Check if user_id already exists ANYWHERE in the mapping
+        params = existing_index.params or {}
+        mapping = params.get("mapping", {})
+        types = mapping.get("types", {})
+        default_mapping = mapping.get("default_mapping", {})
+
+        def has_field_in_properties(props: dict) -> bool:
+            return field in props
+
+        # Check all type mappings
+        for type_name, type_def in types.items():
+            if has_field_in_properties(type_def.get("properties", {})):
+                log_info(
+                    f"Couchbase: FTS index '{search_index_name}' already has '{field}' in type '{type_name}'. No update needed."
+                )
+                return
+
+        # Check default_mapping
+        if has_field_in_properties(default_mapping.get("properties", {})):
+            log_info(
+                f"Couchbase: FTS index '{search_index_name}' already has '{field}' in default_mapping. No update needed."
+            )
+            return
+
+        # Detect which mapping mode the index uses
+        doc_config = params.get("doc_config", {})
+        mode = doc_config.get("mode", "scope.collection.type_field")
+
+        # Find where to add user_id based on existing mappings
+        target_type_key = None
+        if types:
+            # Use the first existing type mapping (user's actual index structure)
+            target_type_key = next(iter(types.keys()))
+        elif default_mapping.get("enabled"):
+            # Index uses default_mapping mode
+            target_type_key = None  # Will add to default_mapping
+        else:
+            # Fallback to scope.collection convention
+            target_type_key = f"{scope_name}.{collection_name}"
+
+        log_info(
+            f"Couchbase: adding '{field}' field to FTS index '{search_index_name}' "
+            f"(target: {target_type_key or 'default_mapping'}, mode: {mode})..."
+        )
+
+        user_id_field_def = {
+            "enabled": True,
+            "fields": [
+                {
+                    "docvalues": True,
+                    "include_in_all": False,
+                    "include_term_vectors": False,
+                    "index": True,
+                    "name": field,
+                    "store": True,
+                    "analyzer": "keyword",
+                    "type": "text",
+                }
+            ],
+        }
+
+        # Build updated index definition
+        updated_params = deepcopy(params)
+        if "mapping" not in updated_params:
+            updated_params["mapping"] = {}
+
+        if target_type_key is None:
+            # Add to default_mapping
+            if "default_mapping" not in updated_params["mapping"]:
+                updated_params["mapping"]["default_mapping"] = {"dynamic": True, "enabled": True, "properties": {}}
+            if "properties" not in updated_params["mapping"]["default_mapping"]:
+                updated_params["mapping"]["default_mapping"]["properties"] = {}
+            updated_params["mapping"]["default_mapping"]["properties"][field] = user_id_field_def
+        else:
+            # Add to specific type mapping
+            if "types" not in updated_params["mapping"]:
+                updated_params["mapping"]["types"] = {}
+            if target_type_key not in updated_params["mapping"]["types"]:
+                updated_params["mapping"]["types"][target_type_key] = {
+                    "dynamic": False,
+                    "enabled": True,
+                    "properties": {},
+                }
+            if "properties" not in updated_params["mapping"]["types"][target_type_key]:
+                updated_params["mapping"]["types"][target_type_key]["properties"] = {}
+            updated_params["mapping"]["types"][target_type_key]["properties"][field] = user_id_field_def
+
+        updated_index = SearchIndex(
+            name=existing_index.name,
+            source_type=existing_index.source_type,
+            idx_type=existing_index.idx_type,
+            source_name=existing_index.source_name,
+            uuid=existing_index.uuid,
+            plan_params=existing_index.plan_params,
+            params=updated_params,
+        )
+
+        search_mgr.upsert_index(updated_index)
+        log_info(f"Couchbase: FTS index '{search_index_name}' updated with '{field}' field.")
+
+        # Wait for index to reprocess documents
+        log_info("Couchbase: waiting for FTS index to reindex documents (this may take a moment)...")
+        sleep(5)
+        log_info("Couchbase: migration complete. FTS scoped search should now work.")
+
     except Exception as e:
-        log_error(f"Error backfilling Couchbase: {e}")
+        log_error(f"Error migrating Couchbase: {e}")
         raise
 
 

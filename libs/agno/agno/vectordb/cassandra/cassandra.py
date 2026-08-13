@@ -51,6 +51,9 @@ class Cassandra(VectorDb):
             raise ValueError("Embedder.dimensions must be set.")
         self.initialize_table()
 
+        # Whether the table has migrated rows with user_id; resolved lazily and cached
+        self._owner_field_exists: Optional[bool] = None
+
     def initialize_table(self):
         self.table = AgnoMetadataVectorCassandraTable(
             session=self.session,
@@ -106,6 +109,70 @@ class Cassandra(VectorDb):
                 "shared with every user"
             )
 
+    def _table_has_user_id_field(self) -> Optional[bool]:
+        """Check if the table has ANY rows with user_id in metadata_s.
+
+        Follows the Redis pattern: check if the store supports the field at all,
+        not whether every row has it. If at least one row has user_id, the table
+        is considered migrated (v3-compatible).
+
+        Empty tables return True - no v2 data to protect against.
+
+        Returns True if any row has user_id or table is empty, False if rows exist
+        without user_id, None on error.
+        """
+        try:
+            # 1. Check if table has any rows at all (LIMIT 1 for efficiency)
+            any_row_query = f"SELECT row_id FROM {self.keyspace}.{self.table_name} LIMIT 1"
+            any_row_result = self.session.execute(any_row_query)
+            if not list(any_row_result):
+                # Empty table - no v2 data to worry about
+                return True
+
+            # 2. Check if ANY row has user_id key
+            query = (
+                f"SELECT row_id FROM {self.keyspace}.{self.table_name} "
+                f"WHERE metadata_s CONTAINS KEY '{USER_ID_METADATA_KEY}' LIMIT 1 ALLOW FILTERING"
+            )
+            result = self.session.execute(query)
+            rows = list(result)
+            return len(rows) > 0
+        except Exception:
+            return None
+
+    def _user_id_field_exists(self) -> bool:
+        """Cached check for whether the table has any rows with user_id."""
+        if self._owner_field_exists is None:
+            answer = self._table_has_user_id_field()
+            if answer is None:
+                log_warning(
+                    f"Could not inspect Cassandra table '{self.table_name}' for the "
+                    f"'{USER_ID_METADATA_KEY}' field; proceeding as migrated for this operation."
+                )
+                return True
+            self._owner_field_exists = answer
+        return self._owner_field_exists
+
+    def _require_owner_field(self, user_id: Optional[str]) -> bool:
+        """Gate scoped operations on whether the table has migrated rows.
+
+        Returns True when the field exists, False when missing and unscoped.
+        Raises on a scoped call against an unmigrated table.
+        """
+        if self._user_id_field_exists():
+            return True
+        if user_id is None:
+            return False
+        # Re-inspect once in case the table was migrated
+        self._owner_field_exists = None
+        if self._user_id_field_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but Cassandra table '{self.table_name}' has rows "
+            f"without the '{USER_ID_METADATA_KEY}' metadata key. Run the v2 -> v3 migration "
+            "(libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py) to backfill user_id."
+        )
+
     def _scoped_row_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic row id so two users inserting the same content
         get distinct rows. ``base_id`` is digested first so a shifting ``_`` boundary can't collide.
@@ -120,6 +187,7 @@ class Cassandra(VectorDb):
         shared bucket only, never another user's owned row.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         owner = user_id if user_id is not None else SHARED_USER_ID_VALUE
         query = (
             f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
@@ -136,6 +204,7 @@ class Cassandra(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
         futures = []
         for doc in documents:
@@ -170,6 +239,7 @@ class Cassandra(VectorDb):
     ) -> None:
         """Insert documents asynchronously by running in a thread."""
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -275,6 +345,7 @@ class Cassandra(VectorDb):
     ) -> List[Document]:
         """Keyword-based search on document metadata."""
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         log_debug(f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}")
         if filters is not None:
             log_warning("Filters are not yet supported in Cassandra. No filters will be applied.")
@@ -305,6 +376,7 @@ class Cassandra(VectorDb):
     ) -> List[Document]:
         """Vector similarity search implementation."""
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         query_embedding = self.embedder.get_embedding(query)
 
         if user_id is None:
@@ -467,6 +539,7 @@ class Cassandra(VectorDb):
             bool: True if documents were deleted, False otherwise
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             log_debug(f"Cassandra VectorDB : Deleting documents with content_id {content_id}")
             # Query to find documents with matching content_id in metadata
@@ -503,6 +576,7 @@ class Cassandra(VectorDb):
             bool: True if documents were deleted, False otherwise
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         owner = user_id if user_id is not None else SHARED_USER_ID_VALUE
         try:
             log_debug(f"Cassandra VectorDB : Deleting documents with content_hash {content_hash}")
