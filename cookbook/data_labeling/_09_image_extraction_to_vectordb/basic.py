@@ -21,7 +21,7 @@ from agno.knowledge.embedder.google import GeminiEmbedder
 from agno.media import Image
 from agno.vectordb.lancedb import LanceDb, SearchType
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

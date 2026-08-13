@@ -140,31 +140,32 @@ jobs:
     if: github.event_name != 'push' || !github.event.pull_request
     strategy:
       matrix:
-        python-version: ["3.12"]
-      fail-fast: true # Stop all matrix jobs if one fails
+        group: [1, 2, 3, 4, 5]
+      fail-fast: true
+
+    name: tests (${{ matrix.group }}/5)
 
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        run: |
-          set -e
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          python-version: "3.12"
+      - name: Set up uv with cache
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "libs/agno/pyproject.toml"
       - name: Run test setup
         working-directory: .
         run: |
           set -e
           ./scripts/test_setup.sh
-      - name: Run tests for Agno
+      - name: Run tests (group ${{ matrix.group }}/5)
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          uv pip install pytest-cov
-          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
-          echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+          uv pip install pytest-split --quiet
+          python -m pytest --splits 5 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from agno.db.base import BaseDb
 from agno.models.base import Model
-from agno.tools.function import Function
+from agno.tools.function import RUNTIME_ONLY_FIELDS, Function, isolated_runtime_value
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_warning
 from agno.vectordb.base import VectorDb
@@ -17,6 +17,11 @@ from agno.vectordb.base import VectorDb
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.team import Team
+
+# A flat function name, or a (toolkit name, function name) qualified pair.
+EntrypointKey = Union[str, Tuple[str, str]]
+# The Function that owns the entrypoint, or the registered plain callable itself.
+EntrypointSource = Union[Function, Callable]
 
 
 def _model_identity(model: Model) -> tuple:
@@ -47,6 +52,15 @@ class Registry:
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
     knowledge: List[Any] = field(default_factory=list)
+    # Names claimed by two distinct knowledge instances: lenient resolution
+    # keeps the first, strict resolution refuses the ambiguity.
+    _ambiguous_knowledge_names: Set[str] = field(default_factory=set, init=False, repr=False)
+    # Knowledge a framework sync mirrored in for name resolution, as opposed to
+    # the user registering it. Kept on the registry, not on the AgentOS that
+    # mirrored, because a registry can be shared: any AgentOS asking must see
+    # every mirror, or one OS's component-private knowledge would look
+    # user-registered to another.
+    _mirrored_knowledge: List[Any] = field(default_factory=list, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
@@ -54,19 +68,27 @@ class Registry:
     teams: List[Team] = field(default_factory=list)
 
     @cached_property
-    def _entrypoint_lookup(self) -> Dict[str, Any]:
+    def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
         # Maps function name -> source: the Function that owns the entrypoint
         # (for Toolkit and Function tools) or the plain callable itself.
-        lookup: Dict[str, Any] = {}
+        # Toolkit functions are additionally indexed under a toolkit-qualified
+        # tuple key (<toolkit name>, <function name>) so serialized dicts that
+        # carry their owning toolkit's name (the "toolkit" key written at
+        # serialization) resolve to the right toolkit even when two registry
+        # toolkits share member names. A tuple never equals a string, so
+        # qualified keys cannot collide with flat names -- including function
+        # names that contain characters like dots.
+        lookup: Dict[EntrypointKey, EntrypointSource] = {}
 
-        def _entrypoint(source: Any) -> Optional[Callable]:
+        def _entrypoint(source: EntrypointSource) -> Optional[Callable]:
             return source.entrypoint if isinstance(source, Function) else source
 
-        def register(name: str, source: Any) -> None:
-            # This lookup is keyed by name only, so two genuinely different tools
-            # that share a name collapse to one slot (last wins). We can't resolve
-            # that from a serialized function name alone, but we can surface it so
-            # the user can give the tools distinct names.
+        def register(name: str, source: EntrypointSource) -> None:
+            # The flat slot is keyed by name only, so two genuinely different
+            # tools that share a name collapse to one slot (last wins). Dicts
+            # qualified with their toolkit's name still resolve correctly, but
+            # unqualified ones (legacy configs, plain callables) can't, so we
+            # surface the collision for the user to disambiguate.
             existing = lookup.get(name)
             if existing is not None and existing is not source and _entrypoint(existing) is not _entrypoint(source):
                 log_warning(
@@ -76,34 +98,237 @@ class Registry:
                 )
             lookup[name] = source
 
-        for tool in self.tools:
-            if isinstance(tool, Toolkit):
-                for func in tool.functions.values():
-                    if func.entrypoint is not None:
-                        register(func.name, func)
-            elif isinstance(tool, Function):
-                if tool.entrypoint is not None:
-                    register(tool.name, tool)
-            elif callable(tool):
-                register(tool.__name__, tool)
+        for toolkit, name, source in self._iter_entrypoint_sources():
+            register(name, source)
+            if toolkit is not None and isinstance(toolkit.name, str) and toolkit.name:
+                # A qualified slot collides only when two same-named toolkits
+                # share a member name, and that collision has already warned on
+                # the flat slot above -- so this write stays silent (last wins).
+                lookup[(toolkit.name, name)] = source
         return lookup
 
+    def _iter_entrypoint_sources(self) -> Iterator[Tuple[Optional[Toolkit], str, EntrypointSource]]:
+        """Every (owning toolkit, name, source) registration, in order.
+
+        The single source of truth for what claims an entrypoint slot:
+        ``_entrypoint_lookup`` folds these into its dicts and ``_owner_index``
+        replays them per batch, so the two can never disagree on a winner.
+        """
+        for tool in self.tools:
+            if isinstance(tool, Toolkit):
+                # get_functions() is the exposed subset -- the only functions
+                # that are serialized or run, so only those claim a slot.
+                for func in tool.get_functions().values():
+                    if func.entrypoint is not None:
+                        yield tool, func.name, func
+            elif isinstance(tool, Function):
+                if tool.entrypoint is not None:
+                    yield None, tool.name, tool
+            elif callable(tool):
+                yield None, tool.__name__, tool
+
+    def _owner_index(
+        self,
+    ) -> Tuple[Dict[EntrypointKey, Tuple[Optional[Toolkit], EntrypointSource]], Dict[int, Toolkit]]:
+        """Slot owners and toolkit provenance, replayed from the registrations.
+
+        The first map holds the (toolkit, source) a fresh lookup build would
+        leave in every slot. Comparing a cached entry against its slot's owner
+        detects every way the cache can go stale: a toolkit that rebuilt its
+        functions dict (MCP toolkits replace every Function on connect), a
+        member deleted after the cache was built, or a slot whose
+        last-write-wins winner changed. A miss-only check catches none of
+        those, because the stale entry still *hits*.
+
+        The second map answers a different question: which live Toolkit holds
+        this exact Function object. Slot ownership cannot answer it -- a
+        toolkit member also registered directly owns its flat slot as a direct
+        registration, yet the toolkit still holds the object, and its guidance
+        still belongs to a component that loaded the member. Freshness is the
+        slot's; provenance is the object's.
+
+        Built once per rehydration batch, so a component load pays one walk of
+        the registrations rather than one per tool dict.
+        """
+        index: Dict[EntrypointKey, Tuple[Optional[Toolkit], EntrypointSource]] = {}
+        by_identity: Dict[int, Toolkit] = {}
+        for toolkit, name, source in self._iter_entrypoint_sources():
+            index[name] = (toolkit, source)
+            if toolkit is not None:
+                by_identity[id(source)] = toolkit
+                if isinstance(toolkit.name, str) and toolkit.name:
+                    index[(toolkit.name, name)] = (toolkit, source)
+        return index, by_identity
+
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
-        """Reconstruct a Function from dict, reattaching its entrypoint."""
+        """Reconstruct a Function from dict, reattaching its entrypoint.
+
+        Dicts that carry their owning toolkit's name (the "toolkit" key written
+        at serialization) resolve via the toolkit-qualified key first, so
+        same-named functions from different toolkits bind to the right
+        entrypoint. The flat function name stays as the fallback for configs
+        saved before qualification and for functions whose toolkit is no longer
+        in the registry.
+        """
+        return self._rehydrate_function(func_dict, {"rebuilt": False})
+
+    @staticmethod
+    def _is_function_config(func_dict: Dict[str, Any]) -> bool:
+        """Whether ``Function.to_dict()`` could have written this dict.
+
+        Positive identification: ``name`` and ``parameters`` are always
+        written (``parameters`` has a non-None default, and ``to_dict`` only
+        drops None values), and no ``SERIALIZED_FIELDS`` key is ``type`` or
+        ``input_schema``. Provider-native tool dicts miss on one of these --
+        OpenAI-style builtins carry a top-level ``type``, Anthropic-style
+        custom tools carry ``input_schema`` and no ``parameters``. Anything
+        else in a tools list is the provider's to interpret, not ours to
+        parse.
+        """
+        return (
+            "name" in func_dict
+            and "parameters" in func_dict
+            and "type" not in func_dict
+            and "input_schema" not in func_dict
+        )
+
+    def rehydrate_functions(
+        self, func_dicts: List[Dict[str, Any]], strict: bool = False
+    ) -> List[Union[Function, Dict[str, Any]]]:
+        """Rehydrate a batch of persisted tool dicts, sharing one cache-rebuild budget.
+
+        With strict=True a toolkit-qualified reference resolves only from its
+        own toolkit; the flat-name fallback that may bind a same-named function
+        from a different toolkit is reserved for lenient loads.
+
+        A component load rehydrates every tool in its config; one rebuild of the
+        entrypoint lookup per batch is enough to pick up late-registered
+        functions, so repeated misses within a load don't each pay a rebuild.
+
+        A tools list can also carry provider-run tools persisted as plain
+        dicts. Those run inside the model provider, not the framework: there
+        is no entrypoint to reattach, so anything that is not positively a
+        serialized Function -- see ``_is_function_config`` -- passes through
+        unchanged, in place. A dict that looks like one but fails validation
+        passes through too: one unparseable tool must not take down the whole
+        component load.
+        """
+        rebuild_state: Dict[str, Any] = {"rebuilt": False}
+        rehydrated: List[Union[Function, Dict[str, Any]]] = []
+        for func_dict in func_dicts:
+            if not self._is_function_config(func_dict):
+                rehydrated.append(func_dict)
+                continue
+            try:
+                rehydrated.append(self._rehydrate_function(func_dict, rebuild_state, strict=strict))
+            except ValidationError as e:
+                if strict:
+                    from agno.exceptions import ComponentRehydrationError
+
+                    raise ComponentRehydrationError(
+                        f"Tool dict '{func_dict.get('name')}' is a serialized Function that does "
+                        f"not validate ({e.error_count()} error(s)); the stored config is corrupt. "
+                        "Re-save the component, or pass strict=False to pass the dict through to "
+                        "the model provider unchanged."
+                    ) from e
+                log_warning(
+                    f"Registry: tool dict '{func_dict.get('name')}' looks like a serialized "
+                    f"Function but does not validate as one ({e.error_count()} error(s)); "
+                    "passing it through to the model provider unchanged."
+                )
+                rehydrated.append(func_dict)
+        return rehydrated
+
+    def _rehydrate_function(
+        self, func_dict: Dict[str, Any], rebuild_state: Dict[str, Any], strict: bool = False
+    ) -> Function:
         func = Function.from_dict(func_dict)
-        source = self._entrypoint_lookup.get(func.name)
-        if source is None:
-            # Toolkits can gain functions after the lookup is first built -- MCP
-            # toolkits only register their functions once connected -- so a miss
-            # may just mean the cache is stale. Rebuild once and retry.
-            self.__dict__.pop("_entrypoint_lookup", None)
-            source = self._entrypoint_lookup.get(func.name)
+        toolkit_name = func_dict.get("toolkit")
+        if isinstance(toolkit_name, str) and toolkit_name:
+            # Keep the attribution on the object so a load -> save round trip
+            # re-stamps the "toolkit" key even though the loaded component holds
+            # bare Functions instead of Toolkits.
+            func.owning_toolkit = toolkit_name
+
+        owner_maps = rebuild_state.get("owners")
+        if owner_maps is None:
+            owner_maps = rebuild_state["owners"] = self._owner_index()
+        owners, toolkit_by_identity = owner_maps
+
+        def lookup(key: EntrypointKey) -> Tuple[Optional[EntrypointSource], Optional[Toolkit]]:
+            # Resolution serves the slot's owner: the same answer a fresh cache
+            # build would give. The cached lookup is compared against it to
+            # decide when to rebuild -- Toolkits can gain functions after the
+            # lookup is first built (MCP toolkits only register their functions
+            # once connected), so a miss may just mean the cache is stale, and
+            # a hit goes stale the same way when a toolkit rebuilds or drops
+            # its functions, or a slot's last-write-wins winner changes.
+            # Rebuild once per batch when the cache disagrees, so collision
+            # warnings re-surface and later batches start warm, and not at all
+            # when a rebuild could not help (the key has no owner in the
+            # current registrations, so it would miss too).
+            owner_toolkit, owner_source = owners.get(key, (None, None))
+            if not rebuild_state["rebuilt"] and self._entrypoint_lookup.get(key) is not owner_source:
+                self.__dict__.pop("_entrypoint_lookup", None)
+                rebuild_state["rebuilt"] = True
+                _ = self._entrypoint_lookup
+            return owner_source, owner_toolkit
+
+        source: Optional[EntrypointSource] = None
+        source_owner: Optional[Toolkit] = None
+        resolved_as_recorded = func.owning_toolkit is None
+        if func.owning_toolkit is not None:
+            # A qualified miss rebuilds before falling back to the flat name:
+            # the flat slot may hold a same-named function from a *different*
+            # toolkit while the right one simply hasn't populated the cache yet.
+            source, source_owner = lookup((func.owning_toolkit, func.name))
+            resolved_as_recorded = source is not None
+        # A strict load keeps a qualified reference bound to its own toolkit:
+        # a same-named function from another toolkit is a different tool.
+        if source is None and (func.owning_toolkit is None or not strict):
+            source, source_owner = lookup(func.name)
+            if source is not None and func.owning_toolkit is not None:
+                # The recorded toolkit could not be honored, so the flat slot's
+                # same-named function -- possibly from a different toolkit -- is
+                # being bound instead.
+                log_warning(
+                    f"Registry: toolkit '{func.owning_toolkit}' does not provide '{func.name}' "
+                    "in this registry; binding the same-named function found under the flat "
+                    "name instead. If the toolkit was renamed, update the registry or re-save "
+                    "the component."
+                )
         if isinstance(source, Function):
             func.entrypoint = source.entrypoint
-            # Entrypoints built for a fixed schema (e.g. MCP call proxies) must
-            # not be re-introspected at run time: processing would rebuild the
-            # schema's `required` list from the proxy's signature.
-            func.skip_entrypoint_processing = source.skip_entrypoint_processing
+            # Behavior the storage layer never writes comes from the live
+            # registry Function, so registry-side edits apply on the next
+            # component load. See RUNTIME_ONLY_FIELDS for what and why.
+            for field_name in RUNTIME_ONLY_FIELDS:
+                setattr(func, field_name, isolated_runtime_value(getattr(source, field_name)))
+            # Only when the bound function is the one the config named, or the
+            # config named no toolkit at all. A config whose recorded toolkit
+            # has left the registry binds the flat slot, which may belong to a
+            # different toolkit, and that toolkit's guidance is not this
+            # function's to carry.
+            #
+            # The slot's owner is the primary attribution; the identity map is
+            # the fallback for a flat slot owned by a direct registration of an
+            # object a Toolkit also holds -- provenance follows the object.
+            source_toolkit = source_owner if source_owner is not None else toolkit_by_identity.get(id(source))
+            if not resolved_as_recorded:
+                source_toolkit = None
+            if source_toolkit is not None:
+                # Keep the exact live Toolkit available to instruction
+                # collection. Every member points to the same object, so the
+                # collector can add toolkit-level guidance once without
+                # copying it into persisted Function dictionaries.
+                #
+                # The attribution is deliberately not written back onto an
+                # unqualified config. Identity resolution already reaches the
+                # Toolkit without a recorded name, and stamping one would tie
+                # the config to that name: a later rename would then take the
+                # qualified path, miss, and lose the guidance the unstamped
+                # config still finds.
+                func.source_toolkit = source_toolkit
         else:
             func.entrypoint = source
         if func.entrypoint is None:
@@ -232,6 +457,81 @@ class Registry:
             return
         self.vector_dbs.append(vector_db)
 
+    def add_function(self, func: Any) -> None:
+        """Add a plain callable unless one with the same name is already present.
+
+        Workflow step executors, evaluators, selectors and end conditions
+        resolve by function name at rehydration. The first callable under a
+        name wins; a distinct same-named callable is reported, since it would
+        be shadowed.
+        """
+        if not callable(func) or not getattr(func, "__name__", None):
+            return
+        existing = self.get_function(func.__name__)
+        if existing is not None:
+            if existing is not func:
+                log_warning(
+                    f"Registry: multiple distinct callables share the name '{func.__name__}'; "
+                    "keeping the first. Rename one to avoid it being shadowed."
+                )
+            return
+        self.functions.append(func)
+
+    def add_knowledge(self, knowledge: Any, mirrored: bool = False) -> None:
+        """Add a knowledge instance unless one with the same name is already present.
+
+        Knowledge resolves by name at rehydration, so only named instances are
+        registrable. The first instance under a name wins; a distinct
+        same-named instance is reported, since it would be shadowed.
+
+        ``mirrored`` marks an instance a framework sync added for name
+        resolution rather than the user registering it; mirrored knowledge is
+        not a knowledge-route source on any AgentOS sharing this registry. An
+        explicit (non-mirrored) add of an instance that is already present
+        promotes it to user provenance: the user registering it by hand is the
+        grant a mirror is not.
+        """
+        name = getattr(knowledge, "name", None)
+        if knowledge is None or name is None:
+            return
+        existing = self.get_knowledge(name)
+        if existing is not None:
+            if existing is not knowledge:
+                self._ambiguous_knowledge_names.add(name)
+                log_warning(
+                    f"Registry: multiple distinct knowledge instances share name '{name}'; "
+                    "keeping the first for lenient loads. Strict loads refuse the ambiguity: "
+                    "give the instances distinct names."
+                )
+            elif not mirrored:
+                self._mirrored_knowledge = [kb for kb in self._mirrored_knowledge if kb is not knowledge]
+            return
+        self.knowledge.append(knowledge)
+        if mirrored:
+            self._mirrored_knowledge.append(knowledge)
+
+    def knowledge_is_mirrored(self, knowledge: Any) -> bool:
+        """Whether ``knowledge`` is in the registry only because a sync mirrored it."""
+        return any(knowledge is kb for kb in self._mirrored_knowledge)
+
+    def add_schema(self, schema: Any) -> None:
+        """Add an input/output schema class unless one with the same name is already present.
+
+        Schemas resolve by class name at rehydration. Inline dict schemas are
+        not registrable and ride through serialization on their own.
+        """
+        if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+            return
+        existing = self.get_schema(schema.__name__)
+        if existing is not None:
+            if existing is not schema:
+                log_warning(
+                    f"Registry: multiple distinct schema classes share the name '{schema.__name__}'; "
+                    "keeping the first. Rename one to avoid it being shadowed."
+                )
+            return
+        self.schemas.append(schema)
+
     def get_schema(self, name: str) -> Optional[Type[BaseModel]]:
         """Get a schema by name."""
         if self.schemas:
@@ -278,6 +578,18 @@ class Registry:
 
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
+
+    def knowledge_name_is_ambiguous(self, name: str) -> bool:
+        """Whether two distinct knowledge instances claim ``name``.
+
+        Covers both construction paths: instances handed to the constructor
+        (scanned here) and instances add_knowledge refused to append (recorded
+        in the ambiguity set).
+        """
+        if name in self._ambiguous_knowledge_names:
+            return True
+        matches = [k for k in self.knowledge if getattr(k, "name", None) == name]
+        return len(matches) > 1 and any(match is not matches[0] for match in matches)
 
     def get_knowledge(self, name: str) -> Optional[Any]:
         """Get a knowledge instance by name from the registry."""

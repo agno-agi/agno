@@ -116,7 +116,10 @@ class Agent:
     # --- Agent Memory ---
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
-    # Enable the agent to manage memories of the user
+    # Enable the agent to manage memories of the user.
+    # Do not combine with a LearningMachine that has a user_memory store: both
+    # register a tool named update_user_memory, tool parsing keeps the first
+    # name it sees, and the learning store's tool is dropped without a word.
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     update_memory_on_run: bool = False
@@ -872,6 +875,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return _messages.get_system_message(
             self,
@@ -879,6 +883,7 @@ class Agent:
             run_context=run_context,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     async def aget_system_message(
@@ -887,6 +892,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return await _messages.aget_system_message(
             self,
@@ -894,6 +900,7 @@ class Agent:
             run_context=run_context,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     def get_relevant_docs_from_knowledge(
@@ -945,8 +952,8 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry)
+    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False) -> "Agent":
+        return _storage.from_dict(cls, data=data, registry=registry, strict=strict)
 
     def save(
         self,
@@ -967,8 +974,9 @@ class Agent:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        strict: bool = False,
     ) -> Optional["Agent"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version)
+        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
 
     def delete(
         self,
@@ -1739,6 +1747,7 @@ def get_agent_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    strict: bool = False,
 ) -> Optional["Agent"]:
     """
     Get an Agent by id from the database (new entities/configs schema).
@@ -1752,10 +1761,16 @@ def get_agent_by_id(
         id: Agent entity_id.
         label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
+        strict: If True, unresolvable registry references raise
+            ComponentRehydrationError; None strictly means the agent was not found.
 
     Returns:
         Agent instance or None.
+
+    Raises:
+        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
     """
+    from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_error
 
     try:
@@ -1767,11 +1782,22 @@ def get_agent_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
 
-        agent = Agent.from_dict(cfg, registry=registry)
+        agent = Agent.from_dict(cfg, registry=registry, strict=strict)
         agent.id = id
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one, matching Agent.load.
+        if agent.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(cfg, db, "agent", id)
+            agent.db = db
 
         return agent
 
+    except ComponentRehydrationError:
+        # A rehydration failure is not "agent not found"; propagate it.
+        raise
     except Exception as e:
         log_error(f"Error loading Agent {id} from database: {str(e)}")
         return None
@@ -1803,7 +1829,9 @@ def get_agents(
                         component_id = component["component_id"]
                         if "id" not in agent_config:
                             agent_config["id"] = component_id
-                        agent = Agent.from_dict(agent_config, registry=registry)
+                        # Lenient on purpose: listings must show degraded
+                        # components so they stay visible and fixable.
+                        agent = Agent.from_dict(agent_config, registry=registry, strict=False)
                         agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")
