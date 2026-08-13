@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Any
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.utils.pprint import pprint_run_response
 
 try:
@@ -107,7 +107,7 @@ if __name__ == "__main__":
         seed_out_of_order_history(memory)
 
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIResponses(id="gpt-5.5"),
             tools=build_memory_tools(memory, AGENT_ID),
             instructions=[
                 "Use recall for questions about the current state.",
