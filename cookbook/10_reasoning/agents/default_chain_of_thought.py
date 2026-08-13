@@ -22,7 +22,7 @@ manual_cot_agent = Agent(
 
 default_cot_agent = Agent(
     model=OpenAIChat(id="gpt-4o", max_tokens=1200),
-    reasoning=True,
+    reasoning_model=OpenAIChat(id="gpt-4o-mini"),
     markdown=True,
 )
 
@@ -39,7 +39,7 @@ if __name__ == "__main__":
         show_full_reasoning=True,
     )
 
-    print("\n=== Built-in reasoning=True ===")
+    print("\n=== With reasoning_model ===")
     default_cot_agent.print_response(
         prompt,
         stream=True,

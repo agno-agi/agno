@@ -16,7 +16,6 @@ task = "Prove that for any positive integer n, the sum of the first n odd number
 
 cot_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    reasoning=True,
     markdown=True,
 )
 

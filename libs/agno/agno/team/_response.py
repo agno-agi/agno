@@ -664,7 +664,7 @@ def handle_reasoning_event(
 def handle_reasoning(
     team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reasoning_generator = reason(
             team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
         )
@@ -680,7 +680,7 @@ def handle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
 ) -> Iterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reasoning_generator = reason(
             team,
             run_response=run_response,
@@ -694,7 +694,7 @@ def handle_reasoning_stream(
 async def ahandle_reasoning(
     team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reason_generator = areason(
             team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
         )
@@ -710,7 +710,7 @@ async def ahandle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
 ) -> AsyncIterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reason_generator = areason(
             team,
             run_response=run_response,

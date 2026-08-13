@@ -22,7 +22,6 @@ regular_agent_openai = Agent(model=OpenAIChat(id="gpt-4o"), markdown=True)
 
 cot_agent_openai = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    reasoning=True,
     markdown=True,
 )
 

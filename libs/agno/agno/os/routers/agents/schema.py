@@ -219,7 +219,7 @@ class AgentResponse(BaseModel):
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
-            "reasoning": agent.reasoning,
+            "reasoning": agent.reasoning_model is not None,
             "reasoning_agent_id": agent.reasoning_agent.id if agent.reasoning_agent else None,
             "reasoning_min_steps": agent.reasoning_min_steps,
             "reasoning_max_steps": agent.reasoning_max_steps,

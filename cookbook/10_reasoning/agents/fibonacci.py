@@ -16,7 +16,6 @@ task = "Give me steps to write a python script for fibonacci series"
 
 cot_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    reasoning=True,
     markdown=True,
 )
 

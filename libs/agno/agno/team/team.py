@@ -345,7 +345,6 @@ class Team:
     metadata: Optional[Dict[str, Any]] = None
 
     # --- Team Reasoning ---
-    reasoning: bool = False
     reasoning_model: Optional[Model] = None
     reasoning_agent: Optional[Agent] = None
     reasoning_min_steps: int = 1
@@ -529,7 +528,6 @@ class Team:
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
@@ -649,7 +647,6 @@ class Team:
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             metadata=metadata,
-            reasoning=reasoning,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,
             reasoning_min_steps=reasoning_min_steps,

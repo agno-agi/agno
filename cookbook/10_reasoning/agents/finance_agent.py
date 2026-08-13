@@ -18,7 +18,6 @@ cot_agent = Agent(
     tools=[YFinanceTools()],
     instructions="Use tables to display data",
     use_json_mode=True,
-    reasoning=True,
     markdown=True,
 )
 

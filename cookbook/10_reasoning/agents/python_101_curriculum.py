@@ -16,7 +16,6 @@ task = "Craft a curriculum for Python 101"
 
 cot_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    reasoning=True,
     markdown=True,
 )
 

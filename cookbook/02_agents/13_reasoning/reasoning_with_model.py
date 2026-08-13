@@ -12,10 +12,9 @@ from agno.models.openai import OpenAIResponses
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.6"),
     # Use a separate model for the reasoning/thinking step
-    reasoning_model=OpenAIResponses(id="gpt-5-mini"),
-    reasoning=True,
+    reasoning_model=OpenAIResponses(id="o3-mini"),
     reasoning_min_steps=2,
     reasoning_max_steps=5,
     markdown=True,

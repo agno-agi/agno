@@ -768,8 +768,6 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["tool_choice"] = agent.tool_choice
 
     # --- Reasoning settings ---
-    if agent.reasoning:
-        config["reasoning"] = agent.reasoning
     if agent.reasoning_model is not None:
         if isinstance(agent.reasoning_model, Model):
             config["reasoning_model"] = agent.reasoning_model.to_dict()
@@ -1189,7 +1187,6 @@ def from_dict(
         tool_call_limit=config.get("tool_call_limit"),
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
-        reasoning=config.get("reasoning", False),
         # reasoning_model=config.get("reasoning_model"),  # TODO
         reasoning_min_steps=config.get("reasoning_min_steps", 1),
         reasoning_max_steps=config.get("reasoning_max_steps", 10),

@@ -205,7 +205,7 @@ class TeamResponse(BaseModel):
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
-            "reasoning": team.reasoning,
+            "reasoning": team.reasoning_model is not None,
             "reasoning_agent_id": team.reasoning_agent.id if team.reasoning_agent else None,
             "reasoning_min_steps": team.reasoning_min_steps,
             "reasoning_max_steps": team.reasoning_max_steps,
