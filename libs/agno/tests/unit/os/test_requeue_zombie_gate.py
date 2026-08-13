@@ -75,3 +75,20 @@ class TestRequeueZombieGate:
         resp = harness.client.post("/queue/jobs/j4/requeue")
         assert resp.status_code == 200
         assert resp.json()["status"] == "queued"
+
+
+class TestNoWorkerAnswers503:
+    """One operational condition, one status: with no active queue worker,
+    every /queue endpoint answers 503 (service availability) - the old
+    _get_store 404 made the same state a missing resource on read
+    endpoints while the requeue path already said 503."""
+
+    def test_queue_endpoints_answer_503_without_worker(self):
+        app = FastAPI()
+        app.include_router(get_queue_router(SimpleNamespace()))
+        client = TestClient(app, raise_server_exceptions=False)
+
+        for path in ("/queue/jobs", "/queue/jobs/some-id", "/queue/stats"):
+            resp = client.get(path)
+            assert resp.status_code == 503, f"{path}: expected 503, got {resp.status_code}"
+            assert "not enabled" in resp.json()["detail"]

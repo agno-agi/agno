@@ -21,7 +21,13 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import ComponentRehydrationError, InputCheckError, OutputCheckError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     get_auth_token_from_request,
@@ -1535,6 +1541,16 @@ def get_workflow_router(
                 raise HTTPException(
                     status_code=400, detail="Background execution is not supported for remote workflows"
                 )
+            # The db requirement gates BOTH shapes here: the non-stream
+            # branch always 400ed, while the stream branch used to enter the
+            # detached streamer and let arun(background=True) raise - the
+            # same misconfiguration answered 200 + SSE error frame,
+            # indistinguishable from a runtime failure.
+            if not workflow.db:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Background execution requires a database to be configured on the workflow",
+                )
 
             if stream:
                 # Durable queued streaming: the queue row is the acceptance,
@@ -1547,7 +1563,6 @@ def get_workflow_router(
                 stream_queueable = (
                     queue_worker is not None
                     and getattr(workflow, "db", None) is not None
-                    and not isinstance(workflow, RemoteWorkflow)
                     and version is None
                     and payload_is_queueable(queued_stream_payload)
                     and any(
@@ -1556,13 +1571,13 @@ def get_workflow_router(
                     )
                 )
                 if stream_queueable:
-                    # 202/stream-accept must honor input_schema like the inline path
+                    # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(workflow, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.run.base import RunStatus as _RS
 
                     queued_run_id = str(uuid4())
-                    queued_session_id = session_id or str(uuid4())
+                    queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="workflow",
@@ -1642,13 +1657,9 @@ def get_workflow_router(
                     media_type="text/event-stream",
                 )
 
-            # background=True, stream=False: return 202 immediately with run metadata
-            if not workflow.db:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Background execution requires a database to be configured on the workflow",
-                )
-
+            # background=True, stream=False: return 202 immediately with run
+            # metadata (the db requirement was enforced at the top of the
+            # background branch, for both shapes)
             # Durable queue path: acceptance is a committed row; whichever
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
@@ -1664,15 +1675,14 @@ def get_workflow_router(
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
-                and not isinstance(workflow, RemoteWorkflow)
                 and component_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
             ):
-                # 202 must honor input_schema exactly like the inline path 422s
+                # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(workflow, message)
                 queued_run_id = str(uuid4())
-                queued_session_id = session_id or str(uuid4())
+                queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="workflow",
@@ -1745,15 +1755,24 @@ def get_workflow_router(
                         "accepting replica instead - bounded and observable, but NOT durable."
                     )
 
-            run_response = await workflow.arun(
-                input=message,
-                session_id=session_id,
-                user_id=user_id,
-                stream=False,
-                background=True,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
+            # Same input-error contract as the inline path: schema violations
+            # are refused up front (the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500), and guardrail
+            # refusals from the dispatch answer 400.
+            validate_seam_input(workflow, message)
+            try:
+                run_response = await workflow.arun(
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                    background=True,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
                 content={
@@ -1783,6 +1802,11 @@ def get_workflow_router(
                 if auth_token and isinstance(workflow, RemoteWorkflow):
                     kwargs["auth_token"] = auth_token
 
+                # Schema violations are refused up front with the seams'
+                # shared check: the dispatch's own schema ValueError is
+                # indistinguishable from an internal one, so it is not
+                # caught - internal failures keep their generic 500.
+                validate_seam_input(workflow, message)
                 run_response = await workflow.arun(
                     input=message,
                     session_id=session_id,
@@ -1795,9 +1819,10 @@ def get_workflow_router(
 
         except InputCheckError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            # Handle unexpected runtime errors
-            raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+        # No blanket 500 (agents parity): the old except Exception swallowed
+        # every typed error - including HTTPException itself, converting 4xx
+        # into 500 - and echoed raw internals in the detail. Uncaught
+        # exceptions propagate to FastAPI's generic 500.
 
     @router.post(
         "/workflows/{workflow_id}/runs/{run_id}/continue",
@@ -1897,6 +1922,7 @@ def get_workflow_router(
         if not getattr(existing_run, "is_paused", False):
             status = getattr(existing_run, "status", None)
             _status_to_detail = {
+                RunStatus.pending: "run is already pending",
                 RunStatus.running: "run is already running",
                 RunStatus.completed: "run is already completed",
                 RunStatus.error: "run has errored",
@@ -1936,12 +1962,7 @@ def get_workflow_router(
                 getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
                 for candidate in (os.workflows or [])
             )
-            if (
-                queue_worker is not None
-                and not isinstance(workflow, RemoteWorkflow)
-                and workflow_is_queueable
-                and payload_is_queueable(continue_payload)
-            ):
+            if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
                 # The endpoint already proved the run row is PAUSED above
                 continue_outcome = await acontinue_via_queue(
                     queue_worker,
@@ -2060,10 +2081,17 @@ def get_workflow_router(
                     final_status=getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
-            except InputCheckError as e:
+            # Same typed mapping as the agents continue endpoint: a
+            # race-losing continue (the run moved past PAUSED between the
+            # pre-check and dispatch) must answer 404/409/400 like the
+            # pre-check would have, never a blanket 500. Anything untyped
+            # propagates (FastAPI's 500, without echoing internals).
+            except RunNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except RunNotContinuableError as e:
+                raise HTTPException(status_code=409, detail=str(e))
+            except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Error continuing workflow run: {str(e)}")
 
     @router.post(
         "/workflows/{workflow_id}/runs/{run_id}/cancel",
