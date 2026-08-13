@@ -2,8 +2,15 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from agno.config import HistoryConfig, SessionConfig, StorageConfig
 from agno.workflow import Workflow
+
+
+def test_constructor_is_keyword_only():
+    with pytest.raises(TypeError):
+        Workflow("some-id")  # type: ignore[misc]
 
 
 def test_flat_params_unchanged():

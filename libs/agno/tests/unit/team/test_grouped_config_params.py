@@ -7,6 +7,8 @@ resolution rule.
 
 from unittest.mock import patch
 
+import pytest
+
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.config import (
@@ -30,6 +32,14 @@ from agno.team.mode import TeamMode
 
 def _member() -> Agent:
     return Agent(name="member")
+
+
+def test_constructor_is_keyword_only_after_members():
+    with pytest.raises(TypeError):
+        Team([_member()], "some-id")  # type: ignore[misc]
+    # members itself stays positional
+    team = Team([_member()])
+    assert team.members is not None
 
 
 def test_flat_params_unchanged():
