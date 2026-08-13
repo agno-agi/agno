@@ -124,7 +124,7 @@ def couchbase_cluster() -> Generator[Cluster, None, None]:
         pass
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def setup_v2_data(couchbase_cluster: Cluster):
     """Create v2-style scope, collection, FTS index, and insert test documents."""
     bucket = couchbase_cluster.bucket(BUCKET)
@@ -198,7 +198,7 @@ class TestCouchbaseMigration:
         cluster = setup_v2_data["cluster"]
 
         # Load the migration script
-        script_path = Path(__file__).resolve().parents[4] / "migrations" / "v2_to_v3" / "migrate_sentinel_vectordbs.py"
+        script_path = Path(__file__).resolve().parents[3] / "migrations" / "v2_to_v3" / "migrate_sentinel_vectordbs.py"
         spec = importlib.util.spec_from_file_location("migrate", script_path)
         assert spec and spec.loader
         mod = importlib.util.module_from_spec(spec)

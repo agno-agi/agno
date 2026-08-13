@@ -268,7 +268,7 @@ def migrate_couchbase() -> None:
         updated_index = SearchIndex(
             name=existing_index.name,
             source_type=existing_index.source_type,
-            idx_type=existing_index.type,
+            idx_type=existing_index.idx_type,
             source_name=existing_index.source_name,
             uuid=existing_index.uuid,
             plan_params=existing_index.plan_params,

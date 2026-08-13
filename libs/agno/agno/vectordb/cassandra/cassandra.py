@@ -109,48 +109,38 @@ class Cassandra(VectorDb):
                 "shared with every user"
             )
 
-    def _has_unmigrated_rows(self) -> Optional[bool]:
-        """Check if any rows exist without user_id in metadata_s using CONTAINS KEY.
+    def _table_has_user_id_field(self) -> Optional[bool]:
+        """Check if the table has ANY rows with user_id in metadata_s.
 
-        Compares total row count vs rows with user_id key. If total > with_key,
-        unmigrated rows exist.
+        Follows the Redis pattern: check if the store supports the field at all,
+        not whether every row has it. If at least one row has user_id, the table
+        is considered migrated (v3-compatible).
 
-        Returns True if unmigrated rows found, False if all rows have user_id, None on error.
+        Returns True if any row has user_id, False if no rows have it, None on error.
         """
         try:
-            # 1. Count total rows
-            total_query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name}"
-            total_result = self.session.execute(total_query)
-            total_count = total_result.one()[0]
-
-            if total_count == 0:
-                # Empty table - will be created with user_id
-                return False
-
-            # 2. Count rows that have user_id key
-            with_key_query = (
-                f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
-                f"WHERE metadata_s CONTAINS KEY '{USER_ID_METADATA_KEY}' ALLOW FILTERING"
+            # Check if ANY row has user_id key (LIMIT 1 for efficiency)
+            query = (
+                f"SELECT row_id FROM {self.keyspace}.{self.table_name} "
+                f"WHERE metadata_s CONTAINS KEY '{USER_ID_METADATA_KEY}' LIMIT 1 ALLOW FILTERING"
             )
-            with_key_result = self.session.execute(with_key_query)
-            with_key_count = with_key_result.one()[0]
-
-            # 3. If total > with_key, some rows are missing user_id
-            return total_count > with_key_count
+            result = self.session.execute(query)
+            rows = list(result)
+            return len(rows) > 0
         except Exception:
             return None
 
     def _user_id_field_exists(self) -> bool:
-        """Cached check for whether the table has migrated rows with user_id."""
+        """Cached check for whether the table has any rows with user_id."""
         if self._owner_field_exists is None:
-            has_unmigrated = self._has_unmigrated_rows()
-            if has_unmigrated is None:
+            answer = self._table_has_user_id_field()
+            if answer is None:
                 log_warning(
                     f"Could not inspect Cassandra table '{self.table_name}' for the "
                     f"'{USER_ID_METADATA_KEY}' field; proceeding as migrated for this operation."
                 )
                 return True
-            self._owner_field_exists = not has_unmigrated
+            self._owner_field_exists = answer
         return self._owner_field_exists
 
     def _require_owner_field(self, user_id: Optional[str]) -> bool:
