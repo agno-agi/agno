@@ -1290,11 +1290,18 @@ class Claude(Model):
         """
         metrics = MessageMetrics()
 
-        metrics.input_tokens = response_usage.input_tokens or 0
-        metrics.output_tokens = response_usage.output_tokens or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
         metrics.cache_read_tokens = response_usage.cache_read_input_tokens or 0
         metrics.cache_write_tokens = response_usage.cache_creation_input_tokens or 0
+        # Anthropic reports input_tokens NET of the cache and bills the two cache counters
+        # separately on top, so the cache has to be added back for input_tokens to mean what
+        # it means everywhere else here. The OpenAI parser sets input_tokens from
+        # prompt_tokens, which already includes the cached tokens, and records
+        # cache_read_tokens as a breakdown of it rather than an addition to it.
+        metrics.input_tokens = (
+            (response_usage.input_tokens or 0) + metrics.cache_read_tokens + metrics.cache_write_tokens
+        )
+        metrics.output_tokens = response_usage.output_tokens or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         # Anthropic-specific additional fields
         if response_usage.server_tool_use:
