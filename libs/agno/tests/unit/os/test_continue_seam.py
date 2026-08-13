@@ -948,3 +948,36 @@ class TestInlineContinueSeedsExpiredCounter:
         assert reads == [], "a live counter must not cost a session read"
         idx = await stream.add_event("r1", RunContentEvent(content="b", run_id="r1"))
         assert idx == 1
+
+
+class TestPausedGate409CarriesEscapeHatch:
+    @pytest.mark.asyncio
+    async def test_paused_ticket_409_names_the_row_missing_escape(self):
+        """When the run ROW is lost while its paused ticket survives,
+        background=true fails not-found and falls through to this gate:
+        without the escape-hatch sentence, the 409 told the caller to do
+        exactly what it just did (a self-referential dead end)."""
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        store._jobs["r-lostrow"] = QueuedJob(
+            id="r-lostrow",
+            component_type="agent",
+            component_id="a1",
+            session_id="s1",
+            payload={},
+            status="paused",
+        ).to_dict()
+        worker = SimpleNamespace(store=store)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await araise_if_ticket_owns_continue(worker, "r-lostrow", component_type="agent", component_id="a1")
+
+        assert excinfo.value.status_code == 409
+        assert "requeue the ticket" in excinfo.value.detail, (
+            "the 409 must carry the cancel+requeue escape hatch for the lost-row corner"
+        )
