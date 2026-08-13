@@ -46,9 +46,8 @@ class InMemoryDb(BaseDb):
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the schema version stamped for the given table.
 
-        Defaults to "2.0.0" when nothing is stamped yet, matching the SQL
-        adapters, so the MigrationManager runs migrations instead of skipping
-        the table. The stamp lives in-process, like all data in this adapter.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
         return self._schema_versions.get(table_name, "2.0.0")
 

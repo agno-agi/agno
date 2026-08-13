@@ -251,10 +251,8 @@ class ClickhouseDb(BaseDb):
             return False
 
     def get_latest_schema_version(self, table_name: str) -> Optional[str]:
-        # Defaults to "2.0.0" when nothing is stamped, matching the other SQL
-        # adapters: the MigrationManager treats None as "skip this table", so
-        # returning None here would make migrations unreachable on databases
-        # that have not been stamped yet.
+        # Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        # runs migrations instead of skipping the table.
         try:
             qualified = self._get_table("versions")
             if qualified is None:

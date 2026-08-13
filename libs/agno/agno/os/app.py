@@ -1252,9 +1252,17 @@ class AgentOS:
 
                 log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
 
+                status_code = getattr(exc, "status_code", 500)
+                # 4xx exceptions that carry their own status wrote their
+                # message for the client; 5xx details must never echo
+                # str(exc) - unhandled server errors are routinely store or
+                # driver failures whose text carries connection strings, SQL
+                # fragments, and hostnames. The full traceback is in the
+                # server log above; the wire gets the exception type only.
+                detail = str(exc) if status_code < 500 else f"Internal server error ({type(exc).__name__})"
                 return JSONResponse(
-                    status_code=getattr(exc, "status_code", 500),
-                    content={"detail": str(exc)},
+                    status_code=status_code,
+                    content={"detail": detail},
                 )
 
         # Update CORS middleware

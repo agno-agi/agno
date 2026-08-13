@@ -430,3 +430,38 @@ class TestSubmitBackgroundBodyParity:
             f"{path}: the non-durable 202 body must match the durable seam's shape exactly, got {body}"
         )
         assert body["status"] in ("PENDING", "RUNNING")
+
+
+class TestServerErrorsDoNotEchoInternals:
+    """N17: seam store failures and unhandled server errors surfaced as raw
+    500s whose detail embedded str(exc) - store/driver text carries
+    connection strings, SQL fragments, and hostnames. The wire gets the
+    exception type; the full detail stays in the server log."""
+
+    SECRET = "postgresql://ai:supersecret@db.internal:5532/ai"
+
+    def test_prepare_failure_500_names_the_type_not_the_driver_text(self, harness, monkeypatch):
+        async def broken_prepare(component, component_type, run_id, session_id, user_id, input):
+            raise RuntimeError(f"connection refused at {TestServerErrorsDoNotEchoInternals.SECRET}")
+
+        monkeypatch.setattr("agno.os.job_queue.aprepare_queued_run", broken_prepare)
+        resp = harness.client.post(
+            "/agents/qa-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
+        )
+        assert resp.status_code == 500
+        assert self.SECRET not in resp.text, "the 500 detail must not echo driver internals"
+        assert "RuntimeError" in resp.json()["detail"], "the type name is the client-safe breadcrumb"
+
+    def test_unhandled_exception_500_names_the_type_not_the_message(self, harness, monkeypatch):
+        from agno.agent import Agent
+
+        async def broken_arun(self, **kwargs):
+            raise RuntimeError(f"cannot reach {TestServerErrorsDoNotEchoInternals.SECRET}")
+
+        monkeypatch.setattr(Agent, "arun", broken_arun)
+        resp = harness.client.post(
+            "/agents/qa-agent/runs", data={"message": "hi", "stream": "false", "background": "false"}
+        )
+        assert resp.status_code == 500
+        assert self.SECRET not in resp.text, "the app-level handler must not echo str(exc) on 5xx"
+        assert "RuntimeError" in resp.json()["detail"]

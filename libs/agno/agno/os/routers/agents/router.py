@@ -639,7 +639,10 @@ def get_agent_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
-        version: Optional[str] = Form(None, description="Agent version to use for this run"),
+        # int like teams/workflows: component versions are integers, and the
+        # old str declaration's bare int(version) cast 500ed on non-numeric
+        # input where the siblings answer a clean 422
+        version: Optional[int] = Form(None, description="Agent version to use for this run"),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
@@ -689,7 +692,7 @@ def get_agent_router(
             os.agents,
             os.db,
             registry,
-            version=int(version) if version else None,
+            version=version,
             request=request,
             user_id=user_id,
             session_id=session_id,
@@ -758,6 +761,15 @@ def get_agent_router(
         if background:
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
+            # The db requirement gates BOTH shapes here: the non-stream
+            # branch always 400ed, while the stream branch used to enter the
+            # detached streamer and let arun(background=True) raise - the
+            # same misconfiguration answered 200 + SSE error frame,
+            # indistinguishable from a runtime failure.
+            if not getattr(agent, "db", None):
+                raise HTTPException(
+                    status_code=400, detail="Background execution requires a database to be configured on the agent"
+                )
 
             if stream:
                 # Durable queued streaming: the queue row is the acceptance,
@@ -771,7 +783,6 @@ def get_agent_router(
                     queue_worker is not None
                     and getattr(agent, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
-                    and not isinstance(agent, RemoteAgent)
                     and version is None
                     and not (base64_images or base64_audios or base64_videos or input_files)
                     and any(
@@ -780,14 +791,14 @@ def get_agent_router(
                     )
                 )
                 if stream_queueable:
-                    # 202/stream-accept must honor input_schema like the inline path
+                    # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(agent, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.os.event_streams import get_event_stream as _ges
                     from agno.run.base import RunStatus as _RS
 
                     queued_run_id = str(uuid4())
-                    queued_session_id = session_id or str(uuid4())
+                    queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="agent",
@@ -875,12 +886,9 @@ def get_agent_router(
                     media_type="text/event-stream",
                 )
 
-            # background=True, stream=False: return 202 immediately with run metadata
-            if not getattr(agent, "db", None):
-                raise HTTPException(
-                    status_code=400, detail="Background execution requires a database to be configured on the agent"
-                )
-
+            # background=True, stream=False: return 202 immediately with run
+            # metadata (the db requirement was enforced at the top of the
+            # background branch, for both shapes)
             # Durable queue path: acceptance is a committed row; whichever
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
@@ -896,7 +904,6 @@ def get_agent_router(
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
-                and not isinstance(agent, RemoteAgent)
                 and agent_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
@@ -905,10 +912,10 @@ def get_agent_router(
                 # than 400ing a submission that worked before durable mode
                 and not (base64_images or base64_audios or base64_videos or input_files)
             ):
-                # 202 must honor input_schema exactly like the inline path 422s
+                # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(agent, message)
                 queued_run_id = str(uuid4())
-                queued_session_id = session_id or str(uuid4())
+                queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="agent",
@@ -987,21 +994,30 @@ def get_agent_router(
                         "accepting replica instead - bounded and observable, but NOT durable."
                     )
 
-            run_response = cast(
-                RunOutput,
-                await agent.arun(  # type: ignore[misc]
-                    input=message,
-                    session_id=session_id,
-                    user_id=user_id,
-                    images=base64_images if base64_images else None,
-                    audio=base64_audios if base64_audios else None,
-                    videos=base64_videos if base64_videos else None,
-                    files=input_files if input_files else None,
-                    stream=False,
-                    background=True,
-                    **kwargs,
-                ),
-            )
+            # Same input-error contract as the inline path: schema violations
+            # are refused up front (the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500), and guardrail
+            # refusals from the dispatch answer 400.
+            validate_seam_input(agent, message)
+            try:
+                run_response = cast(
+                    RunOutput,
+                    await agent.arun(  # type: ignore[misc]
+                        input=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=input_files if input_files else None,
+                        stream=False,
+                        background=True,
+                        **kwargs,
+                    ),
+                )
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
                 content={
@@ -1033,6 +1049,13 @@ def get_agent_router(
             if auth_token and isinstance(agent, RemoteAgent):
                 kwargs["auth_token"] = auth_token
 
+            # Schema violations are refused up front with the seams' shared
+            # check: the dispatch's own schema ValueError is
+            # indistinguishable from an internal one (e.g. storage code), so
+            # catching ValueError here would misclassify server failures as
+            # client errors and echo their internals - internal failures
+            # keep their generic 500 instead.
+            validate_seam_input(agent, message)
             try:
                 run_response = cast(
                     RunOutput,

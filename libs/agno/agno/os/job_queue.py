@@ -246,11 +246,16 @@ def payload_is_queueable(payload: Any) -> bool:
     cannot carry (media BaseModel instances, dynamically-built output_schema
     classes, arbitrary objects in kwargs) would either fail the enqueue INSERT
     or come back as lossy strings - such submissions must fall back to the
-    non-durable path instead of 500ing or corrupting the run."""
+    non-durable path instead of 500ing or corrupting the run.
+
+    allow_nan=False: Python's json serializes NaN/Infinity by default, but
+    they are NOT valid JSON - Postgres JSONB rejects them at INSERT, so a
+    NaN-carrying payload would pass this gate and then 500 the submit, the
+    exact failure the gate exists to prevent."""
     import json as _json
 
     try:
-        _json.dumps(payload)
+        _json.dumps(payload, allow_nan=False)
         return True
     except (TypeError, ValueError):
         return False
@@ -1175,20 +1180,23 @@ class QueueWorker:
         return RunPersistOutcome.UPDATED
 
     def _retry_delay(self, attempt: int) -> int:
-        """Exponential backoff with jitter, capped at 10x the base (the base
-        acts as the minimum delay; the shutdown-drain requeue intentionally
-        uses the flat base with no backoff).
+        """FULL-jitter exponential backoff, capped at 10x the base (the
+        shutdown-drain requeue intentionally uses the flat base with no
+        backoff).
 
-        config.retry_delay_seconds is the BASE delay; attempt N waits up to
-        base * 2**(N-1), jittered uniformly to avoid a thundering herd of
-        retries when many workers fail together."""
+        config.retry_delay_seconds is the BASE delay; attempt N waits
+        uniformly in [0, min(base * 2**(N-1), base * 10)] - the AWS
+        full-jitter shape. The old lower bound of `base` made attempt 1's
+        range [base, base]: zero jitter, so a fleet-wide failure retried in
+        lockstep at exactly base seconds - precisely the herd the jitter
+        exists to break up."""
         import random
 
         base = self.config.retry_delay_seconds
         if base <= 0:
             return 0  # explicit no-backoff configuration (tests, dev loops)
         ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
-        return random.randint(base, max(base, ceiling))
+        return random.randint(0, ceiling)
 
     @staticmethod
     def _is_permanent_failure(exc: BaseException, continuation_component: Optional[str] = None) -> bool:
@@ -1351,6 +1359,54 @@ class QueueWorker:
         for reserved in ("input", "session_id", "user_id", "run_id", "stream", "stream_events", "yield_run_output"):
             extra.pop(reserved, None)
         return extra
+
+    async def _ahonor_terminal_row(self, component: Any, job: Dict[str, Any]) -> None:
+        """A claimed FRESH job whose run row is already terminal: never
+        execute (see the RUNNING-stamp refusal in _execute_claimed for the
+        crash window that produces this state). Settle the ticket to match
+        the row and close the stream view with the same status.
+
+        The row read resolves WHICH terminal status wins the ticket. If the
+        row cannot be read (or reads back non-terminal - a race), NOTHING is
+        settled: manufacturing a terminal status here could stamp a
+        cancelled ticket over a COMPLETED row (multi-attempt reclaim of a
+        run whose first attempt committed but crashed before settling).
+        Leaving the claim to go stale hands the job to the reconciling
+        sweep, which pre-reads the row and settles ticket and stream from
+        the truth.
+        """
+        from agno.run.base import RunStatus
+
+        job_id = job["id"]
+        row_status: Optional[str] = None
+        with contextlib.suppress(Exception):
+            run_output = await component.aget_run_output(job_id, job["session_id"], user_id=job.get("user_id"))
+            raw = getattr(run_output, "status", None)
+            row_status = raw.value if isinstance(raw, RunStatus) else raw
+        normalized = str(row_status).lower() if row_status is not None else None
+        if normalized not in ("completed", "cancelled"):
+            log_error(
+                f"Job queue: claimed job {job_id} refused the RUNNING stamp as terminal but its run "
+                f"row could not be read back ({row_status!r}); leaving the claim to go stale for the "
+                "reconciling sweep instead of guessing a terminal status"
+            )
+            return
+        ticket_status = normalized
+        await self._asettle_ticket(job_id, job["attempt"], ticket_status)
+        with contextlib.suppress(Exception):
+            from agno.os.event_streams import get_event_stream
+
+            await asyncio.shield(
+                get_event_stream().complete_run(
+                    job_id,
+                    RunStatus.completed if ticket_status == "completed" else RunStatus.cancelled,
+                    generation=job.get("attempt"),
+                )
+            )
+        log_warning(
+            f"Job queue: claimed job {job_id} has a terminal run row ({row_status}); "
+            f"skipped execution and settled the ticket {ticket_status}"
+        )
 
     async def _asettle_ticket(
         self, job_id: str, attempt: int, status: str, error: Optional[str] = None, shielded: bool = False
@@ -1550,10 +1606,12 @@ class QueueWorker:
             # its own status once it actually starts executing.
             if component is not None and not payload.get("continue"):
                 from agno.run.base import RunStatus as _RS
+                from agno.run.status_persist import RunPersistOutcome as _RPO
                 from agno.run.status_persist import apersist_run_status as _aps
 
+                stamp_outcome = None
                 try:
-                    await _aps(
+                    stamp_outcome = await _aps(
                         component,
                         job.get("component_type", ""),
                         session_id=job["session_id"],
@@ -1569,6 +1627,19 @@ class QueueWorker:
                         f"Job queue: RUNNING stamp failed for job {job_id} (worker={self.worker_id}, "
                         f"attempt={attempt}): {e}"
                     )
+                if stamp_outcome is _RPO.TERMINAL_REFUSED:
+                    # The run row is already COMPLETED/CANCELLED (the guard's
+                    # exact terminal set - ERROR rows pass, so operator
+                    # requeue re-drives are unaffected). The canonical
+                    # producer is the cancel crash window: acancel_queued
+                    # persists the CANCELLED row first, and a crash before
+                    # the ticket tombstone leaves a queued ticket over the
+                    # terminal row. Executing it ran a cancelled run's side
+                    # effects and settled the ticket completed over a
+                    # CANCELLED row - a permanent divergence nothing
+                    # revisits. Honor the row instead.
+                    await self._ahonor_terminal_row(component, job)
+                    return
             if is_stream:
                 execution = self._execute_streaming(component, job)
             elif payload.get("continue"):
@@ -1781,10 +1852,17 @@ async def araise_if_ticket_owns_continue(
         return
     status = job.get("status")
     if status == "paused":
+        # The message carries its own escape hatch: when the run ROW is
+        # missing while this paused ticket survives (a lost row after a
+        # session-store fault), background=true itself fails not-found and
+        # falls through to this gate - without the second sentence the 409
+        # told the caller to do exactly what it just did, a dead end.
         raise HTTPException(
             status_code=409,
             detail=f"Run {run_id} was submitted through the durable queue; continue it with "
-            "background=true (the queue owns its continuations)",
+            "background=true (the queue owns its continuations). If background=true cannot "
+            "find the run, its row is missing while the ticket survives: cancel the run and "
+            "requeue the ticket from the /queue operations surface.",
         )
     if status in ("queued", "running"):
         raise HTTPException(
@@ -1956,8 +2034,11 @@ async def acontinue_via_queue(
 
 def validate_seam_input(component: Any, input: Any) -> None:
     """Mirror arun's input_schema validation at the durable seams: the inline
-    path 422s on schema violations, so a 202 for the same payload (failing
-    only later, inside the worker) would be a contract divergence."""
+    non-stream path answers 400 on schema violations (InputCheckError /
+    ValueError from the run dispatch), so a 202 for the same payload (failing
+    only later, inside the worker) would be a contract divergence - and so
+    would a different status. This helper used to answer 422 on the false
+    premise that the inline path did; one payload, one status: 400."""
     schema = getattr(component, "input_schema", None)
     if schema is None:
         return
@@ -1970,7 +2051,7 @@ def validate_seam_input(component: Any, input: Any) -> None:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Input failed schema validation: {str(e)[:300]}")
+        raise HTTPException(status_code=400, detail=f"Input failed schema validation: {str(e)[:300]}")
 
 
 async def _atomic_append_run(
@@ -2208,9 +2289,13 @@ async def aprepare_accepted_or_abort(
             await event_stream.register_run(run_id, RunStatus.pending)
             await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
         log_error(f"Run {run_id}: acceptance aborted - run-row prepare failed ({e}); ticket cancelled")
+        # The detail names the exception TYPE only: prepare failures are
+        # store failures, and their str() carries driver internals
+        # (connection strings, SQL fragments, hostnames) that belong in the
+        # server log above, never on the wire.
         raise HTTPException(
             status_code=500,
-            detail=f"Run acceptance aborted: the run row could not be prepared ({str(e)[:200]}); "
+            detail=f"Run acceptance aborted: the run row could not be prepared ({type(e).__name__}); "
             "the queued job was cancelled and will not execute. Retry the submission.",
         )
 
