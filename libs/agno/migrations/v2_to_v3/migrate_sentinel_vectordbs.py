@@ -188,12 +188,13 @@ def migrate_couchbase() -> None:
         cluster = Cluster(couchbase_config["connection_string"], ClusterOptions(auth))
         cluster.wait_until_ready(timedelta(seconds=10))
 
-        # 1. N1QL UPDATE to stamp user_id on documents
+        # 1. N1QL UPDATE only rows that don't yet have the owner field -> idempotent
         keyspace = f"`{bucket_name}`.`{scope_name}`.`{collection_name}`"
         from couchbase.options import QueryOptions
 
         query = f"UPDATE {keyspace} SET {field} = $sentinel WHERE {field} IS MISSING OR {field} IS NULL"
         result = cluster.query(query, QueryOptions(named_parameters={"sentinel": sentinel}, metrics=True))
+        # Drain the result so the mutation executes
         for _ in result.rows():
             pass
         try:

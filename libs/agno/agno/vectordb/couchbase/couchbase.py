@@ -662,8 +662,8 @@ class CouchbaseSearch(VectorDb):
                 return True
             return False
         except SearchIndexNotFoundException:
-            # Index doesn't exist yet — will be created with user_id
-            return True
+            # Index doesn't exist yet — can't verify if user's definition has user_id
+            return None
         except Exception:
             return None
 
