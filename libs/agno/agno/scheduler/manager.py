@@ -6,7 +6,12 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule, ScheduleRun
+from agno.db.schemas.scheduler import (
+    STUDIO_SCHEDULE_MANAGED_BY,
+    Schedule,
+    ScheduleRun,
+    is_studio_managed_schedule,
+)
 from agno.utils.log import log_debug, log_warning
 
 # Valid DB method names for the scheduler
@@ -99,6 +104,25 @@ class ScheduleManager:
             return []
         return [ScheduleRun.from_dict(d) if isinstance(d, dict) else d for d in data]
 
+    def _generic_namespace_kwargs(self) -> Dict[str, str]:
+        """Scope scheduler-v2 name/list reads away from Studio-owned rows."""
+        version = getattr(self.db, "scheduler_api_version", 1)
+        if isinstance(version, int) and version >= 2:
+            return {"exclude_managed_by": STUDIO_SCHEDULE_MANAGED_BY}
+        return {}
+
+    def _get_generic_schedule(self, schedule_id: str) -> Optional[Schedule]:
+        schedule = self._to_schedule(self._call("get_schedule", schedule_id))
+        if schedule is None or is_studio_managed_schedule(schedule):
+            return None
+        return schedule
+
+    async def _aget_generic_schedule(self, schedule_id: str) -> Optional[Schedule]:
+        schedule = self._to_schedule(await self._acall("get_schedule", schedule_id))
+        if schedule is None or is_studio_managed_schedule(schedule):
+            return None
+        return schedule
+
     # --- Sync API ---
 
     def create(
@@ -134,7 +158,7 @@ class ScheduleManager:
         if not validate_timezone(timezone):
             raise ValueError(f"Invalid timezone: {timezone}")
 
-        existing = self._to_schedule(self._call("get_schedule_by_name", name))
+        existing = self._to_schedule(self._call("get_schedule_by_name", name, **self._generic_namespace_kwargs()))
         if existing is not None:
             if if_exists == "skip":
                 log_debug(f"Schedule '{name}' already exists, skipping")
@@ -192,26 +216,36 @@ class ScheduleManager:
 
     def list(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
         """List all schedules."""
-        result = self._call("get_schedules", enabled=enabled, limit=limit, page=page)
+        result = self._call(
+            "get_schedules",
+            enabled=enabled,
+            limit=limit,
+            page=page,
+            **self._generic_namespace_kwargs(),
+        )
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
 
     def get(self, schedule_id: str) -> Optional[Schedule]:
         """Get a schedule by ID."""
-        return self._to_schedule(self._call("get_schedule", schedule_id))
+        return self._get_generic_schedule(schedule_id)
 
     def update(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
         """Update a schedule."""
+        if self._get_generic_schedule(schedule_id) is None:
+            return None
         return self._to_schedule(self._call("update_schedule", schedule_id, **kwargs))
 
     def delete(self, schedule_id: str) -> bool:
         """Delete a schedule."""
+        if self._get_generic_schedule(schedule_id) is None:
+            return False
         return self._call("delete_schedule", schedule_id)
 
     def enable(self, schedule_id: str) -> Optional[Schedule]:
         """Enable a schedule and compute next run."""
-        schedule = self._to_schedule(self._call("get_schedule", schedule_id))
+        schedule = self._get_generic_schedule(schedule_id)
         if schedule is None:
             return None
         from agno.scheduler.cron import compute_next_run
@@ -221,6 +255,8 @@ class ScheduleManager:
 
     def disable(self, schedule_id: str) -> Optional[Schedule]:
         """Disable a schedule."""
+        if self._get_generic_schedule(schedule_id) is None:
+            return None
         return self._to_schedule(self._call("update_schedule", schedule_id, enabled=False))
 
     def trigger(self, schedule_id: str) -> None:
@@ -238,6 +274,8 @@ class ScheduleManager:
 
     def get_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
         """Get run history for a schedule."""
+        if self._get_generic_schedule(schedule_id) is None:
+            return []
         result = self._call("get_schedule_runs", schedule_id, limit=limit, page=page)
         # get_schedule_runs returns (runs_list, total_count) tuple
         runs_data = result[0] if isinstance(result, tuple) else result
@@ -278,7 +316,9 @@ class ScheduleManager:
         if not validate_timezone(timezone):
             raise ValueError(f"Invalid timezone: {timezone}")
 
-        existing = self._to_schedule(await self._acall("get_schedule_by_name", name))
+        existing = self._to_schedule(
+            await self._acall("get_schedule_by_name", name, **self._generic_namespace_kwargs())
+        )
         if existing is not None:
             if if_exists == "skip":
                 log_debug(f"Schedule '{name}' already exists, skipping")
@@ -336,26 +376,36 @@ class ScheduleManager:
 
     async def alist(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
         """Async list all schedules."""
-        result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page)
+        result = await self._acall(
+            "get_schedules",
+            enabled=enabled,
+            limit=limit,
+            page=page,
+            **self._generic_namespace_kwargs(),
+        )
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
 
     async def aget(self, schedule_id: str) -> Optional[Schedule]:
         """Async get a schedule by ID."""
-        return self._to_schedule(await self._acall("get_schedule", schedule_id))
+        return await self._aget_generic_schedule(schedule_id)
 
     async def aupdate(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
         """Async update a schedule."""
+        if await self._aget_generic_schedule(schedule_id) is None:
+            return None
         return self._to_schedule(await self._acall("update_schedule", schedule_id, **kwargs))
 
     async def adelete(self, schedule_id: str) -> bool:
         """Async delete a schedule."""
+        if await self._aget_generic_schedule(schedule_id) is None:
+            return False
         return await self._acall("delete_schedule", schedule_id)
 
     async def aenable(self, schedule_id: str) -> Optional[Schedule]:
         """Async enable a schedule."""
-        schedule = self._to_schedule(await self._acall("get_schedule", schedule_id))
+        schedule = await self._aget_generic_schedule(schedule_id)
         if schedule is None:
             return None
         from agno.scheduler.cron import compute_next_run
@@ -367,10 +417,14 @@ class ScheduleManager:
 
     async def adisable(self, schedule_id: str) -> Optional[Schedule]:
         """Async disable a schedule."""
+        if await self._aget_generic_schedule(schedule_id) is None:
+            return None
         return self._to_schedule(await self._acall("update_schedule", schedule_id, enabled=False))
 
     async def aget_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
         """Async get run history for a schedule."""
+        if await self._aget_generic_schedule(schedule_id) is None:
+            return []
         result = await self._acall("get_schedule_runs", schedule_id, limit=limit, page=page)
         # get_schedule_runs returns (runs_list, total_count) tuple
         runs_data = result[0] if isinstance(result, tuple) else result

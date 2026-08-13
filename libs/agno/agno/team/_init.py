@@ -57,7 +57,7 @@ from agno.utils.log import (
     use_team_logger,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import generate_id_from_name
+from agno.utils.string import generate_component_id_from_name
 
 
 def __init__(
@@ -447,7 +447,7 @@ def set_id(team: "Team") -> None:
     If the name is not provided, generate a random UUID.
     """
     if team.id is None:
-        team.id = generate_id_from_name(team.name)
+        team.id = generate_component_id_from_name(team.name)
 
 
 def _set_debug(team: "Team", debug_mode: Optional[bool] = None) -> None:

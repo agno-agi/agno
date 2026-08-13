@@ -23,7 +23,8 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
-from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, ComponentVersionGuard, UserMemory
+from agno.db.utils import bind_component_version_guard, capture_component_version_guard
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
@@ -1561,8 +1562,9 @@ class Team:
         stage: str = "published",
         label: Optional[str] = None,
         notes: Optional[str] = None,
+        guard: Optional[ComponentVersionGuard] = None,
     ) -> Optional[int]:
-        return _storage.save(self, db=db, stage=stage, label=label, notes=notes)
+        return _storage.save(self, db=db, stage=stage, label=label, notes=notes, guard=guard)
 
     @classmethod
     def load(
@@ -1583,6 +1585,7 @@ class Team:
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
         require_no_dependents: bool = True,
+        guard: Optional[ComponentVersionGuard] = None,
     ) -> bool:
         """Delete this team's persisted component.
 
@@ -1608,6 +1611,7 @@ class Team:
             db=db,
             hard_delete=hard_delete,
             require_no_dependents=require_no_dependents,
+            guard=guard,
         )
 
     # -*- Public convenience functions
@@ -1875,6 +1879,8 @@ def get_team_by_id(
                 require_db_fallback_matches(cfg, db, "team", id)
             team.db = db
 
+        capture_component_version_guard(team, db, id, expected_config_version=row.get("version"))
+
         return team
 
     except ComponentRehydrationError:
@@ -1923,6 +1929,12 @@ def get_teams(
                         team.id = component_id
                         team._version = config.get("version")
                         team._stage = config.get("stage")
+                        bind_component_version_guard(
+                            team,
+                            db,
+                            latest_version=config.get("version"),
+                            current_version=component.get("current_version"),
+                        )
                         teams.append(team)
             except Exception as e:
                 log_error(f"Error loading Team {component_id} from database: {str(e)}")

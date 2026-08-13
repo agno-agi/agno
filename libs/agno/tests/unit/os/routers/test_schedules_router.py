@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agno.db.schemas.scheduler import ScheduleNameConflictError
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.settings import AgnoAPISettings
 
@@ -45,6 +46,7 @@ def _make_schedule_dict(**overrides):
 def mock_db():
     """Create a mock DB with schedule methods."""
     db = MagicMock()
+    db.scheduler_api_version = 2
     db.get_schedules = MagicMock(return_value=[])
     db.get_schedule = MagicMock(return_value=None)
     db.get_schedule_by_name = MagicMock(return_value=None)
@@ -81,6 +83,12 @@ class TestListSchedules:
         resp = client.get("/schedules")
         assert resp.status_code == 200
         assert resp.json()["data"] == []
+        mock_db.get_schedules.assert_called_once_with(
+            enabled=None,
+            limit=100,
+            page=1,
+            exclude_managed_by="studio",
+        )
 
     def test_returns_schedules(self, client, mock_db):
         schedules = [_make_schedule_dict(id="s1"), _make_schedule_dict(id="s2", name="second")]
@@ -125,6 +133,7 @@ class TestCreateSchedule:
         )
         assert resp.status_code == 201
         assert resp.json()["name"] == "new-sched"
+        mock_db.get_schedule_by_name.assert_called_once_with("new-sched", exclude_managed_by="studio")
         mock_db.create_schedule.assert_called_once()
 
     @patch("agno.scheduler.cron._require_pytz")
@@ -160,6 +169,25 @@ class TestCreateSchedule:
         )
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
+
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
+    @patch("agno.scheduler.cron.validate_cron_expr", return_value=True)
+    @patch("agno.scheduler.cron.validate_timezone", return_value=True)
+    @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
+    def test_create_constraint_race_maps_to_conflict(
+        self, mock_compute, mock_tz, mock_cron, mock_req_cron, mock_req_pytz, client, mock_db
+    ):
+        mock_db.get_schedule_by_name = MagicMock(return_value=None)
+        mock_db.create_schedule = MagicMock(side_effect=ScheduleNameConflictError("new-sched"))
+
+        resp = client.post(
+            "/schedules",
+            json={"name": "new-sched", "cron_expr": "0 9 * * *", "endpoint": "/test"},
+        )
+
+        assert resp.status_code == 409
+        assert "new-sched" in resp.json()["detail"]
 
 
 # =============================================================================
@@ -208,6 +236,16 @@ class TestUpdateSchedule:
         resp = client.patch("/schedules/sched-1", json={})
         assert resp.status_code == 200
         mock_db.update_schedule.assert_not_called()
+
+    def test_rename_constraint_race_maps_to_conflict(self, client, mock_db):
+        mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
+        mock_db.get_schedule_by_name = MagicMock(return_value=None)
+        mock_db.update_schedule = MagicMock(side_effect=ScheduleNameConflictError("renamed"))
+
+        resp = client.patch("/schedules/sched-1", json={"name": "renamed"})
+
+        assert resp.status_code == 409
+        assert "renamed" in resp.json()["detail"]
 
 
 # =============================================================================
@@ -351,6 +389,7 @@ class TestGetScheduleRun:
             "error": None,
             "created_at": now,
         }
+        mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
         mock_db.get_schedule_run = MagicMock(return_value=run)
         resp = client.get("/schedules/sched-1/runs/r1")
         assert resp.status_code == 200
@@ -369,9 +408,39 @@ class TestGetScheduleRun:
             "status": "success",
             "created_at": int(time.time()),
         }
+        mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
         mock_db.get_schedule_run = MagicMock(return_value=run)
         resp = client.get("/schedules/sched-1/runs/r1")
         assert resp.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json_body"),
+    [
+        ("GET", "/schedules/studio-schedule", None),
+        ("PATCH", "/schedules/studio-schedule", {"description": "overwritten"}),
+        ("DELETE", "/schedules/studio-schedule", None),
+        ("POST", "/schedules/studio-schedule/enable", None),
+        ("POST", "/schedules/studio-schedule/disable", None),
+        ("POST", "/schedules/studio-schedule/trigger", None),
+        ("GET", "/schedules/studio-schedule/runs", None),
+        ("GET", "/schedules/studio-schedule/runs/run-1", None),
+    ],
+)
+def test_generic_routes_hide_studio_schedule_ids(client, mock_db, method, path, json_body):
+    mock_db.get_schedule.return_value = _make_schedule_dict(
+        id="studio-schedule",
+        managed_by="studio",
+        owner_actor_id="actor-1",
+    )
+
+    response = client.request(method, path, json=json_body)
+
+    assert response.status_code == 404
+    mock_db.update_schedule.assert_not_called()
+    mock_db.delete_schedule.assert_not_called()
+    mock_db.get_schedule_runs.assert_not_called()
+    mock_db.get_schedule_run.assert_not_called()
 
 
 # =============================================================================

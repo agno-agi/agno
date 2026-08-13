@@ -58,17 +58,19 @@ Persistence:
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
 
 from agno.run import RunContext
 from agno.tools.function import Function
-from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools, _slugify
+from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
+from agno.utils.string import generate_component_id_from_name
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.db.base import BaseDb, ComponentVersionGuard
+    from agno.db.base import BaseDb, ComponentProjection, ComponentVersionGuard
     from agno.models.base import Model
     from agno.registry.registry import Registry
     from agno.scheduler.manager import ScheduleManager
@@ -80,6 +82,8 @@ Component = Union["Agent", "Team", "Workflow"]
 TeamMember = Union["Agent", "Team"]
 
 _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
+_STUDIO_CONFIG_KEY = "_agno_studio"
+_STUDIO_CONFIG_MANIFEST = {"schema_version": 2, "request": {}}
 
 
 class StudioTools(Toolkit):
@@ -246,6 +250,9 @@ class StudioTools(Toolkit):
                 ]
             )
 
+        if self.enable_agents or self.enable_teams or self.enable_workflows:
+            tools.append(self.restore_component)
+
         # Versioning works on any component type, but is opt-in.
         if self.enable_versions:
             tools.extend(
@@ -312,6 +319,8 @@ class StudioTools(Toolkit):
                     (self.arun_workflow, "run_workflow"),
                 ]
             )
+        if self.enable_agents or self.enable_teams or self.enable_workflows:
+            async_tools.append((self.arestore_component, "restore_component"))
         if self.enable_versions:
             async_tools.extend(
                 [
@@ -522,8 +531,9 @@ class StudioTools(Toolkit):
         """Capture the exact config loaded by an edit and its catalog-v2 CAS state."""
         if self.db is None:
             return None, None
-        if not self.enable_versions or getattr(self.db, "component_catalog_api_version", 1) < 2:
-            return self._edit_base_version(component_id), None
+        if getattr(self.db, "component_catalog_api_version", 1) < 2:
+            base_version = self._edit_base_version(component_id)
+            return base_version, None
 
         from agno.db.base import ComponentVersionGuard
 
@@ -536,10 +546,76 @@ class StudioTools(Toolkit):
             row["version"] for row in configs if row.get("stage") == "draft" and isinstance(row.get("version"), int)
         ]
         current_version = component.get("current_version")
-        base_version = max(drafts) if drafts else current_version
+        base_version = max(drafts) if self.enable_versions and drafts else current_version
+        if base_version is None:
+            base_version = max(versions) if versions else None
         return base_version, ComponentVersionGuard(
             latest_version=max(versions) if versions else None,
             current_version=current_version,
+        )
+
+    def _require_studio_owned(
+        self,
+        component_id: str,
+        *,
+        version: Optional[int] = None,
+        include_deleted: bool = False,
+    ) -> Dict[str, Any]:
+        """Return a config only when it was written by this typed control plane."""
+        if self.db is None:
+            raise ValueError("StudioTools has no db configured")
+        if getattr(self.db, "component_catalog_api_version", 1) >= 2:
+            row = self.db.get_config(
+                component_id=component_id,
+                version=version,
+                include_deleted=include_deleted,
+            )
+        else:
+            if include_deleted:
+                raise ValueError("Explicit restore requires component catalog API v2")
+            row = self.db.get_config(component_id=component_id, version=version)
+        candidates = [row]
+        if getattr(self.db, "component_catalog_api_version", 1) >= 2:
+            candidates.extend(
+                self.db.list_configs(
+                    component_id,
+                    include_config=True,
+                    include_deleted=include_deleted,
+                )
+            )
+        else:
+            candidates.extend(self.db.list_configs(component_id, include_config=True))
+        owned = any(
+            isinstance(candidate, dict)
+            and isinstance(candidate.get("config"), dict)
+            and _STUDIO_CONFIG_KEY in candidate["config"]
+            for candidate in candidates
+        )
+        if not isinstance(row, dict) or not isinstance(row.get("config"), dict) or not owned:
+            raise ValueError(
+                f"Cannot mutate component '{component_id}': only Studio-created components are editable by StudioTools"
+            )
+        return row
+
+    def _component_guard(
+        self,
+        component_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> tuple[Dict[str, Any], "ComponentVersionGuard"]:
+        """Capture component state for one guarded Studio mutation."""
+        if self.db is None:
+            raise ValueError("StudioTools has no db configured")
+        from agno.db.base import ComponentVersionGuard
+
+        component = self.db.get_component(component_id, include_deleted=include_deleted)
+        if component is None:
+            raise ValueError(f"Component not found: {component_id}")
+        latest = self.db.get_latest_config(component_id, include_deleted=include_deleted)
+        latest_version = latest.get("version") if isinstance(latest, dict) else None
+        return component, ComponentVersionGuard(
+            latest_version=latest_version if isinstance(latest_version, int) else None,
+            current_version=component.get("current_version"),
         )
 
     def _find_agent_for_edit(
@@ -1008,9 +1084,8 @@ class StudioTools(Toolkit):
                 message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
                 return json.dumps({"error": message})
 
-            agent_id = self._unique_component_id(name, db)
             agent = Agent(
-                id=agent_id,
+                id=generate_component_id_from_name(name),
                 name=name,
                 model=model,
                 tools=tools or None,
@@ -1022,7 +1097,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
             )
 
-            version = _persist_only(agent, db)
+            agent_id, version = self._create_component(agent, db)
             log_debug(f"StudioTools created agent id={agent_id} version={version}")
             return json.dumps(
                 {
@@ -1100,9 +1175,8 @@ class StudioTools(Toolkit):
                 members, member_pins = self._bind_members_to_target_db(members, db)
             except ValueError as e:
                 return json.dumps({"error": str(e)})
-            team_id = self._unique_component_id(name, db)
             team = Team(
-                id=team_id,
+                id=generate_component_id_from_name(name),
                 name=name,
                 model=model,
                 members=members,
@@ -1114,7 +1188,11 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
             )
 
-            version = _persist_only(team, db, links=self._links_for_component(team, db=db, pinned_versions=member_pins))
+            team_id, version = self._create_component(
+                team,
+                db,
+                links=self._links_for_component(team, db=db, pinned_versions=member_pins),
+            )
             log_debug(f"StudioTools created team id={team_id} members={member_ids} version={version}")
             return json.dumps(
                 {
@@ -1166,17 +1244,18 @@ class StudioTools(Toolkit):
                 step_pins = self._bind_steps_to_target_db(steps, db)
             except ValueError as e:
                 return json.dumps({"error": str(e)})
-            workflow_id = self._unique_component_id(name, db)
             workflow = Workflow(
-                id=workflow_id,
+                id=generate_component_id_from_name(name),
                 name=name,
                 description=description,
                 steps=steps,
                 db=db,
             )
 
-            version = _persist_only(
-                workflow, db, links=self._links_for_component(workflow, db=db, pinned_versions=step_pins)
+            workflow_id, version = self._create_component(
+                workflow,
+                db,
+                links=self._links_for_component(workflow, db=db, pinned_versions=step_pins),
             )
             log_debug(f"StudioTools created workflow id={workflow_id} steps={len(steps)} version={version}")
             return json.dumps(
@@ -1596,9 +1675,12 @@ class StudioTools(Toolkit):
                 if match is None:
                     return json.dumps({"error": f"Version not found: {component_id} v{target}"})
                 if match.get("stage") == "published":
+                    self._require_studio_owned(component_id, version=target)
                     if not catalog_v2:
                         self._sync_component_row(component_id, target)
                     return json.dumps({"status": "already_published", "id": component_id, "version": target})
+
+            self._require_studio_owned(component_id, version=target)
 
             if catalog_v2:
                 result = self.db.upsert_config(
@@ -1636,7 +1718,31 @@ class StudioTools(Toolkit):
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured."})
         try:
-            ok = self.db.set_current_version(component_id, version=version)
+            catalog_v2 = getattr(self.db, "component_catalog_api_version", 1) >= 2
+            self._require_studio_owned(component_id, version=version)
+            if catalog_v2:
+                from agno.db.base import ComponentVersionGuard
+
+                component = self.db.get_component(component_id)
+                if component is None:
+                    return json.dumps({"error": f"Component not found: {component_id}"})
+                configs = self.db.list_configs(component_id, include_config=False)
+                latest_version = max(
+                    (config["version"] for config in configs if isinstance(config.get("version"), int)),
+                    default=None,
+                )
+                ok = self.db.set_current_version(
+                    component_id,
+                    version=version,
+                    guard=ComponentVersionGuard(
+                        latest_version=latest_version,
+                        current_version=component.get("current_version"),
+                    ),
+                )
+            else:
+                # Catalog-v1 adapters predate keyword-only guards. Preserve
+                # their exact call shape instead of probing and catching TypeError.
+                ok = self.db.set_current_version(component_id, version=version)
             if not ok:
                 return json.dumps({"error": f"Component or version not found: {component_id} v{version}"})
             return json.dumps({"status": "set_current", "id": component_id, "version": version})
@@ -1654,7 +1760,12 @@ class StudioTools(Toolkit):
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured."})
         try:
-            deleted = self.db.delete_config(component_id, version=version)
+            self._require_studio_owned(component_id, version=version)
+            if getattr(self.db, "component_catalog_api_version", 1) >= 2:
+                _, guard = self._component_guard(component_id)
+                deleted = self.db.delete_config(component_id, version=version, guard=guard)
+            else:
+                deleted = self.db.delete_config(component_id, version=version)
             if not deleted:
                 return json.dumps({"error": f"Version not found: {component_id} v{version}"})
             return json.dumps({"status": "deleted", "id": component_id, "version": version})
@@ -1666,8 +1777,42 @@ class StudioTools(Toolkit):
     # Delete
     # ------------------------------------------------------------------
 
+    def _archive_studio_component(self, component_id: str, component_type: Any, noun: str) -> str:
+        """Archive a typed Studio component with the state observed here."""
+        if self.db is None:
+            return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
+
+        component = self.db.get_component(component_id, component_type=component_type)
+        if component is None:
+            resolved = self._runner_tools._resolve_db_id_by_name_or_slug(component_type.value, component_id)
+            if resolved is not None:
+                return json.dumps(
+                    {"error": f"Delete requires the exact id: '{component_id}' resolves to '{resolved}'."}
+                )
+            return json.dumps({"error": f"{noun} not found: {component_id}"})
+
+        catalog_v2 = getattr(self.db, "component_catalog_api_version", 1) >= 2
+        if catalog_v2:
+            component, guard = self._component_guard(component_id)
+            target_version = component.get("current_version") or guard.latest_version
+            self._require_studio_owned(component_id, version=target_version)
+            deleted = self.db.delete_component(
+                component_id,
+                hard_delete=False,
+                guard=guard,
+                expected_component_type=component_type,
+            )
+            status = "archived"
+        else:
+            self._require_studio_owned(component_id)
+            deleted = self.db.delete_component(component_id, hard_delete=True)
+            status = "deleted"
+        if not deleted:
+            return json.dumps({"error": f"{noun} not found: {component_id}"})
+        return json.dumps({"status": status, "id": component_id})
+
     def delete_agent(self, agent_id: str) -> str:
-        """Hard-delete an agent DB component.
+        """Archive a Studio-created agent DB component.
 
         Args:
             agent_id (str): The exact id of the agent to delete. Display names
@@ -1678,24 +1823,13 @@ class StudioTools(Toolkit):
         try:
             from agno.db.base import ComponentType
 
-            component = self.db.get_component(agent_id, component_type=ComponentType.AGENT)
-            if component is None:
-                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
-                if resolved is not None:
-                    return json.dumps(
-                        {"error": f"Delete requires the exact id: '{agent_id}' resolves to '{resolved}'."}
-                    )
-                return json.dumps({"error": f"Agent not found: {agent_id}"})
-            deleted = self.db.delete_component(agent_id, hard_delete=True)
-            if not deleted:
-                return json.dumps({"error": f"Agent not found: {agent_id}"})
-            return json.dumps({"status": "deleted", "id": agent_id})
+            return self._archive_studio_component(agent_id, ComponentType.AGENT, "Agent")
         except Exception as e:
             logger.exception("Failed to delete agent")
             return json.dumps({"error": str(e) or type(e).__name__})
 
     def delete_team(self, team_id: str) -> str:
-        """Hard-delete a team component.
+        """Archive a Studio-created team component.
 
         Args:
             team_id (str): The exact id of the team to delete. Display names
@@ -1706,22 +1840,13 @@ class StudioTools(Toolkit):
         try:
             from agno.db.base import ComponentType
 
-            component = self.db.get_component(team_id, component_type=ComponentType.TEAM)
-            if component is None:
-                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
-                if resolved is not None:
-                    return json.dumps({"error": f"Delete requires the exact id: '{team_id}' resolves to '{resolved}'."})
-                return json.dumps({"error": f"Team not found: {team_id}"})
-            deleted = self.db.delete_component(team_id, hard_delete=True)
-            if not deleted:
-                return json.dumps({"error": f"Team not found: {team_id}"})
-            return json.dumps({"status": "deleted", "id": team_id})
+            return self._archive_studio_component(team_id, ComponentType.TEAM, "Team")
         except Exception as e:
             logger.exception("Failed to delete team")
             return json.dumps({"error": str(e) or type(e).__name__})
 
     def delete_workflow(self, workflow_id: str) -> str:
-        """Hard-delete a workflow component.
+        """Archive a Studio-created workflow component.
 
         Args:
             workflow_id (str): The exact id of the workflow to delete. Display
@@ -1732,20 +1857,53 @@ class StudioTools(Toolkit):
         try:
             from agno.db.base import ComponentType
 
-            component = self.db.get_component(workflow_id, component_type=ComponentType.WORKFLOW)
-            if component is None:
-                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
-                if resolved is not None:
-                    return json.dumps(
-                        {"error": f"Delete requires the exact id: '{workflow_id}' resolves to '{resolved}'."}
-                    )
-                return json.dumps({"error": f"Workflow not found: {workflow_id}"})
-            deleted = self.db.delete_component(workflow_id, hard_delete=True)
-            if not deleted:
-                return json.dumps({"error": f"Workflow not found: {workflow_id}"})
-            return json.dumps({"status": "deleted", "id": workflow_id})
+            return self._archive_studio_component(workflow_id, ComponentType.WORKFLOW, "Workflow")
         except Exception as e:
             logger.exception("Failed to delete workflow")
+            return json.dumps({"error": str(e) or type(e).__name__})
+
+    def restore_component(self, component_id: str) -> str:
+        """Restore an archived Studio-created component by exact id.
+
+        Args:
+            component_id (str): Exact archived component id. Display names do not resolve.
+        """
+        if self.db is None:
+            return json.dumps({"error": "StudioTools has no db configured; cannot restore components."})
+        if getattr(self.db, "component_catalog_api_version", 1) < 2:
+            return json.dumps({"error": "Explicit restore requires component catalog API v2"})
+        try:
+            component, guard = self._component_guard(component_id, include_deleted=True)
+            if component.get("deleted_at") is None:
+                return json.dumps({"status": "already_active", "id": component_id})
+
+            enabled = {
+                "agent": self.enable_agents,
+                "team": self.enable_teams,
+                "workflow": self.enable_workflows,
+            }
+            component_type = component.get("component_type")
+            if not isinstance(component_type, str) or not enabled.get(component_type, False):
+                return json.dumps({"error": f"{component_type or 'unknown'} operations are not enabled"})
+
+            projection_version = component.get("current_version") or guard.latest_version
+            config_row = self._require_studio_owned(
+                component_id,
+                version=projection_version,
+                include_deleted=True,
+            )
+            config = config_row["config"]
+            projection: "ComponentProjection" = {
+                "name": config.get("name") or component.get("name") or component_id,
+                "description": config.get("description"),
+                "metadata": deepcopy(config.get("metadata")),
+            }
+            restored = self.db.restore_component(component_id, guard=guard, projection=projection)
+            if not restored:
+                return json.dumps({"error": f"Component is not archived: {component_id}"})
+            return json.dumps({"status": "restored", "id": component_id})
+        except Exception as e:
+            logger.exception("Failed to restore component")
             return json.dumps({"error": str(e) or type(e).__name__})
 
     # ------------------------------------------------------------------
@@ -2131,6 +2289,10 @@ class StudioTools(Toolkit):
         """Async variant of delete_workflow."""
         return await self._run_sync_tool(self.delete_workflow, workflow_id)
 
+    async def arestore_component(self, component_id: str) -> str:
+        """Async variant of restore_component."""
+        return await self._run_sync_tool(self.restore_component, component_id)
+
     async def acreate_schedule(
         self,
         name: str,
@@ -2162,19 +2324,53 @@ class StudioTools(Toolkit):
 
         return await asyncio.to_thread(function, *args, **kwargs)
 
-    def _unique_component_id(self, name: str, db: "BaseDb") -> str:
-        """Return a unique id in the DB component namespace.
+    def _create_component(
+        self,
+        component: Component,
+        db: "BaseDb",
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> tuple[str, Optional[int]]:
+        """Create one top-level Studio component without a split transaction.
 
-        Components use ``component_id`` as the primary key, so agents, teams,
-        and workflows intentionally share one id namespace.
+        Catalog-v2 creation reserves the ID and writes version one atomically.
+        If a concurrent creator wins the candidate ID, retry with the next
+        suffix instead of appending a second version to the winner's component.
+        Catalog-v1 adapters retain their historical non-atomic call shapes.
         """
-        base = _slugify(name)
-        candidate = base
-        suffix = 2
-        while self._component_id_exists(candidate, db):
-            candidate = f"{base}-{suffix}"
+        from agno.db.base import ComponentAlreadyExistsError
+
+        name = getattr(component, "name", None)
+        if not isinstance(name, str) or not name:
+            raise ValueError("Component has no name")
+
+        base = generate_component_id_from_name(name)
+        suffix = 1
+        while True:
+            component_id = base if suffix == 1 else f"{base}-{suffix}"
             suffix += 1
-        return candidate
+            if self._component_id_exists(component_id, db):
+                continue
+            component.id = component_id
+
+            if getattr(db, "component_catalog_api_version", 1) < 2:
+                return component_id, _persist_only(component, db, links=links)
+
+            try:
+                _, config_row = db.create_component_with_config(
+                    component_id=component_id,
+                    component_type=_component_type(component),
+                    name=name,
+                    description=getattr(component, "description", None),
+                    metadata=getattr(component, "metadata", None),
+                    config=_canonical_component_config(component),
+                    stage="published",
+                    links=links,
+                )
+                return component_id, config_row.get("version")
+            except ComponentAlreadyExistsError:
+                # The candidate was free at the read above but was reserved by
+                # another creator before our atomic insert. Try the next ID.
+                continue
 
     def _get_schedule_manager(self) -> "ScheduleManager":
         """The shared SchedulerTools instance's manager."""
@@ -2213,9 +2409,11 @@ class StudioTools(Toolkit):
             if (
                 getattr(component, "id", None) == component_id
                 or component_name == component_id
-                or (component_name is not None and _slugify(component_name) == component_id)
+                or (component_name is not None and generate_component_id_from_name(component_name) == component_id)
             ):
                 return True
+        if getattr(db, "component_catalog_api_version", 1) >= 2:
+            return db.get_component(component_id, include_deleted=True) is not None
         return db.get_component(component_id) is not None
 
     def _bind_child_to_target_db(
@@ -2534,7 +2732,7 @@ class StudioTools(Toolkit):
         load dropped (unless this edit replaced that key), and re-emits the
         member/step links so the new version stays pinned.
         """
-        config = _component_to_dict(component)
+        config = _studio_component_config(_component_to_dict(component))
         replaced = replaced_keys or set()
         component_id = getattr(component, "id", None)
         self._preserve_unresolved_keys(component_id, config, replaced, base_version)
@@ -2549,7 +2747,7 @@ class StudioTools(Toolkit):
         if self.enable_versions:
             version = self._upsert_draft(component, config=config, links=links, guard=guard)
             return {"draft_version": version, "stage": "draft"}
-        version = _persist_only(component, self.db, config=config, links=links)
+        version = _persist_only(component, self.db, config=config, links=links, guard=guard)
         return {"version": version, "stage": "published"}
 
     def _preserve_unresolved_keys(
@@ -2766,11 +2964,13 @@ class StudioTools(Toolkit):
                 metadata=getattr(component, "metadata", None),
             )
 
+        draft_config = _studio_component_config(config if config is not None else _component_to_dict(component))
+
         if not catalog_v2:
             result = self.db.upsert_config(
                 component_id=component_id,
                 version=self._latest_draft_version(component_id),
-                config=config if config is not None else _component_to_dict(component),
+                config=draft_config,
                 stage="draft",
                 links=links,
             )
@@ -2781,7 +2981,7 @@ class StudioTools(Toolkit):
 
         result = self.db.upsert_config(
             component_id=component_id,
-            config=config if config is not None else _component_to_dict(component),
+            config=draft_config,
             stage="draft",
             links=links,
             guard=guard,
@@ -2833,6 +3033,7 @@ def _persist_only(
     stage: str = "published",
     config: Optional[Dict[str, Any]] = None,
     links: Optional[List[Dict[str, Any]]] = None,
+    guard: Optional["ComponentVersionGuard"] = None,
 ) -> Optional[int]:
     """Save a component WITHOUT cascading to members or step agents.
 
@@ -2852,18 +3053,19 @@ def _persist_only(
     component_id = getattr(component, "id", None)
     if component_id is None:
         raise ValueError("Component has no id")
-    db.upsert_component(
+    from agno.db.utils import save_component_config
+
+    result = save_component_config(
+        db,
         component_id=component_id,
         component_type=_component_type(component),
         name=getattr(component, "name", component_id),
         description=getattr(component, "description", None),
         metadata=getattr(component, "metadata", None),
-    )
-    result = db.upsert_config(
-        component_id=component_id,
-        config=config if config is not None else _component_to_dict(component),
+        config=_studio_component_config(config if config is not None else _component_to_dict(component)),
         stage=stage,
         links=links,
+        guard=guard,
     )
     return result.get("version")
 
@@ -2944,6 +3146,26 @@ def _component_to_dict(component: Component, carry: Optional[Dict[str, Any]] = N
         # the edited one and wins.
         config.setdefault(key, value)
     return config
+
+
+def _canonical_component_config(component: Component) -> Dict[str, Any]:
+    """Embed the complete catalog projection in an immutable Studio config."""
+    config = _component_to_dict(component)
+    config.update(
+        {
+            "name": getattr(component, "name", None) or getattr(component, "id", None),
+            "description": getattr(component, "description", None),
+            "metadata": deepcopy(getattr(component, "metadata", None)),
+        }
+    )
+    return _studio_component_config(config)
+
+
+def _studio_component_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Stamp immutable ownership metadata on every Studio-written version."""
+    marked = deepcopy(config)
+    marked[_STUDIO_CONFIG_KEY] = deepcopy(_STUDIO_CONFIG_MANIFEST)
+    return marked
 
 
 # Backward-compatible alias. The toolkit was originally released as ``StudioTool``

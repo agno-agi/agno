@@ -24,7 +24,7 @@ from agno.os.schema import (
 )
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
-from agno.utils.string import generate_id_from_name
+from agno.utils.string import generate_component_id_from_name
 
 
 class LegacyComponentCreate(BaseModel):
@@ -128,7 +128,7 @@ def attach_legacy_routes(router: APIRouter, db: BaseDb, registry: Optional[Regis
     )
     async def create_component(body: LegacyComponentCreate) -> ComponentResponse:
         try:
-            component_id = body.component_id or generate_id_from_name(body.name)
+            component_id = body.component_id or generate_component_id_from_name(body.name)
             config = _resolve_db_in_config(deepcopy(body.config or {}), db, registry)
 
             links: Optional[List[Dict[str, Any]]] = None

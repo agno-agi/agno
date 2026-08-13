@@ -19,8 +19,14 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.db.base import BaseDb, ComponentType, SessionType
-from agno.db.utils import resolve_db_from_config, save_component_config
+from agno.db.base import BaseDb, ComponentType, ComponentVersionGuard, ComponentVersionGuardRequiredError, SessionType
+from agno.db.utils import (
+    bind_component_version_guard_after_append,
+    capture_component_version_guard,
+    get_bound_component_version_guard,
+    resolve_db_from_config,
+    save_component_config,
+)
 from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
@@ -39,7 +45,7 @@ from agno.utils.agent import (
 from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
-from agno.utils.string import generate_id_from_name
+from agno.utils.string import generate_component_id_from_name
 
 # ---------------------------------------------------------------------------
 # Run output accessors
@@ -1275,6 +1281,7 @@ def save(
     stage: str = "published",
     label: Optional[str] = None,
     notes: Optional[str] = None,
+    guard: Optional[ComponentVersionGuard] = None,
 ) -> Optional[int]:
     """
     Save the agent component and config.
@@ -1285,6 +1292,8 @@ def save(
         stage: The stage of the component. Defaults to "published".
         label: The label of the component.
         notes: The notes of the component.
+        guard: Explicit catalog-v2 compare-and-set state. Loaded and
+            previously saved objects reuse their captured guard automatically.
 
     Returns:
         Optional[int]: The version number of the saved config.
@@ -1296,7 +1305,9 @@ def save(
         raise ValueError("Async databases not yet supported for save(). Use a sync database.")
 
     if agent.id is None:
-        agent.id = generate_id_from_name(agent.name)
+        agent.id = generate_component_id_from_name(agent.name)
+
+    mutation_guard = guard or get_bound_component_version_guard(agent, db_)
 
     try:
         config = save_component_config(
@@ -1310,9 +1321,18 @@ def save(
             label=label,
             stage=stage,
             notes=notes,
+            guard=mutation_guard,
         )
-
-        return config.get("version")
+        version = config.get("version")
+        if isinstance(version, int) and getattr(db_, "component_catalog_api_version", 1) >= 2:
+            bind_component_version_guard_after_append(
+                agent,
+                db_,
+                previous=mutation_guard,
+                version=version,
+                stage=stage,
+            )
+        return version
 
     except Exception as e:
         log_error(f"Error saving Agent to database: {str(e)}")
@@ -1364,6 +1384,8 @@ def load(
             require_db_fallback_matches(config, db, "agent", id)
         agent.db = db
 
+    capture_component_version_guard(agent, db, id, expected_config_version=data.get("version"))
+
     return agent
 
 
@@ -1373,6 +1395,7 @@ def delete(
     db: Optional[BaseDb] = None,
     hard_delete: bool = False,
     require_no_dependents: bool = True,
+    guard: Optional[ComponentVersionGuard] = None,
 ) -> bool:
     """
     Delete the agent component.
@@ -1386,6 +1409,8 @@ def delete(
             validation and can leave active components with dangling links;
             use it only for a deliberate repair or migration. Catalog-v1
             adapters retain their historical unguarded deletion behavior.
+        guard: Explicit catalog-v2 compare-and-set state. Loaded and
+            previously saved objects reuse their captured guard automatically.
 
     Returns:
         True if the component was deleted, False otherwise.
@@ -1406,8 +1431,13 @@ def delete(
         # Preserve the exact pre-2.9 adapter call shape. Third-party catalog-v1
         # implementations cannot accept the v2-only keyword-only policy.
         return db_.delete_component(component_id=agent.id, hard_delete=hard_delete)
+    mutation_guard = guard or get_bound_component_version_guard(agent, db_)
+    if mutation_guard is None:
+        raise ComponentVersionGuardRequiredError(agent.id)
     return db_.delete_component(
         component_id=agent.id,
         hard_delete=hard_delete,
+        guard=mutation_guard,
         require_no_dependents=require_no_dependents,
+        expected_component_type=ComponentType.AGENT,
     )

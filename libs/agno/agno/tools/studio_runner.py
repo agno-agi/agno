@@ -106,6 +106,7 @@ from agno.run import RunContext
 from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
+from agno.utils.string import generate_component_id_from_name
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
@@ -126,10 +127,7 @@ _GRAPH_DEPTH_CAP = 32
 
 def _slugify(name: str) -> str:
     """Component ids are slugified names (shared with StudioTools' create path)."""
-    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip())
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug.strip("-") or "component"
+    return generate_component_id_from_name(name)
 
 
 class StudioRunnerError(Exception):

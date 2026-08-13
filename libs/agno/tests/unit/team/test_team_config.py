@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb, ComponentType
+from agno.db.base import BaseDb, ComponentType, ComponentVersionGuard
 from agno.db.sqlite import SqliteDb
 from agno.registry import Registry
 from agno.session import TeamSession
@@ -692,13 +692,15 @@ class TestTeamSave:
             "deleted_at": None,
         }
         mock_db.upsert_config.return_value = {"version": 2}
+        guard = ComponentVersionGuard(latest_version=1, current_version=1)
 
         basic_team.db = mock_db
-        version = basic_team.save()
+        version = basic_team.save(guard=guard)
 
         mock_db.upsert_config.assert_called_once()
         call_args = mock_db.upsert_config.call_args
         assert call_args.kwargs["component_id"] == "test-team"
+        assert call_args.kwargs["guard"] == guard
         assert "config" in call_args.kwargs
         assert call_args.kwargs["projection"] == {
             "name": "Test Team",
@@ -1103,35 +1105,50 @@ class TestTeamDelete:
     def test_delete_calls_delete_component(self, basic_team, mock_db):
         """Test delete calls delete_component."""
         mock_db.delete_component.return_value = True
+        guard = ComponentVersionGuard(latest_version=1, current_version=1)
 
         basic_team.db = mock_db
-        result = basic_team.delete()
+        result = basic_team.delete(guard=guard)
 
         mock_db.delete_component.assert_called_once_with(
-            component_id="test-team", hard_delete=False, require_no_dependents=True
+            component_id="test-team",
+            hard_delete=False,
+            guard=guard,
+            require_no_dependents=True,
+            expected_component_type=ComponentType.TEAM,
         )
         assert result is True
 
     def test_delete_with_hard_delete(self, basic_team, mock_db):
         """Test delete with hard_delete flag."""
         mock_db.delete_component.return_value = True
+        guard = ComponentVersionGuard(latest_version=1, current_version=1)
 
         basic_team.db = mock_db
-        result = basic_team.delete(hard_delete=True)
+        result = basic_team.delete(hard_delete=True, guard=guard)
 
         mock_db.delete_component.assert_called_once_with(
-            component_id="test-team", hard_delete=True, require_no_dependents=True
+            component_id="test-team",
+            hard_delete=True,
+            guard=guard,
+            require_no_dependents=True,
+            expected_component_type=ComponentType.TEAM,
         )
         assert result is True
 
     def test_delete_can_explicitly_bypass_dependency_check(self, basic_team, mock_db):
         """Test delete forwards the dangerous dependency-check escape hatch."""
         basic_team.db = mock_db
+        guard = ComponentVersionGuard(latest_version=1, current_version=1)
 
-        assert basic_team.delete(require_no_dependents=False) is True
+        assert basic_team.delete(require_no_dependents=False, guard=guard) is True
 
         mock_db.delete_component.assert_called_once_with(
-            component_id="test-team", hard_delete=False, require_no_dependents=False
+            component_id="test-team",
+            hard_delete=False,
+            guard=guard,
+            require_no_dependents=False,
+            expected_component_type=ComponentType.TEAM,
         )
 
     def test_delete_uses_exact_catalog_v1_signature(self, basic_team, mock_db):
@@ -1153,7 +1170,10 @@ class TestTeamDelete:
         """Test delete uses explicitly provided db."""
         mock_db.delete_component.return_value = True
 
-        result = basic_team.delete(db=mock_db)
+        result = basic_team.delete(
+            db=mock_db,
+            guard=ComponentVersionGuard(latest_version=1, current_version=1),
+        )
 
         mock_db.delete_component.assert_called_once()
         assert result is True
@@ -1168,7 +1188,7 @@ class TestTeamDelete:
         mock_db.delete_component.return_value = False
 
         basic_team.db = mock_db
-        result = basic_team.delete()
+        result = basic_team.delete(guard=ComponentVersionGuard(latest_version=1, current_version=1))
 
         assert result is False
 

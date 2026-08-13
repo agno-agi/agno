@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -826,6 +826,19 @@ class ComponentCreate(BaseModel):
     stage: Literal["draft", "published"] = Field("draft", description="Stage: 'draft' or 'published'")
     notes: Optional[str] = Field(None, description="Optional notes")
 
+    @field_validator("component_id")
+    @classmethod
+    def validate_component_id_segment(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not value or value in {".", ".."}:
+            raise ValueError("component_id must be a non-empty URL path segment")
+        if any(char in value for char in ("/", "\\", "?", "#", "%")):
+            raise ValueError("component_id must be a single URL path segment")
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("component_id cannot contain control characters")
+        return value
+
 
 class ComponentResponse(BaseModel):
     component_id: str
@@ -897,6 +910,14 @@ class SetCurrentConfig(BaseModel):
 
 class ComponentDelete(BaseModel):
     """Guarded soft-archive request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    guard: ComponentVersionGuardRequest = Field(..., description="Expected component version state")
+
+
+class ComponentRestore(BaseModel):
+    """Guarded restore request for an archived component."""
 
     model_config = ConfigDict(extra="forbid")
 

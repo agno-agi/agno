@@ -85,7 +85,7 @@ from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.string import generate_id, generate_id_from_name
+from agno.utils.string import generate_component_id_from_name, generate_id
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 if TYPE_CHECKING:
@@ -868,7 +868,7 @@ class AgentOS:
             collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
             if not workflow.id:
-                workflow.id = generate_id_from_name(workflow.name)
+                workflow.id = generate_component_id_from_name(workflow.name)
 
             # Required for the built-in routes to work
             workflow.store_events = True

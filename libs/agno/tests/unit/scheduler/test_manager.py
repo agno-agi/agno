@@ -8,6 +8,7 @@ import pytest
 pytest.importorskip("croniter", reason="croniter not installed")
 pytest.importorskip("pytz", reason="pytz not installed")
 
+from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.scheduler.manager import ScheduleManager  # noqa: E402
 
 # =============================================================================
@@ -43,6 +44,7 @@ def _make_schedule(**overrides):
 @pytest.fixture
 def mock_db():
     db = MagicMock()
+    db.scheduler_api_version = 2
     db.get_schedule = MagicMock(return_value=_make_schedule())
     db.get_schedule_by_name = MagicMock(return_value=None)
     db.get_schedules = MagicMock(return_value=[_make_schedule()])
@@ -69,6 +71,7 @@ class TestManagerCreate:
         assert result.name == "new-sched"
         assert result.cron_expr == "0 9 * * *"
         assert result.enabled is True
+        mock_db.get_schedule_by_name.assert_called_once_with("new-sched", exclude_managed_by="studio")
         mock_db.create_schedule.assert_called_once()
 
     def test_create_invalid_cron(self, mgr):
@@ -107,11 +110,21 @@ class TestManagerList:
     def test_list_all(self, mgr, mock_db):
         result = mgr.list()
         assert len(result) == 1
-        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1)
+        mock_db.get_schedules.assert_called_once_with(
+            enabled=None,
+            limit=100,
+            page=1,
+            exclude_managed_by="studio",
+        )
 
     def test_list_with_filters(self, mgr, mock_db):
         mgr.list(enabled=True, limit=10, page=2)
-        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, page=2)
+        mock_db.get_schedules.assert_called_once_with(
+            enabled=True,
+            limit=10,
+            page=2,
+            exclude_managed_by="studio",
+        )
 
 
 class TestManagerGet:
@@ -173,6 +186,38 @@ class TestManagerGetRuns:
         mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, page=2)
 
 
+def test_generic_manager_isolates_studio_schedule_by_name_and_id(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "manager-namespace.db"))
+    studio_schedule = _make_schedule(
+        id="studio-schedule",
+        name="shared-name",
+        cron_expr="0 1 * * *",
+        managed_by="studio",
+        owner_actor_id="actor-1",
+    )
+    db.create_schedule(studio_schedule)
+    manager = ScheduleManager(db)
+
+    generic = manager.create(
+        name="shared-name",
+        cron="0 2 * * *",
+        endpoint="/agents/generic/runs",
+        if_exists="update",
+    )
+
+    assert generic.id != "studio-schedule"
+    assert generic.managed_by is None
+    assert [schedule.id for schedule in manager.list()] == [generic.id]
+    assert manager.get("studio-schedule") is None
+    assert manager.update("studio-schedule", description="overwritten") is None
+    assert manager.delete("studio-schedule") is False
+    assert manager.get_runs("studio-schedule") == []
+    stored_studio = db.get_schedule("studio-schedule")
+    assert stored_studio is not None
+    assert stored_studio["cron_expr"] == "0 1 * * *"
+    assert stored_studio["description"] is None
+
+
 class TestManagerCallMissingMethod:
     def test_missing_method(self, mgr, mock_db):
         del mock_db.get_schedule
@@ -192,6 +237,7 @@ class TestManagerCallMissingMethod:
 @pytest.fixture
 def mock_async_db():
     db = MagicMock()
+    db.scheduler_api_version = 2
     db.get_schedule = AsyncMock(return_value=_make_schedule())
     db.get_schedule_by_name = AsyncMock(return_value=None)
     db.get_schedules = AsyncMock(return_value=[_make_schedule()])
@@ -212,6 +258,10 @@ class TestAsyncCreate:
     async def test_acreate_success(self, async_mgr, mock_async_db):
         result = await async_mgr.acreate(name="async-sched", cron="0 9 * * *", endpoint="/test")
         assert result.name == "async-sched"
+        mock_async_db.get_schedule_by_name.assert_awaited_once_with(
+            "async-sched",
+            exclude_managed_by="studio",
+        )
         mock_async_db.create_schedule.assert_called_once()
 
     @pytest.mark.asyncio
@@ -231,6 +281,28 @@ class TestAsyncList:
     async def test_alist(self, async_mgr, mock_async_db):
         result = await async_mgr.alist()
         assert len(result) == 1
+        mock_async_db.get_schedules.assert_awaited_once_with(
+            enabled=None,
+            limit=100,
+            page=1,
+            exclude_managed_by="studio",
+        )
+
+
+class TestAsyncStudioIsolation:
+    @pytest.mark.asyncio
+    async def test_studio_schedule_is_hidden_from_id_mutations(self, async_mgr, mock_async_db):
+        mock_async_db.get_schedule.return_value = _make_schedule(managed_by="studio", owner_actor_id="actor-1")
+
+        assert await async_mgr.aget("sched-1") is None
+        assert await async_mgr.aupdate("sched-1", description="overwritten") is None
+        assert await async_mgr.adelete("sched-1") is False
+        assert await async_mgr.aenable("sched-1") is None
+        assert await async_mgr.adisable("sched-1") is None
+        assert await async_mgr.aget_runs("sched-1") == []
+        mock_async_db.update_schedule.assert_not_awaited()
+        mock_async_db.delete_schedule.assert_not_awaited()
+        mock_async_db.get_schedule_runs.assert_not_awaited()
 
 
 class TestAsyncGet:

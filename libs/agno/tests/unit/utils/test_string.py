@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from agno.utils.string import (
     _extract_json_objects,
+    generate_component_id_from_name,
     generate_id_from_name,
     parse_response_model_str,
     sanitize_postgres_string,
@@ -395,6 +396,15 @@ def test_generate_id_from_name_with_name():
     assert generate_id_from_name("Research/Review") == "research/review"
     assert generate_id_from_name("  Repeated  Spaces  ") == "--repeated--spaces--"
     assert generate_id_from_name("日本語") == "日本語"
+
+
+def test_generate_component_id_from_name_is_one_url_segment():
+    assert generate_component_id_from_name("My Agent") == "my-agent"
+    assert generate_component_id_from_name("Analyst v2.5") == "analyst-v2-5"
+    assert generate_component_id_from_name("R&D Jörg") == "r-d-jörg"
+    assert generate_component_id_from_name("Research/Review") == "research-review"
+    assert generate_component_id_from_name("  Repeated  Spaces  ") == "repeated-spaces"
+    assert generate_component_id_from_name("///") == "component"
 
 
 def test_generate_id_from_name_without_name():

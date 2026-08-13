@@ -4575,6 +4575,7 @@ class SqliteDb(BaseDb):
         guard: Optional[ComponentVersionGuard] = None,
         require_no_dependents: bool = True,
         projection: Optional[ComponentProjection] = None,
+        expected_component_type: Optional[ComponentType] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
@@ -4586,6 +4587,7 @@ class SqliteDb(BaseDb):
                 default). Soft deletion considers active parents; hard deletion
                 considers every parent.
             projection: Component fields to update atomically with a soft deletion.
+            expected_component_type: Optional identity invariant.
 
         Returns:
             True if deleted, False if not found.
@@ -4603,13 +4605,21 @@ class SqliteDb(BaseDb):
 
             with self._component_write_session() as sess:
                 existing = sess.execute(
-                    select(components_table.c.component_id, components_table.c.current_version).where(
+                    select(
+                        components_table.c.component_id,
+                        components_table.c.component_type,
+                        components_table.c.current_version,
+                    ).where(
                         components_table.c.component_id == component_id,
                         *([] if hard_delete else [components_table.c.deleted_at.is_(None)]),
                     )
                 ).fetchone()
                 if existing is None:
                     return False
+                if expected_component_type is not None and existing.component_type != expected_component_type.value:
+                    raise ValueError(
+                        f"Component {component_id} has type {existing.component_type}, not {expected_component_type.value}"
+                    )
 
                 if configs_table is not None:
                     actual = self._component_version_state(
@@ -4956,6 +4966,8 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        *,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
 
@@ -4965,6 +4977,7 @@ class SqliteDb(BaseDb):
                 the current published version or the latest draft when the
                 component has never been published.
             label: Config label to lookup. Ignored if version is provided.
+            include_deleted: Allow reading config history for an archived component.
 
         Returns:
             Config dictionary or None if not found.
@@ -4977,17 +4990,13 @@ class SqliteDb(BaseDb):
                 return None
 
             with self.Session() as sess:
-                # Always verify component exists and is not deleted
-                component_row = (
-                    sess.execute(
-                        select(components_table.c.current_version, components_table.c.component_id).where(
-                            components_table.c.component_id == component_id,
-                            components_table.c.deleted_at.is_(None),
-                        )
-                    )
-                    .mappings()
-                    .one_or_none()
-                )
+                component_query = select(
+                    components_table.c.current_version,
+                    components_table.c.component_id,
+                ).where(components_table.c.component_id == component_id)
+                if not include_deleted:
+                    component_query = component_query.where(components_table.c.deleted_at.is_(None))
+                component_row = sess.execute(component_query).mappings().one_or_none()
 
                 if component_row is None:
                     return None
@@ -5570,12 +5579,15 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         include_config: bool = False,
+        *,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """List all config versions for a component.
 
         Args:
             component_id: The component ID.
             include_config: If True, include full config blob. Otherwise just metadata.
+            include_deleted: Allow listing config history for an archived component.
 
         Returns:
             List of config dictionaries, newest first.
@@ -5589,13 +5601,12 @@ class SqliteDb(BaseDb):
                 return []
 
             with self.Session() as sess:
-                # Verify component exists and is not deleted
-                exists = sess.execute(
-                    select(components_table.c.component_id).where(
-                        components_table.c.component_id == component_id,
-                        components_table.c.deleted_at.is_(None),
-                    )
-                ).fetchone()
+                component_query = select(components_table.c.component_id).where(
+                    components_table.c.component_id == component_id
+                )
+                if not include_deleted:
+                    component_query = component_query.where(components_table.c.deleted_at.is_(None))
+                exists = sess.execute(component_query).fetchone()
 
                 if exists is None:
                     return []
@@ -5827,6 +5838,9 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        *,
+        _visited: Optional[Set[Tuple[str, int]]] = None,
+        _max_depth: int = 50,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
 
@@ -5839,6 +5853,9 @@ class SqliteDb(BaseDb):
             Dictionary with component, config, links, and resolved children.
         """
         try:
+            if _max_depth <= 0:
+                return None
+
             # Get component
             component = self.get_component(component_id)
             if component is None:
@@ -5854,6 +5871,21 @@ class SqliteDb(BaseDb):
                 resolved_version = self.resolve_version(component_id, version)
             if resolved_version is None:
                 return None
+
+            # Track only the active recursion path. Copying before descent
+            # detects real cycles without treating a shared child in a DAG as
+            # a cycle in its second branch.
+            active_path = set(_visited or set())
+            node_key = (component_id, resolved_version)
+            if node_key in active_path:
+                return {
+                    "component": component,
+                    "config": self.get_config(component_id, version=resolved_version),
+                    "children": [],
+                    "resolved_versions": {component_id: resolved_version},
+                    "cycle_detected": True,
+                }
+            active_path.add(node_key)
 
             # Get config
             config = self.get_config(component_id, version=resolved_version)
@@ -5877,6 +5909,8 @@ class SqliteDb(BaseDb):
                 child_graph = self.load_component_graph(
                     link["child_component_id"],
                     version=child_version,
+                    _visited=active_path,
+                    _max_depth=_max_depth - 1,
                 )
 
                 if child_graph:

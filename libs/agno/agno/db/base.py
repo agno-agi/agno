@@ -78,6 +78,24 @@ class ComponentVersionConflictError(ValueError):
         self.actual = actual
 
 
+class ComponentVersionGuardRequiredError(ValueError):
+    """Raised when a catalog-v2 mutation has no compare-and-set state."""
+
+    def __init__(self, component_id: str):
+        super().__init__(
+            f"Component {component_id} already exists; load it, reuse its saved object, or pass a ComponentVersionGuard"
+        )
+        self.component_id = component_id
+
+
+class ComponentArchivedError(ValueError):
+    """Raised when a normal mutation targets a reserved, archived ID."""
+
+    def __init__(self, component_id: str):
+        super().__init__(f"Component {component_id} is archived; restore it explicitly before saving")
+        self.component_id = component_id
+
+
 class ComponentDependencyError(ValueError):
     """Raised when a component or config is still referenced."""
 
@@ -985,6 +1003,7 @@ class BaseDb(ABC):
         guard: Optional[ComponentVersionGuard] = None,
         require_no_dependents: bool = True,
         projection: Optional[ComponentProjection] = None,
+        expected_component_type: Optional[ComponentType] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
@@ -996,6 +1015,8 @@ class BaseDb(ABC):
                 default). Soft deletion considers active parents; hard deletion
                 considers every parent.
             projection: Component fields to update atomically with a soft deletion.
+            expected_component_type: Optional identity invariant validated in
+                the same transaction as deletion.
 
         Returns:
             True if deleted, False if not found or already deleted.
@@ -1092,6 +1113,8 @@ class BaseDb(ABC):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        *,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
 
@@ -1101,6 +1124,7 @@ class BaseDb(ABC):
                 omitted, returns the current published config or the latest
                 draft when the component has never been published.
             label: Config label to lookup. Ignored if version is provided.
+            include_deleted: Allow reading config history for an archived component.
 
         Returns:
             Config dictionary or None if not found.
@@ -1246,12 +1270,15 @@ class BaseDb(ABC):
         self,
         component_id: str,
         include_config: bool = False,
+        *,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """List all config versions for a component.
 
         Args:
             component_id: The component ID.
             include_config: If True, include full config blob. Otherwise just metadata.
+            include_deleted: Allow listing config history for an archived component.
 
         Returns:
             List of config dictionaries, newest first.

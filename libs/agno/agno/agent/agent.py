@@ -34,8 +34,9 @@ from agno.agent import (
 )
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
-from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, ComponentVersionGuard, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.utils import bind_component_version_guard, capture_component_version_guard
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
@@ -944,8 +945,9 @@ class Agent:
         stage: str = "published",
         label: Optional[str] = None,
         notes: Optional[str] = None,
+        guard: Optional[ComponentVersionGuard] = None,
     ) -> Optional[int]:
-        return _storage.save(self, db=db, stage=stage, label=label, notes=notes)
+        return _storage.save(self, db=db, stage=stage, label=label, notes=notes, guard=guard)
 
     @classmethod
     def load(
@@ -966,6 +968,7 @@ class Agent:
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
         require_no_dependents: bool = True,
+        guard: Optional[ComponentVersionGuard] = None,
     ) -> bool:
         """Delete this agent's persisted component.
 
@@ -991,6 +994,7 @@ class Agent:
             db=db,
             hard_delete=hard_delete,
             require_no_dependents=require_no_dependents,
+            guard=guard,
         )
 
     def get_run_output(
@@ -1801,6 +1805,8 @@ def get_agent_by_id(
                 require_db_fallback_matches(cfg, db, "agent", id)
             agent.db = db
 
+        capture_component_version_guard(agent, db, id, expected_config_version=row.get("version"))
+
         return agent
 
     except ComponentRehydrationError:
@@ -1843,6 +1849,12 @@ def get_agents(
                         agent.id = component_id
                         agent._version = config.get("version")
                         agent._stage = config.get("stage")
+                        bind_component_version_guard(
+                            agent,
+                            db,
+                            latest_version=config.get("version"),
+                            current_version=component.get("current_version"),
+                        )
                         agents.append(agent)
             except Exception as e:
                 component_id = component.get("component_id", "unknown")

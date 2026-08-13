@@ -36,12 +36,12 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import generate_id_from_name
+from agno.utils.string import generate_component_id_from_name
 
 
 def set_id(agent: Agent) -> None:
     if agent.id is None:
-        agent.id = generate_id_from_name(agent.name)
+        agent.id = generate_component_id_from_name(agent.name)
 
 
 def set_debug(agent: Agent, debug_mode: Optional[bool] = None) -> None:

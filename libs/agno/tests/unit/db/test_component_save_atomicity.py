@@ -5,7 +5,15 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from agno.agent.agent import Agent, get_agent_by_id, get_agents
-from agno.db.base import BaseDb, ComponentDependencyError, ComponentType
+from agno.db.base import (
+    BaseDb,
+    ComponentArchivedError,
+    ComponentDependencyError,
+    ComponentType,
+    ComponentVersionConflictError,
+    ComponentVersionGuard,
+    ComponentVersionGuardRequiredError,
+)
 from agno.db.sqlite import SqliteDb
 from agno.os.utils import (
     get_agent_by_id as get_runtime_agent_by_id,
@@ -17,7 +25,7 @@ from agno.os.utils import (
     get_workflow_by_id as get_runtime_workflow_by_id,
 )
 from agno.team.team import Team, get_team_by_id, get_teams
-from agno.utils.string import generate_id_from_name
+from agno.utils.string import generate_component_id_from_name
 from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
 
 
@@ -56,6 +64,9 @@ class _LegacyComponentSqliteDb(SqliteDb):
 
     def create_component_with_config(self, *args, **kwargs):
         raise AssertionError("catalog API v1 must not probe the v2 atomic primitive")
+
+    def delete_component(self, component_id: str, hard_delete: bool = False) -> bool:
+        return super().delete_component(component_id=component_id, hard_delete=hard_delete)
 
 
 class _BrokenAtomicSqliteDb(SqliteDb):
@@ -121,6 +132,30 @@ class _ReplaceDuringReadSqliteDb(SqliteDb):
                 stage="published",
             )
         return component
+
+
+class _PublishBetweenLoadAndGuardSqliteDb(SqliteDb):
+    """Publish after a load reads config but before it captures CAS state."""
+
+    publish_before_next_get_component = False
+
+    def get_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        *,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        if self.publish_before_next_get_component:
+            self.publish_before_next_get_component = False
+            super().upsert_config(
+                component_id,
+                config={"id": component_id, "name": "Concurrent publication"},
+                stage="published",
+                guard=ComponentVersionGuard(latest_version=1, current_version=1),
+                projection={"name": "Concurrent publication"},
+            )
+        return super().get_component(component_id, component_type, include_deleted=include_deleted)
 
 
 def _assert_no_component_or_configs(db: SqliteDb, component_id: str) -> None:
@@ -248,6 +283,8 @@ def test_first_save_falls_back_for_legacy_custom_component_adapter(tmp_path) -> 
     assert component["current_version"] == 1
     assert config is not None and config["stage"] == "published"
 
+    assert agent.delete(db=db) is True
+
 
 def test_base_bulk_read_fallback_preserves_legacy_scalar_signatures(tmp_path) -> None:
     db = _LegacyComponentSqliteDb(db_file=str(tmp_path / "legacy-bulk-read-adapter.db"))
@@ -318,14 +355,22 @@ def test_draft_only_projection_tracks_latest_draft_then_freezes_after_publish(tm
     assert component["metadata"] == {"revision": 3}
 
 
-def test_save_restores_archived_component_and_appends_history(tmp_path) -> None:
-    db = SqliteDb(db_file=str(tmp_path / "restore-on-save.db"))
+def test_save_requires_explicit_restore_then_appends_history(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "explicit-restore-before-save.db"))
     agent = Agent(id="restorable-agent", name="Version one", description="Before archive", db=db)
     assert agent.save(stage="published") == 1
     assert agent.delete() is True
 
     agent.name = "Version two"
     agent.description = "After restore"
+    with pytest.raises(ComponentArchivedError, match="restore it explicitly"):
+        agent.save(stage="published")
+
+    assert db.restore_component(
+        "restorable-agent",
+        guard=ComponentVersionGuard(latest_version=1, current_version=1),
+        projection={"name": "Version one", "description": "Before archive", "metadata": None},
+    )
     assert agent.save(stage="published") == 2
 
     component = db.get_component("restorable-agent")
@@ -343,7 +388,7 @@ def test_failed_save_does_not_restore_archived_component(tmp_path) -> None:
     assert agent.delete() is True
 
     agent.name = "Rejected version"
-    with pytest.raises(ValueError, match="Label 'stable' already exists"):
+    with pytest.raises(ComponentArchivedError, match="restore it explicitly"):
         agent.save(stage="published", label="stable")
 
     assert db.get_component("archived-agent") is None
@@ -380,7 +425,8 @@ def test_public_delete_dependency_check_has_explicit_escape_hatch(tmp_path) -> N
             }
         ],
     )
-    child = Agent(id="child-agent", db=db)
+    child = Agent.load("child-agent", db=db)
+    assert child is not None
 
     with pytest.raises(ComponentDependencyError):
         child.delete()
@@ -389,14 +435,15 @@ def test_public_delete_dependency_check_has_explicit_escape_hatch(tmp_path) -> N
     assert db.get_component("child-agent") is None
 
 
-def test_draft_save_survives_publish_after_initial_component_read(tmp_path) -> None:
+def test_draft_save_rejects_publish_after_captured_component_state(tmp_path) -> None:
     db = _PublishDuringReadSqliteDb(db_file=str(tmp_path / "publish-race.db"))
     agent = Agent(id="race-agent", name="Initial draft", db=db)
     assert agent.save(stage="draft") == 1
 
     agent.name = "Later draft"
     db.publish_during_next_get = True
-    assert agent.save(stage="draft") == 3
+    with pytest.raises(ComponentVersionConflictError):
+        agent.save(stage="draft")
 
     component = db.get_component("race-agent")
     assert component is not None
@@ -405,9 +452,151 @@ def test_draft_save_survives_publish_after_initial_component_read(tmp_path) -> N
     assert db.get_current_config("race-agent")["version"] == 2  # type: ignore[index]
     latest = db.get_latest_config("race-agent")
     assert latest is not None
-    assert latest["version"] == 3
-    assert latest["stage"] == "draft"
-    assert latest["config"]["name"] == "Later draft"
+    assert latest["version"] == 2
+    assert latest["stage"] == "published"
+
+
+def test_two_loaded_agents_cannot_overwrite_each_others_snapshot(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "stale-loaded-agent.db"))
+    original = Agent(id="guarded-agent", name="Original", db=db)
+    assert original.save() == 1
+
+    first = Agent.load("guarded-agent", db=db)
+    stale = Agent.load("guarded-agent", db=db)
+    assert first is not None and stale is not None
+
+    first.name = "Winner"
+    assert first.save() == 2
+    stale.name = "Stale loser"
+    with pytest.raises(ComponentVersionConflictError):
+        stale.save()
+
+    current = db.get_current_config("guarded-agent")
+    assert current is not None
+    assert current["version"] == 2
+    assert current["config"]["name"] == "Winner"
+
+
+def test_loaded_team_and_workflow_saves_reject_stale_snapshots(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "stale-team-workflow.db"))
+    team = Team(id="guarded-team", name="Team", members=[], db=db)
+    workflow = Workflow(id="guarded-workflow", name="Workflow", db=db)
+    assert team.save() == 1
+    assert workflow.save() == 1
+
+    first_team = Team.load("guarded-team", db=db)
+    stale_team = Team.load("guarded-team", db=db)
+    first_workflow = Workflow.load("guarded-workflow", db=db)
+    stale_workflow = Workflow.load("guarded-workflow", db=db)
+    assert first_team is not None and stale_team is not None
+    assert first_workflow is not None and stale_workflow is not None
+
+    first_team.name = "Winning team"
+    assert first_team.save() == 2
+    stale_team.name = "Stale team"
+    with pytest.raises(ComponentVersionConflictError):
+        stale_team.save()
+
+    first_workflow.name = "Winning workflow"
+    assert first_workflow.save() == 2
+    stale_workflow.name = "Stale workflow"
+    with pytest.raises(ComponentVersionConflictError):
+        stale_workflow.save()
+
+
+def test_stale_loaded_object_cannot_archive_newer_version(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "stale-delete.db"))
+    assert Agent(id="stale-delete", name="Original", db=db).save() == 1
+    writer = Agent.load("stale-delete", db=db)
+    stale_deleter = Agent.load("stale-delete", db=db)
+    assert writer is not None and stale_deleter is not None
+
+    writer.name = "Newer"
+    assert writer.save() == 2
+
+    with pytest.raises(ComponentVersionConflictError):
+        stale_deleter.delete()
+    assert db.get_component("stale-delete") is not None
+
+
+def test_public_delete_validates_component_type_inside_transaction(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "delete-type.db"))
+    assert Team(id="shared-delete-id", name="Team", members=[], db=db).save() == 1
+    wrong_type = Agent(id="shared-delete-id", name="Not the team", db=db)
+
+    with pytest.raises(ValueError, match="has type team, not agent"):
+        wrong_type.delete(guard=ComponentVersionGuard(latest_version=1, current_version=1))
+
+    component = db.get_component("shared-delete-id")
+    assert component is not None
+    assert component["component_type"] == ComponentType.TEAM.value
+
+
+def test_existing_id_requires_loaded_or_explicit_guard(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "guard-required.db"))
+    assert Agent(id="guard-required", name="Original", db=db).save() == 1
+
+    unattached = Agent(id="guard-required", name="Overwrite", db=db)
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        unattached.save()
+
+
+def test_captured_guard_cannot_be_reused_against_a_different_database(tmp_path) -> None:
+    db_a = SqliteDb(db_file=str(tmp_path / "guard-db-a.db"))
+    db_b = SqliteDb(db_file=str(tmp_path / "guard-db-b.db"))
+    from_a = Agent(id="same-id", name="Database A", db=db_a)
+    assert from_a.save() == 1
+    assert Agent(id="same-id", name="Database B", db=db_b).save() == 1
+
+    from_a.name = "Cross-db overwrite"
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        from_a.save(db=db_b)
+
+    assert db_b.get_current_config("same-id")["config"]["name"] == "Database B"
+
+
+def test_captured_guard_distinguishes_independent_in_memory_databases() -> None:
+    db_a = SqliteDb(db_url="sqlite://")
+    db_b = SqliteDb(db_url="sqlite://")
+    from_a = Agent(id="same-memory-id", name="Database A", db=db_a)
+    assert from_a.save() == 1
+    assert Agent(id="same-memory-id", name="Database B", db=db_b).save() == 1
+
+    from_a.name = "Cross-db overwrite"
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        from_a.save(db=db_b)
+
+    assert db_b.get_current_config("same-memory-id")["config"]["name"] == "Database B"
+
+
+def test_load_does_not_attach_fresh_guard_to_replaced_config_snapshot(tmp_path) -> None:
+    db = _PublishBetweenLoadAndGuardSqliteDb(db_file=str(tmp_path / "load-guard-race.db"))
+    assert Agent(id="load-race", name="Version one", db=db).save() == 1
+    db.publish_before_next_get_component = True
+
+    stale = Agent.load("load-race", db=db)
+    assert stale is not None
+    stale.name = "Must not overwrite"
+
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        stale.save()
+    assert db.get_current_config("load-race")["config"]["name"] == "Concurrent publication"
+
+
+def test_load_of_published_snapshot_cannot_silently_overwrite_newer_draft(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "load-with-draft.db"))
+    original = Agent(id="load-with-draft", name="Published", db=db)
+    assert original.save() == 1
+    assert original.save(stage="draft") == 2
+
+    published = Agent.load("load-with-draft", db=db)
+    assert published is not None
+    assert published.name == "Published"
+    published.name = "Must not skip the draft"
+
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        published.save()
+    assert db.get_latest_config("load-with-draft")["version"] == 2  # type: ignore[index]
 
 
 def test_save_rejects_component_type_replacement_after_initial_read(tmp_path) -> None:
@@ -428,14 +617,14 @@ def test_save_rejects_component_type_replacement_after_initial_read(tmp_path) ->
     assert [row["version"] for row in db.list_configs("replaced-component")] == [1]
 
 
-def test_direct_component_saves_share_the_historical_name_id_contract(tmp_path) -> None:
+def test_direct_component_saves_share_the_url_safe_name_id_contract(tmp_path) -> None:
     name = "R&D Jörg"
-    expected = generate_id_from_name(name)
+    expected = generate_component_id_from_name(name)
     agent = Agent(name=name, db=SqliteDb(db_file=str(tmp_path / "agent-id.db")))
     team = Team(name=name, members=[], db=SqliteDb(db_file=str(tmp_path / "team-id.db")))
     workflow = Workflow(name=name, db=SqliteDb(db_file=str(tmp_path / "workflow-id.db")))
 
-    assert expected == "r&d-jörg"
+    assert expected == "r-d-jörg"
     assert agent.save(stage="draft") == 1
     assert team.save(stage="draft") == 1
     assert workflow.save(stage="draft") == 1

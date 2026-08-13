@@ -80,6 +80,59 @@ def _component_link(child_id: str, *, link_key: str = "step_0") -> Dict[str, obj
     }
 
 
+def _insert_raw_component_link(db: SqliteDb, parent_id: str, child_id: str, *, link_key: str) -> None:
+    links_table = db._get_table(table_type="component_links", create_table_if_not_found=True)
+    assert links_table is not None
+    with db.Session() as session, session.begin():
+        session.execute(
+            links_table.insert().values(
+                parent_component_id=parent_id,
+                parent_version=1,
+                link_kind="step_agent",
+                link_key=link_key,
+                child_component_id=child_id,
+                child_version=1,
+                position=0,
+            )
+        )
+
+
+def test_load_component_graph_bounds_malformed_cycle(sqlite_db_real: SqliteDb) -> None:
+    _create_component(sqlite_db_real, "graph-cycle-a")
+    _create_component(sqlite_db_real, "graph-cycle-b")
+    _insert_raw_component_link(sqlite_db_real, "graph-cycle-a", "graph-cycle-b", link_key="to-b")
+    _insert_raw_component_link(sqlite_db_real, "graph-cycle-b", "graph-cycle-a", link_key="to-a")
+
+    graph = sqlite_db_real.load_component_graph("graph-cycle-a")
+
+    assert graph is not None
+    cycle = graph["children"][0]["graph"]["children"][0]["graph"]
+    assert cycle["component"]["component_id"] == "graph-cycle-a"
+    assert cycle["cycle_detected"] is True
+    assert cycle["children"] == []
+
+
+def test_load_component_graph_expands_shared_child_in_each_dag_branch(sqlite_db_real: SqliteDb) -> None:
+    _create_component(sqlite_db_real, "graph-shared")
+    _create_component(sqlite_db_real, "graph-left", links=[_component_link("graph-shared")])
+    _create_component(sqlite_db_real, "graph-right", links=[_component_link("graph-shared")])
+    _create_component(
+        sqlite_db_real,
+        "graph-root",
+        links=[
+            _component_link("graph-left", link_key="left"),
+            _component_link("graph-right", link_key="right"),
+        ],
+    )
+
+    graph = sqlite_db_real.load_component_graph("graph-root")
+
+    assert graph is not None
+    shared_graphs = [branch["graph"]["children"][0]["graph"] for branch in graph["children"]]
+    assert [item["component"]["component_id"] for item in shared_graphs] == ["graph-shared", "graph-shared"]
+    assert all("cycle_detected" not in item for item in shared_graphs)
+
+
 def test_generic_read_falls_back_to_latest_draft_but_current_read_does_not(sqlite_db_real: SqliteDb) -> None:
     _create_component(sqlite_db_real, "draft-agent", stage="draft")
 
@@ -1047,6 +1100,9 @@ def test_restore_component_is_guarded_and_preserves_history(sqlite_db_real: Sqli
     assert sqlite_db_real.delete_component("restored-agent", guard=_guard(1, 1))
 
     assert sqlite_db_real.get_config("restored-agent") is None
+    archived_config = sqlite_db_real.get_config("restored-agent", version=1, include_deleted=True)
+    assert archived_config is not None
+    assert archived_config["version"] == 1
     archived_latest = sqlite_db_real.get_latest_config("restored-agent", include_deleted=True)
     assert archived_latest is not None
     assert archived_latest["version"] == 1
@@ -1248,6 +1304,12 @@ def test_expected_component_type_rejects_replaced_identity(sqlite_db_real: Sqlit
             config={"name": "Agent payload"},
             stage="published",
             projection={"name": "Agent payload"},
+            expected_component_type=ComponentType.AGENT,
+        )
+    with pytest.raises(ValueError, match="has type team, not agent"):
+        sqlite_db_real.delete_component(
+            "replaced-identity",
+            guard=_guard(1, 1),
             expected_component_type=ComponentType.AGENT,
         )
 

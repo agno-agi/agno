@@ -6,8 +6,10 @@ config persistence path is exercised, not mocked.
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from importlib.util import find_spec
+from threading import Barrier
 from typing import Any, Dict
 
 import pytest
@@ -125,6 +127,7 @@ class TestInitialization:
             "edit_agent",
             "delete_agent",
             "run_agent",
+            "restore_component",
         }
         assert expected == set(studio.functions.keys())
 
@@ -350,7 +353,7 @@ class TestCreateAgent:
         assert out["status"] == "created"
         assert out["tools"] == []
 
-    def test_slug_collisions_get_unique_ids(self, studio, db):
+    def test_canonical_id_collisions_get_unique_ids(self, studio, db):
         first = _loads(studio.create_agent(name="My Agent", instructions="i", model_id="gpt-5.4"))
         second = _loads(studio.create_agent(name="my-agent", instructions="i", model_id="gpt-5.4"))
         third = _loads(studio.create_agent(name="My--Agent", instructions="i", model_id="gpt-5.4"))
@@ -362,6 +365,61 @@ class TestCreateAgent:
         assert db.get_component("my-agent-2")["name"] == "my-agent"
         assert db.get_component("my-agent-3")["name"] == "My--Agent"
 
+    def test_generated_id_matches_direct_save(self, studio, tmp_path):
+        name = "R&D Jörg"
+        direct = Agent(name=name, db=SqliteDb(db_file=str(tmp_path / "direct-studio-id.db")))
+        assert direct.save(stage="draft") == 1
+
+        created = _loads(studio.create_agent(name=name, instructions="i", model_id="gpt-5.4"))
+
+        assert direct.id == "r-d-jörg"
+        assert created["id"] == direct.id
+
+    def test_create_persists_complete_null_projection(self, studio, db):
+        created = _loads(
+            studio.create_agent(
+                name="Projection Agent",
+                instructions="i",
+                model_id="gpt-5.4",
+                description=None,
+            )
+        )
+
+        config = db.get_config(created["id"], version=1)["config"]
+        assert config["name"] == "Projection Agent"
+        assert "description" in config and config["description"] is None
+        assert "metadata" in config and config["metadata"] is None
+
+    def test_concurrent_create_reserves_distinct_component_ids(self, studio, db, monkeypatch):
+        # Initialize the SQLite catalog before synchronizing the two inserts.
+        studio.create_agent(name="seed", instructions="i", model_id="gpt-5.4")
+        original_exists = studio._component_id_exists
+        ready = Barrier(2)
+
+        def synchronize_candidate(component_id, target_db):
+            exists = original_exists(component_id, target_db)
+            if component_id == "race-agent" and not exists:
+                ready.wait(timeout=5)
+            return exists
+
+        monkeypatch.setattr(studio, "_component_id_exists", synchronize_candidate)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(
+                    studio.create_agent,
+                    name="Race Agent",
+                    instructions=f"instructions-{index}",
+                    model_id="gpt-5.4",
+                )
+                for index in range(2)
+            ]
+        created = [_loads(future.result()) for future in futures]
+
+        assert sorted(result["id"] for result in created) == ["race-agent", "race-agent-2"]
+        for result in created:
+            versions = db.list_configs(result["id"], include_config=True)
+            assert [(row["version"], row["stage"]) for row in versions] == [(1, "published")]
+
     def test_component_ids_share_global_namespace(self, studio):
         studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
         team = _loads(studio.create_team(name="Reporter", instructions="i", member_ids=["member"], model_id="gpt-5.4"))
@@ -371,10 +429,10 @@ class TestCreateAgent:
         assert agent["id"] == "reporter-2"
 
     def test_persist_failure_returns_error(self, studio, db, monkeypatch):
-        def fail_upsert_config(*args, **kwargs):
+        def fail_atomic_create(*args, **kwargs):
             raise RuntimeError("persist failed")
 
-        monkeypatch.setattr(db, "upsert_config", fail_upsert_config)
+        monkeypatch.setattr(db, "create_component_with_config", fail_atomic_create)
 
         out = _loads(studio.create_agent(name="broken", instructions="i", model_id="gpt-5.4"))
         assert "error" in out
@@ -1043,6 +1101,40 @@ class TestEditWithoutVersioning:
         assert out["version"] == 3
         assert db.get_config("tutor")["version"] == 3
 
+    def test_default_edit_rejects_a_competing_publish(self, studio, db, monkeypatch):
+        from agno.db.base import ComponentVersionGuard
+
+        studio.create_agent(name="tutor", instructions="orig", model_id="gpt-5.4")
+        original_save = studio._save_edit
+
+        def save_after_competing_publish(*args, **kwargs):
+            stored = db.get_config("tutor", version=1)
+            assert stored is not None
+            competing = dict(stored["config"])
+            competing["description"] = "winner"
+            db.upsert_config(
+                component_id="tutor",
+                config=competing,
+                stage="published",
+                guard=ComponentVersionGuard(latest_version=1, current_version=1),
+            )
+            return original_save(*args, **kwargs)
+
+        monkeypatch.setattr(studio, "_save_edit", save_after_competing_publish)
+
+        out = _loads(studio.edit_agent("tutor", instructions="stale"))
+
+        assert "version conflict" in out["error"]
+        assert [row["version"] for row in db.list_configs("tutor")] == [2, 1]
+        assert db.get_current_config("tutor")["config"]["description"] == "winner"
+
+    def test_every_studio_written_version_carries_ownership_marker(self, studio, db):
+        studio.create_agent(name="tutor", instructions="orig", model_id="gpt-5.4")
+        studio.edit_agent("tutor", instructions="updated")
+
+        configs = db.list_configs("tutor", include_config=True)
+        assert [row["config"]["_agno_studio"]["schema_version"] for row in configs] == [2, 2]
+
 
 class TestEditTeam:
     def _setup(self, studio):
@@ -1261,6 +1353,47 @@ class TestVersioning:
         assert out["status"] == "set_current"
         assert out["version"] == 1
 
+    def test_set_current_version_rejects_concurrent_publication(self, studio_versioned, db, monkeypatch):
+        from agno.db.base import ComponentVersionGuard
+
+        self._create_and_edit(studio_versioned)
+        studio_versioned.publish_component("tutor")
+        original_set_current = db.set_current_version
+
+        def publish_before_rollback(*args, **kwargs):
+            current = db.get_config("tutor", version=2)
+            assert current is not None
+            competing = dict(current["config"])
+            competing["description"] = "concurrent publication"
+            db.upsert_config(
+                component_id="tutor",
+                config=competing,
+                stage="published",
+                guard=ComponentVersionGuard(latest_version=2, current_version=2),
+            )
+            return original_set_current(*args, **kwargs)
+
+        monkeypatch.setattr(db, "set_current_version", publish_before_rollback)
+        out = _loads(studio_versioned.set_current_version("tutor", 1))
+
+        assert "version conflict" in out["error"]
+        assert db.get_component("tutor")["current_version"] == 3
+
+    def test_set_current_version_restores_explicit_null_projection(self, studio_versioned, db):
+        studio_versioned.create_agent(
+            name="nullable",
+            instructions="original",
+            model_id="gpt-5.4",
+            description=None,
+        )
+        studio_versioned.edit_agent("nullable", description="new description")
+        studio_versioned.publish_component("nullable")
+
+        out = _loads(studio_versioned.set_current_version("nullable", 1))
+
+        assert out["status"] == "set_current"
+        assert db.get_component("nullable")["description"] is None
+
     def test_delete_draft_version(self, studio_versioned):
         self._create_and_edit(studio_versioned)
         out = _loads(studio_versioned.delete_version("tutor", 2))
@@ -1269,6 +1402,30 @@ class TestVersioning:
         versions = _loads(studio_versioned.list_versions("tutor"))
         assert versions["count"] == 1
         assert versions["versions"][0]["version"] == 1
+
+    def test_delete_draft_rejects_a_competing_append(self, studio_versioned, db, monkeypatch):
+        from agno.db.base import ComponentVersionGuard
+
+        self._create_and_edit(studio_versioned)
+        original_delete = db.delete_config
+
+        def delete_after_competing_append(*args, **kwargs):
+            base = db.get_config("tutor", version=2)
+            assert base is not None
+            db.upsert_config(
+                "tutor",
+                config=dict(base["config"]),
+                stage="draft",
+                guard=ComponentVersionGuard(latest_version=2, current_version=1),
+            )
+            return original_delete(*args, **kwargs)
+
+        monkeypatch.setattr(db, "delete_config", delete_after_competing_append)
+
+        out = _loads(studio_versioned.delete_version("tutor", 2))
+
+        assert "version conflict" in out["error"]
+        assert [row["version"] for row in db.list_configs("tutor")] == [3, 2, 1]
 
     def test_delete_published_version_returns_error(self, studio_versioned):
         self._create_and_edit(studio_versioned)
@@ -1457,12 +1614,25 @@ class TestDelete:
     def test_delete_agent_removes_from_db(self, studio, db):
         studio.create_agent(name="temp", instructions="i", model_id="gpt-5.4")
         out = _loads(studio.delete_agent("temp"))
-        assert out["status"] == "deleted"
+        assert out["status"] == "archived"
         assert db.get_component("temp") is None
 
     def test_delete_unknown_agent_returns_error(self, studio):
         out = _loads(studio.delete_agent("ghost"))
         assert "error" in out
+
+    def test_archive_reserves_id_and_explicit_restore_keeps_history(self, studio, db):
+        created = _loads(studio.create_agent(name="temp", instructions="i", model_id="gpt-5.4"))
+        assert created["id"] == "temp"
+        assert _loads(studio.delete_agent("temp"))["status"] == "archived"
+
+        replacement = _loads(studio.create_agent(name="temp", instructions="replacement", model_id="gpt-5.4"))
+        assert replacement["id"] == "temp-2"
+        restored = _loads(studio.restore_component("temp"))
+
+        assert restored == {"status": "restored", "id": "temp"}
+        assert db.get_component("temp") is not None
+        assert [row["version"] for row in db.list_configs("temp")] == [1]
 
     def test_delete_agent_only_deletes_db_component_when_live_agent_shadows_id(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
@@ -1478,7 +1648,7 @@ class TestDelete:
         tool = StudioTools(registry=registry, db=db, agents_list=[ShadowAgent()])
 
         out = _loads(tool.delete_agent("temp"))
-        assert out["status"] == "deleted"
+        assert out["status"] == "archived"
         assert db.get_component("temp") is None
 
 

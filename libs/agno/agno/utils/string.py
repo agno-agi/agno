@@ -315,6 +315,23 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
         return generate_human_readable_id()
 
 
+def generate_component_id_from_name(name: Optional[str] = None) -> str:
+    """Generate a new component ID that is safe as one REST path segment.
+
+    ``generate_id_from_name`` remains unchanged because its historical output
+    is persisted outside the component catalog too. Existing component IDs
+    remain addressable exactly; only newly derived component IDs use this
+    stricter contract.
+    """
+    if name:
+        slug = "".join(char.lower() if char.isalnum() else "-" for char in name.strip())
+        slug = re.sub(r"-+", "-", slug).strip("-")
+        return slug or "component"
+    from agno.utils.names import generate_human_readable_id
+
+    return generate_human_readable_id()
+
+
 def sanitize_postgres_string(value: Optional[str]) -> Optional[str]:
     """Remove illegal chars from string values to prevent PostgreSQL encoding errors.
 

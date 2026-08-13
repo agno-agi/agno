@@ -64,11 +64,17 @@ def _is_schedule_name_conflict(error: DuplicateKeyError) -> bool:
     details = error.details
     return isinstance(details, dict) and details.get("keyPattern") in (
         {"name": 1},
+        {"name": 1, "managed_by": 1},
         {"owner_actor_id": 1, "name": 1},
     )
 
 
 class MongoDb(BaseDb):
+    # Component catalog v2 is currently implemented only by the synchronous
+    # SQL adapters. Keep Mongo explicit so control planes fail capability
+    # detection instead of implying partial parity from scheduler support.
+    supports_component_persistence = False
+    component_catalog_api_version = 1
     scheduler_api_version = 2
 
     def __init__(

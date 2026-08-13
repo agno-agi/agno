@@ -118,6 +118,8 @@ def _is_schedule_name_conflict(error: IntegrityError, table_name: str, schema_na
 
 
 class AsyncPostgresDb(AsyncBaseDb):
+    supports_component_persistence = False
+    component_catalog_api_version = 1
     scheduler_api_version = 2
 
     def __init__(
@@ -4204,6 +4206,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         guard: Optional[ComponentVersionGuard] = None,
         require_no_dependents: bool = True,
         projection: Optional[ComponentProjection] = None,
+        expected_component_type: Optional[ComponentType] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4238,6 +4241,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        *,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4270,6 +4275,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         component_id: str,
         include_config: bool = False,
+        *,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 

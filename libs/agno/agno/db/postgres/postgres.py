@@ -4709,6 +4709,7 @@ class PostgresDb(BaseDb):
         guard: Optional[ComponentVersionGuard] = None,
         require_no_dependents: bool = True,
         projection: Optional[ComponentProjection] = None,
+        expected_component_type: Optional[ComponentType] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
@@ -4718,6 +4719,7 @@ class PostgresDb(BaseDb):
             guard: Expected latest/current version state for compare-and-set.
             require_no_dependents: Refuse deletion while qualifying inbound links exist.
             projection: Component fields to update atomically with a soft archive.
+            expected_component_type: Optional identity invariant.
 
         Returns:
             True if deleted, False if not found or already deleted.
@@ -4759,6 +4761,16 @@ class PostgresDb(BaseDb):
                     log_error(f"Component {component_id} not found")
                     return False
                 self._check_component_guard(component_id, guard, actual)
+                if expected_component_type is not None:
+                    actual_type = sess.execute(
+                        select(components_table.c.component_type)
+                        .where(components_table.c.component_id == component_id)
+                        .with_for_update()
+                    ).scalar_one()
+                    if actual_type != expected_component_type.value:
+                        raise ValueError(
+                            f"Component {component_id} has type {actual_type}, not {expected_component_type.value}"
+                        )
 
                 if require_no_dependents and links_table is not None:
                     dependents = self._component_dependents(
@@ -5102,6 +5114,8 @@ class PostgresDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        *,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
 
@@ -5111,6 +5125,7 @@ class PostgresDb(BaseDb):
                 the current published version or the latest draft when the
                 component has never been published.
             label: Config label to lookup. Ignored if version is provided.
+            include_deleted: Allow reading config history for an archived component.
 
         Returns:
             Config dictionary or None if not found.
@@ -5123,17 +5138,13 @@ class PostgresDb(BaseDb):
                 return None
 
             with self.Session() as sess:
-                # Verify component exists and get current_version
-                component_row = (
-                    sess.execute(
-                        select(components_table.c.component_id, components_table.c.current_version).where(
-                            components_table.c.component_id == component_id,
-                            components_table.c.deleted_at.is_(None),
-                        )
-                    )
-                    .mappings()
-                    .one_or_none()
-                )
+                component_query = select(
+                    components_table.c.component_id,
+                    components_table.c.current_version,
+                ).where(components_table.c.component_id == component_id)
+                if not include_deleted:
+                    component_query = component_query.where(components_table.c.deleted_at.is_(None))
+                component_row = sess.execute(component_query).mappings().one_or_none()
 
                 if component_row is None:
                     return None
@@ -5727,12 +5738,15 @@ class PostgresDb(BaseDb):
         self,
         component_id: str,
         include_config: bool = False,
+        *,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """List all config versions for a component.
 
         Args:
             component_id: The component ID.
             include_config: If True, include full config blob. Otherwise just metadata.
+            include_deleted: Allow listing config history for an archived component.
 
         Returns:
             List of config dictionaries, newest first.
@@ -5746,13 +5760,12 @@ class PostgresDb(BaseDb):
                 return []
 
             with self.Session() as sess:
-                # Verify component exists and is not deleted
-                exists = sess.execute(
-                    select(components_table.c.component_id).where(
-                        components_table.c.component_id == component_id,
-                        components_table.c.deleted_at.is_(None),
-                    )
-                ).scalar_one_or_none()
+                component_query = select(components_table.c.component_id).where(
+                    components_table.c.component_id == component_id
+                )
+                if not include_deleted:
+                    component_query = component_query.where(components_table.c.deleted_at.is_(None))
+                exists = sess.execute(component_query).scalar_one_or_none()
 
                 if exists is None:
                     return []
@@ -6025,12 +6038,11 @@ class PostgresDb(BaseDb):
             if resolved_version is None:
                 return None
 
-            # Cycle detection
-            if _visited is None:
-                _visited = set()
-
+            # Track only the active recursion path. A global visited set
+            # incorrectly marks a shared child in a valid DAG as a cycle.
+            active_path = set(_visited or set())
             node_key = (component_id, resolved_version)
-            if node_key in _visited:
+            if node_key in active_path:
                 return {
                     "component": component,
                     "config": self.get_config(component_id, version=resolved_version),
@@ -6038,7 +6050,7 @@ class PostgresDb(BaseDb):
                     "resolved_versions": {component_id: resolved_version},
                     "cycle_detected": True,
                 }
-            _visited.add(node_key)
+            active_path.add(node_key)
 
             config = self.get_config(component_id, version=resolved_version)
             if config is None:
@@ -6069,7 +6081,7 @@ class PostgresDb(BaseDb):
                 child_graph = self.load_component_graph(
                     child_id,
                     version=resolved_child_ver,
-                    _visited=_visited,
+                    _visited=active_path,
                     _max_depth=_max_depth - 1,
                 )
 

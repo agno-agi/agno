@@ -29,8 +29,24 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
-from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import resolve_db_from_config, save_component_config
+from agno.db.base import (
+    AsyncBaseDb,
+    BaseDb,
+    ComponentArchivedError,
+    ComponentType,
+    ComponentVersionConflictError,
+    ComponentVersionGuard,
+    ComponentVersionGuardRequiredError,
+    SessionType,
+)
+from agno.db.utils import (
+    bind_component_version_guard,
+    bind_component_version_guard_after_append,
+    capture_component_version_guard,
+    get_bound_component_version_guard,
+    resolve_db_from_config,
+    save_component_config,
+)
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -116,7 +132,7 @@ from agno.utils.print_response.workflow import (
     print_response,
     print_response_stream,
 )
-from agno.utils.string import generate_id_from_name
+from agno.utils.string import generate_component_id_from_name
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
@@ -553,7 +569,7 @@ class Workflow:
 
     def set_id(self) -> None:
         if self.id is None:
-            self.id = generate_id_from_name(self.name)
+            self.id = generate_component_id_from_name(self.name)
 
     def _has_async_db(self) -> bool:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
@@ -1067,6 +1083,7 @@ class Workflow:
         stage: str = "published",
         label: Optional[str] = None,
         notes: Optional[str] = None,
+        guard: Optional[ComponentVersionGuard] = None,
     ) -> Optional[int]:
         """
         Save the workflow component and config.
@@ -1076,6 +1093,8 @@ class Workflow:
             stage: The stage of the component. Defaults to "published".
             label: The label of the component.
             notes: The notes of the component.
+            guard: Explicit catalog-v2 compare-and-set state. Loaded and
+                previously saved objects reuse their captured guard automatically.
 
         Returns:
             Optional[int]: The version number of the saved config.
@@ -1086,10 +1105,13 @@ class Workflow:
         if not isinstance(db_, BaseDb):
             raise ValueError("Async databases not yet supported for save(). Use a sync database.")
         if self.id is None:
-            self.id = generate_id_from_name(self.name)
+            self.id = generate_component_id_from_name(self.name)
+
+        mutation_guard = guard or get_bound_component_version_guard(self, db_)
 
         # Track saved entity versions for pinning links
         saved_versions: Dict[str, int] = {}
+        saved_child_guards: Dict[str, ComponentVersionGuard] = {}
 
         # Collect all links
         all_links: List[Dict[str, Any]] = []
@@ -1104,27 +1126,58 @@ class Workflow:
             if isinstance(step, Step):
                 # Save agent if present
                 if step.agent and isinstance(step.agent, Agent):
+                    child_guard = get_bound_component_version_guard(step.agent, db_)
+                    if child_guard is None and step.agent.id is not None:
+                        child_guard = saved_child_guards.get(step.agent.id)
                     agent_version = step.agent.save(
                         db=db_,
                         stage=stage,
                         label=label,
                         notes=notes,
+                        guard=child_guard,
                     )
                     if step.agent.id is not None and agent_version is not None:
                         saved_versions[step.agent.id] = agent_version
+                        saved_guard = get_bound_component_version_guard(step.agent, db_)
+                        if saved_guard is not None:
+                            saved_child_guards[step.agent.id] = saved_guard
 
                 # Save team if present
                 if step.team and isinstance(step.team, Team):
-                    team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
+                    child_guard = get_bound_component_version_guard(step.team, db_)
+                    if child_guard is None and step.team.id is not None:
+                        child_guard = saved_child_guards.get(step.team.id)
+                    team_version = step.team.save(
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                        guard=child_guard,
+                    )
                     if step.team.id is not None and team_version is not None:
                         saved_versions[step.team.id] = team_version
+                        saved_guard = get_bound_component_version_guard(step.team, db_)
+                        if saved_guard is not None:
+                            saved_child_guards[step.team.id] = saved_guard
 
                 # Save nested workflow if present; without a saved version its
                 # step_workflow link cannot be written and the save would fail.
                 if step.workflow is not None and isinstance(step.workflow, Workflow):
-                    workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
+                    child_guard = get_bound_component_version_guard(step.workflow, db_)
+                    if child_guard is None and step.workflow.id is not None:
+                        child_guard = saved_child_guards.get(step.workflow.id)
+                    workflow_version = step.workflow.save(
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                        guard=child_guard,
+                    )
                     if step.workflow.id is not None and workflow_version is not None:
                         saved_versions[step.workflow.id] = workflow_version
+                        saved_guard = get_bound_component_version_guard(step.workflow, db_)
+                        if saved_guard is not None:
+                            saved_child_guards[step.workflow.id] = saved_guard
 
                 # Add links with position and pinned version
                 for link in step.get_links(position=position):
@@ -1200,11 +1253,25 @@ class Workflow:
                 label=label,
                 stage=stage,
                 notes=notes,
+                guard=mutation_guard,
             )
+            saved_version = config.get("version")
+            if isinstance(saved_version, int) and getattr(db_, "component_catalog_api_version", 1) >= 2:
+                bind_component_version_guard_after_append(
+                    self,
+                    db_,
+                    previous=mutation_guard,
+                    version=saved_version,
+                    stage=stage,
+                )
+            return saved_version
 
-            return config.get("version")
-
-        except WorkflowLinkCollisionError:
+        except (
+            ComponentArchivedError,
+            ComponentVersionConflictError,
+            ComponentVersionGuardRequiredError,
+            WorkflowLinkCollisionError,
+        ):
             # The refusal must reach the caller: returning None here would
             # read as an I/O failure and hide that the snapshot was rejected.
             raise
@@ -1267,6 +1334,8 @@ class Workflow:
                 require_db_fallback_matches(config, db, "workflow", id)
             workflow.db = db
 
+        capture_component_version_guard(workflow, db, id, expected_config_version=data.get("version"))
+
         return workflow
 
     def delete(
@@ -1275,6 +1344,7 @@ class Workflow:
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
         require_no_dependents: bool = True,
+        guard: Optional[ComponentVersionGuard] = None,
     ) -> bool:
         """
         Delete the workflow component.
@@ -1288,6 +1358,8 @@ class Workflow:
                 with dangling links; use it only for a deliberate repair or
                 migration. Catalog-v1 adapters retain their historical
                 unguarded deletion behavior.
+            guard: Explicit catalog-v2 compare-and-set state. Loaded and
+                previously saved objects reuse their captured guard automatically.
 
         Returns:
             True if the workflow was deleted, False otherwise.
@@ -1308,10 +1380,15 @@ class Workflow:
             # Preserve the exact pre-2.9 adapter call shape. Third-party
             # catalog-v1 implementations cannot accept the v2-only policy.
             return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
+        mutation_guard = guard or get_bound_component_version_guard(self, db_)
+        if mutation_guard is None:
+            raise ComponentVersionGuardRequiredError(self.id)
         return db_.delete_component(
             component_id=self.id,
             hard_delete=hard_delete,
+            guard=mutation_guard,
             require_no_dependents=require_no_dependents,
+            expected_component_type=ComponentType.WORKFLOW,
         )
 
     async def aget_run_output(
@@ -11321,6 +11398,8 @@ def get_workflow_by_id(
                 require_db_fallback_matches(cfg, db, "workflow", id)
             workflow.db = db
 
+        capture_component_version_guard(workflow, db, id, expected_config_version=row.get("version"))
+
         return workflow
 
     except ComponentRehydrationError:
@@ -11358,6 +11437,12 @@ def get_workflows(
                         workflow.id = component_id
                         workflow._version = config.get("version")
                         workflow._stage = config.get("stage")
+                        bind_component_version_guard(
+                            workflow,
+                            db,
+                            latest_version=config.get("version"),
+                            current_version=component.get("current_version"),
+                        )
                         workflows.append(workflow)
             except Exception as e:
                 component_id = component.get("component_id", "unknown")

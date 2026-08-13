@@ -4,6 +4,7 @@ import json
 import time
 from copy import deepcopy
 from datetime import date, datetime
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
@@ -13,7 +14,14 @@ from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
-    from agno.db.base import AsyncBaseDb, BaseDb, ComponentProjection, ComponentType, SessionType
+    from agno.db.base import (
+        AsyncBaseDb,
+        BaseDb,
+        ComponentProjection,
+        ComponentType,
+        ComponentVersionGuard,
+        SessionType,
+    )
     from agno.registry.registry import Registry
     from agno.session import Session
 
@@ -51,6 +59,118 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
 )
 
 
+_COMPONENT_VERSION_GUARD_ATTR = "_agno_component_version_guard"
+_COMPONENT_VERSION_GUARD_DB_ATTR = "_agno_component_version_guard_db"
+
+
+def _component_guard_db_identity(db: "BaseDb") -> Any:
+    """Return a stable identity for equivalent database instances.
+
+    Persisted components may reconstruct their serialized database into a new
+    Python object. Object identity would discard the guard in that normal load
+    path, while ``BaseDb.id`` alone does not distinguish two SQLite files.
+    """
+    try:
+        serialized = json.dumps(db.to_dict(), sort_keys=True, default=str, separators=(",", ":"))
+        identity: Tuple[Any, ...] = (type(db), sha256(serialized.encode()).digest())
+        engine = getattr(db, "db_engine", None)
+        url = getattr(engine, "url", None)
+        if (
+            url is not None
+            and str(url).startswith("sqlite")
+            and getattr(url, "database", None)
+            in {
+                None,
+                "",
+                ":memory:",
+            }
+        ):
+            # Identically configured in-memory SQLite engines are independent
+            # databases, unlike two connections to the same file or server.
+            identity += (id(engine),)
+        return identity
+    except Exception:
+        # A catalog-v2 third-party adapter with a broken serializer should
+        # still fail closed when a different database object is supplied.
+        return (type(db), id(db))
+
+
+def get_bound_component_version_guard(component: Any, db: "BaseDb") -> Optional["ComponentVersionGuard"]:
+    """Return the catalog-v2 state captured on a persisted component object."""
+    if getattr(component, _COMPONENT_VERSION_GUARD_DB_ATTR, None) != _component_guard_db_identity(db):
+        return None
+    return getattr(component, _COMPONENT_VERSION_GUARD_ATTR, None)
+
+
+def bind_component_version_guard(
+    component: Any,
+    db: "BaseDb",
+    *,
+    latest_version: Optional[int],
+    current_version: Optional[int],
+) -> "ComponentVersionGuard":
+    """Attach compare-and-set state without adding it to serialized configs."""
+    from agno.db.base import ComponentVersionGuard
+
+    guard = ComponentVersionGuard(latest_version=latest_version, current_version=current_version)
+    setattr(component, _COMPONENT_VERSION_GUARD_ATTR, guard)
+    setattr(component, _COMPONENT_VERSION_GUARD_DB_ATTR, _component_guard_db_identity(db))
+    return guard
+
+
+def capture_component_version_guard(
+    component: Any,
+    db: "BaseDb",
+    component_id: str,
+    *,
+    include_deleted: bool = False,
+    expected_config_version: Optional[int] = None,
+) -> Optional["ComponentVersionGuard"]:
+    """Capture the active catalog state on an object returned from persistence."""
+    if getattr(db, "component_catalog_api_version", 1) < 2:
+        return None
+    component_row = db.get_component(component_id, include_deleted=include_deleted)
+    if component_row is None:
+        return None
+    latest = db.get_latest_config(component_id, include_deleted=include_deleted)
+    latest_version = latest.get("version") if isinstance(latest, dict) else None
+    current_version = component_row.get("current_version")
+    if expected_config_version is not None and expected_config_version != latest_version:
+        # The row was replaced between the config read and this state read, or
+        # the caller loaded the published/historical snapshot while a newer
+        # draft exists. Do not attach fresh state to stale data; a later
+        # mutation must supply an explicit guard and will otherwise fail closed.
+        return None
+    return bind_component_version_guard(
+        component,
+        db,
+        latest_version=latest_version if isinstance(latest_version, int) else None,
+        current_version=current_version,
+    )
+
+
+def bind_component_version_guard_after_append(
+    component: Any,
+    db: "BaseDb",
+    *,
+    previous: Optional["ComponentVersionGuard"],
+    version: int,
+    stage: str,
+) -> "ComponentVersionGuard":
+    """Advance an object's guard to exactly the state produced by its append."""
+    current_version = (
+        version
+        if stage == "published"
+        else (previous.current_version if previous is not None and version != 1 else None)
+    )
+    return bind_component_version_guard(
+        component,
+        db,
+        latest_version=version,
+        current_version=current_version,
+    )
+
+
 def save_component_config(
     db: "BaseDb",
     *,
@@ -64,6 +184,7 @@ def save_component_config(
     label: Optional[str] = None,
     notes: Optional[str] = None,
     links: Optional[List[Dict[str, Any]]] = None,
+    guard: Optional["ComponentVersionGuard"] = None,
 ) -> Dict[str, Any]:
     """Persist a component config through the adapter's declared catalog contract.
 
@@ -76,11 +197,15 @@ def save_component_config(
     cannot leak into the current projection.
 
     A concurrent creator may occupy the ID between the initial lookup and the
-    insert. In that case, validate the winning row and continue through the
-    existing-component path, matching the append-on-save behavior of the
-    component APIs.
+    insert. In that case the call continues through the existing-component
+    path, where a missing or stale guard rejects appending to the winner.
     """
-    from agno.db.base import ComponentAlreadyExistsError, ComponentType
+    from agno.db.base import (
+        ComponentAlreadyExistsError,
+        ComponentArchivedError,
+        ComponentType,
+        ComponentVersionGuardRequiredError,
+    )
 
     if stage not in {"draft", "published"}:
         raise ValueError(f"Invalid stage: {stage}")
@@ -162,7 +287,10 @@ def save_component_config(
     if actual_type != expected_type:
         raise ValueError(f"Component {component_id} has type {actual_type}, not {expected_type}")
 
-    restore_if_deleted = component.get("deleted_at") is not None
+    if component.get("deleted_at") is not None:
+        raise ComponentArchivedError(component_id)
+    if guard is None:
+        raise ComponentVersionGuardRequiredError(component_id)
 
     # Always provide the complete desired projection. Version-2 adapters make
     # the draft-only decision while holding the component write lock, so a
@@ -181,8 +309,8 @@ def save_component_config(
         stage=stage,
         notes=notes,
         links=links,
+        guard=guard,
         projection=projection,
-        restore_if_deleted=restore_if_deleted,
         expected_component_type=component_type,
     )
 

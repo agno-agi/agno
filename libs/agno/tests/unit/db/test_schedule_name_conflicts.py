@@ -288,7 +288,10 @@ def _async_mongo_db(error: DuplicateKeyError, operation: str) -> AsyncMongoDb:
 
 
 @pytest.mark.parametrize("operation", ["create", "update"])
-@pytest.mark.parametrize("key_pattern", [{"name": 1}, {"owner_actor_id": 1, "name": 1}])
+@pytest.mark.parametrize(
+    "key_pattern",
+    [{"name": 1}, {"name": 1, "managed_by": 1}, {"owner_actor_id": 1, "name": 1}],
+)
 def test_mongo_maps_only_structured_schedule_name_key_pattern(operation, key_pattern):
     db = _sync_mongo_db(_mongo_duplicate_error(key_pattern), operation)
 
@@ -316,7 +319,10 @@ def test_mongo_does_not_map_misleading_message_for_id_key_pattern(operation):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["create", "update"])
-@pytest.mark.parametrize("key_pattern", [{"name": 1}, {"owner_actor_id": 1, "name": 1}])
+@pytest.mark.parametrize(
+    "key_pattern",
+    [{"name": 1}, {"name": 1, "managed_by": 1}, {"owner_actor_id": 1, "name": 1}],
+)
 async def test_async_mongo_maps_only_structured_schedule_name_key_pattern(operation, key_pattern):
     db = _async_mongo_db(_mongo_duplicate_error(key_pattern), operation)
 

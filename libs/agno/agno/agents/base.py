@@ -55,10 +55,10 @@ class BaseExternalAgent:
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     def __post_init__(self) -> None:
-        from agno.utils.string import generate_id_from_name
+        from agno.utils.string import generate_component_id_from_name
 
         if self.id is None:
-            self.id = generate_id_from_name(self.name)
+            self.id = generate_component_id_from_name(self.name)
 
     def get_id(self) -> str:
         """Return the agent ID, guaranteed non-None after __post_init__."""

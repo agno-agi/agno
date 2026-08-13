@@ -7,6 +7,7 @@ Tests cover:
 - GET /components/{component_id} - Get component
 - PATCH /components/{component_id} - Update component
 - DELETE /components/{component_id} - Delete component
+- POST /components/{component_id}/restore - Restore component
 - GET /components/{component_id}/configs - List configs
 - POST /components/{component_id}/configs - Create config
 - GET /components/{component_id}/configs/current - Get current config
@@ -26,6 +27,7 @@ from agno.agent import Agent
 from agno.db.base import (
     BaseDb,
     ComponentDependencyError,
+    ComponentDependencyUnavailableError,
     ComponentDraftRequiredError,
     ComponentLastConfigError,
     ComponentType,
@@ -186,6 +188,7 @@ def mock_db():
     db.get_component = MagicMock()
     db.upsert_component = MagicMock()
     db.delete_component = MagicMock()
+    db.restore_component = MagicMock()
     db.create_component_with_config = MagicMock()
     db.list_configs = MagicMock()
     db.get_config = MagicMock()
@@ -233,6 +236,24 @@ def _guard(latest_version=1, current_version=1):
 
 
 class TestComponentPersistenceCapability:
+    def test_builtin_component_catalog_v2_support_matrix_is_explicit(self):
+        from agno.db.postgres.async_postgres import AsyncPostgresDb
+        from agno.db.postgres.postgres import PostgresDb
+        from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+        assert supports_component_routes(SqliteDb.__new__(SqliteDb)) is True
+        assert supports_component_routes(PostgresDb.__new__(PostgresDb)) is True
+        assert supports_component_routes(AsyncSqliteDb.__new__(AsyncSqliteDb)) is False
+        assert supports_component_routes(AsyncPostgresDb.__new__(AsyncPostgresDb)) is False
+
+    def test_mongo_component_catalog_is_explicitly_unsupported(self):
+        pytest.importorskip("pymongo")
+        from agno.db.mongo.async_mongo import AsyncMongoDb
+        from agno.db.mongo.mongo import MongoDb
+
+        assert supports_component_routes(MongoDb.__new__(MongoDb)) is False
+        assert supports_component_routes(AsyncMongoDb.__new__(AsyncMongoDb)) is False
+
     def test_router_rejects_unsupported_sync_db(self, settings):
         unsupported_db = _create_mock_db_class()()
 
@@ -270,16 +291,16 @@ class TestComponentPersistenceCapability:
         )
 
         assert created.status_code == 201
-        assert created.json()["component_id"] == "analyst-v2.5"
+        assert created.json()["component_id"] == "analyst-v2-5"
         assert db.calls[0][:4] == (
             "upsert_component",
-            "analyst-v2.5",
+            "analyst-v2-5",
             ComponentType.AGENT,
             "Analyst v2.5",
         )
         assert db.calls[1] == (
             "upsert_config",
-            "analyst-v2.5",
+            "analyst-v2-5",
             {"instructions": "Review"},
             None,
             None,
@@ -288,13 +309,13 @@ class TestComponentPersistenceCapability:
             None,
         )
 
-        current = client.get("/components/analyst-v2.5/configs/current")
+        current = client.get("/components/analyst-v2-5/configs/current")
         assert current.status_code == 200
-        assert db.calls[-1] == ("get_config", "analyst-v2.5", None, None)
+        assert db.calls[-1] == ("get_config", "analyst-v2-5", None, None)
 
-        deleted = client.delete("/components/analyst-v2.5")
+        deleted = client.delete("/components/analyst-v2-5")
         assert deleted.status_code == 204
-        assert db.calls[-1] == ("delete_component", "analyst-v2.5", False)
+        assert db.calls[-1] == ("delete_component", "analyst-v2-5", False)
 
     def test_agentos_mounts_the_detected_v1_router(self):
         db = _create_legacy_catalog_db()
@@ -388,6 +409,15 @@ class TestListComponents:
 
 
 class TestCreateComponent:
+    @pytest.mark.parametrize("component_id", ["research/review", "..", "encoded%2Fslash"])
+    def test_create_rejects_component_id_that_is_not_one_url_segment(self, client, component_id):
+        response = client.post(
+            "/components",
+            json={"component_id": component_id, "name": "Unsafe", "component_type": "agent"},
+        )
+
+        assert response.status_code == 422
+
     """Tests for POST /components endpoint."""
 
     def test_create_component_success(self, client, mock_db):
@@ -455,7 +485,7 @@ class TestCreateComponent:
         )
 
         assert response.status_code == 201
-        assert direct_id == "r&d-jörg"
+        assert direct_id == "r-d-jörg"
         call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["component_id"] == direct_id
 
@@ -862,6 +892,88 @@ class TestDeleteComponent:
         mock_db.delete_component.assert_not_called()
 
 
+class TestRestoreComponent:
+    """Tests for POST /components/{component_id}/restore."""
+
+    def test_restore_component_success(self, client, mock_db):
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "component_type": "agent",
+            "name": "Archived",
+            "current_version": 1,
+            "deleted_at": 123,
+        }
+        mock_db.get_config.return_value = {
+            "component_id": "agent-1",
+            "version": 1,
+            "stage": "published",
+            "config": {"name": "Published", "description": None, "metadata": {"release": 1}},
+        }
+        mock_db.restore_component.return_value = True
+
+        response = client.post("/components/agent-1/restore", json=_guard(2, 1))
+
+        assert response.status_code == 204
+        mock_db.get_component.assert_called_once_with("agent-1", include_deleted=True)
+        mock_db.get_config.assert_called_once_with("agent-1", version=1, include_deleted=True)
+        mock_db.restore_component.assert_called_once_with(
+            "agent-1",
+            guard=ComponentVersionGuard(latest_version=2, current_version=1),
+            projection={"name": "Published", "description": None, "metadata": {"release": 1}},
+        )
+
+    def test_restore_component_not_found(self, client, mock_db):
+        mock_db.get_component.return_value = None
+
+        response = client.post("/components/missing/restore", json=_guard())
+
+        assert response.status_code == 404
+        mock_db.restore_component.assert_not_called()
+
+    def test_restore_component_requires_archived_row(self, client, mock_db):
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "component_type": "agent",
+            "current_version": 1,
+            "deleted_at": None,
+        }
+
+        response = client.post("/components/agent-1/restore", json=_guard())
+
+        assert response.status_code == 409
+        mock_db.restore_component.assert_not_called()
+
+    def test_restore_component_dependency_conflict_is_stable(self, client, mock_db):
+        mock_db.get_component.return_value = {
+            "component_id": "team-1",
+            "component_type": "team",
+            "name": "Team",
+            "current_version": 1,
+            "deleted_at": 123,
+        }
+        mock_db.get_config.return_value = {
+            "component_id": "team-1",
+            "version": 1,
+            "stage": "published",
+            "config": {"name": "Team"},
+        }
+        mock_db.restore_component.side_effect = ComponentDependencyUnavailableError(
+            "team-1",
+            [{"child_component_id": "agent-1", "child_version": 2}],
+        )
+
+        response = client.post("/components/team-1/restore", json=_guard())
+
+        assert response.status_code == 409
+        assert "pinned dependency" in response.json()["detail"]
+
+    def test_restore_component_requires_guard(self, client, mock_db):
+        response = client.post("/components/agent-1/restore", json={})
+
+        assert response.status_code == 422
+        mock_db.restore_component.assert_not_called()
+
+
 class TestGuardedGenericLifecycle:
     """Real SQLite regressions for append-only edits, CAS, and soft archive."""
 
@@ -1045,9 +1157,55 @@ class TestGuardedGenericLifecycle:
         assert "reserved for StudioTools" in response.json()["detail"]
         assert db.get_component("guarded-agent") is None
 
+    def test_archive_restore_then_save_preserves_identity_and_history(self, sqlite_client):
+        client, db = sqlite_client
+        assert self._create(client, stage="published").status_code == 201
+        assert client.request("DELETE", "/components/guarded-agent", json=_guard(1, 1)).status_code == 204
+
+        reserved = self._create(client, stage="published", name="Replacement")
+        assert reserved.status_code == 409
+
+        restored = client.post("/components/guarded-agent/restore", json=_guard(1, 1))
+        assert restored.status_code == 204
+        assert db.get_component("guarded-agent") is not None
+        assert db.get_config("guarded-agent", version=1)["config"]["name"] == "Version one"
+
+        restored_agent = Agent.load("guarded-agent", db=db)
+        assert restored_agent is not None
+        restored_agent.name = "Saved after restore"
+        restored_agent.description = None
+        saved = restored_agent.save(stage="published")
+        assert saved == 2
+        assert [row["version"] for row in db.list_configs("guarded-agent")] == [2, 1]
+        assert db.get_component("guarded-agent")["name"] == "Saved after restore"
+
 
 class TestStudioWriteIsolation:
     """The generic Components API is read-only for Studio-owned records."""
+
+    def test_actual_studio_create_is_rejected_by_generic_mutation_route(self, sqlite_client):
+        from agno.tools.studio import StudioTools
+
+        client, db = sqlite_client
+        studio = StudioTools(
+            registry=Registry(models=[OpenAIResponses(id="gpt-5.4")], dbs=[db]),
+            db=db,
+        )
+        created = studio.create_agent(name="Studio agent", instructions="original", model_id="gpt-5.4")
+        assert '"status": "created"' in created
+
+        stored = db.get_config("studio-agent", version=1)
+        assert stored is not None
+        assert stored["config"]["_agno_studio"]["schema_version"] == 2
+
+        response = client.patch(
+            "/components/studio-agent",
+            json={"description": "generic overwrite", **_guard(1, 1)},
+        )
+
+        assert response.status_code == 409
+        assert "Studio-owned" in response.json()["detail"]
+        assert [row["version"] for row in db.list_configs("studio-agent")] == [1]
 
     def test_generic_config_append_cannot_claim_studio_manifest_namespace(self, sqlite_client):
         client, db = sqlite_client
@@ -1079,6 +1237,61 @@ class TestStudioWriteIsolation:
         assert response.status_code == 400
         assert "reserved for StudioTools" in response.json()["detail"]
         assert [row["version"] for row in db.list_configs("generic-agent")] == [1]
+
+    def test_generic_restore_cannot_reactivate_archived_studio_component(self, sqlite_client):
+        client, db = sqlite_client
+        db.create_component_with_config(
+            component_id="studio-agent",
+            component_type=ComponentType.AGENT,
+            name="Studio agent",
+            config={
+                "id": "studio-agent",
+                "name": "Studio agent",
+                "_agno_studio": {"schema_version": 2, "request": {}},
+            },
+            stage="published",
+        )
+        assert db.delete_component(
+            "studio-agent",
+            guard=ComponentVersionGuard(latest_version=1, current_version=1),
+        )
+
+        response = client.post("/components/studio-agent/restore", json=_guard(1, 1))
+
+        assert response.status_code == 409
+        assert "Studio-owned" in response.json()["detail"]
+        assert db.get_component("studio-agent") is None
+        assert db.get_component("studio-agent", include_deleted=True)["deleted_at"] is not None
+
+    def test_generic_restore_detects_studio_ownership_in_archived_draft_history(self, sqlite_client):
+        client, db = sqlite_client
+        db.create_component_with_config(
+            component_id="transitional-agent",
+            component_type=ComponentType.AGENT,
+            name="Transitional agent",
+            config={"id": "transitional-agent", "name": "Transitional agent"},
+            stage="published",
+        )
+        db.upsert_config(
+            "transitional-agent",
+            config={
+                "id": "transitional-agent",
+                "name": "Studio draft",
+                "_agno_studio": {"schema_version": 2, "request": {}},
+            },
+            stage="draft",
+            guard=ComponentVersionGuard(latest_version=1, current_version=1),
+        )
+        assert db.delete_component(
+            "transitional-agent",
+            guard=ComponentVersionGuard(latest_version=2, current_version=1),
+        )
+
+        response = client.post("/components/transitional-agent/restore", json=_guard(2, 1))
+
+        assert response.status_code == 409
+        assert "Studio-owned" in response.json()["detail"]
+        assert db.get_component("transitional-agent") is None
 
 
 # =============================================================================

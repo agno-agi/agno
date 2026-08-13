@@ -11,6 +11,7 @@ from agno.db.base import (
     ComponentAlreadyExistsError,
     ComponentCycleError,
     ComponentDependencyError,
+    ComponentDependencyUnavailableError,
     ComponentDraftRequiredError,
     ComponentLastConfigError,
     ComponentProjection,
@@ -26,6 +27,7 @@ from agno.os.schema import (
     ComponentCreate,
     ComponentDelete,
     ComponentResponse,
+    ComponentRestore,
     ComponentType,
     ComponentUpdate,
     ConfigCreate,
@@ -42,7 +44,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
-from agno.utils.string import generate_id_from_name
+from agno.utils.string import generate_component_id_from_name
 
 logger = logging.getLogger(__name__)
 
@@ -165,17 +167,22 @@ def _reject_reserved_studio_config(config: Dict[str, Any]) -> None:
         )
 
 
-def _reject_studio_owned_mutation(db: BaseDb, component_id: str) -> None:
+def _reject_studio_owned_mutation(db: BaseDb, component_id: str, *, include_deleted: bool = False) -> None:
     """Prevent generic lifecycle routes from mutating any Studio-owned version.
 
     Ownership is derived from immutable config history rather than only the
     latest/current pointer. That keeps this boundary effective even if a raw
     config was appended before the boundary existed.
     """
-    for config_row in db.list_configs(component_id, include_config=True):
-        config = config_row.get("config")
-        if isinstance(config, dict) and _STUDIO_CONFIG_KEY in config:
-            raise HTTPException(status_code=409, detail=_STUDIO_WRITE_CONFLICT)
+    kwargs = {"include_deleted": True} if include_deleted else {}
+    for config_row in db.list_configs(component_id, include_config=True, **kwargs):
+        _reject_studio_owned_config(config_row)
+
+
+def _reject_studio_owned_config(config_row: Dict[str, Any]) -> None:
+    config = config_row.get("config")
+    if isinstance(config, dict) and _STUDIO_CONFIG_KEY in config:
+        raise HTTPException(status_code=409, detail=_STUDIO_WRITE_CONFLICT)
 
 
 def _resolve_db_in_config(
@@ -610,7 +617,7 @@ def attach_routes(
         try:
             component_id = body.component_id
             if component_id is None:
-                component_id = generate_id_from_name(body.name)
+                component_id = generate_component_id_from_name(body.name)
 
             # Prepare config - ensure it's a dict and resolve db reference
             config = deepcopy(body.config or {})
@@ -850,6 +857,57 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error deleting component: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.post(
+        "/components/{component_id}/restore",
+        status_code=204,
+        operation_id="restore_component",
+        summary="Restore Component",
+        description="Restore a guarded soft-archived component without reusing its ID or history.",
+    )
+    async def restore_component(
+        component_id: str = Path(description="Component ID"),
+        body: ComponentRestore = Body(description="Guarded restore request"),
+    ) -> None:
+        try:
+            component = db.get_component(component_id, include_deleted=True)
+            if component is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            if component.get("deleted_at") is None:
+                raise HTTPException(status_code=409, detail=f"Component {component_id} is not archived")
+            _reject_studio_owned_mutation(db, component_id, include_deleted=True)
+
+            projection_version = component.get("current_version")
+            if projection_version is None:
+                projection_version = body.guard.latest_version
+            config_row = db.get_config(
+                component_id,
+                version=projection_version,
+                include_deleted=True,
+            )
+            if config_row is None or not isinstance(config_row.get("config"), dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Config {component_id} v{projection_version} cannot provide a restore projection",
+                )
+            _reject_studio_owned_config(config_row)
+
+            restored = db.restore_component(
+                component_id,
+                guard=_version_guard(body.guard.latest_version, body.guard.current_version),
+                projection=_projection_from_config(config_row["config"], fallback=component),
+            )
+            if not restored:
+                raise HTTPException(status_code=409, detail=f"Component {component_id} is not archived")
+        except HTTPException:
+            raise
+        except (ComponentDependencyUnavailableError, ComponentVersionConflictError) as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            log_error(f"Error restoring component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
