@@ -151,10 +151,8 @@ class JsonDb(BaseDb):
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the schema version stamped for the given table.
 
-        Defaults to "2.0.0" when nothing is stamped yet, matching the SQL
-        adapters: an unstamped database is assumed pre-v3 so the
-        MigrationManager runs migrations. Returning None here would make the
-        manager skip the table entirely.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
         rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
         for row in rows:

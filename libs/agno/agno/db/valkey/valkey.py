@@ -367,10 +367,8 @@ class ValkeyDb(BaseDb):
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the schema version stamped for the given table.
 
-        Defaults to "2.0.0" when nothing is stamped yet, matching the SQL
-        adapters: an unstamped database is assumed pre-v3 so the
-        MigrationManager runs migrations. Returning None here would make the
-        manager skip the table entirely.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
         value = self.valkey_client.get(self._schema_version_key(table_name))
         if value is None:
@@ -380,8 +378,7 @@ class ValkeyDb(BaseDb):
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
         """Record the schema version stamp for the given table.
 
-        Written without a TTL: the stamp must outlive ``self.expire``, or
-        migrations would silently re-arm once the key expires.
+        No TTL: the stamp must outlive ``self.expire``.
         """
         self.valkey_client.set(self._schema_version_key(table_name), version)
 

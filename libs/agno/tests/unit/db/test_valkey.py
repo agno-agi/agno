@@ -423,9 +423,7 @@ class TestMemory:
 
 class TestSchemaVersion:
     def test_get_latest_schema_version_defaults_to_2_0_0(self, valkey_db, mock_client):
-        # An unstamped table must report "2.0.0" so the MigrationManager runs
-        # migrations. Returning None makes the manager skip the table entirely,
-        # which silently disabled the v2 -> v3 migration on Valkey.
+        # Unstamped must report "2.0.0" — None makes the manager skip the table.
         mock_client.get.return_value = None
         result = valkey_db.get_latest_schema_version(table_name="sessions")
         assert result == "2.0.0"
