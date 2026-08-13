@@ -109,3 +109,12 @@
 **Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
+### taskmarket_tools.py
+
+**Status:** PASS
+
+**Description:** Added `TaskMarketTools`, an Agno toolkit for public TaskMarket task discovery, live task and submission inspection, exact Base/USDC budget previews, and one explicitly authorized create path through the first-party CLI. The toolkit has sync and async read variants, requires confirmation plus a maximum spend before creation, verifies Base chain ID 8453, and never blindly retries an ambiguous create result.
+
+**Result:** The focused unit suite passes (`7 passed`). Read-only live smoke checks against `https://api.taskmarket.dev` returned the current public task list and a valid task detail response. The cookbook module imports with the local Agno package; running the agent requires a model provider credential.
+
+---
