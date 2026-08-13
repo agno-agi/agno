@@ -274,6 +274,21 @@ def format_sse_event_with_index(
         return f"event: message\ndata: {clean_json}\n\n"
 
 
+# Idle window between tail items before a keepalive (and the settled-ticket
+# truth probe) fires; module-level so tests can shrink it.
+_TAIL_IDLE_RECHECK_SECONDS = 30.0
+
+
+def sse_error_frame(message: str) -> str:
+    """A wire-safe SSE error frame.
+
+    The payload goes through json.dumps: hand-interpolating exception text
+    into an f-string frame emitted invalid JSON the moment the message
+    contained a quote, backslash, or newline.
+    """
+    return f"event: error\ndata: {json.dumps({'event': 'error', 'error': message})}\n\n"
+
+
 async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> Any:
     """SSE response for a durably queued STREAMING run: tail the event stream.
 
@@ -313,9 +328,7 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
             # error frame so the client can distinguish and reconnect
             log_error(f"Queued stream tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
@@ -323,8 +336,39 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
     try:
         while True:
             try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=_TAIL_IDLE_RECHECK_SECONDS)
             except asyncio.TimeoutError:
+                # Idle recheck. If the durable ticket has SETTLED while the
+                # stream never received its terminal sentinel (a lost
+                # terminal write - the producer died between settling the
+                # ticket and closing the stream), nothing will ever end this
+                # tail: it used to keepalive silently until the stream state
+                # expired. Tell the client the truth instead, once, and end -
+                # the complete output is guaranteed via the run row.
+                closed_frame: Optional[str] = None
+                with contextlib.suppress(Exception):
+                    from agno.os.job_queue import get_active_queue_worker, ticket_status_to_api
+
+                    worker = get_active_queue_worker()
+                    job = await worker.store.get_job(run_id) if worker is not None else None
+                    if (
+                        job is not None
+                        and job.get("job_type", "run") == "run"
+                        and job.get("status") in ("completed", "failed", "cancelled")
+                    ):
+                        stream_status = await event_stream.get_run_status(run_id)
+                        if stream_status is None or stream_status in (RunStatus.pending, RunStatus.running):
+                            payload = {
+                                "event": "stream_expired",
+                                "run_id": run_id,
+                                "status": ticket_status_to_api(job.get("status", "")) or "ERROR",
+                                "message": "The run finished but its stream lost the terminal event; "
+                                "poll the run for the complete output.",
+                            }
+                            closed_frame = f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+                if closed_frame is not None:
+                    yield closed_frame
+                    return
                 yield ": keepalive\n\n"
                 continue
             if item is None:
@@ -369,25 +413,26 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
             await pump_task
 
 
-def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
-    """PATH-3 (DB fallback) replay frames, honoring the client's floor.
+def stored_event_replay_dicts(
+    run_output: Any, run_id: str, last_event_index: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """DB-fallback replay payloads, honoring the client's floor.
 
-    ONE implementation for all three routers - the old triplicated loop
-    ignored last_event_index and renumbered every stored event from zero:
-    duplicates for partially-caught-up clients, and destroyed index
-    continuity (stream indices are NOT gapless - retries and continuation
-    legs leave real gaps that positional renumbering compacted away).
+    ONE implementation for every replay surface (the three SSE resume routes
+    and the workflow WS subscription) - the old per-surface loops ignored
+    last_event_index and renumbered every stored event from zero: duplicates
+    for partially-caught-up clients, and destroyed index continuity (stream
+    indices are NOT gapless - retries and continuation legs leave real gaps
+    that positional renumbering compacted away).
 
     Events stamped at publish carry their real stream index (event_index);
     those are floor-filtered and replayed under their stored index.
     Unstamped legacy events keep the positional fallback and are never
     floor-filtered: a floor from live-stream indices does not speak their
-    numbering. The meta frame's total reflects what is actually replayed.
+    numbering.
     """
-    from agno.utils.serialize import json_serializer
-
     floor = last_event_index if last_event_index is not None else -1
-    frames: List[str] = []
+    dicts: List[Dict[str, Any]] = []
     for position, event in enumerate(getattr(run_output, "events", None) or []):
         event_dict = event.to_dict()
         stored_index = event_dict.get("event_index")
@@ -396,6 +441,17 @@ def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: O
         event_dict["event_index"] = int(stored_index) if stored_index is not None else position
         if "run_id" not in event_dict:
             event_dict["run_id"] = run_id
+        dicts.append(event_dict)
+    return dicts
+
+
+def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
+    """SSE framing over ``stored_event_replay_dicts`` (the PATH-3 resume
+    routes). The meta frame's total reflects what is actually replayed."""
+    from agno.utils.serialize import json_serializer
+
+    frames: List[str] = []
+    for event_dict in stored_event_replay_dicts(run_output, run_id, last_event_index):
         event_type = event_dict.get("event", "message")
         frames.append(
             f"event: {event_type}\n"
@@ -468,7 +524,13 @@ async def amark_continue_stream_running(
         # it also clears the pause's completed_at so the reopened run cannot
         # be reaped mid-continuation, and seeds the index counter from the
         # durable floor when the stream's own counter expired.
-        await event_stream.reopen_run(run_id, floor=floor)
+        if not await event_stream.reopen_run(run_id, floor=floor):
+            # Declined: the status already moved past PAUSED (a racing writer
+            # finished or took over the leg). Stamping RUNNING over that
+            # newer state would resurrect a settled stream until the
+            # streamer's finally heals it - honor the reopen contract and
+            # leave the stream alone; the continue itself proceeds.
+            return
         await event_stream.set_run_status(run_id, RunStatus.running)
 
 

@@ -73,6 +73,20 @@ class QueueConfig:
             work from any replica. Only replaces in-memory defaults: an
             explicitly configured cancellation manager or event stream is never
             overridden. Also works against Valkey (Redis-protocol compatible).
+
+    Multi-replica uniformity: the timing and budget fields
+    (``lock_grace_seconds``, ``stop_timeout_seconds``, ``retention_seconds``,
+    ``max_attempts``, ``timeout_seconds``) must be configured UNIFORMLY across
+    every replica sharing one queue table. Each is applied by whichever
+    replica performs the action - the claimer's grace sets its heartbeat
+    cadence while the sweeper's grace judges staleness, ``max_attempts`` is
+    stamped per-ticket by the accepting replica, and the smallest
+    ``retention_seconds`` in the fleet wins the hourly cleanup - so divergent
+    values (including transiently, during a rolling deploy) can falsely sweep
+    a healthy peer's runs or delete tickets early. When changing
+    ``lock_grace_seconds`` on a live fleet, only ever RAISE it, and roll the
+    sweeping replicas first: a replica sweeping with a smaller grace than its
+    peers heartbeat with judges their live leases stale.
     """
 
     max_concurrency: Optional[int] = None
@@ -110,11 +124,18 @@ class QueueConfig:
     # oldest_queued_age_seconds in /queue/stats.
     deployment_id: Optional[str] = None
     # Stale-lock grace before a crashed worker's jobs are reclaimed. The
-    # worker heartbeat refreshes locks, so this can stay small. Caveat: the
-    # heartbeat runs on the event loop - a run doing SYNC blocking work (sync
-    # model client / sync tool) that starves the loop past this grace will be
-    # swept as dead and its eventual completion fenced out (reported failed
-    # despite finishing). Keep blocking work in threads, or raise this grace.
+    # worker heartbeat refreshes locks, so this can stay small - but it is
+    # coupled to the drain timeout below: the worker requires
+    # stop_timeout < lock_grace_seconds (a drain that can outlive the lease
+    # guarantees a peer reclaims a still-draining run mid-drain). On the
+    # production (sync-wrapped) stores the heartbeat runs on a dedicated
+    # thread, so a run doing SYNC blocking work (sync model client / sync
+    # tool) can no longer starve its own lease - sync I/O releases the GIL,
+    # so the thread keeps beating while the event loop is blocked. Blocking
+    # work still delays the loop-bound machinery (cancellation checkpoints,
+    # timeout enforcement, event publishing) - bounded staleness, and worth
+    # keeping in threads regardless. Residual: a C extension that holds the
+    # GIL without releasing it can still starve the heartbeat thread.
     lock_grace_seconds: int = 60
     poll_interval: float = 1.0
     # Terminal jobs older than this are deleted by the worker's retention
@@ -123,6 +144,16 @@ class QueueConfig:
     # must outlive arbitrary human latency. Abandoned paused tickets therefore
     # persist until continued or cancelled - cancel the run to release one.
     retention_seconds: int = 86400
+    # Graceful-shutdown drain window: in-flight runs get this long to finish
+    # before stragglers are cancelled and requeued/failed. Must be strictly
+    # below lock_grace_seconds (validated here, at construction). None = the
+    # worker default (30s), automatically clamped below lock_grace_seconds -
+    # so every lock_grace the validator accepts also boots (values 3-30 used
+    # to pass validation and then crash the app during lifespan startup).
+    # Appended AFTER the pre-existing fields: this is a public dataclass and
+    # is not keyword-only, so inserting mid-list would silently reinterpret
+    # positional constructions of the fields behind it.
+    stop_timeout_seconds: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
@@ -137,6 +168,15 @@ class QueueConfig:
             # Heartbeats fire every lock_grace/3: below ~3s the worker races
             # its own heartbeat and reclaims its own healthy jobs
             raise ValueError("QueueConfig.lock_grace_seconds must be >= 3 (heartbeats fire at lock_grace/3)")
+        if self.stop_timeout_seconds is not None:
+            if self.stop_timeout_seconds < 1:
+                raise ValueError("QueueConfig.stop_timeout_seconds must be >= 1 second when set")
+            if self.stop_timeout_seconds >= self.lock_grace_seconds:
+                raise ValueError(
+                    f"QueueConfig.stop_timeout_seconds ({self.stop_timeout_seconds}) must be strictly below "
+                    f"lock_grace_seconds ({self.lock_grace_seconds}): a drain that can outlive the lease "
+                    "guarantees a peer reclaims a still-draining run mid-drain"
+                )
         if self.retry_delay_seconds < 0:
             raise ValueError("QueueConfig.retry_delay_seconds must be >= 0 (0 = no backoff)")
         if self.max_queue_depth < 0:

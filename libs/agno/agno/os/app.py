@@ -456,14 +456,16 @@ class AgentOS:
 
         # Queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap, in-memory transports).
-        # queue.redis wires the cross-container transports; the explicit
-        # event_stream parameter below is applied after and wins by ordering.
+        # queue.redis wires the cross-container transports over the process
+        # defaults only; the explicit event_stream parameter is applied first
+        # and survives the wiring regardless of its type.
         self.queue = queue
 
-        # Event stream FIRST: the coordination wiring below only fills in-memory
-        # defaults and warns on asymmetric transports - it must see the user's
-        # explicit stream, or the one split-Redis config it exists to catch
-        # (custom stream on Redis A, wired cancellation on Redis B) never warns.
+        # Event stream FIRST: the coordination wiring below only replaces the
+        # never-explicitly-set defaults and warns on asymmetric transports - it
+        # must see the user's explicit stream, or the one split-Redis config it
+        # exists to catch (custom stream on Redis A, wired cancellation on
+        # Redis B) never warns.
         if event_stream is not None:
             set_event_stream(event_stream)
 
@@ -1250,9 +1252,17 @@ class AgentOS:
 
                 log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
 
+                status_code = getattr(exc, "status_code", 500)
+                # 4xx exceptions that carry their own status wrote their
+                # message for the client; 5xx details must never echo
+                # str(exc) - unhandled server errors are routinely store or
+                # driver failures whose text carries connection strings, SQL
+                # fragments, and hostnames. The full traceback is in the
+                # server log above; the wire gets the exception type only.
+                detail = str(exc) if status_code < 500 else f"Internal server error ({type(exc).__name__})"
                 return JSONResponse(
-                    status_code=getattr(exc, "status_code", 500),
-                    content={"detail": str(exc)},
+                    status_code=status_code,
+                    content={"detail": detail},
                 )
 
         # Update CORS middleware

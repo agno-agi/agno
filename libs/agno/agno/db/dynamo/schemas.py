@@ -414,6 +414,17 @@ SPAN_TABLE_SCHEMA = {
 }
 
 
+SCHEMA_VERSIONS_TABLE_SCHEMA = {
+    "TableName": "agno_schema_versions",
+    "KeySchema": [{"AttributeName": "table_name", "KeyType": "HASH"}],
+    "AttributeDefinitions": [
+        {"AttributeName": "table_name", "AttributeType": "S"},
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
+
 RUNS_TABLE_SCHEMA = {
     "TableName": "agno_runs",
     "KeySchema": [{"AttributeName": "run_id", "KeyType": "HASH"}],

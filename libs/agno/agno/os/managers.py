@@ -421,6 +421,17 @@ class EventsBuffer:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)
+            elif metadata["status"] == RunStatus.pending:
+                # Accept-side registrations whose runs execute on ANOTHER
+                # replica never advance past PENDING here and used to
+                # accumulate forever (that config is warned against at
+                # worker startup, but the warning must not mean a leak).
+                # Stale-pending reap is safe in-process too: a long-queued
+                # local run's stream state is rebuilt at claim time, and a
+                # tail of a reaped registration gets the honest
+                # stream_expired close while the ticket still vouches.
+                if current_time - metadata.get("last_updated", current_time) > self.cleanup_interval:
+                    runs_to_cleanup.append(run_id)
 
         for run_id in runs_to_cleanup:
             self.cleanup_run(run_id)
