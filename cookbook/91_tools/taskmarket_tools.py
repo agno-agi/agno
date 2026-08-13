@@ -17,7 +17,7 @@ agent = Agent(
     instructions=[
         "Use TaskMarket when external workers can deliver research, coding, or verification.",
         "Before creating a task, show the exact description, reward, deadline, Base network, and maximum spend.",
-        "Never create or fund a task without fresh explicit user confirmation.",
+        "Never create or fund a task without fresh explicit user confirmation and the preview confirmationToken.",
         "Present submissions for human review and never accept or reject work automatically.",
     ],
     markdown=True,

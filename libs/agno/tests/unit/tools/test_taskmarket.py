@@ -59,6 +59,7 @@ def test_preview_task_calculates_budget_and_keeps_request_unsubmitted():
     assert result_data["notSubmitted"] is True
     assert result_data["preview"]["estimatedMaxSpendUsdc"] == "0.538500"
     assert result_data["preview"]["maxSpendSufficient"] is True
+    assert result_data["preview"]["confirmationToken"]
     assert result_data["preview"]["network"] == {"name": "Base", "chainId": 8453, "asset": "USDC"}
     assert result_data["preview"]["tags"] == ["research", "verification"]
 
@@ -78,6 +79,23 @@ def test_preview_task_rejects_modes_without_supported_create_arguments():
 
     result_data = json.loads(result)
     assert "auction" not in result_data["error"]
+    assert result_data["notSubmitted"] is True
+
+
+def test_preview_task_returns_structured_error_for_duration_overflow():
+    """Extreme duration input must not escape as a timedelta overflow."""
+    tools = TaskMarketTools()
+
+    result = tools.preview_task(
+        description="Collect and verify a short report",
+        reward_usdc="0.50",
+        duration_hours=1e300,
+        tags="research,verification",
+        max_spend_usdc="0.55",
+    )
+
+    result_data = json.loads(result)
+    assert "duration_hours" in result_data["error"]
     assert result_data["notSubmitted"] is True
 
 
@@ -103,6 +121,15 @@ def test_create_task_requires_explicit_confirmation_before_calling_cli():
 def test_create_task_checks_base_wallet_then_calls_cli_once():
     """An authorized create verifies Base/USDC and returns the created ID."""
     tools = TaskMarketTools(cli_command="taskmarket")
+    preview = json.loads(
+        tools.preview_task(
+            description="Collect and verify a short report",
+            reward_usdc="0.50",
+            duration_hours=24,
+            tags="research,verification",
+            max_spend_usdc="0.55",
+        )
+    )
     deposit = CompletedProcess(
         args=["taskmarket", "deposit"],
         returncode=0,
@@ -124,12 +151,14 @@ def test_create_task_checks_base_wallet_then_calls_cli_once():
             tags="research,verification",
             max_spend_usdc="0.55",
             confirm=True,
+            confirmation_token=preview["preview"]["confirmationToken"],
         )
 
     result_data = json.loads(result)
     assert result_data["success"] is True
     assert result_data["taskId"] == "0xcreated"
     assert result_data["paymentState"] == "submitted_once"
+    assert result_data["preview"]["deadlineUtc"] == preview["preview"]["deadlineUtc"]
     assert run_cli.call_count == 2
     assert run_cli.call_args_list[0].args[0] == ["taskmarket", "deposit"]
     create_args = run_cli.call_args_list[1].args[0]
@@ -141,6 +170,15 @@ def test_create_task_checks_base_wallet_then_calls_cli_once():
 def test_create_task_does_not_retry_unknown_cli_failure():
     """A failed create never invites an automatic second payment attempt."""
     tools = TaskMarketTools()
+    preview = json.loads(
+        tools.preview_task(
+            description="Collect and verify a short report",
+            reward_usdc="0.50",
+            duration_hours=24,
+            tags="research,verification",
+            max_spend_usdc="0.55",
+        )
+    )
     deposit = CompletedProcess(
         args=["taskmarket", "deposit"],
         returncode=0,
@@ -162,12 +200,33 @@ def test_create_task_does_not_retry_unknown_cli_failure():
             tags="research,verification",
             max_spend_usdc="0.55",
             confirm=True,
+            confirmation_token=preview["preview"]["confirmationToken"],
         )
 
     result_data = json.loads(result)
     assert result_data["paymentState"] == "unknown_or_not_settled"
     assert result_data["retry"] is False
     assert run_cli.call_count == 2
+
+
+def test_create_task_requires_preview_token_after_confirmation():
+    """Confirmation alone cannot authorize a create without an exact preview."""
+    tools = TaskMarketTools()
+
+    with patch("agno.tools.taskmarket.subprocess.run") as run_cli:
+        result = tools.create_task(
+            description="Collect and verify a short report",
+            reward_usdc="0.50",
+            duration_hours=24,
+            tags="research,verification",
+            max_spend_usdc="0.55",
+            confirm=True,
+        )
+
+    result_data = json.loads(result)
+    assert "confirmation_token" in result_data["error"]
+    assert result_data["notSubmitted"] is True
+    run_cli.assert_not_called()
 
 
 @pytest.mark.asyncio

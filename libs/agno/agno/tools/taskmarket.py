@@ -1,7 +1,9 @@
 """TaskMarket tools for discovering and safely delegating agent work."""
 
 import asyncio
+import hashlib
 import json
+import math
 import subprocess
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -55,6 +57,7 @@ class TaskMarketTools(Toolkit):
         self.api_base_url = api_base_url.rstrip("/")
         self.cli_command = cli_command
         self.timeout = timeout
+        self._pending_previews: Dict[str, Dict[str, Any]] = {}
 
         tools: List[Any] = []
         async_tools: List[Tuple[Any, str]] = []
@@ -137,7 +140,8 @@ class TaskMarketTools(Toolkit):
         )
         if error:
             return self._json_error(error, notSubmitted=True)
-        return self._json({"preview": preview, "notSubmitted": True, "success": True})
+        preview_with_token = self._remember_preview(preview)
+        return self._json({"preview": preview_with_token, "notSubmitted": True, "success": True})
 
     def create_task(
         self,
@@ -148,6 +152,7 @@ class TaskMarketTools(Toolkit):
         max_spend_usdc: str,
         confirm: bool = False,
         mode: str = "bounty",
+        confirmation_token: Optional[str] = None,
     ) -> str:
         """Create a TaskMarket task once after explicit user authorization.
 
@@ -168,14 +173,37 @@ class TaskMarketTools(Toolkit):
             return self._json_error(error, notSubmitted=True, retry=False)
 
         if not confirm:
+            preview_with_token = self._remember_preview(preview)
             return self._json(
                 {
                     "confirmationRequired": True,
                     "notSubmitted": True,
-                    "preview": preview,
-                    "message": "Call again with confirm=true only after the user approves this exact preview.",
+                    "preview": preview_with_token,
+                    "message": "Call again with confirm=true and the preview confirmationToken only after the user approves this exact preview.",
                 }
             )
+
+        if not isinstance(confirmation_token, str) or not confirmation_token:
+            return self._json_error(
+                "confirmation_token is required and must come from the exact preview being approved",
+                notSubmitted=True,
+                retry=False,
+            )
+
+        approved_preview = self._pending_previews.pop(confirmation_token, None)
+        if approved_preview is None:
+            return self._json_error(
+                "confirmation_token is unknown or already used; preview the exact task again",
+                notSubmitted=True,
+                retry=False,
+            )
+        if not self._same_preview_request(preview, approved_preview):
+            return self._json_error(
+                "create arguments do not match the approved preview; preview the exact task again",
+                notSubmitted=True,
+                retry=False,
+            )
+        preview = approved_preview
 
         max_spend = Decimal(preview["maxSpendUsdc"])
         estimated = Decimal(preview["estimatedMaxSpendUsdc"])
@@ -379,11 +407,17 @@ class TaskMarketTools(Toolkit):
             return {}, "tags must contain between 1 and 10 non-empty values"
 
         estimated = self._estimate_max_spend(reward)
-        deadline = datetime.now(timezone.utc) + timedelta(seconds=float(duration) * 3600)
+        try:
+            duration_float = float(duration)
+            if not math.isfinite(duration_float):
+                return {}, "duration_hours must be a positive finite number within the supported date range"
+            deadline = datetime.now(timezone.utc) + timedelta(hours=duration_float)
+        except (OverflowError, ValueError):
+            return {}, "duration_hours must be a positive finite number within the supported date range"
         preview = {
             "description": description,
             "rewardUsdc": self._format_usdc(reward),
-            "durationHours": str(duration_hours),
+            "durationHours": self._format_duration(duration),
             "deadlineUtc": deadline.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "tags": normalized_tags,
             "mode": mode,
@@ -395,6 +429,20 @@ class TaskMarketTools(Toolkit):
             "network": {"name": "Base", "chainId": BASE_CHAIN_ID, "asset": "USDC"},
         }
         return preview, None
+
+    def _remember_preview(self, preview: Dict[str, Any]) -> Dict[str, Any]:
+        token_payload = json.dumps(preview, sort_keys=True, separators=(",", ":"))
+        token = hashlib.sha256(token_payload.encode("utf-8")).hexdigest()
+        self._pending_previews[token] = preview
+        if len(self._pending_previews) > 32:
+            oldest_token = next(iter(self._pending_previews))
+            del self._pending_previews[oldest_token]
+        return {**preview, "confirmationToken": token}
+
+    @staticmethod
+    def _same_preview_request(first: Dict[str, Any], second: Dict[str, Any]) -> bool:
+        fields = ("description", "rewardUsdc", "durationHours", "tags", "mode", "maxSpendUsdc")
+        return all(first.get(field) == second.get(field) for field in fields)
 
     @staticmethod
     def _parse_usdc(value: Any, field_name: str) -> Tuple[Decimal, Optional[str]]:
@@ -423,6 +471,11 @@ class TaskMarketTools(Toolkit):
     @staticmethod
     def _format_usdc(value: Decimal) -> str:
         return format(value.quantize(USDC_QUANTUM, rounding=ROUND_HALF_UP), "f")
+
+    @staticmethod
+    def _format_duration(value: Decimal) -> str:
+        formatted = format(value, "f").rstrip("0").rstrip(".")
+        return formatted or "0"
 
     @staticmethod
     def _validate_task_id(task_id: str) -> Optional[str]:
