@@ -240,9 +240,9 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
         return events
 
     if _is_member_chunk(chunk):
-        _, content = state.get_or_create_member(_member_key(chunk))
-        content["status"] = "running"
-        content["currentTool"] = None
+        _, member_content = state.get_or_create_member(_member_key(chunk))
+        member_content["status"] = "running"
+        member_content["currentTool"] = None
         return [_member_activity_snapshot(chunk, state)]
 
     if tool.tool_call_id in state.ended_tool_call_ids:
