@@ -847,6 +847,8 @@ class ValkeyDB(VectorDb):
             # Also delete all keys with the prefix
             self._delete_all_keys()
             log_debug(f"Deleted Valkey index: {self.index_name}")
+            # Next index under this name may differ — re-resolve lazily
+            self._owner_field_exists = None
             return True
         except Exception as e:
             if "not found" in str(e).lower():
@@ -862,6 +864,7 @@ class ValkeyDB(VectorDb):
         result = await asyncio.to_thread(self.drop)
         if not result:
             raise RuntimeError(f"Failed to drop Valkey index: {self.index_name}")
+        # sync drop() already cleared the cache
 
     def exists(self) -> bool:
         """Check if the Valkey index exists."""
