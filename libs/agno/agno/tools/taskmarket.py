@@ -26,8 +26,9 @@ class TaskMarketTools(Toolkit):
 
     The read tools use TaskMarket's public API. Creating a task is deliberately
     delegated to the first-party CLI so this toolkit never reads or handles a
-    wallet key. The create method requires both ``confirm=True`` and a maximum
-    spend that covers the reward, platform fee estimate, and relay buffer.
+    wallet key. The create method requires ``confirm=True``, the exact
+    ``confirmation_token`` returned by a preview, and a maximum spend that
+    covers the reward, platform fee estimate, and relay buffer.
 
     Args:
         api_base_url: Public TaskMarket API base URL.
@@ -156,10 +157,10 @@ class TaskMarketTools(Toolkit):
     ) -> str:
         """Create a TaskMarket task once after explicit user authorization.
 
-        The first-party CLI is called at most once. If the CLI reports a
-        failure after it may have contacted the payment rail, this method
-        returns ``retry: false`` and an unknown settlement state instead of
-        retrying automatically.
+        The first-party CLI is called at most once after the exact preview token
+        is verified. If the CLI reports a failure after it may have contacted
+        the payment rail, this method returns ``retry: false`` and an unknown
+        settlement state instead of retrying automatically.
         """
         preview, error = self._build_preview(
             description=description,
