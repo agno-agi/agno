@@ -80,7 +80,8 @@ def test_default_format_includes_full_datetime():
     msg = _get_dynamic_context_message(agent)
 
     assert msg is not None
-    assert msg.role == "system"
+    assert msg.role == "user"
+    assert msg.add_to_agent_memory is False
     # Default Python datetime str format: YYYY-MM-DD HH:MM:SS.ffffff
     assert re.search(r"The current time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", msg.content)
 
