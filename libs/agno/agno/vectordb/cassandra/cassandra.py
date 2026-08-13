@@ -116,10 +116,20 @@ class Cassandra(VectorDb):
         not whether every row has it. If at least one row has user_id, the table
         is considered migrated (v3-compatible).
 
-        Returns True if any row has user_id, False if no rows have it, None on error.
+        Empty tables return True - no v2 data to protect against.
+
+        Returns True if any row has user_id or table is empty, False if rows exist
+        without user_id, None on error.
         """
         try:
-            # Check if ANY row has user_id key (LIMIT 1 for efficiency)
+            # 1. Check if table has any rows at all (LIMIT 1 for efficiency)
+            any_row_query = f"SELECT row_id FROM {self.keyspace}.{self.table_name} LIMIT 1"
+            any_row_result = self.session.execute(any_row_query)
+            if not list(any_row_result):
+                # Empty table - no v2 data to worry about
+                return True
+
+            # 2. Check if ANY row has user_id key
             query = (
                 f"SELECT row_id FROM {self.keyspace}.{self.table_name} "
                 f"WHERE metadata_s CONTAINS KEY '{USER_ID_METADATA_KEY}' LIMIT 1 ALLOW FILTERING"
