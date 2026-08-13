@@ -298,3 +298,72 @@ def test_message_reasoning_content_optional():
     msg = Message(role="assistant", content="Just content")
     # Should not raise, reasoning_content should be None or not set
     assert msg.content == "Just content"
+
+
+# ============================================================================
+# Native model reasoning delta in handle_model_response_chunk
+# ============================================================================
+
+
+def _make_chunk_args(stream_events):
+    """Build minimal mocks for handle_model_response_chunk."""
+    from unittest.mock import MagicMock
+
+    from agno.agent._response import handle_model_response_chunk
+    from agno.models.response import ModelResponse, ModelResponseEvent
+    from agno.run.agent import RunOutput
+
+    agent = MagicMock()
+    agent.events_to_skip = None
+    agent.store_events = False
+    session = MagicMock()
+    session.session_id = "test-session"
+    run_response = RunOutput(session_id="test-session")
+    model_response = ModelResponse(content="")
+    reasoning_state = {"reasoning_started": False, "reasoning_time_taken": 0.0, "native_reasoning_streamed": False}
+
+    chunk = ModelResponse(event=ModelResponseEvent.assistant_response.value, reasoning_content="thinking...")
+
+    def run():
+        return list(
+            handle_model_response_chunk(
+                agent=agent,
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=chunk,
+                reasoning_state=reasoning_state,
+                stream_events=stream_events,
+            )
+        )
+
+    return run, reasoning_state, run_response
+
+
+def test_handle_model_response_chunk_emits_reasoning_delta_when_streaming():
+    """Native reasoning content should emit ReasoningContentDeltaEvent when stream_events=True."""
+    from agno.run.agent import RunEvent
+
+    run, reasoning_state, run_response = _make_chunk_args(stream_events=True)
+    events = run()
+
+    delta_events = [e for e in events if e.event == RunEvent.reasoning_content_delta.value]
+    assert len(delta_events) == 1
+    assert delta_events[0].reasoning_content == "thinking..."
+    assert reasoning_state["native_reasoning_streamed"] is True
+    # Accumulated onto run_response as before
+    assert run_response.reasoning_content == "thinking..."
+
+
+def test_handle_model_response_chunk_no_reasoning_delta_when_not_streaming():
+    """No ReasoningContentDeltaEvent when stream_events=False (backward compat), but still accumulates."""
+    from agno.run.agent import RunEvent
+
+    run, reasoning_state, run_response = _make_chunk_args(stream_events=False)
+    events = run()
+
+    delta_events = [e for e in events if e.event == RunEvent.reasoning_content_delta.value]
+    assert len(delta_events) == 0
+    assert reasoning_state["native_reasoning_streamed"] is False
+    # Accumulation still happens regardless of streaming
+    assert run_response.reasoning_content == "thinking..."

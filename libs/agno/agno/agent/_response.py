@@ -1061,6 +1061,7 @@ def handle_model_response_stream(
     reasoning_state = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
+        "native_reasoning_streamed": False,
     }
     model_response = ModelResponse(content="")
 
@@ -1200,6 +1201,20 @@ def handle_model_response_stream(
                 store_events=agent.store_events,
             )
 
+    # Also close native model reasoning (reasoning_content streamed via
+    # ReasoningContentDeltaEvent without going through ReasoningManager).
+    if stream_events and reasoning_state.get("native_reasoning_streamed"):
+        yield handle_event(  # type: ignore
+            create_reasoning_completed_event(
+                from_run_response=run_response,
+                content=run_response.reasoning_content or "",
+                content_type="str",
+            ),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )
+
     # Update the run_response audio if streaming
     if model_response.audio is not None:
         run_response.response_audio = model_response.audio
@@ -1221,6 +1236,7 @@ async def ahandle_model_response_stream(
     reasoning_state = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
+        "native_reasoning_streamed": False,
     }
     model_response = ModelResponse(content="")
 
@@ -1362,6 +1378,20 @@ async def ahandle_model_response_stream(
                 store_events=agent.store_events,
             )
 
+    # Also close native model reasoning (reasoning_content streamed via
+    # ReasoningContentDeltaEvent without going through ReasoningManager).
+    if stream_events and reasoning_state.get("native_reasoning_streamed"):
+        yield handle_event(  # type: ignore
+            create_reasoning_completed_event(
+                from_run_response=run_response,
+                content=run_response.reasoning_content or "",
+                content_type="str",
+            ),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )
+
     # Update the run_response audio if streaming
     if model_response.audio is not None:
         run_response.response_audio = model_response.audio
@@ -1434,6 +1464,26 @@ def handle_model_response_chunk(
                     model_response.reasoning_content or ""
                 ) + model_response_event.reasoning_content
                 run_response.reasoning_content = model_response.reasoning_content
+                # Also yield a dedicated reasoning delta so consumers like
+                # AGUI / AgentOS light up the reasoning panel during
+                # streaming. Without this, models that stream reasoning
+                # from the main call (Claude w/ thinking, OpenAI o-series
+                # on Responses API, Gemini thinking, GeminiInteractions
+                # agent path) only reach the panel via the explicit
+                # ReasoningManager pre-call pattern, which doesn't fit
+                # models where reasoning is interleaved with tool calls.
+                if stream_events and model_response_event.reasoning_content:
+                    yield handle_event(  # type: ignore
+                        create_reasoning_content_delta_event(
+                            from_run_response=run_response,
+                            reasoning_content=model_response_event.reasoning_content,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                    if reasoning_state is not None:
+                        reasoning_state["native_reasoning_streamed"] = True
 
             if model_response_event.redacted_reasoning_content is not None:
                 if not model_response.reasoning_content:
