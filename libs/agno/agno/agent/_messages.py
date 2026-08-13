@@ -1171,7 +1171,10 @@ def _get_dynamic_context_message(agent: "Agent") -> Optional[Message]:
     if not parts:
         return None
 
-    return Message(role="system", content="\n".join(parts))
+    # Use role="user" so adapters that extract system messages (Gemini, Bedrock)
+    # don't overwrite the primary system prompt. Skip persistence so stale
+    # per-turn values don't leak into subsequent runs via history.
+    return Message(role="user", content="\n".join(parts), add_to_agent_memory=False)
 
 
 def get_run_messages(
