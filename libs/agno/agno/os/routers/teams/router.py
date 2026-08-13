@@ -476,6 +476,10 @@ async def team_continue_response_streamer(
         )
         yield format_sse_event(error_response)
 
+    except asyncio.CancelledError:
+        # Sibling-streamer parity: every other streamer ends quietly on
+        # client disconnect (the finalizer above already settled the stream)
+        return
     except Exception as e:
         import traceback
 
@@ -659,7 +663,12 @@ def get_team_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
+        # No raw message content in logs: user input can carry PII/secrets
+        # and belongs in the run record, not the log stream
+        logger.debug(
+            f"Creating team run: {session_id=} {monitor=} {user_id=} {team_id=} "
+            f"files={len(files) if files else 0} message_len={len(message) if message else 0}"
+        )
 
         team = await resolve_team(
             team_id,
@@ -714,9 +723,15 @@ def get_team_router(
                         logger.exception(f"Error processing video {file.filename}")
                         continue
                 elif file_category == "document":
-                    document_file = process_document(file)
-                    if document_file is not None:
-                        document_files.append(document_file)
+                    # Agents parity: one unparseable document must not 500
+                    # the whole submission - skip it, loudly
+                    try:
+                        document_file = process_document(file)
+                        if document_file is not None:
+                            document_files.append(document_file)
+                    except Exception as e:
+                        logger.error(f"Error processing file {file.filename}: {str(e)}")
+                        continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
@@ -735,6 +750,15 @@ def get_team_router(
         if background:
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
+            # The db requirement gates BOTH shapes here: the non-stream
+            # branch always 400ed, while the stream branch used to enter the
+            # detached streamer and let arun(background=True) raise - the
+            # same misconfiguration answered 200 + SSE error frame,
+            # indistinguishable from a runtime failure.
+            if not team.db:
+                raise HTTPException(
+                    status_code=400, detail="Background execution requires a database to be configured on the team"
+                )
 
             if stream:
                 # Durable queued streaming: the queue row is the acceptance,
@@ -748,7 +772,6 @@ def get_team_router(
                     queue_worker is not None
                     and getattr(team, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
-                    and not isinstance(team, RemoteTeam)
                     and version is None
                     and not (base64_images or base64_audios or base64_videos or document_files)
                     and any(
@@ -757,11 +780,11 @@ def get_team_router(
                     )
                 )
                 if stream_queueable:
-                    # 202/stream-accept must honor input_schema like the inline path
+                    # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(team, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     queued_run_id = str(uuid4())
-                    queued_session_id = session_id or str(uuid4())
+                    queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="team",
@@ -843,12 +866,9 @@ def get_team_router(
                     media_type="text/event-stream",
                 )
 
-            # background=True, stream=False: return 202 immediately with run metadata
-            if not team.db:
-                raise HTTPException(
-                    status_code=400, detail="Background execution requires a database to be configured on the team"
-                )
-
+            # background=True, stream=False: return 202 immediately with run
+            # metadata (the db requirement was enforced at the top of the
+            # background branch, for both shapes)
             # Durable queue path: acceptance is a committed row; whichever
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
@@ -864,7 +884,6 @@ def get_team_router(
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
-                and not isinstance(team, RemoteTeam)
                 and component_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
@@ -872,10 +891,10 @@ def get_team_router(
                 # bounded in-process path (parity with the stream seam)
                 and not (base64_images or base64_audios or base64_videos or document_files)
             ):
-                # 202 must honor input_schema exactly like the inline path 422s
+                # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(team, message)
                 queued_run_id = str(uuid4())
-                queued_session_id = session_id or str(uuid4())
+                queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="team",
@@ -954,18 +973,27 @@ def get_team_router(
                         "accepting replica instead - bounded and observable, but NOT durable."
                     )
 
-            run_response = await team.arun(  # type: ignore[misc]
-                input=message,
-                session_id=session_id,
-                user_id=user_id,
-                images=base64_images if base64_images else None,
-                audio=base64_audios if base64_audios else None,
-                videos=base64_videos if base64_videos else None,
-                files=document_files if document_files else None,
-                stream=False,
-                background=True,
-                **kwargs,
-            )
+            # Same input-error contract as the inline path: schema violations
+            # are refused up front (the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500), and guardrail
+            # refusals from the dispatch answer 400.
+            validate_seam_input(team, message)
+            try:
+                run_response = await team.arun(  # type: ignore[misc]
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=document_files if document_files else None,
+                    stream=False,
+                    background=True,
+                    **kwargs,
+                )
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
                 content={
@@ -997,6 +1025,11 @@ def get_team_router(
             if auth_token and isinstance(team, RemoteTeam):
                 kwargs["auth_token"] = auth_token
 
+            # Schema violations are refused up front with the seams' shared
+            # check: the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500.
+            validate_seam_input(team, message)
             try:
                 run_response = await team.arun(  # type: ignore[misc]
                     input=message,
@@ -1385,6 +1418,10 @@ def get_team_router(
             )
             if (
                 queue_worker is not None
+                # LIVE, unlike the submit gates' dead twin: the teams continue
+                # endpoint has no up-front remote rejection, so this is what
+                # routes remote teams past the durable branch (and narrows
+                # the union for the row read below)
                 and not isinstance(team, RemoteTeam)
                 and team_is_queueable
                 and not fork

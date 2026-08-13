@@ -624,10 +624,8 @@ class FirestoreDb(BaseDb):
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the schema version stamped for the given table.
 
-        Defaults to "2.0.0" when nothing is stamped yet, matching the SQL
-        adapters: an unstamped database is assumed pre-v3 so the
-        MigrationManager runs migrations. Returning None here would make the
-        manager skip the table entirely.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
         doc = self.db_client.collection(self.versions_table_name).document(table_name).get()
         if not doc.exists:
