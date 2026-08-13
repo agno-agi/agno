@@ -429,7 +429,9 @@ class TaskMarketTools(Toolkit):
             if not math.isfinite(duration_float):
                 return {}, "duration_hours must be a positive finite number within the supported date range"
             duration_delta = timedelta(hours=duration_float)
-            deadline = datetime.now(timezone.utc) + duration_delta if include_deadline else None
+            deadline = None
+            if include_deadline:
+                deadline = datetime.now(timezone.utc) + duration_delta
         except (OverflowError, ValueError):
             return {}, "duration_hours must be a positive finite number within the supported date range"
         preview = {
