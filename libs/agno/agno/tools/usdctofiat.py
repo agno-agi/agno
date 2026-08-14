@@ -14,8 +14,9 @@ Install: `pip install usdctofiat` or `pip install agno[usdctofiat]`.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from agno.tools import Toolkit
 
@@ -35,6 +36,13 @@ _BANNED_KEY_KWARGS = (
     "wallet_key",
     "evm_private_key",
     "EVM_PRIVATE_KEY",
+)
+
+_BANNED_ATTRIBUTION_KWARGS = (
+    "referrer",
+    "referrers",
+    "extra_referrers",
+    "referral_code",
 )
 
 
@@ -74,6 +82,14 @@ class UsdctoFiatTools(Toolkit):
                 'Pass mode="fast" (0% / TOFIAT) or mode="best" (Delegate, 10 bps) '
                 "on each cashout/estimate call."
             )
+        for banned in _BANNED_ATTRIBUTION_KWARGS:
+            if banned in kwargs:
+                raise TypeError(
+                    "UsdctoFiatTools does not accept attribution overrides. "
+                    "Attribution is locked in usdctofiat to peer-ref-TOFIAT "
+                    "then galleonlabs. Do not pass referrer, referrers, "
+                    "extra_referrers, or referral_code."
+                )
 
         self.signer = signer
         self.offramp = create_offramp(
@@ -84,29 +100,32 @@ class UsdctoFiatTools(Toolkit):
                     "indexer_url",
                     "curator",
                     "indexer",
-                    "referrer",
-                    "referrers",
-                    "extra_referrers",
-                    "referral_code",
                 )
                 if key in kwargs
             }
         )
 
         tools: List[Any] = []
+        async_tools: List[Tuple[Any, str]] = []
         if all or enable_cashout:
             tools.append(self.cashout)
+            async_tools.append((self.acashout, "cashout"))
         if all or enable_watch:
             tools.append(self.watch)
+            async_tools.append((self.awatch, "watch"))
         if all or enable_withdraw:
             tools.append(self.withdraw)
             tools.append(self.close)
+            async_tools.append((self.awithdraw, "withdraw"))
+            async_tools.append((self.aclose, "close"))
         if all or enable_deposits:
             tools.append(self.deposits)
+            async_tools.append((self.adeposits, "deposits"))
         if all or enable_estimate:
             tools.append(self.estimate)
+            async_tools.append((self.aestimate, "estimate"))
 
-        super().__init__(name="usdctofiat", tools=tools, **kwargs)
+        super().__init__(name="usdctofiat", tools=tools, async_tools=async_tools, **kwargs)
 
     def cashout(
         self,
@@ -218,6 +237,37 @@ class UsdctoFiatTools(Toolkit):
             return _dumps(_as_dict(self.offramp.estimate(mode=mode, amount=amount, currency=currency)))
         except Exception as exc:
             return _error(exc)
+
+    async def acashout(
+        self,
+        mode: str,
+        amount: str,
+        currency: str,
+        platform: str,
+        payee: str,
+    ) -> str:
+        """Async variant of cashout."""
+        return await asyncio.to_thread(self.cashout, mode, amount, currency, platform, payee)
+
+    async def awatch(self, deposit_id: str) -> str:
+        """Async variant of watch."""
+        return await asyncio.to_thread(self.watch, deposit_id)
+
+    async def awithdraw(self, deposit_id: str) -> str:
+        """Async variant of withdraw."""
+        return await asyncio.to_thread(self.withdraw, deposit_id)
+
+    async def aclose(self, deposit_id: str) -> str:
+        """Async variant of close."""
+        return await asyncio.to_thread(self.close, deposit_id)
+
+    async def adeposits(self, owner: str) -> str:
+        """Async variant of deposits."""
+        return await asyncio.to_thread(self.deposits, owner)
+
+    async def aestimate(self, mode: str, amount: str, currency: str) -> str:
+        """Async variant of estimate."""
+        return await asyncio.to_thread(self.estimate, mode, amount, currency)
 
 
 def _as_dict(value: Any) -> Any:

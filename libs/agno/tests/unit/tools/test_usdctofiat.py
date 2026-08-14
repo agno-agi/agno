@@ -167,3 +167,55 @@ def test_estimate_mode_required(tools):
     offramp.estimate.side_effect = ModeRequired()
     payload = json.loads(kit.estimate(mode="slow", amount="100", currency="EUR"))
     assert "mode is required" in payload["error"]
+
+
+def test_attribution_kwargs_rejected(mock_offramp):
+    with patch("agno.tools.usdctofiat.create_offramp", return_value=mock_offramp) as factory:
+        for key, value in (
+            ("referrer", "evil.eth"),
+            ("referrers", ["evil.eth"]),
+            ("extra_referrers", ["evil.eth"]),
+            ("referral_code", "EVIL"),
+        ):
+            with pytest.raises(TypeError, match="does not accept attribution"):
+                UsdctoFiatTools(**{key: value})
+        factory.assert_not_called()
+        UsdctoFiatTools()
+        factory.assert_called_once_with()
+
+
+def test_allowed_host_kwargs_still_forward(mock_offramp):
+    with patch("agno.tools.usdctofiat.create_offramp", return_value=mock_offramp) as factory:
+        UsdctoFiatTools(curator_url="https://curator.example", indexer_url="https://indexer.example")
+        factory.assert_called_once_with(
+            curator_url="https://curator.example",
+            indexer_url="https://indexer.example",
+        )
+
+
+def test_async_twins_registered(mock_offramp):
+    with patch("agno.tools.usdctofiat.create_offramp", return_value=mock_offramp):
+        kit = UsdctoFiatTools()
+        assert set(kit.functions) == {"cashout", "watch", "withdraw", "close", "deposits", "estimate"}
+        assert set(kit.async_functions) == set(kit.functions)
+        kit_partial = UsdctoFiatTools(
+            enable_cashout=True,
+            enable_watch=False,
+            enable_withdraw=False,
+            enable_deposits=False,
+            enable_estimate=True,
+        )
+        assert set(kit_partial.functions) == {"cashout", "estimate"}
+        assert set(kit_partial.async_functions) == {"cashout", "estimate"}
+
+
+@pytest.mark.asyncio
+async def test_acashout_without_signer_returns_unsigned_prepare(tools):
+    kit, offramp = tools
+    payload = json.loads(
+        await kit.acashout(mode="fast", amount="100", currency="EUR", platform="revolut", payee="alice")
+    )
+    assert payload["signed"] is False
+    assert payload["prepared"]["attribution"]["referral_code"] == "TOFIAT"
+    offramp.prepare.assert_called_once()
+    offramp.cashout.assert_not_called()
