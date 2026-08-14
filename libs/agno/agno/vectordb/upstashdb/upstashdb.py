@@ -319,9 +319,10 @@ class UpstashVectorDb(VectorDb):
         vectors = []
 
         for i, document in enumerate(documents):
-            if document.id is None:
-                log_error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
-                continue
+            # A Document carries no id unless the caller set one, and dropping it here loses
+            # the chunk silently. Digest the content instead, as PineconeDb does, so the id is
+            # stable across runs and _record_id always has something to fold the owner into.
+            base_id = document.id or md5(document.content.encode()).hexdigest()
 
             logger.debug(
                 f"Processing document {i + 1}: ID={document.id}, name={document.name}, "
@@ -357,7 +358,7 @@ class UpstashVectorDb(VectorDb):
             else:
                 logger.warning(f"Document {document.id} has no name")
 
-            vector_id = self._record_id(document.id, user_id)
+            vector_id = self._record_id(base_id, user_id)
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
@@ -678,9 +679,10 @@ class UpstashVectorDb(VectorDb):
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for i, document in enumerate(documents):
-            if document.id is None:
-                log_error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
-                continue
+            # A Document carries no id unless the caller set one, and dropping it here loses
+            # the chunk silently. Digest the content instead, as PineconeDb does, so the id is
+            # stable across runs and _record_id always has something to fold the owner into.
+            base_id = document.id or md5(document.content.encode()).hexdigest()
 
             logger.debug(
                 f"Processing document {i + 1}: ID={document.id}, name={document.name}, "
@@ -716,7 +718,7 @@ class UpstashVectorDb(VectorDb):
             else:
                 logger.warning(f"Document {document.id} has no name")
 
-            vector_id = self._record_id(document.id, user_id)
+            vector_id = self._record_id(base_id, user_id)
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:

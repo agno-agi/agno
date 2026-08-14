@@ -50,6 +50,15 @@ def _shared_docs() -> List[Document]:
     return [Document(name="company-holidays", content="The office is closed Jan 1.")]
 
 
+def _coll(db, user_id: str) -> str:
+    """The physical collection an owner resolves to, asked of the adapter rather than spelled out.
+
+    The mapping is deliberately not a literal: names are hashed, so hardcoding one here would
+    just restate the implementation instead of checking it.
+    """
+    return db._collection_name_for(user_id)
+
+
 class TestCollectionNaming:
     """Test how a user_id maps to a collection name."""
 
@@ -60,24 +69,52 @@ class TestCollectionNaming:
         # Only None is the shared bucket; "" is an owner and gets its own collection.
         assert chroma_db._collection_name_for("") != TEST_COLLECTION
 
-    def test_simple_user_id_uses_double_underscore_separator(self, chroma_db):
-        assert chroma_db._collection_name_for("alice") == f"{TEST_COLLECTION}__alice"
-
-    def test_long_user_id_gets_hashed(self, chroma_db):
-        # Chroma caps collection names at 63 chars, so a longer user_id falls back to a hash suffix.
-        very_long = "x" * 80
-        name = chroma_db._collection_name_for(very_long)
+    @pytest.mark.parametrize("user_id", ["alice", "x" * 80, "alice@corp.com", "", "../escape"])
+    def test_every_user_id_is_hashed_into_the_suffix(self, chroma_db, user_id):
+        """The suffix is always a hash, never the raw id — see the aliasing test below."""
+        name = chroma_db._collection_name_for(user_id)
         assert name.startswith(f"{TEST_COLLECTION}__")
         suffix = name[len(TEST_COLLECTION) + 2 :]
         assert len(suffix) == 16
         assert all(c in "0123456789abcdef" for c in suffix)
 
-    def test_user_id_with_invalid_chars_gets_hashed(self, chroma_db):
-        # Chroma allows only alphanumerics and ``_.-``, so an email address falls back to a hash suffix.
-        name = chroma_db._collection_name_for("alice@corp.com")
-        assert name.startswith(f"{TEST_COLLECTION}__")
-        suffix = name[len(TEST_COLLECTION) + 2 :]
-        assert len(suffix) == 16
+    def test_a_hash_shaped_user_id_cannot_alias_another_owner(self, chroma_db):
+        """An owner must not be able to name themselves into someone else's collection.
+
+        A digest is itself a valid Chroma name, so hashing only the ids that need it would
+        leave two ways to spell one suffix: an owner who registers as ``md5(victim)[:16]``
+        would land in the victim's collection with read, write and delete on its contents.
+        """
+        victim = "alice@corp.com"
+        victim_suffix = chroma_db._collection_name_for(victim)[len(TEST_COLLECTION) + 2 :]
+
+        # The attacker claims the victim's digest verbatim as their own user_id
+        attacker_name = chroma_db._collection_name_for(victim_suffix)
+
+        assert attacker_name != chroma_db._collection_name_for(victim)
+
+    @pytest.mark.parametrize("base_length", [10, 480, 494, 495, 512, 600])
+    def test_a_long_base_name_still_resolves_within_chromas_limit(self, mock_embedder, base_length):
+        """Chroma rejects a name over 512 chars, and the owner suffix costs 18 of them.
+
+        A base long enough to push past the limit used to fail every scoped operation, so
+        the base is digested too rather than letting the name grow unbounded.
+        """
+        db = ChromaDb(collection="b" * base_length, embedder=mock_embedder)
+
+        name = db._collection_name_for("alice")
+
+        assert 3 <= len(name) <= 512
+        # The unscoped name is the caller's own and stays untouched
+        assert db._collection_name_for(None) == "b" * base_length
+
+    def test_two_long_base_names_do_not_collide(self, mock_embedder):
+        """Truncating alone would fold every base sharing a 494-char prefix into one collection."""
+        shared_prefix = "b" * 600
+        first = ChromaDb(collection=shared_prefix + "one", embedder=mock_embedder)
+        second = ChromaDb(collection=shared_prefix + "two", embedder=mock_embedder)
+
+        assert first._collection_name_for("alice") != second._collection_name_for("alice")
 
 
 class TestWriteStampsOwner:
@@ -86,7 +123,7 @@ class TestWriteStampsOwner:
     def test_alice_insert_creates_alice_collection(self, chroma_db):
         chroma_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
 
-        alice_coll = chroma_db.client.get_collection(name=f"{TEST_COLLECTION}__alice")
+        alice_coll = chroma_db.client.get_collection(name=_coll(chroma_db, "alice"))
         rows = alice_coll.get()
         assert len(rows["ids"]) == 1
 
@@ -101,8 +138,8 @@ class TestWriteStampsOwner:
         chroma_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         chroma_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
 
-        alice_coll = chroma_db.client.get_collection(name=f"{TEST_COLLECTION}__alice")
-        bob_coll = chroma_db.client.get_collection(name=f"{TEST_COLLECTION}__bob")
+        alice_coll = chroma_db.client.get_collection(name=_coll(chroma_db, "alice"))
+        bob_coll = chroma_db.client.get_collection(name=_coll(chroma_db, "bob"))
 
         assert len(alice_coll.get()["ids"]) == 1
         assert len(bob_coll.get()["ids"]) == 1
@@ -176,16 +213,16 @@ class TestDeleteScope:
         """Test that bob deleting ``doc-1`` leaves alice's copy in place."""
         content_id_corpus.delete_by_content_id("doc-1", user_id="bob")
 
-        alice_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__alice")
-        bob_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__bob")
+        alice_coll = content_id_corpus.client.get_collection(name=_coll(content_id_corpus, "alice"))
+        bob_coll = content_id_corpus.client.get_collection(name=_coll(content_id_corpus, "bob"))
         assert len(alice_coll.get()["ids"]) == 1
         assert len(bob_coll.get()["ids"]) == 0
 
     def test_alice_can_delete_her_own(self, content_id_corpus):
         content_id_corpus.delete_by_content_id("doc-1", user_id="alice")
 
-        alice_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__alice")
-        bob_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__bob")
+        alice_coll = content_id_corpus.client.get_collection(name=_coll(content_id_corpus, "alice"))
+        bob_coll = content_id_corpus.client.get_collection(name=_coll(content_id_corpus, "bob"))
         assert len(alice_coll.get()["ids"]) == 0
         assert len(bob_coll.get()["ids"]) == 1
 
@@ -193,8 +230,8 @@ class TestDeleteScope:
         """``user_id=None`` is the unscoped delete, so it clears every owner's copy, not just the base one."""
         content_id_corpus.delete_by_content_id("doc-1", user_id=None)
 
-        alice_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__alice")
-        bob_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__bob")
+        alice_coll = content_id_corpus.client.get_collection(name=_coll(content_id_corpus, "alice"))
+        bob_coll = content_id_corpus.client.get_collection(name=_coll(content_id_corpus, "bob"))
         assert len(alice_coll.get()["ids"]) == 0
         assert len(bob_coll.get()["ids"]) == 0
 
@@ -203,8 +240,8 @@ class TestDeleteScope:
         assert result is False
 
         # Existing data untouched.
-        alice_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__alice")
-        bob_coll = content_id_corpus.client.get_collection(name=f"{TEST_COLLECTION}__bob")
+        alice_coll = content_id_corpus.client.get_collection(name=_coll(content_id_corpus, "alice"))
+        bob_coll = content_id_corpus.client.get_collection(name=_coll(content_id_corpus, "bob"))
         assert len(alice_coll.get()["ids"]) == 1
         assert len(bob_coll.get()["ids"]) == 1
 
@@ -218,12 +255,12 @@ class TestDropCleansUpPerUserCollections:
 
         # Both per-user collections exist before the drop
         existing = [c.name if hasattr(c, "name") else c for c in chroma_db.client.list_collections()]
-        assert f"{TEST_COLLECTION}__alice" in existing
-        assert f"{TEST_COLLECTION}__bob" in existing
+        assert _coll(chroma_db, "alice") in existing
+        assert _coll(chroma_db, "bob") in existing
 
         chroma_db.drop()
 
         after = [c.name if hasattr(c, "name") else c for c in chroma_db.client.list_collections()]
-        assert f"{TEST_COLLECTION}__alice" not in after
-        assert f"{TEST_COLLECTION}__bob" not in after
+        assert _coll(chroma_db, "alice") not in after
+        assert _coll(chroma_db, "bob") not in after
         assert TEST_COLLECTION not in after

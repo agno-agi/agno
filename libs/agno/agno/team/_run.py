@@ -9059,7 +9059,7 @@ async def _acontinue_run(
                 )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
-                # the same scope. 
+                # the same scope.
                 if user_id is None:
                     user_id = _resolve_continue_owner_team(run_response, run_id=run_id, session=team_session)
                     if user_id is not None:
