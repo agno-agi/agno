@@ -1,13 +1,16 @@
 """Unit tests for A2AClient."""
 
-from unittest.mock import MagicMock, patch
 from datetime import datetime
+from typing import AsyncIterator
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agno.client.a2a import (
     A2AClient,
 )
+from agno.client.a2a.utils import map_stream_events_to_run_events
+from agno.run.agent import RunCompletedEvent, RunContentEvent, RunStartedEvent
 from a2a.types import (
     Task,
     TaskStatus,
@@ -130,6 +133,80 @@ class TestA2AClient:
             completed_events = [e for e in events if e.is_completed]
             assert completed_events
             assert completed_events[0].is_final
+
+    @pytest.mark.asyncio
+    async def test_stream_message_terminal_status_update_carries_metadata(self):
+        """Regression test: out-of-band metadata rides the final=True status-update
+        (the A2A spec's terminal event). map_stream_events_to_run_events must read
+        event.metadata off that terminal event and forward it onto RunCompletedEvent,
+        rather than dropping it. (Port of #9224 to the a2a-sdk ClientFactory path.)"""
+        with patch("a2a.client.ClientFactory.connect") as mock_connect:
+            mock_sdk_client = MagicMock()
+            mock_connect.return_value = mock_sdk_client
+
+            ts = datetime.now().isoformat()
+
+            # 1. Task working (non-final status-update)
+            task1 = Task(
+                id="t1",
+                context_id="ctx-1",
+                status=TaskStatus(state="working", timestamp=ts),
+                history=[],
+                artifacts=[],
+                kind="task",
+                metadata={},
+            )
+            event1 = TaskStatusUpdateEvent(
+                task_id="t1",
+                context_id="ctx-1",
+                status=TaskStatus(state="working", timestamp=ts),
+                final=False,
+                kind="status-update",
+            )
+
+            # 2. Content update via task history expansion
+            msg_p1 = Message(role=Role.agent, message_id="m1", parts=[Part(root=TextPart(text="Hello"))])
+            task2 = task1.model_copy()
+            task2.history = [msg_p1]
+            event2 = None  # task-only update
+
+            # 3. Terminal status-update carrying out-of-band metadata
+            task3 = task2.model_copy()
+            event3 = TaskStatusUpdateEvent(
+                task_id="t1",
+                context_id="ctx-1",
+                status=TaskStatus(state="completed", timestamp=ts),
+                final=True,
+                kind="status-update",
+                metadata={"refetch_model": True},
+            )
+
+            items = [
+                (task1, event1),
+                (task2, event2),
+                (task3, event3),
+            ]
+
+            mock_sdk_client.send_message.side_effect = lambda *args, **kwargs: mock_async_iter(items)
+
+            client = A2AClient("http://localhost:7777")
+
+            async def raw_stream() -> AsyncIterator:
+                async for event in client.stream_message(message="Hello"):
+                    yield event
+
+            run_events = [
+                event async for event in map_stream_events_to_run_events(raw_stream(), agent_id="agent-1")
+            ]
+
+            assert [type(e) for e in run_events] == [
+                RunStartedEvent,
+                RunContentEvent,
+                RunCompletedEvent,
+            ]
+            completed = run_events[-1]
+            assert completed.content == "Hello"
+            assert completed.metadata == {"refetch_model": True}
 
     @pytest.mark.asyncio
     async def test_get_sdk_client_card_resolution_failure(self):

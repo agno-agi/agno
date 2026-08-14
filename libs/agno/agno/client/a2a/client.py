@@ -369,9 +369,6 @@ class A2AClient:
 
                     # 2. Handle events
                     if event:
-                        event_type = "unknown"
-                        is_final = False
-
                         if isinstance(event, TaskStatusUpdateEvent):
                             status_state = (
                                 str(getattr(event.status.state, "value", event.status.state))
@@ -383,16 +380,17 @@ class A2AClient:
                             else:
                                 event_type = "status"
 
-                            is_final = event.final
-
-                            if is_final:
-                                yield StreamEvent(
-                                    event_type=event_type,
-                                    task_id=task.id,
-                                    context_id=task.context_id,
-                                    metadata=event.metadata,
-                                    is_final=True,
-                                )
+                            # Forward every status-update (final or not) so consumers
+                            # see task lifecycle transitions (e.g. "working" ->
+                            # RunStartedEvent); metadata on the terminal final=True
+                            # event is preserved (#9224 regression).
+                            yield StreamEvent(
+                                event_type=event_type,
+                                task_id=task.id,
+                                context_id=task.context_id,
+                                metadata=event.metadata,
+                                is_final=event.final,
+                            )
 
         except Exception as e:
             raise RemoteServerUnavailableError(

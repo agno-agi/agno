@@ -920,7 +920,12 @@ async def test_refresh_survives_access_token_expiry_across_replicas(tmp_path):
     # full second of life, and the sleep (monotonic) can drift from expiry (wall clock) on CI.
     await asyncio.sleep(1.8)
 
-    replica = _os(_provider(db, access_token_ttl=1), db=db)
+    # The replica keeps the default (long) access TTL. It only needs to reject the first
+    # instance's already-expired token via the stateless exp check -- that token's expiry is
+    # baked in at mint time, so the replica's own TTL is irrelevant to it. A 1s TTL here would
+    # instead race the *refreshed* token below, which is used a couple of calls after it is
+    # minted and would flakily expire mid-test on a slow runner.
+    replica = _os(_provider(db), db=db)
     async with _http_client(replica) as client:
         expired = await client.post(
             "/mcp", json=_MCP_INIT_BODY, headers={**_MCP_HEADERS, "Authorization": f"Bearer {tokens['access_token']}"}

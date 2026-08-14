@@ -8,10 +8,13 @@ from typing import (
     Dict,
     List,
     Optional,
+    Union,
     cast,
 )
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
+    from agno.run.agent import RunOutput
     from agno.team.team import Team
 
 from agno.db.base import SessionType
@@ -173,6 +176,164 @@ async def aget_session(
     return None
 
 
+def _scrub_tool_results_keeping_unresolved(run: Union[TeamRunOutput, "RunOutput"]) -> None:
+    """Drop every stored tool-result message, keeping any call still awaiting one.
+
+    ``scrub_tool_results_from_run_output`` drops every assistant message that
+    made a call it removed. On a paused run that takes the message carrying the
+    *pending* call with it whenever one assistant turn mixes a finished call
+    with the gated one, leaving the resumed model nothing to answer. Here a
+    resolved call is stripped out of the message it was made in instead, and
+    the pending call survives."""
+    from copy import copy
+
+    if not run.messages:
+        return
+    if not any(message.role == "tool" for message in run.messages):
+        return
+    resolved = {message.tool_call_id for message in run.messages if message.role == "tool" and message.tool_call_id}
+    kept = []
+    for message in run.messages:
+        if message.role == "tool":
+            continue
+        if message.role == "assistant" and message.tool_calls:
+            remaining = [call for call in message.tool_calls if call.get("id") not in resolved]
+            if not remaining:
+                continue
+            if len(remaining) != len(message.tool_calls):
+                message = copy(message)
+                message.tool_calls = remaining
+        kept.append(message)
+    run.messages = kept
+
+
+def _resolve_spared_member(
+    team: "Team", member_response: Union[TeamRunOutput, "RunOutput"]
+) -> Optional[Union["Agent", "Team"]]:
+    """Resolve the member that produced a spared response, by owning path.
+
+    A run's member_responses belong to that team's DIRECT members, so the
+    owner of a spared response is resolved among the direct members of the
+    team level that carries it — never by a global search: sibling sub-teams
+    may hold leaves with the same member id, and a tree-wide first match
+    would apply the other leaf's storage flags. Among direct members an
+    agent response resolves to an Agent and a team response to a Team.
+    Only a response whose id matches no direct member at all (a
+    caller-assembled tree that skips levels) falls back to the global
+    search, which is then no worse than resolving it globally from the
+    root."""
+    from agno.run.agent import RunOutput
+    from agno.team._tools import _find_member_by_id
+    from agno.team.team import Team
+    from agno.utils.team import get_member_id
+
+    member_id = member_response.agent_id if isinstance(member_response, RunOutput) else member_response.team_id
+    if not member_id:
+        return None
+    response_is_team = not isinstance(member_response, RunOutput)
+    # Callable member lists resolve at run time; here (a storage scrub, no run
+    # context) only a plain list can be searched — matching get_resolved_members.
+    members = getattr(team, "members", None)
+    if not isinstance(members, list):
+        members = []
+    direct_matches = [member for member in members if get_member_id(member) == member_id]
+    for member in direct_matches:
+        if isinstance(member, Team) == response_is_team:
+            return member
+    if direct_matches:
+        return direct_matches[0]
+    member_result = _find_member_by_id(team, member_id)
+    return member_result[1] if member_result is not None else None
+
+
+def _storage_view_of_spared_run(
+    team: "Team",
+    member_response: Union[TeamRunOutput, "RunOutput"],
+    member: Optional[Union["Agent", "Team"]] = None,
+) -> Union[TeamRunOutput, "RunOutput"]:
+    """Apply a spared member's own storage flags to a copy of its paused run.
+
+    A paused member run is kept out of the member-response scrub so
+    continue_run can resume it after a reload. That exemption must not also
+    carry the member's data past its own store_media / store_tool_messages /
+    store_history_messages settings: the delegation path applies them to every
+    member run it persists, and a run spared here is persisted the same way.
+
+    ``member`` is the already-resolved owner when the caller knows it;
+    otherwise it is resolved from ``team``'s direct members
+    (_resolve_spared_member)."""
+    from copy import copy
+
+    from agno.utils.agent import (
+        isolate_media_scrub_targets,
+        scrub_history_messages_from_run_output,
+        scrub_media_from_run_output,
+    )
+
+    if member is None:
+        member = _resolve_spared_member(team, member_response)
+    if member is None:
+        # The owning member cannot be resolved (e.g. callable Team.members).
+        # Store the strictest view: every storage flag treated as off, with the
+        # paused-aware tool scrub so the pending call stays resumable.
+        view = copy(member_response)
+        isolate_media_scrub_targets(view)
+        scrub_media_from_run_output(view)
+        _scrub_tool_results_keeping_unresolved(view)
+        scrub_history_messages_from_run_output(view)
+        return view
+    if member.store_media and member.store_tool_messages and member.store_history_messages:
+        return member_response
+
+    view = copy(member_response)
+    # The spared run is shared with the live tree, and the media scrub rewrites
+    # Message objects in place.
+    isolate_media_scrub_targets(view)
+    if not member.store_media:
+        scrub_media_from_run_output(view)
+    if not member.store_tool_messages:
+        _scrub_tool_results_keeping_unresolved(view)
+    if not member.store_history_messages:
+        scrub_history_messages_from_run_output(view)
+    return view
+
+
+def _scrub_member_responses_keeping_paused(
+    team: "Team",
+    run: Union[TeamRunOutput, "RunOutput"],
+) -> Union[TeamRunOutput, "RunOutput"]:
+    """Return a storage view of the run with member responses removed at every
+    nesting level, sparing paused ones: a paused member run is the resume
+    state for continue_run after a session reload, and the save after it
+    completes scrubs it. Completed responses inside a spared paused sub-team
+    run are removed too, and a spared run still passes through its own member's
+    storage flags.
+
+    Copy-on-write: every level this rebuilds is shallow-copied, so the live run
+    tree the caller holds keeps its member responses and its full messages."""
+    from copy import copy
+
+    from agno.team.team import Team
+
+    spared = []
+    for member_response in getattr(run, "member_responses", None) or []:
+        if not getattr(member_response, "is_paused", False):
+            continue
+        # Resolve the owner at THIS level before recursing: the response tree
+        # mirrors the team tree, and carrying the owning sub-team down keeps a
+        # nested leaf resolving against its own branch — not a sibling's leaf
+        # that shares its id.
+        member = _resolve_spared_member(team, member_response)
+        member_response = _storage_view_of_spared_run(team, member_response, member=member)
+        if getattr(member_response, "member_responses", None):
+            owning_team = member if isinstance(member, Team) else team
+            member_response = _scrub_member_responses_keeping_paused(owning_team, member_response)
+        spared.append(member_response)
+    run = copy(run)
+    run.member_responses = spared  # type: ignore[union-attr]
+    return run
+
+
 def save_session(team: "Team", session: TeamSession) -> None:
     """
     Save the TeamSession to storage
@@ -180,6 +341,8 @@ def save_session(team: "Team", session: TeamSession) -> None:
     Args:
         session: The TeamSession to save.
     """
+    from copy import copy
+
     from agno.team._init import _has_async_db
     from agno.team._run import _scrub_member_responses
     from agno.team._storage import _upsert_session
@@ -194,16 +357,30 @@ def save_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_run_id", None)
 
         # scrub the member responses based on storage settings
+        storage_session = session
         if session.runs is not None:
-            for run in session.runs:
-                if hasattr(run, "member_responses"):
-                    if not team.store_member_responses:
-                        # Remove all member responses
-                        run.member_responses = []
-                    else:
+            if not team.store_member_responses:
+                # Hand the DB a scrubbed view on a session of its own. Storing
+                # the view on the caller's session instead — even briefly —
+                # publishes it to everyone holding that session: with
+                # cache_session the object is shared, so a concurrent
+                # upsert_run would land in the throwaway list and a concurrent
+                # save would capture it as the state to restore. The view is
+                # also only ever a view: keeping it would freeze the stored
+                # copy of a paused member run at PAUSED, and the resume
+                # continues the live run, so a cached session would advertise
+                # a pending approval on a finished run for good.
+                storage_session = copy(session)
+                storage_session.runs = [
+                    _scrub_member_responses_keeping_paused(team, run) if hasattr(run, "member_responses") else run
+                    for run in session.runs
+                ]
+            else:
+                for run in session.runs:
+                    if hasattr(run, "member_responses"):
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
-        _upsert_session(team, session=session)
+        _upsert_session(team, session=storage_session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
@@ -214,6 +391,8 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
     Args:
         session: The TeamSession to save.
     """
+    from copy import copy
+
     from agno.team._init import _has_async_db
     from agno.team._run import _scrub_member_responses
     from agno.team._storage import _aupsert_session, _upsert_session
@@ -225,20 +404,29 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_run_id", None)
 
         # scrub the member responses based on storage settings
+        storage_session = session
         if session.runs is not None:
-            for run in session.runs:
-                if hasattr(run, "member_responses"):
-                    if not team.store_member_responses:
-                        # Remove all member responses
-                        run.member_responses = []
-                    else:
+            if not team.store_member_responses:
+                # See save_session: the scrubbed view is for the DB write only,
+                # and it goes on a session of its own. Here the await makes the
+                # window a real one — two overlapping saves on a shared session
+                # would restore each other's snapshots out of order and leave
+                # the scrubbed list live.
+                storage_session = copy(session)
+                storage_session.runs = [
+                    _scrub_member_responses_keeping_paused(team, run) if hasattr(run, "member_responses") else run
+                    for run in session.runs
+                ]
+            else:
+                for run in session.runs:
+                    if hasattr(run, "member_responses"):
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
 
         if _has_async_db(team):
-            await _aupsert_session(team, session=session)
+            await _aupsert_session(team, session=storage_session)
         else:
-            _upsert_session(team, session=session)
+            _upsert_session(team, session=storage_session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
