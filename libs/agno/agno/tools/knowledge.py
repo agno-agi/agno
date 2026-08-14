@@ -23,6 +23,14 @@ class KnowledgeTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_think" in kwargs:
+            think = kwargs.pop("enable_think")
+        if "enable_search" in kwargs:
+            search = kwargs.pop("enable_search")
+        if "enable_analyze" in kwargs:
+            analyze = kwargs.pop("enable_analyze")
+
         if knowledge is None:
             raise ValueError("knowledge must be provided when using KnowledgeTools")
 

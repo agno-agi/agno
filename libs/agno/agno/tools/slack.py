@@ -191,6 +191,32 @@ class SlackTools(Toolkit):
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
             thread_message_limit (int): Maximum number of messages to fetch in get_thread. Defaults to 20.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_send_message" in kwargs:
+            send_message = kwargs.pop("enable_send_message")
+        if "enable_send_message_thread" in kwargs:
+            send_message_thread = kwargs.pop("enable_send_message_thread")
+        if "enable_list_channels" in kwargs:
+            list_channels = kwargs.pop("enable_list_channels")
+        if "enable_get_channel_history" in kwargs:
+            get_channel_history = kwargs.pop("enable_get_channel_history")
+        if "enable_upload_file" in kwargs:
+            upload_file = kwargs.pop("enable_upload_file")
+        if "enable_download_file" in kwargs:
+            download_file = kwargs.pop("enable_download_file")
+        if "enable_search_messages" in kwargs:
+            search_messages = kwargs.pop("enable_search_messages")
+        if "enable_search_workspace" in kwargs:
+            search_workspace = kwargs.pop("enable_search_workspace")
+        if "enable_get_thread" in kwargs:
+            get_thread = kwargs.pop("enable_get_thread")
+        if "enable_list_users" in kwargs:
+            list_users = kwargs.pop("enable_list_users")
+        if "enable_get_user_info" in kwargs:
+            get_user_info = kwargs.pop("enable_get_user_info")
+        if "enable_get_channel_info" in kwargs:
+            get_channel_info = kwargs.pop("enable_get_channel_info")
+
         _token = token or getenv("SLACK_TOKEN")
         if not _token:
             raise ValueError("SLACK_TOKEN is not set")

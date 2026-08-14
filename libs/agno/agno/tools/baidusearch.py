@@ -39,6 +39,10 @@ class BaiduSearchTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_baidu_search" in kwargs:
+            baidu_search = kwargs.pop("enable_baidu_search")
+
         self.fixed_max_results = fixed_max_results
         self.fixed_language = fixed_language
         self.headers = headers

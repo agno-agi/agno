@@ -26,6 +26,10 @@ class Crawl4aiTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_crawl" in kwargs:
+            crawl = kwargs.pop("enable_crawl")
+
         tools: List[Callable] = []
         async_tools: List[tuple] = []
         if all or crawl:

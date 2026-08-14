@@ -29,6 +29,10 @@ class Newspaper4kTools(Toolkit):
             read_article: Enable the read_article tool.
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_read_article" in kwargs:
+            read_article = kwargs.pop("enable_read_article")
+
         self.include_summary: bool = include_summary
         self.article_length: Optional[int] = article_length
 

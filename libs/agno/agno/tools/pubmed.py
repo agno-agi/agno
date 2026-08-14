@@ -40,6 +40,10 @@ class PubmedTools(Toolkit):
             search_pubmed: Enable the search_pubmed tool.
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_search_pubmed" in kwargs:
+            search_pubmed = kwargs.pop("enable_search_pubmed")
+
         self.max_results: Optional[int] = max_results
         self.email: str = email
         self.results_expanded: bool = results_expanded

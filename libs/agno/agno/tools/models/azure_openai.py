@@ -34,7 +34,12 @@ class AzureOpenAITools(Toolkit):
         image_quality: Literal["standard", "hd"] = "standard",  # Note: "hd" quality is only available for dall-e-3.
         generate_image: bool = True,
         all: bool = False,
+        **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_generate_image" in kwargs:
+            generate_image = kwargs.pop("enable_generate_image")
+
         # Set credentials from parameters or environment variables
         self.api_key = api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
@@ -62,7 +67,7 @@ class AzureOpenAITools(Toolkit):
         else:
             log_error("Missing required image generation parameters or invalid model")
 
-        super().__init__(name="azure_openai_tools", tools=tools)
+        super().__init__(name="azure_openai_tools", tools=tools, **kwargs)
 
         self.image_quality = image_quality
 

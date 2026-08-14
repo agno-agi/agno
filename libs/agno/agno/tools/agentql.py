@@ -21,6 +21,12 @@ class AgentQLTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_scrape_website" in kwargs:
+            scrape_website = kwargs.pop("enable_scrape_website")
+        if "enable_custom_scrape_website" in kwargs:
+            custom_scrape_website = kwargs.pop("enable_custom_scrape_website")
+
         self.api_key = api_key or getenv("AGENTQL_API_KEY")
         if not self.api_key:
             raise ValueError("AGENTQL_API_KEY not set. Please set the AGENTQL_API_KEY environment variable.")

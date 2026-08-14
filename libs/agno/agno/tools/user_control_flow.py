@@ -21,6 +21,10 @@ class UserControlFlowTools(Toolkit):
             get_user_input: Whether to enable the get_user_input tool.
             **kwargs: Additional arguments passed to the Toolkit base class.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_get_user_input" in kwargs:
+            get_user_input = kwargs.pop("enable_get_user_input")
+
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
         else:

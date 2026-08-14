@@ -37,6 +37,10 @@ class ReplicateTools(Toolkit):
             generate_media: Enable the generate_media tool.
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_generate_media" in kwargs:
+            generate_media = kwargs.pop("enable_generate_media")
+
         self.api_key = api_key or getenv("REPLICATE_API_KEY")
         if not self.api_key:
             log_error("REPLICATE_API_KEY not set. Please set the REPLICATE_API_KEY environment variable.")

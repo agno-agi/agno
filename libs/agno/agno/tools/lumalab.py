@@ -53,6 +53,12 @@ class LumaLabTools(Toolkit):
             image_to_video: Enable the image_to_video tool.
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_generate_video" in kwargs:
+            generate_video = kwargs.pop("enable_generate_video")
+        if "enable_image_to_video" in kwargs:
+            image_to_video = kwargs.pop("enable_image_to_video")
+
         self.model: Literal["ray-2", "ray-flash-2"] = model
         self.duration = duration
         self.resolution = resolution

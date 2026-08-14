@@ -45,6 +45,14 @@ class WorkflowTools(Toolkit):
         async_mode: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_run_workflow" in kwargs:
+            run_workflow = kwargs.pop("enable_run_workflow")
+        if "enable_think" in kwargs:
+            think = kwargs.pop("enable_think")
+        if "enable_analyze" in kwargs:
+            analyze = kwargs.pop("enable_analyze")
+
         # Add instructions for using this toolkit
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS

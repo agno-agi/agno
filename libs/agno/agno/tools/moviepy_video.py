@@ -48,6 +48,14 @@ class MoviePyVideoTools(Toolkit):
             embed_captions: Enable the embed_captions tool.
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_process_video" in kwargs:
+            extract_audio = kwargs.pop("enable_process_video")
+        if "enable_generate_captions" in kwargs:
+            create_srt = kwargs.pop("enable_generate_captions")
+        if "enable_embed_captions" in kwargs:
+            embed_captions = kwargs.pop("enable_embed_captions")
+
         tools: List[Callable] = []
         if all or extract_audio:
             tools.append(self.extract_audio)

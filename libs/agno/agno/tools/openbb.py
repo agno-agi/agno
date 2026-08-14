@@ -41,6 +41,18 @@ class OpenBBTools(Toolkit):
             get_price_targets: Enable price targets tool.
             all: Enable all tools regardless of individual flags.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_get_stock_price" in kwargs:
+            get_stock_price = kwargs.pop("enable_get_stock_price")
+        if "enable_search_company_symbol" in kwargs:
+            search_company_symbol = kwargs.pop("enable_search_company_symbol")
+        if "enable_get_company_news" in kwargs:
+            get_company_news = kwargs.pop("enable_get_company_news")
+        if "enable_get_company_profile" in kwargs:
+            get_company_profile = kwargs.pop("enable_get_company_profile")
+        if "enable_get_price_targets" in kwargs:
+            get_price_targets = kwargs.pop("enable_get_price_targets")
+
         self.obb = obb or openbb_app
 
         try:

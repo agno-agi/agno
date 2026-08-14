@@ -44,6 +44,16 @@ class BrowserbaseTools(Toolkit):
             max_content_length (int, optional): Maximum character length for page content. Defaults to 100000.
                 Content exceeding this limit will be truncated with a notice. Set to None for no limit.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_navigate_to" in kwargs:
+            navigate_to = kwargs.pop("enable_navigate_to")
+        if "enable_screenshot" in kwargs:
+            screenshot = kwargs.pop("enable_screenshot")
+        if "enable_get_page_content" in kwargs:
+            get_page_content = kwargs.pop("enable_get_page_content")
+        if "enable_close_session" in kwargs:
+            close_session = kwargs.pop("enable_close_session")
+
         self.parse_html = parse_html
         self.max_content_length = max_content_length
 

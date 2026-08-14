@@ -20,6 +20,12 @@ class SerpApiTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_search_google" in kwargs:
+            search_google = kwargs.pop("enable_search_google")
+        if "enable_search_youtube" in kwargs:
+            search_youtube = kwargs.pop("enable_search_youtube")
+
         self.api_key = api_key or getenv("SERP_API_KEY")
         if not self.api_key:
             logger.warning("No Serpapi API key provided")

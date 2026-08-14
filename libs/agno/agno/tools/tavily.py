@@ -72,6 +72,14 @@ class TavilyTools(Toolkit):
             chunks_per_source: Number of content chunks per source (1-3).
             search_params: Additional parameters merged into every search request.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_search" in kwargs:
+            search = kwargs.pop("enable_search")
+        if "enable_search_context" in kwargs:
+            search_context = kwargs.pop("enable_search_context")
+        if "enable_extract" in kwargs:
+            extract = kwargs.pop("enable_extract")
+
         self.api_key = api_key or getenv("TAVILY_API_KEY")
         if not self.api_key:
             log_error("TAVILY_API_KEY not provided")

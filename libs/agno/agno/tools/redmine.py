@@ -52,6 +52,28 @@ class RedmineTools(Toolkit):
             list_versions: Enable the list_versions tool.
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_get_issue" in kwargs:
+            get_issue = kwargs.pop("enable_get_issue")
+        if "enable_create_issue" in kwargs:
+            create_issue = kwargs.pop("enable_create_issue")
+        if "enable_update_issue" in kwargs:
+            update_issue = kwargs.pop("enable_update_issue")
+        if "enable_search_issues" in kwargs:
+            search_issues = kwargs.pop("enable_search_issues")
+        if "enable_add_comment" in kwargs:
+            add_comment = kwargs.pop("enable_add_comment")
+        if "enable_log_time" in kwargs:
+            log_time = kwargs.pop("enable_log_time")
+        if "enable_list_projects" in kwargs:
+            list_projects = kwargs.pop("enable_list_projects")
+        if "enable_list_users" in kwargs:
+            list_users = kwargs.pop("enable_list_users")
+        if "enable_list_project_members" in kwargs:
+            list_project_members = kwargs.pop("enable_list_project_members")
+        if "enable_list_versions" in kwargs:
+            list_versions = kwargs.pop("enable_list_versions")
+
         self.server_url = server_url or getenv("REDMINE_SERVER_URL")
         self.username = username or getenv("REDMINE_USERNAME")
         self.password = password or getenv("REDMINE_PASSWORD")

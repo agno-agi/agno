@@ -35,6 +35,16 @@ class SearchApiTools(Toolkit):
             search_youtube: Enable YouTube search.
             all: Enable all search engines.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_search_google" in kwargs:
+            search_google = kwargs.pop("enable_search_google")
+        if "enable_search_news" in kwargs:
+            search_news = kwargs.pop("enable_search_news")
+        if "enable_search_images" in kwargs:
+            search_images = kwargs.pop("enable_search_images")
+        if "enable_search_youtube" in kwargs:
+            search_youtube = kwargs.pop("enable_search_youtube")
+
         self.api_key = api_key or getenv("SEARCHAPI_API_KEY")
         if not self.api_key:
             log_warning("No SearchAPI key provided. Set the SEARCHAPI_API_KEY environment variable.")

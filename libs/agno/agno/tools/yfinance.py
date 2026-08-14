@@ -43,6 +43,26 @@ class YFinanceTools(Toolkit):
         session: Optional[Any] = None,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_stock_price" in kwargs:
+            stock_price = kwargs.pop("enable_stock_price")
+        if "enable_company_info" in kwargs:
+            company_info = kwargs.pop("enable_company_info")
+        if "enable_stock_fundamentals" in kwargs:
+            stock_fundamentals = kwargs.pop("enable_stock_fundamentals")
+        if "enable_income_statements" in kwargs:
+            income_statements = kwargs.pop("enable_income_statements")
+        if "enable_key_financial_ratios" in kwargs:
+            key_financial_ratios = kwargs.pop("enable_key_financial_ratios")
+        if "enable_analyst_recommendations" in kwargs:
+            analyst_recommendations = kwargs.pop("enable_analyst_recommendations")
+        if "enable_company_news" in kwargs:
+            company_news = kwargs.pop("enable_company_news")
+        if "enable_technical_indicators" in kwargs:
+            technical_indicators = kwargs.pop("enable_technical_indicators")
+        if "enable_historical_prices" in kwargs:
+            historical_prices = kwargs.pop("enable_historical_prices")
+
         self.session = session
 
         tools: List[Callable] = []

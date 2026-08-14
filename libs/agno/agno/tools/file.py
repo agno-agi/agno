@@ -122,6 +122,24 @@ class FileTools(Toolkit):
             exclude_patterns: Patterns to exclude from list/search operations.
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_save_file" in kwargs:
+            save_file = kwargs.pop("enable_save_file")
+        if "enable_read_file" in kwargs:
+            read_file = kwargs.pop("enable_read_file")
+        if "enable_delete_file" in kwargs:
+            delete_file = kwargs.pop("enable_delete_file")
+        if "enable_list_files" in kwargs:
+            list_files = kwargs.pop("enable_list_files")
+        if "enable_search_files" in kwargs:
+            search_files = kwargs.pop("enable_search_files")
+        if "enable_read_file_chunk" in kwargs:
+            read_file_chunk = kwargs.pop("enable_read_file_chunk")
+        if "enable_replace_file_chunk" in kwargs:
+            replace_file_chunk = kwargs.pop("enable_replace_file_chunk")
+        if "enable_search_content" in kwargs:
+            search_content = kwargs.pop("enable_search_content")
+
         self.base_dir: Path = Path(base_dir).resolve() if base_dir else Path.cwd().resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.restrict_to_base_dir = restrict_to_base_dir

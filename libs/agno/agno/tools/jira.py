@@ -26,6 +26,18 @@ class JiraTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_get_issue" in kwargs:
+            get_issue = kwargs.pop("enable_get_issue")
+        if "enable_create_issue" in kwargs:
+            create_issue = kwargs.pop("enable_create_issue")
+        if "enable_search_issues" in kwargs:
+            search_issues = kwargs.pop("enable_search_issues")
+        if "enable_add_comment" in kwargs:
+            add_comment = kwargs.pop("enable_add_comment")
+        if "enable_add_worklog" in kwargs:
+            add_worklog = kwargs.pop("enable_add_worklog")
+
         self.server_url = server_url or getenv("JIRA_SERVER_URL")
         self.username = username or getenv("JIRA_USERNAME")
         self.password = password or getenv("JIRA_PASSWORD")

@@ -1,5 +1,6 @@
 import json
 import urllib.request
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -26,6 +27,12 @@ class ArxivTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_search_arxiv" in kwargs:
+            search_arxiv = kwargs.pop("enable_search_arxiv")
+        if "enable_read_arxiv_papers" in kwargs:
+            read_arxiv_papers = kwargs.pop("enable_read_arxiv_papers")
+
         self.client: arxiv.Client = arxiv.Client()
         self.download_dir: Path = download_dir or Path(__file__).parent.joinpath("arxiv_pdfs")
 

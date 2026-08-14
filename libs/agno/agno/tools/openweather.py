@@ -37,6 +37,16 @@ class OpenWeatherTools(Toolkit):
             all: Register all tools regardless of individual flags.
             timeout: Per-request HTTP timeout in seconds.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_current_weather" in kwargs:
+            get_current_weather = kwargs.pop("enable_current_weather")
+        if "enable_forecast" in kwargs:
+            get_forecast = kwargs.pop("enable_forecast")
+        if "enable_air_pollution" in kwargs:
+            get_air_pollution = kwargs.pop("enable_air_pollution")
+        if "enable_geocoding" in kwargs:
+            geocode_location = kwargs.pop("enable_geocoding")
+
         self.api_key = api_key or getenv("OPENWEATHER_API_KEY")
         if not self.api_key:
             raise ValueError(

@@ -42,6 +42,16 @@ class Mem0Tools(Toolkit):
             delete_all_memories: Enable the delete_all_memories tool. Disabled by default (destructive).
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_add_memory" in kwargs:
+            add_memory = kwargs.pop("enable_add_memory")
+        if "enable_search_memory" in kwargs:
+            search_memory = kwargs.pop("enable_search_memory")
+        if "enable_get_all_memories" in kwargs:
+            get_all_memories = kwargs.pop("enable_get_all_memories")
+        if "enable_delete_all_memories" in kwargs:
+            delete_all_memories = kwargs.pop("enable_delete_all_memories")
+
         tools: List[Callable] = []
         if all or add_memory:
             tools.append(self.mem0_add_memory)

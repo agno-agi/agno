@@ -22,6 +22,18 @@ class DiscordTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_send_message" in kwargs:
+            send_message = kwargs.pop("enable_send_message")
+        if "enable_get_channel_messages" in kwargs:
+            get_channel_messages = kwargs.pop("enable_get_channel_messages")
+        if "enable_get_channel_info" in kwargs:
+            get_channel_info = kwargs.pop("enable_get_channel_info")
+        if "enable_list_channels" in kwargs:
+            list_channels = kwargs.pop("enable_list_channels")
+        if "enable_delete_message" in kwargs:
+            delete_message = kwargs.pop("enable_delete_message")
+
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
         if not self.bot_token:
             log_error("Discord bot token is required")

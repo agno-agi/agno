@@ -33,6 +33,10 @@ class ZendeskTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_search_zendesk" in kwargs:
+            search_zendesk = kwargs.pop("enable_search_zendesk")
+
         self.username = username or getenv("ZENDESK_USERNAME")
         self.password = password or getenv("ZENDESK_PASSWORD")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")

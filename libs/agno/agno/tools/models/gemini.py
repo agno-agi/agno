@@ -33,6 +33,12 @@ class GeminiTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_generate_image" in kwargs:
+            generate_image = kwargs.pop("enable_generate_image")
+        if "enable_generate_video" in kwargs:
+            generate_video = kwargs.pop("enable_generate_video")
+
         tools = []
         if all or generate_image:
             tools.append(self.gemini_generate_image)

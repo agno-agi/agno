@@ -30,6 +30,10 @@ class BraveSearchTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_brave_search" in kwargs:
+            brave_search = kwargs.pop("enable_brave_search")
+
         self.api_key = api_key or getenv("BRAVE_API_KEY")
         if not self.api_key:
             raise ValueError("BRAVE_API_KEY is required. Please set the BRAVE_API_KEY environment variable.")

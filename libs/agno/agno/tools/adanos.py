@@ -47,6 +47,16 @@ class AdanosTools(Toolkit):
             market_sentiment: Register the aggregate market sentiment tool.
             all: Register all tools regardless of individual flags.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_stock_sentiment" in kwargs:
+            stock_sentiment = kwargs.pop("enable_stock_sentiment")
+        if "enable_crypto_sentiment" in kwargs:
+            crypto_sentiment = kwargs.pop("enable_crypto_sentiment")
+        if "enable_trending" in kwargs:
+            trending = kwargs.pop("enable_trending")
+        if "enable_market_sentiment" in kwargs:
+            market_sentiment = kwargs.pop("enable_market_sentiment")
+
         self.api_key = api_key or getenv("ADANOS_API_KEY")
         self.base_url = base_url.rstrip("/")
         self.timeout = httpx.Timeout(timeout)

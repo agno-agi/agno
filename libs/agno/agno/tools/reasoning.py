@@ -19,6 +19,11 @@ class ReasoningTools(Toolkit):
         **kwargs,
     ):
         """A toolkit that provides step-by-step reasoning tools: Think and Analyze."""
+        # Backwards compat: enable_X -> X
+        if "enable_think" in kwargs:
+            think = kwargs.pop("enable_think")
+        if "enable_analyze" in kwargs:
+            analyze = kwargs.pop("enable_analyze")
 
         # Add instructions for using this toolkit
         if instructions is None:

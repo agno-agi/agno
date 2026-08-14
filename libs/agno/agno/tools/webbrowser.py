@@ -13,6 +13,10 @@ class WebBrowserTools(Toolkit):
     """
 
     def __init__(self, open_page: bool = False, **kwargs):
+        # Backwards compat: enable_X -> X
+        if "enable_open_page" in kwargs:
+            open_page = kwargs.pop("enable_open_page")
+
         tools: List[Callable] = []
         if open_page:
             tools.append(self.open_page)

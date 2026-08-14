@@ -28,6 +28,14 @@ class CartesiaTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_text_to_speech" in kwargs:
+            text_to_speech = kwargs.pop("enable_text_to_speech")
+        if "enable_list_voices" in kwargs:
+            list_voices = kwargs.pop("enable_list_voices")
+        if "enable_localize_voice" in kwargs:
+            localize_voice = kwargs.pop("enable_localize_voice")
+
         self.api_key = api_key or getenv("CARTESIA_API_KEY")
 
         if not self.api_key:

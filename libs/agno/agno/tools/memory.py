@@ -43,6 +43,20 @@ class MemoryTools(Toolkit):
             few_shot_examples: Custom few-shot examples.
             all: Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_get_memories" in kwargs:
+            get_memories = kwargs.pop("enable_get_memories")
+        if "enable_add_memory" in kwargs:
+            add_memory = kwargs.pop("enable_add_memory")
+        if "enable_update_memory" in kwargs:
+            update_memory = kwargs.pop("enable_update_memory")
+        if "enable_delete_memory" in kwargs:
+            delete_memory = kwargs.pop("enable_delete_memory")
+        if "enable_analyze" in kwargs:
+            analyze = kwargs.pop("enable_analyze")
+        if "enable_think" in kwargs:
+            think = kwargs.pop("enable_think")
+
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
             if add_few_shot:

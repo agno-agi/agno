@@ -48,6 +48,14 @@ class SQLTools(Toolkit):
             run_sql_query: Enable running arbitrary SQL. Defaults to False (security).
             all: Enable all tools. Defaults to False.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_list_tables" in kwargs:
+            list_tables = kwargs.pop("enable_list_tables")
+        if "enable_describe_table" in kwargs:
+            describe_table = kwargs.pop("enable_describe_table")
+        if "enable_run_sql_query" in kwargs:
+            run_sql_query = kwargs.pop("enable_run_sql_query")
+
         # Get the database engine
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:

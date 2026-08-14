@@ -54,6 +54,10 @@ class SeltzTools(Toolkit):
         search: bool = True,
         **kwargs: Any,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_search" in kwargs:
+            search = kwargs.pop("enable_search")
+
         default_max_results = self._resolve_max_results(max_results=max_results, max_documents=max_documents)
 
         self.api_key = api_key or getenv("SELTZ_API_KEY")

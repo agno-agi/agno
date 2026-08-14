@@ -25,6 +25,10 @@ class CustomApiTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_make_request" in kwargs:
+            make_request = kwargs.pop("enable_make_request")
+
         self.base_url = base_url
         self.username = username
         self.password = password

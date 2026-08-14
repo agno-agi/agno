@@ -49,6 +49,14 @@ class SofyaTools(Toolkit):
             timeout: Request timeout in seconds. Defaults to 180.
             **kwargs: Additional arguments passed to Toolkit.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_search" in kwargs:
+            search = kwargs.pop("enable_search")
+        if "enable_extract" in kwargs:
+            extract = kwargs.pop("enable_extract")
+        if "enable_research" in kwargs:
+            research = kwargs.pop("enable_research")
+
         self.api_key: Optional[str] = api_key or getenv("SOFYA_API_KEY")
         if not self.api_key:
             log_error("SOFYA_API_KEY not provided")

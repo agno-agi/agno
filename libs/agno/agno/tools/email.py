@@ -18,6 +18,10 @@ class EmailTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_email_user" in kwargs:
+            email_user = kwargs.pop("enable_email_user")
+
         self.receiver_email: Optional[str] = receiver_email
         self.sender_name: Optional[str] = sender_name
         self.sender_email: Optional[str] = sender_email

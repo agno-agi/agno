@@ -33,6 +33,9 @@ class EvmTools(Toolkit):
             rpc_url: RPC URL for blockchain connection (defaults to EVM_RPC_URL env var)
             **kwargs: Additional arguments passed to parent Toolkit class
         """
+        # Backwards compat: enable_X -> X
+        if "enable_send_transaction" in kwargs:
+            send_transaction = kwargs.pop("enable_send_transaction")
 
         self.private_key = private_key or getenv("EVM_PRIVATE_KEY")
         self.rpc_url = rpc_url or getenv("EVM_RPC_URL")

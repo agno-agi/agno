@@ -33,6 +33,14 @@ class NotionTools(Toolkit):
         all: bool = False,
         **kwargs: Any,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_create_page" in kwargs:
+            create_page = kwargs.pop("enable_create_page")
+        if "enable_update_page" in kwargs:
+            update_page = kwargs.pop("enable_update_page")
+        if "enable_search_pages" in kwargs:
+            search_pages = kwargs.pop("enable_search_pages")
+
         self.api_key = api_key or os.getenv("NOTION_API_KEY")
         self.database_id = database_id or os.getenv("NOTION_DATABASE_ID")
 
