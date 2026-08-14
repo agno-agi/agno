@@ -474,7 +474,10 @@ class ValkeyDB(VectorDb):
                     log_warning(
                         f"Valkey index '{self.index_name}' was created without the "
                         f"'{self.USER_ID_FIELD}' field; per-user scoped searches will not match. "
-                        f"Drop and recreate the index to enable per-user isolation."
+                        "Run the v2 -> v3 migration "
+                        "(libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py), which "
+                        "stamps the vectors and rebuilds the index schema in place. Do not call "
+                        "drop() to fix this — it deletes the stored vectors along with the index."
                     )
         except Exception as e:
             log_error(f"Error creating Valkey index: {str(e)}")

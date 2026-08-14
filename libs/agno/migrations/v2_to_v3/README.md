@@ -45,9 +45,9 @@ Two things decide whether a backend needs work:
 | **pineconedb** | metadata field (schemaless) | absent | visible | none |
 | **chromadb** | collection-per-user | base collection | visible | none |
 | **opensearch** | dynamic-mapping field | absent | visible | none |
-| **lightrag** | — (external graph) | — | — | not possible |
-| **llamaindex** | — (external retriever) | — | — | not possible |
-| **langchaindb** | — (external vectorstore) | — | — | not possible |
+| **lightrag** | — (no per-vector owner) | — | visible; `user_id` ignored, results never scoped | not possible |
+| **llamaindex** | — (no per-vector owner) | — | visible; `user_id` ignored, results never scoped | not possible |
+| **langchaindb** | — (no per-vector owner) | — | visible; `user_id` ignored, results never scoped | not possible |
 
 > **Milvus note:** v3 switched Milvus from `NULL`-shared to sentinel-shared (`"__shared__"`),
 > and its scoped search has no "is null" branch — so a pre-v3 entity is invisible to every
@@ -70,7 +70,11 @@ Two things decide whether a backend needs work:
 > collection. Pre-v3 data lives in the base collection, so it stays visible as shared.
 
 > **opensearch note:** mappings are dynamic — a scoped read uses `must_not exists` on `user_id`,
-> which matches existing (field-absent) documents, and new owner-writes auto-create the mapping.
+> which matches existing (field-absent) documents, so pre-v3 data stays visible as shared and no
+> backfill is needed. The adapter declares `user_id` as a `keyword` on the live index before the
+> first owner-write: OpenSearch would otherwise dynamic-map that first value as analyzed `text`,
+> a scope filter would match its tokens rather than the owner (`user_id="123"` also matching
+> `"team-123"`), and a field's type cannot be changed once set.
 
 > **Couchbase note (FTS index update required):** Couchbase uses a separate FTS (Full-Text Search)
 > index for vector search. Stamping `user_id` on documents via N1QL is not enough — the FTS index
@@ -80,8 +84,11 @@ Two things decide whether a backend needs work:
 > to your FTS index mapping with `analyzer: "keyword"` and wait for reindexing.
 
 > **lightrag / llamaindex / langchaindb:** these wrap an external index and store no per-vector
-> `user_id` in Agno, so there is nothing to backfill and scoped calls fail closed. Isolation for
-> those deployments must be handled at the external index / application layer.
+> `user_id` in Agno, so there is nothing to backfill. They also cannot enforce a scope: a
+> `user_id` passed to one of them is logged as unsupported and **ignored**, and the call returns
+> the external index's results unscoped — every owner's chunks, not the caller's. Do not rely on
+> `user_id` for isolation on these backends. Isolation for those deployments must be handled at
+> the external index / application layer, or by using a vector db that supports it natively.
 
 ---
 

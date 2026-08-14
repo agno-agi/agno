@@ -308,6 +308,25 @@ class CouchbaseSearch(VectorDb):
         """Create the collection and FTS index if they don't exist."""
         self._create_collection_and_scope()
         self._create_fts_index()
+        self._warn_if_scope_filter_unsupported()
+
+    def _warn_if_scope_filter_unsupported(self) -> None:
+        """Say at startup when the supplied FTS index cannot honour a scope filter.
+
+        The index definition belongs to the user, so it may not index ``user_id`` as a
+        keyword — and scoped calls then fail late and quietly rather than at create().
+        Only a conclusive verdict warns; an uninspectable index says nothing.
+        """
+        self._owner_field_exists = None
+        if self._fts_has_user_id_field() is False:
+            log_warning(
+                f"Couchbase FTS index '{self.search_index_name}' does not index "
+                f"'{self.USER_ID_FIELD}' with analyzer='keyword', so per-user scoped calls will be "
+                "refused. Add the field to the index mapping with analyzer='keyword' (the v2 -> v3 "
+                "migration, libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py, does this "
+                "for you when given search_index_name). A dynamic mapping is not sufficient: its "
+                "analyzed values make a scoped search match other owners' chunks."
+            )
 
     def insert(
         self,
@@ -639,8 +658,27 @@ class CouchbaseSearch(VectorDb):
                 "shared with every user"
             )
 
+    def _user_id_indexed_as_keyword(self, properties: Dict[str, Any]) -> bool:
+        """Whether ``user_id`` is declared in these properties as an exact-match term.
+
+        Presence is not enough. The scope filter is a TermQuery, which matches whatever
+        tokens the analyzer produced, so a ``user_id`` indexed with the default analyzer
+        matches on word pieces: a search scoped to ``"123"`` also returns ``"team-123"``'s
+        chunks. Only the ``keyword`` analyzer keeps the value whole.
+        """
+        field_def = properties.get(self.USER_ID_FIELD)
+        if not isinstance(field_def, dict):
+            return False
+        for indexed_field in field_def.get("fields", []):
+            if isinstance(indexed_field, dict) and indexed_field.get("analyzer") == "keyword":
+                return True
+        return False
+
     def _fts_has_user_id_field(self) -> Optional[bool]:
-        """Check if the FTS index mapping includes the user_id field.
+        """Whether the FTS index can honour a scope filter on ``user_id``.
+
+        The field has to be declared *and* indexed as a keyword. A dynamic mapping declares
+        nothing, so it never qualifies — its analyzed values would cross-match other owners.
 
         Returns None when the index cannot be inspected (not found, connection issue).
         """
@@ -650,21 +688,12 @@ class CouchbaseSearch(VectorDb):
             else:
                 mgr = self.scope.search_indexes()
             index_def = mgr.get_index(self.search_index_name)
-            # Navigate the FTS mapping to find user_id
             mapping = index_def.params.get("mapping", {})
-            types = mapping.get("types", {})
-            for type_mapping in types.values():
-                props = type_mapping.get("properties", {})
-                if self.USER_ID_FIELD in props:
-                    return True
-            # Also check top-level properties (for simpler mappings)
-            if self.USER_ID_FIELD in mapping.get("properties", {}):
-                return True
-            # Also check default_mapping.properties (for indexes using default_mapping mode)
-            default_mapping = mapping.get("default_mapping", {})
-            if self.USER_ID_FIELD in default_mapping.get("properties", {}):
-                return True
-            return False
+            candidates = [type_mapping.get("properties", {}) for type_mapping in mapping.get("types", {}).values()]
+            # Simpler mappings keep the properties at the top level or under default_mapping
+            candidates.append(mapping.get("properties", {}))
+            candidates.append(mapping.get("default_mapping", {}).get("properties", {}))
+            return any(self._user_id_indexed_as_keyword(properties) for properties in candidates)
         except SearchIndexNotFoundException:
             # Index doesn't exist yet — can't verify if user's definition has user_id
             return None

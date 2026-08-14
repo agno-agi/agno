@@ -30,8 +30,20 @@ class FakeIndex:
         self.indices.create.return_value = {"acknowledged": True}
         self.indices.put_mapping.return_value = {"acknowledged": True}
         self.mapping_updates: List[Dict[str, Any]] = []
-        self.indices.put_mapping.side_effect = lambda index, body: self.mapping_updates.append(body)
+        # A legacy index: the owner field is absent until something declares it, and
+        # get_mapping has to report that faithfully or the adapter cannot tell.
+        self.mapped_properties: Dict[str, Any] = {}
+        self.indices.put_mapping.side_effect = self._put_mapping
+        self.indices.get_mapping.side_effect = self._get_mapping
         self.search_bodies: List[Dict[str, Any]] = []
+
+    def _put_mapping(self, index, body):
+        self.mapping_updates.append(body)
+        self.mapped_properties.update(body.get("properties", {}))
+        return {"acknowledged": True}
+
+    def _get_mapping(self, index):
+        return {index: {"mappings": {"properties": dict(self.mapped_properties)}}}
 
     def value(self, source: Dict[str, Any], field: str) -> Any:
         """Resolve a dotted field path the way OpenSearch resolves meta_data.team.keyword."""
@@ -553,10 +565,21 @@ class TestLegacyIndexCompatibility:
 
         assert list(opensearch_db.client.docs) == ["old"]
 
-    def test_the_index_mapping_is_never_written_to(self, opensearch_db):
-        """Nothing here alters an existing mapping - schema changes ship as an explicit migration."""
+    def test_only_the_owner_field_is_ever_added_to_the_mapping(self, opensearch_db):
+        """An owned write declares ``user_id`` as a keyword and touches nothing else.
+
+        Adding the field is the one mapping change the adapter makes, and it has to happen
+        before the first stamped value: OpenSearch would otherwise dynamic-map that value as
+        analyzed text, which no scope filter can honour and which an index can never undo.
+        """
         opensearch_db.insert("h_alice", [doc("alice", ALICE)], user_id="alice")
         opensearch_db.insert("h_bob", [doc("bob", BOB)], user_id="bob")
+
+        assert opensearch_db.client.mapping_updates == [{"properties": {"user_id": {"type": "keyword"}}}]
+
+    def test_an_unowned_write_leaves_the_mapping_alone(self, opensearch_db):
+        """The shared bucket is the absence of the field, so it needs no declaration."""
+        opensearch_db.insert("h_shared", [doc("shared", SHARED)], user_id=None)
 
         assert opensearch_db.client.mapping_updates == []
 

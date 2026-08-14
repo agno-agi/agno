@@ -60,6 +60,39 @@ cassandra_config: Dict[str, Any] = {
 # -----------------------------------------
 
 
+def _decode(value: Any) -> Any:
+    """FT.INFO answers in bytes on some clients and str on others."""
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def _indexed_vector_dimensions(info: Any) -> Any:
+    """Read the vector dimension out of an FT.INFO payload.
+
+    The rebuilt schema has to keep the dimension the stored vectors were written with:
+    the adapter takes it from the embedder, so a migration run with a different (or
+    default) embedder would otherwise silently orphan every stored vector.
+
+    Returns None when the payload has no vector attribute to read.
+    """
+    items = info.items() if hasattr(info, "items") else []
+    for key, value in items:
+        if _decode(key) != "attributes":
+            continue
+        for attribute in value:
+            flat = [_decode(entry) for entry in attribute]
+            if "VECTOR" not in flat:
+                continue
+            for entry in flat:
+                # The vector params arrive as a nested [name, value, ...] sequence
+                if isinstance(entry, (list, tuple)):
+                    params = [_decode(param) for param in entry]
+                    if "dimensions" in params:
+                        return params[params.index("dimensions") + 1]
+            if "dim" in flat:
+                return flat[flat.index("dim") + 1]
+    return None
+
+
 def migrate_redis_index(index_name: str) -> None:
     """Stamp the shared sentinel onto every Redis vector lacking a ``user_id``.
 
@@ -104,6 +137,44 @@ def migrate_redis_index(index_name: str) -> None:
         log_error(f"Error backfilling Redis index {index_name}: {e}")
         raise
 
+    # A pre-v3 index has no ``user_id`` TAG in its schema,
+    # so the scope filter still matches nothing. The schema is fixed at FT.CREATE, so it has
+    # to be dropped and rebuilt. The vectors are already stamped at this point, so a failure
+    # here is reported rather than raised — it must not undo a backfill that succeeded.
+    try:
+        db = RedisDB(index_name=index_name, redis_url=redis_url, redis_client=client)
+        if db._index_has_user_id_field():
+            log_info(f"Redis index '{index_name}': schema already has '{field}'. No rebuild needed.")
+            return
+
+        # The rebuilt schema must keep the dimension the stored vectors were written with.
+        # It comes from the embedder, so read it off the live index rather than defaulting.
+        live_dimensions = _indexed_vector_dimensions(db.index.info())
+        if live_dimensions is None:
+            raise ValueError("could not read the vector dimension from the live index")
+        if live_dimensions != db.dimensions:
+            log_info(f"Redis index '{index_name}': preserving the live vector dimension {live_dimensions}.")
+            db.dimensions = live_dimensions
+            # RedisDB snapshots its schema in __init__, so the new dimension only reaches
+            # FT.CREATE if the schema and the index built from it are regenerated here.
+            db.schema = db._get_schema()
+            db.index = db._create_index()
+
+        log_info(f"Redis index '{index_name}': rebuilding schema to add the '{field}' field...")
+        # drop=False is FT.DROPINDEX without DD: it removes the schema and leaves every
+        # hash in place. ``drop()`` on the adapter would delete the vectors as well.
+        db.index.delete(drop=False)
+        db._owner_field_exists = None
+        db.create()
+        log_info(f"Redis index '{index_name}': schema rebuilt; scoped search is now available.")
+    except Exception as e:
+        log_warning(
+            f"Redis index '{index_name}': vectors are stamped, but the index schema could not be "
+            f"rebuilt ({e}). Scoped search stays unavailable until the index carries the "
+            f"'{field}' field: recreate it from your own RedisDB instance (same embedder), which "
+            "rebuilds the schema without touching the stored vectors."
+        )
+
 
 def migrate_valkey_index(index_name: str) -> None:
     """Stamp the shared sentinel onto every Valkey vector lacking a ``user_id``.
@@ -146,6 +217,43 @@ def migrate_valkey_index(index_name: str) -> None:
     except Exception as e:
         log_error(f"Error backfilling Valkey index {index_name}: {e}")
         raise
+
+    # See ``migrate_redis_index`` — the stamped hashes are only half of it; the index schema
+    # has to carry the ``user_id`` TAG before a scope filter can match. Reported rather than
+    # raised so a rebuild failure cannot undo a backfill that already succeeded.
+    try:
+        from urllib.parse import urlparse
+
+        from glide_sync import ft as glide_ft
+
+        parsed = urlparse(valkey_url or "redis://localhost:6379")
+        db = ValkeyDB(index_name=index_name, host=parsed.hostname or "localhost", port=parsed.port or 6379)
+        if field in db._indexed_field_names():
+            log_info(f"Valkey index '{index_name}': schema already has '{field}'. No rebuild needed.")
+            return
+
+        # Keep the dimension the stored vectors were written with.
+        live_dimensions = _indexed_vector_dimensions(glide_ft.info(db._get_client(), index_name))
+        if live_dimensions is None:
+            raise ValueError("could not read the vector dimension from the live index")
+        if live_dimensions != db.dimensions:
+            log_info(f"Valkey index '{index_name}': preserving the live vector dimension {live_dimensions}.")
+            db.dimensions = live_dimensions
+
+        log_info(f"Valkey index '{index_name}': rebuilding schema to add the '{field}' field...")
+        # Schema-only drop. ``ValkeyDB.drop()`` also calls _delete_all_keys(), which would
+        # erase the vectors this migration just stamped.
+        glide_ft.dropindex(db._get_client(), index_name)
+        db._owner_field_exists = None
+        db.create()
+        log_info(f"Valkey index '{index_name}': schema rebuilt; scoped search is now available.")
+    except Exception as e:
+        log_warning(
+            f"Valkey index '{index_name}': vectors are stamped, but the index schema could not be "
+            f"rebuilt ({e}). Scoped search stays unavailable until the index carries the "
+            f"'{field}' field: recreate it from your own ValkeyDB instance (same embedder), which "
+            "rebuilds the schema without touching the stored vectors."
+        )
 
 
 def migrate_couchbase() -> None:
