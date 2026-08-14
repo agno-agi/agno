@@ -48,6 +48,7 @@ from agno.os.job_queue import (
     validate_seam_input,
 )
 from agno.os.middleware.user_scope import (
+    MISSING_USER_IDENTITY,
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
@@ -195,12 +196,17 @@ async def handle_workflow_via_websocket(
                     user_id = jwt_user_id
 
         # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
-        scoped_user_id = get_scoped_user_id_for_ws(
-            user_id,
-            jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
-            is_admin=bool(ws_auth and ws_auth.is_admin),
-            user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
-        )
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id,
+                jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+                user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -435,9 +441,14 @@ async def handle_workflow_subscription(
         is_admin = ctx.is_admin
         user_isolation_enabled = ctx.user_isolation_enabled
         # Owner scope for DB-backed workflow components on reconnect.
-        scoped_user_id = get_scoped_user_id_for_ws(
-            user_id, jwt_enabled=jwt_enabled, is_admin=is_admin, user_isolation_enabled=user_isolation_enabled
-        )
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id, jwt_enabled=jwt_enabled, is_admin=is_admin, user_isolation_enabled=user_isolation_enabled
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
@@ -655,12 +666,17 @@ async def handle_workflow_continue_via_websocket(
         user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
         # Owner scope for DB-backed workflow components on continue.
-        scoped_user_id = get_scoped_user_id_for_ws(
-            user_id,
-            jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
-            is_admin=bool(ws_auth and ws_auth.is_admin),
-            user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
-        )
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id,
+                jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+                user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))

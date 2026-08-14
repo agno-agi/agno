@@ -476,5 +476,16 @@ class TestGetScopedUserIdFromParts:
             get_scoped_user_id_for_ws("sa:bot", jwt_enabled=True, is_admin=True, user_isolation_enabled=False) is None
         )
 
-    def test_no_user_id_is_unscoped(self):
-        assert get_scoped_user_id_for_ws(None, jwt_enabled=True, is_admin=False, user_isolation_enabled=True) is None
+    def test_no_user_id_fails_closed_under_isolation(self):
+        # An identity-less token under isolation must 403 like the REST helper,
+        # not fall through to unscoped (which would skip the run-ownership gates).
+        with pytest.raises(HTTPException) as exc:
+            get_scoped_user_id_for_ws(None, jwt_enabled=True, is_admin=False, user_isolation_enabled=True)
+        assert exc.value.status_code == 403
+
+        with pytest.raises(HTTPException):
+            get_scoped_user_id_for_ws("", jwt_enabled=True, is_admin=False, user_isolation_enabled=True)
+
+    def test_no_user_id_is_unscoped_when_isolation_off(self):
+        assert get_scoped_user_id_for_ws(None, jwt_enabled=True, is_admin=False, user_isolation_enabled=False) is None
+        assert get_scoped_user_id_for_ws(None, jwt_enabled=False, is_admin=False, user_isolation_enabled=True) is None
