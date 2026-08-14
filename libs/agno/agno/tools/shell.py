@@ -7,13 +7,23 @@ from agno.utils.log import log_debug, log_info, log_warning
 
 
 class ShellTools(Toolkit):
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "all": "run_shell_command",
+    }
+
     def __init__(
         self,
         base_dir: Optional[Union[Path, str]] = None,
-        run_shell_command: bool = True,
+        run_shell_command: bool = False,
         **kwargs,
     ):
         """Initialize ShellTools.
+
+        Args:
+            base_dir: Working directory for commands. Defaults to None (current directory).
+            run_shell_command: Enable the run_shell_command tool. Defaults to False
+                (executes arbitrary commands on the host).
 
         .. warning::
             ``run_shell_command`` runs an arbitrary command on the host OS with no

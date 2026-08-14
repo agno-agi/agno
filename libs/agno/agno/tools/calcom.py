@@ -21,10 +21,10 @@ class CalComTools(Toolkit):
         user_timezone: Optional[str] = None,
         timeout: int = 30,
         get_available_slots: bool = True,
-        create_booking: bool = True,
+        create_booking: bool = False,
         get_upcoming_bookings: bool = True,
-        reschedule_booking: bool = True,
-        cancel_booking: bool = True,
+        reschedule_booking: bool = False,
+        cancel_booking: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -35,6 +35,15 @@ class CalComTools(Toolkit):
             event_type_id: Default event type ID for bookings
             user_timezone: User's timezone in IANA format (e.g., 'Asia/Kolkata')
             timeout: Per-request HTTP timeout in seconds. Defaults to 30.
+            get_available_slots: Enable the get_available_slots tool. Defaults to True.
+            create_booking: Enable the create_booking tool. Defaults to False
+                (creates real bookings).
+            get_upcoming_bookings: Enable the get_upcoming_bookings tool. Defaults to True.
+            reschedule_booking: Enable the reschedule_booking tool. Defaults to False
+                (modifies existing bookings).
+            cancel_booking: Enable the cancel_booking tool. Defaults to False
+                (destructive).
+            all: Enable all tools.
         """
         # Backwards compat: enable_X -> X
         if "enable_get_available_slots" in kwargs:

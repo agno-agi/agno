@@ -296,8 +296,8 @@ class TestTransactionParameters:
 class TestToolkitIntegration:
     """Test cases for toolkit integration."""
 
-    def test_tools_registration(self, mock_web3_constructor, mock_web3_client):
-        """Test that tools are properly registered in the toolkit."""
+    def test_tools_not_registered_by_default(self, mock_web3_constructor, mock_web3_client):
+        """send_transaction is opt-in (sends on-chain transactions)."""
         mock_web3_class, mock_http_provider = mock_web3_constructor
         mock_web3_class.return_value = mock_web3_client
 
@@ -306,8 +306,20 @@ class TestToolkitIntegration:
             rpc_url="https://0xrpc.io/sep",
         )
 
-        # Check that the send_transaction method is registered as a tool
         assert hasattr(tools, "tools")
+        assert len(tools.tools) == 0
+
+    def test_tools_registration_opt_in(self, mock_web3_constructor, mock_web3_client):
+        """Passing send_transaction=True registers the tool."""
+        mock_web3_class, mock_http_provider = mock_web3_constructor
+        mock_web3_class.return_value = mock_web3_client
+
+        tools = EvmTools(
+            private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            rpc_url="https://0xrpc.io/sep",
+            send_transaction=True,
+        )
+
         assert len(tools.tools) == 1
         assert tools.tools[0] == tools.send_transaction
 

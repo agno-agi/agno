@@ -19,25 +19,30 @@ class JiraTools(Toolkit):
         password: Optional[str] = None,
         token: Optional[str] = None,
         get_issue: bool = True,
-        create_issue: bool = True,
+        create_issue: bool = False,
         search_issues: bool = True,
-        add_comment: bool = True,
-        add_worklog: bool = True,
+        add_comment: bool = False,
+        add_worklog: bool = False,
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_get_issue" in kwargs:
-            get_issue = kwargs.pop("enable_get_issue")
-        if "enable_create_issue" in kwargs:
-            create_issue = kwargs.pop("enable_create_issue")
-        if "enable_search_issues" in kwargs:
-            search_issues = kwargs.pop("enable_search_issues")
-        if "enable_add_comment" in kwargs:
-            add_comment = kwargs.pop("enable_add_comment")
-        if "enable_add_worklog" in kwargs:
-            add_worklog = kwargs.pop("enable_add_worklog")
+        """Initialize Jira toolkit.
 
+        Args:
+            server_url: Jira server URL. Falls back to JIRA_SERVER_URL env var.
+            username: Jira username. Falls back to JIRA_USERNAME env var.
+            password: Jira password. Falls back to JIRA_PASSWORD env var.
+            token: Jira API token. Falls back to JIRA_TOKEN env var.
+            get_issue: Enable the get_issue tool. Defaults to True.
+            create_issue: Enable the create_issue tool. Defaults to False
+                (creates issues in the remote project).
+            search_issues: Enable the search_issues tool. Defaults to True.
+            add_comment: Enable the add_comment tool. Defaults to False
+                (posts comments on the user's behalf).
+            add_worklog: Enable the add_worklog tool. Defaults to False
+                (writes worklog entries to the remote issue).
+            all: Enable all tools.
+        """
         self.server_url = server_url or getenv("JIRA_SERVER_URL")
         self.username = username or getenv("JIRA_USERNAME")
         self.password = password or getenv("JIRA_PASSWORD")

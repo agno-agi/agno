@@ -12,7 +12,7 @@ class AirflowTools(Toolkit):
     def __init__(
         self,
         dags_dir: Optional[Union[Path, str]] = None,
-        save_dag_file: bool = True,
+        save_dag_file: bool = False,
         read_dag_file: bool = True,
         all: bool = False,
         **kwargs,
@@ -20,6 +20,12 @@ class AirflowTools(Toolkit):
         """Toolkit for reading and writing Airflow DAG files.
 
         Quickstart: https://airflow.apache.org/docs/apache-airflow/stable/start.html
+
+        Args:
+            dags_dir: Directory containing DAG files. Defaults to the current working directory.
+            save_dag_file: Enable the save_dag_file tool. Defaults to False (writes files to disk).
+            read_dag_file: Enable the read_dag_file tool. Defaults to True.
+            all: Enable all tools.
         """
         # Backwards compat: enable_X -> X
         if "enable_save_dag_file" in kwargs:

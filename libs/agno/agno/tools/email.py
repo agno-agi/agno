@@ -14,14 +14,20 @@ class EmailTools(Toolkit):
         sender_name: Optional[str] = None,
         sender_email: Optional[str] = None,
         sender_passkey: Optional[str] = None,
-        email_user: bool = True,
+        email_user: bool = False,
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_email_user" in kwargs:
-            email_user = kwargs.pop("enable_email_user")
+        """Initialize Email toolkit.
 
+        Args:
+            receiver_email: The email address to send emails to.
+            sender_name: The name shown as the email sender.
+            sender_email: The email address to send emails from.
+            sender_passkey: The passkey used to authenticate the sender account.
+            email_user: Enable the email_user tool. Defaults to False (sends email).
+            all: Enable all tools.
+        """
         self.receiver_email: Optional[str] = receiver_email
         self.sender_name: Optional[str] = sender_name
         self.sender_email: Optional[str] = sender_email

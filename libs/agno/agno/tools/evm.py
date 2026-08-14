@@ -22,7 +22,7 @@ class EvmTools(Toolkit):
         self,
         private_key: Optional[str] = None,
         rpc_url: Optional[str] = None,
-        send_transaction: bool = True,
+        send_transaction: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -31,6 +31,9 @@ class EvmTools(Toolkit):
         Args:
             private_key: Private key for signing transactions (defaults to EVM_PRIVATE_KEY env var)
             rpc_url: RPC URL for blockchain connection (defaults to EVM_RPC_URL env var)
+            send_transaction: Enable the send_transaction tool. Defaults to False
+                (sends on-chain transactions).
+            all: Enable all tools.
             **kwargs: Additional arguments passed to parent Toolkit class
         """
         # Backwards compat: enable_X -> X

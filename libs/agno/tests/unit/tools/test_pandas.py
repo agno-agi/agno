@@ -6,26 +6,27 @@ from agno.tools.pandas import PandasTools
 
 @pytest.fixture
 def pandas_tools():
-    return PandasTools()
+    return PandasTools(create_pandas_dataframe=True, run_dataframe_operation=True)
 
 
 def test_pandas_tools_initialization():
+    # Both tools dispatch to arbitrary callables (code execution), so they are opt-in
     tools = PandasTools()
-    assert len(tools.tools) == 2
+    assert len(tools.tools) == 0
     assert tools.name == "pandas_tools"
     assert isinstance(tools.dataframes, dict)
     assert len(tools.dataframes) == 0
 
-    tools = PandasTools(enable_create_pandas_dataframe=False)
+    tools = PandasTools(create_pandas_dataframe=True)
     assert len(tools.tools) == 1
     assert tools.name == "pandas_tools"
 
-    tools = PandasTools(enable_run_dataframe_operation=False)
+    tools = PandasTools(run_dataframe_operation=True)
     assert len(tools.tools) == 1
     assert tools.name == "pandas_tools"
 
-    tools = PandasTools(all=False, enable_create_pandas_dataframe=False, enable_run_dataframe_operation=False)
-    assert len(tools.tools) == 0
+    tools = PandasTools(all=True)
+    assert len(tools.tools) == 2
     assert tools.name == "pandas_tools"
 
 

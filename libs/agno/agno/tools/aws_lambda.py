@@ -14,16 +14,19 @@ class AWSLambdaTools(Toolkit):
         self,
         region_name: str = "us-east-1",
         list_functions: bool = True,
-        invoke_function: bool = True,
+        invoke_function: bool = False,
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_list_functions" in kwargs:
-            list_functions = kwargs.pop("enable_list_functions")
-        if "enable_invoke_function" in kwargs:
-            invoke_function = kwargs.pop("enable_invoke_function")
+        """Initialize AWS Lambda toolkit.
 
+        Args:
+            region_name: AWS region name. Defaults to "us-east-1".
+            list_functions: Enable the list_functions tool. Defaults to True.
+            invoke_function: Enable the invoke_function tool. Defaults to False
+                (executes remote code).
+            all: Enable all tools.
+        """
         self.client = boto3.client("lambda", region_name=region_name)
 
         tools: List[Callable] = []

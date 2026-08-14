@@ -11,8 +11,42 @@ try:
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
 
+# Tools that create, update, or delete remote state on GitHub.
+# Excluded by default unless the caller passes include_tools or exclude_tools.
+DANGEROUS_TOOLS = frozenset(
+    {
+        "assign_issue",
+        "close_issue",
+        "comment_on_issue",
+        "create_branch",
+        "create_file",
+        "create_issue",
+        "create_pull_request",
+        "create_pull_request_comment",
+        "create_repository",
+        "create_review_request",
+        "delete_file",
+        "delete_repository",
+        "edit_issue",
+        "edit_pull_request_comment",
+        "label_issue",
+        "reopen_issue",
+        "set_default_branch",
+        "update_file",
+    }
+)
+
 
 class GithubTools(Toolkit):
+    """GitHub toolkit for repository, issue, and pull request management.
+
+    By default, tools that create, update, or delete remote state (the module-level
+    ``DANGEROUS_TOOLS`` set: create/edit/delete of repositories, files, branches,
+    issues, comments, and pull requests) are excluded from registration. Passing
+    ``include_tools`` or ``exclude_tools`` explicitly disables this default filtering
+    and is respected unchanged.
+    """
+
     # Tool name constants for include_tools/exclude_tools
     SEARCH_REPOSITORIES = "search_repositories"
     LIST_REPOSITORIES = "list_repositories"
@@ -58,28 +92,34 @@ class GithubTools(Toolkit):
         self,
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
-        all: bool = False,
         **kwargs,
     ):
         """Initialize GitHub toolkit for repository and issue management.
 
+        When neither include_tools nor exclude_tools is passed, tools that create,
+        update, or delete remote state (DANGEROUS_TOOLS) are excluded by default.
+
         Args:
             access_token: GitHub personal access token. Falls back to GITHUB_ACCESS_TOKEN env var.
             base_url: GitHub Enterprise base URL. If None, uses public GitHub.
-            all: Enable all tools (default behavior, kept for API consistency).
             **kwargs: Passed to Toolkit. Use include_tools/exclude_tools to filter.
 
         Example:
             # Include only specific tools
             GithubTools(include_tools=[GithubTools.SEARCH_REPOSITORIES, GithubTools.GET_REPOSITORY])
 
-            # Exclude destructive tools
-            GithubTools(exclude_tools=[GithubTools.DELETE_REPOSITORY, GithubTools.DELETE_FILE])
+            # Opt back in to every tool, including destructive ones
+            GithubTools(exclude_tools=[])
         """
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
 
         self.g = self.authenticate()
+
+        # Protect destructive operations by default: unless the caller filters
+        # tools explicitly, exclude everything that writes to remote state.
+        if kwargs.get("include_tools") is None and kwargs.get("exclude_tools") is None:
+            kwargs["exclude_tools"] = sorted(DANGEROUS_TOOLS)
 
         # Register all tools - base Toolkit handles include_tools/exclude_tools filtering
         tools: List[Callable] = [

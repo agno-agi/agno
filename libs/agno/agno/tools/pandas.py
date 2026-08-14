@@ -10,10 +10,17 @@ except ImportError:
 
 
 class PandasTools(Toolkit):
+    """Toolkit for creating and operating on pandas dataframes.
+
+    Both tools dispatch to arbitrary pandas callables by name, which amounts to
+    code execution. They are therefore opt-in: pass ``create_pandas_dataframe=True``,
+    ``run_dataframe_operation=True``, or ``all=True`` to enable them.
+    """
+
     def __init__(
         self,
-        create_pandas_dataframe: bool = True,
-        run_dataframe_operation: bool = True,
+        create_pandas_dataframe: bool = False,
+        run_dataframe_operation: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -21,7 +28,9 @@ class PandasTools(Toolkit):
 
         Args:
             create_pandas_dataframe: Enable the create_pandas_dataframe tool.
+                Defaults to False (dispatches to arbitrary pandas callables, i.e. code execution).
             run_dataframe_operation: Enable the run_dataframe_operation tool.
+                Defaults to False (dispatches to arbitrary dataframe callables, i.e. code execution).
             all: Enable all tools.
         """
         # Backwards compat: enable_X -> X

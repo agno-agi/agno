@@ -11,7 +11,7 @@ from github.Issue import Issue
 from github.PullRequest import PullRequest
 from github.Repository import Repository
 
-from agno.tools.github import GithubTools
+from agno.tools.github import DANGEROUS_TOOLS, GithubTools
 
 
 @pytest.fixture
@@ -60,6 +60,34 @@ def mock_paginated_list(mock_search_repos):
     mock_list.__iter__.return_value = mock_search_repos
     mock_list.get_page.return_value = mock_search_repos
     return mock_list
+
+
+def test_default_excludes_dangerous_tools(mock_github):
+    """By default, tools that write remote state are not registered."""
+    github_tools = GithubTools()
+    registered = set(github_tools.functions.keys())
+
+    assert registered.isdisjoint(DANGEROUS_TOOLS)
+    # Read-only tools remain registered
+    assert "get_repository" in registered
+    assert "search_repositories" in registered
+    assert "get_pull_requests" in registered
+
+
+def test_explicit_include_tools_respected(mock_github):
+    """An explicit include_tools filter disables the default dangerous-tools exclusion."""
+    github_tools = GithubTools(include_tools=[GithubTools.DELETE_REPOSITORY, GithubTools.GET_REPOSITORY])
+    registered = set(github_tools.functions.keys())
+
+    assert registered == {"delete_repository", "get_repository"}
+
+
+def test_explicit_empty_exclude_tools_registers_everything(mock_github):
+    """Passing exclude_tools=[] opts back in to every tool, including destructive ones."""
+    github_tools = GithubTools(exclude_tools=[])
+    registered = set(github_tools.functions.keys())
+
+    assert DANGEROUS_TOOLS.issubset(registered)
 
 
 def test_list_pull_requests(mock_github):

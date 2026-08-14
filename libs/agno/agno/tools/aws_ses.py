@@ -16,14 +16,19 @@ class AWSSESTool(Toolkit):
         sender_email: Optional[str] = None,
         sender_name: Optional[str] = None,
         region_name: str = "us-east-1",
-        send_email: bool = True,
+        send_email: bool = False,
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_send_email" in kwargs:
-            send_email = kwargs.pop("enable_send_email")
+        """Initialize AWS SES toolkit.
 
+        Args:
+            sender_email: The email address to send emails from.
+            sender_name: The name shown as the email sender.
+            region_name: AWS region name. Defaults to "us-east-1".
+            send_email: Enable the aws_ses_send_email tool. Defaults to False (sends email).
+            all: Enable all tools.
+        """
         self.client = boto3.client("ses", region_name=region_name)
         self.sender_email = sender_email
         self.sender_name = sender_name

@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Callable, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 try:
     from scavio import ScavioClient
@@ -61,48 +61,26 @@ class ScavioTools(Toolkit):
     LIST_INSTAGRAM_FOLLOWERS = "list_instagram_followers"
     LIST_INSTAGRAM_FOLLOWINGS = "list_instagram_followings"
 
-    # Backwards compat: map old enable_X flags to tool groups
-    _PLATFORM_TOOLS = {
-        "google": [SEARCH_GOOGLE],
-        "amazon": [SEARCH_AMAZON, GET_AMAZON_PRODUCT],
-        "walmart": [SEARCH_WALMART, GET_WALMART_PRODUCT],
-        "youtube": [SEARCH_YOUTUBE, GET_YOUTUBE_VIDEO],
-        "reddit": [SEARCH_REDDIT, GET_REDDIT_POST],
-        "tiktok": [
-            GET_TIKTOK_PROFILE,
-            LIST_TIKTOK_POSTS,
-            GET_TIKTOK_VIDEO,
-            LIST_TIKTOK_VIDEO_COMMENTS,
-            LIST_TIKTOK_COMMENT_REPLIES,
-            SEARCH_TIKTOK_VIDEOS,
-            SEARCH_TIKTOK_USERS,
-            GET_TIKTOK_HASHTAG,
-            LIST_TIKTOK_HASHTAG_VIDEOS,
-            LIST_TIKTOK_FOLLOWERS,
-            LIST_TIKTOK_FOLLOWINGS,
-        ],
-        "instagram": [
-            GET_INSTAGRAM_PROFILE,
-            LIST_INSTAGRAM_POSTS,
-            LIST_INSTAGRAM_REELS,
-            LIST_INSTAGRAM_TAGGED,
-            LIST_INSTAGRAM_STORIES,
-            GET_INSTAGRAM_POST,
-            LIST_INSTAGRAM_POST_COMMENTS,
-            LIST_INSTAGRAM_COMMENT_REPLIES,
-            SEARCH_INSTAGRAM_USERS,
-            SEARCH_INSTAGRAM_HASHTAGS,
-            LIST_INSTAGRAM_FOLLOWERS,
-            LIST_INSTAGRAM_FOLLOWINGS,
-        ],
+    @classmethod
+    def _all_tool_names(cls) -> List[str]:
+        return [value for key, value in vars(cls).items() if key.isupper() and isinstance(value, str)]
+
+    # Agno 2.x per-provider flags, consumed below and translated to exclude_tools
+    _legacy_param_aliases = {
+        "enable_google": None,
+        "enable_amazon": None,
+        "enable_walmart": None,
+        "enable_youtube": None,
+        "enable_reddit": None,
+        "enable_tiktok": None,
+        "enable_instagram": None,
     }
 
-    def __init__(self, api_key: Optional[str] = None, all: bool = False, **kwargs):
+    def __init__(self, api_key: Optional[str] = None, **kwargs):
         """Initialize ScavioTools for multi-platform search.
 
         Args:
             api_key: Scavio API key. Falls back to SCAVIO_API_KEY env var.
-            all: Enable all tools (default behavior, kept for API consistency).
             **kwargs: Passed to Toolkit. Use include_tools/exclude_tools to filter.
 
         Example:
@@ -112,15 +90,18 @@ class ScavioTools(Toolkit):
             # Exclude TikTok tools
             ScavioTools(exclude_tools=[ScavioTools.GET_TIKTOK_PROFILE, ScavioTools.LIST_TIKTOK_POSTS])
         """
-        # Backwards compat: enable_X=False -> exclude those tools
-        exclude_tools = list(kwargs.get("exclude_tools", []))
-        for platform, tool_names in self._PLATFORM_TOOLS.items():
-            old_key = f"enable_{platform}"
-            if old_key in kwargs:
-                if not kwargs.pop(old_key):
-                    exclude_tools.extend(tool_names)
-        if exclude_tools:
-            kwargs["exclude_tools"] = exclude_tools
+        # Translate deprecated 2.x per-provider flags (enable_tiktok=False, ...)
+        # into an exclude_tools list, unless the caller filters explicitly
+        legacy_excluded: List[str] = []
+        for legacy_flag in list(self._legacy_param_aliases):
+            if legacy_flag in kwargs:
+                provider = legacy_flag[len("enable_") :]
+                enabled = kwargs.pop(legacy_flag)
+                log_warning(f"`{legacy_flag}` is deprecated for ScavioTools; use include_tools/exclude_tools instead.")
+                if not enabled:
+                    legacy_excluded.extend(name for name in self._all_tool_names() if provider in name)
+        if legacy_excluded and kwargs.get("include_tools") is None and kwargs.get("exclude_tools") is None:
+            kwargs["exclude_tools"] = sorted(legacy_excluded)
 
         self.api_key = api_key or getenv("SCAVIO_API_KEY")
         if not self.api_key:
