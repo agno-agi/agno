@@ -603,6 +603,31 @@ def _find_member_by_id(
     return None
 
 
+def _get_delegatable_member_ids(team: "Team", run_context: Optional["RunContext"] = None) -> List[str]:
+    """Collect every member ID `_find_member_by_id` would accept, including subteam members.
+
+    Used to constrain the `member_id` argument of the delegation tools to a fixed
+    enum, so models can't hallucinate an ID that isn't actually delegatable.
+    """
+    from agno.team.team import Team
+    from agno.utils.callables import get_resolved_members
+
+    resolved_members = get_resolved_members(team, run_context)
+    if resolved_members is None:
+        return []
+
+    member_ids: List[str] = []
+    for member in resolved_members:
+        member_id = get_member_id(member)
+        if member_id is not None:
+            member_ids.append(member_id)
+
+        if isinstance(member, Team):
+            member_ids.extend(_get_delegatable_member_ids(member, run_context=run_context))
+
+    return member_ids
+
+
 def _find_member_route_by_id(
     team: "Team", member_id: str, run_context: Optional[RunContext] = None
 ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:

@@ -463,6 +463,7 @@ def _get_delegate_task_function(
     from agno.team._tools import (
         _determine_team_member_interactions,
         _find_member_by_id,
+        _get_delegatable_member_ids,
         _get_history_for_member_agent,
         _propagate_member_pause,
     )
@@ -1425,6 +1426,12 @@ def _get_delegate_task_function(
             delegate_function = delegate_task_to_member  # type: ignore
 
         delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
+
+        # Constrain member_id to an enum of the actually delegatable member IDs,
+        # so models can't hallucinate an ID that isn't in the team or subteams.
+        member_ids = _get_delegatable_member_ids(team, run_context=run_context)
+        if member_ids:
+            delegate_func.parameters["properties"]["member_id"]["enum"] = member_ids
 
     if team.respond_directly:
         delegate_func.stop_after_tool_call = True
