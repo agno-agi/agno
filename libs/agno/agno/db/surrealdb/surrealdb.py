@@ -169,10 +169,6 @@ class SurrealDb(BaseDb):
             raise Exception("Failed to retrieve database information")
         return table_name in response.get("tables", [])
 
-    def _table_exists(self, table_name: str) -> bool:
-        """Deprecated: Use table_exists() instead."""
-        return self.table_exists(table_name)
-
     def _create_table(self, table_type: TableType, table_name: str):
         query = get_schema(table_type, table_name)
         self.client.query(query)
@@ -210,7 +206,7 @@ class SurrealDb(BaseDb):
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
 
-        if create_table_if_not_found and not self._table_exists(table_name):
+        if create_table_if_not_found and not self.table_exists(table_name):
             self._create_table(table_type, table_name)
 
         return table_name

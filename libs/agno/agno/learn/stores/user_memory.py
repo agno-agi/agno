@@ -78,8 +78,6 @@ class UserMemoryStore(LearningStore):
 
         if self.config.mode == LearningMode.PROPOSE:
             log_warning("UserMemoryStore does not support PROPOSE mode.")
-        elif self.config.mode == LearningMode.HITL:
-            log_warning("UserMemoryStore does not support HITL mode.")
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -1524,6 +1522,3 @@ class UserMemoryStore(LearningStore):
             raw=raw,
         )
 
-
-# Backwards compatibility alias
-MemoriesStore = UserMemoryStore

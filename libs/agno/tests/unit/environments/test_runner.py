@@ -104,7 +104,6 @@ class StubRolloutAgent:
         self.session_state = {"seed": 1}
         self.instructions = "Answer tersely."
         self.update_memory_on_run = True
-        self.enable_user_memories = True
         self.enable_agentic_memory = True
         self.update_knowledge = True
         self.update_cultural_knowledge = True
@@ -136,7 +135,6 @@ class StubRolloutAgent:
                 "output_model": self.output_model,
                 "user_id": self.user_id,
                 "update_memory_on_run": self.update_memory_on_run,
-                "enable_user_memories": self.enable_user_memories,
                 "enable_agentic_memory": self.enable_agentic_memory,
                 "update_knowledge": self.update_knowledge,
                 "update_cultural_knowledge": self.update_cultural_knowledge,
@@ -201,7 +199,6 @@ async def test_hermetic_no_memory_capture():
 
     for snapshot in recorder.snapshots:
         assert snapshot["update_memory_on_run"] is False
-        assert snapshot["enable_user_memories"] is False
         assert snapshot["enable_agentic_memory"] is False
 
 
@@ -261,7 +258,6 @@ def _masked_start(run_input, snapshot):
         "culture_manager": snapshot["culture_manager"],
         "memory_manager": snapshot["memory_manager"],
         "update_memory_on_run": snapshot["update_memory_on_run"],
-        "enable_user_memories": snapshot["enable_user_memories"],
         "enable_agentic_memory": snapshot["enable_agentic_memory"],
         "update_knowledge": snapshot["update_knowledge"],
         "update_cultural_knowledge": snapshot["update_cultural_knowledge"],

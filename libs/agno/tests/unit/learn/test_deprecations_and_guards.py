@@ -43,15 +43,14 @@ def test_enable_user_memories_is_quiet(caplog, tmp_path) -> None:
     assert not any("enable_user_memories" in r.getMessage() for r in caplog.records)
 
 
-def test_hitl_mode_warns_unsupported_without_deprecating(caplog) -> None:
-    from agno.learn.config import LearningMode, UserMemoryConfig
-    from agno.learn.stores.user_memory import UserMemoryStore
+def test_hitl_mode_is_removed() -> None:
+    import pytest
 
-    with caplog.at_level(logging.WARNING):
-        UserMemoryStore(config=UserMemoryConfig(db=RecordingLearningDb(), mode=LearningMode.HITL))  # type: ignore[arg-type]
-    messages = [r.getMessage() for r in caplog.records]
-    assert any("does not support HITL mode" in m for m in messages)
-    assert not any("deprecated" in m for m in messages)
+    from agno.learn.config import LearningMode
+
+    assert not hasattr(LearningMode, "HITL")
+    with pytest.raises(ValueError):
+        LearningMode("hitl")
 
 
 def test_agentic_memory_collision_is_quiet(caplog, tmp_path) -> None:

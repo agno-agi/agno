@@ -78,9 +78,6 @@ class LearnedKnowledgeStore(LearningStore):
     def __post_init__(self):
         self._schema = self.config.schema or LearnedKnowledge
 
-        if self.config.mode == LearningMode.HITL:
-            log_warning("LearnedKnowledgeStore does not support HITL mode. Use PROPOSE mode for soft approval.")
-
     # =========================================================================
     # LearningStore Protocol Implementation
     # =========================================================================
