@@ -49,10 +49,13 @@ This example connects to the published Peer Cash MCP server to discover fiat pay
 
 ### Prerequisites
 
-Install the required dependencies:
+Install Python 3.11 or newer. The Peer Cash example also requires Node.js 22 or
+newer with `npx` available on your `PATH`.
+
+Install the required Python dependencies:
 
 ```bash
-uv pip install agno mcp openai
+uv pip install "agno[mcp]" openai
 ```
 
 Export your API keys:
