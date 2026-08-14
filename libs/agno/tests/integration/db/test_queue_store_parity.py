@@ -150,6 +150,27 @@ class TestDedupParity:
         )
 
 
+class TestEnqueueIdCollisionParity:
+    @pytest.mark.asyncio
+    async def test_reenqueue_of_live_id_raises_and_preserves_ticket(self, store):
+        """Job ids are server-minted and never reused: enqueueing an existing
+        id is a programming error and must raise (Postgres: primary key),
+        never silently reset a live ticket to queued/attempt-0 - that would
+        put two executors on one run and fence out the first one's
+        completion."""
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        assert claimed is not None
+
+        with pytest.raises(Exception):
+            await store.enqueue_job(make_job("r1"))
+
+        job = await store.get_job("r1")
+        assert job["status"] == "running" and job["attempt"] == claimed["attempt"], (
+            f"the live ticket must survive untouched, got {job['status']}/{job['attempt']}"
+        )
+
+
 class TestDepthGateParity:
     @pytest.mark.asyncio
     async def test_sequential_depth_gate_shared_contract(self, store):
@@ -231,6 +252,15 @@ class TestWaitingLifecycleParity:
         assert job["status"] == "queued"
         assert job["max_attempts"] == job["attempt"] + 1, "continue grants exactly one more execution"
         assert job["payload"]["continue"]["updated_tools"] == [{"tool_call_id": "t1"}]
+        # The returned ticket is a plain data dict on every store: the SQL
+        # adapters stamp timestamps with DB-clock expressions and must
+        # resolve them to concrete ints, not hand back Cast objects.
+        assert isinstance(job["available_at"], int) and isinstance(job["updated_at"], int), (
+            f"timestamp stamps must be ints, got {type(job['available_at'])!r}/{type(job['updated_at'])!r}"
+        )
+        import json
+
+        json.dumps(job)
 
         attach = await store.continue_job("r1", {"updated_tools": []})
         assert attach["outcome"] == "attach"
@@ -401,3 +431,35 @@ class TestSweepSettleParity:
         assert await store.settle_swept_job("r1", "sweeper", "failed", "worker lost")
         job = await store.get_job("r1")
         assert job["status"] == "failed" and job["error"] == "worker lost"
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestSyncPostgresContinueJobStamps:
+    """The sync Postgres adapter's continue_job twin: the parity fixture runs
+    the ASYNC adapter, so the sync path's timestamp resolution needs its own
+    pin (both adapters stamp with SQL DB-clock expressions)."""
+
+    def test_returned_job_is_json_serializable(self):
+        import json
+
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_sync_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r1"))
+            claimed = db.claim_job("w1")
+            assert db.complete_job("r1", "w1", claimed["attempt"], "paused")
+            result = db.continue_job("r1", {"updated_tools": [{"tool_call_id": "t1"}]})
+            assert result["outcome"] == "queued"
+            job = result["job"]
+            assert isinstance(job["available_at"], int) and isinstance(job["updated_at"], int), (
+                f"timestamp stamps must be ints, got {type(job['available_at'])!r}/{type(job['updated_at'])!r}"
+            )
+            json.dumps(job)
+        finally:
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+            engine.dispose()

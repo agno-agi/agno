@@ -19,7 +19,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -34,10 +40,11 @@ from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
-    asettle_paused_ticket,
     aticket_poll_fallback,
+    ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    ticket_status_to_api,
     validate_seam_input,
 )
 from agno.os.middleware.user_scope import (
@@ -58,7 +65,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
-    acomplete_continue_stream,
+    afinalize_continue_stream,
     amark_continue_stream_running,
     classify_upload_file,
     find_factory_by_id,
@@ -72,6 +79,7 @@ from agno.os.utils import (
     queued_run_tail_streamer,
     replayed_payload_to_sse,
     resolve_team,
+    sse_error_frame,
 )
 from agno.registry import Registry
 from agno.run.agent import RunOutput
@@ -252,7 +260,7 @@ async def _resume_stream_generator(
         # the only honest signal is an SSE error frame (never a silent close,
         # and never a quiet fall-through to the DB path)
         log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
-        yield f'event: error\ndata: {{"event": "error", "error": "event stream unavailable: {str(e)[:200]}"}}\n\n'
+        yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
     if buffer_status is None:
@@ -363,9 +371,7 @@ async def _resume_stream_generator(
             # error frame so the client can distinguish and reconnect
             log_error(f"Resume tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
@@ -446,13 +452,20 @@ async def team_continue_response_streamer(
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
             if _sync_stream:
-                _final = await acomplete_continue_stream(team, run_id, session_id)
-                # Inline continue of a DURABLE paused run: terminalize the
-                # queue ticket too (paused tickets are retention-exempt and
-                # would otherwise say paused forever). CAS no-op for runs
-                # that never rode the queue or whose continuation is owned
-                # by a worker.
-                await asettle_paused_ticket(queue_worker, run_id, _final)
+                # Stream close + paused-ticket settle as one cancellation-
+                # proof unit; under cancellation the final status is KNOWN -
+                # see the agents twin for both hazards
+                import sys
+
+                _exc = sys.exc_info()[0]
+                _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+                await afinalize_continue_stream(
+                    team,
+                    run_id,
+                    session_id,
+                    queue_worker=queue_worker,
+                    final_status=RunStatus.cancelled if _cancelled else None,
+                )
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -462,6 +475,10 @@ async def team_continue_response_streamer(
         )
         yield format_sse_event(error_response)
 
+    except asyncio.CancelledError:
+        # Sibling-streamer parity: every other streamer ends quietly on
+        # client disconnect (the finalizer above already settled the stream)
+        return
     except Exception as e:
         import traceback
 
@@ -640,7 +657,12 @@ def get_team_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
+        # No raw message content in logs: user input can carry PII/secrets
+        # and belongs in the run record, not the log stream
+        logger.debug(
+            f"Creating team run: {session_id=} {monitor=} {user_id=} {team_id=} "
+            f"files={len(files) if files else 0} message_len={len(message) if message else 0}"
+        )
 
         team = await resolve_team(
             team_id,
@@ -695,9 +717,15 @@ def get_team_router(
                         logger.exception(f"Error processing video {file.filename}")
                         continue
                 elif file_category == "document":
-                    document_file = process_document(file)
-                    if document_file is not None:
-                        document_files.append(document_file)
+                    # Agents parity: one unparseable document must not 500
+                    # the whole submission - skip it, loudly
+                    try:
+                        document_file = process_document(file)
+                        if document_file is not None:
+                            document_files.append(document_file)
+                    except Exception as e:
+                        logger.error(f"Error processing file {file.filename}: {str(e)}")
+                        continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
@@ -716,6 +744,15 @@ def get_team_router(
         if background:
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
+            # The db requirement gates BOTH shapes here: the non-stream
+            # branch always 400ed, while the stream branch used to enter the
+            # detached streamer and let arun(background=True) raise - the
+            # same misconfiguration answered 200 + SSE error frame,
+            # indistinguishable from a runtime failure.
+            if not team.db:
+                raise HTTPException(
+                    status_code=400, detail="Background execution requires a database to be configured on the team"
+                )
 
             if stream:
                 # Durable queued streaming: the queue row is the acceptance,
@@ -729,7 +766,6 @@ def get_team_router(
                     queue_worker is not None
                     and getattr(team, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
-                    and not isinstance(team, RemoteTeam)
                     and version is None
                     and not (base64_images or base64_audios or base64_videos or document_files)
                     and any(
@@ -738,11 +774,11 @@ def get_team_router(
                     )
                 )
                 if stream_queueable:
-                    # 202/stream-accept must honor input_schema like the inline path
+                    # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(team, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     queued_run_id = str(uuid4())
-                    queued_session_id = session_id or str(uuid4())
+                    queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="team",
@@ -766,6 +802,7 @@ def get_team_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
+                        ensure_duplicate_matches_component(existing, "team", job["component_id"])
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -823,12 +860,9 @@ def get_team_router(
                     media_type="text/event-stream",
                 )
 
-            # background=True, stream=False: return 202 immediately with run metadata
-            if not team.db:
-                raise HTTPException(
-                    status_code=400, detail="Background execution requires a database to be configured on the team"
-                )
-
+            # background=True, stream=False: return 202 immediately with run
+            # metadata (the db requirement was enforced at the top of the
+            # background branch, for both shapes)
             # Durable queue path: acceptance is a committed row; whichever
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
@@ -844,7 +878,6 @@ def get_team_router(
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
-                and not isinstance(team, RemoteTeam)
                 and component_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
@@ -852,10 +885,10 @@ def get_team_router(
                 # bounded in-process path (parity with the stream seam)
                 and not (base64_images or base64_audios or base64_videos or document_files)
             ):
-                # 202 must honor input_schema exactly like the inline path 422s
+                # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(team, message)
                 queued_run_id = str(uuid4())
-                queued_session_id = session_id or str(uuid4())
+                queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="team",
@@ -878,14 +911,16 @@ def get_team_router(
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
+                    ensure_duplicate_matches_component(existing, "team", job["component_id"])
                     return JSONResponse(
                         status_code=202,
                         content={
                             "run_id": existing["id"],
                             "session_id": existing["session_id"],
-                            "status": "PENDING"
-                            if existing["status"] in ("queued", "running")
-                            else existing["status"].upper(),
+                            # Same vocabulary as the run poll: a duplicate of a
+                            # failed run says ERROR (not an invented "FAILED"),
+                            # and a running one says RUNNING (not PENDING).
+                            "status": ticket_status_to_api(existing["status"]) or existing["status"].upper(),
                         },
                     )
                 if enqueue_result["reason"] == "duplicate":
@@ -905,34 +940,54 @@ def get_team_router(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
                 )
-            elif queue_worker is not None and (
-                not payload_is_queueable(queued_payload)
-                or base64_images
-                or base64_audios
-                or base64_videos
-                or document_files
-            ):
-                # Media-only bypasses were silent: the payload is JSON-clean
-                # but uploads cannot ride the queue yet, and the run silently
-                # lost durability. Same warning either way.
-                log_warning(
-                    "Background run bypasses the durable queue: the submission carries media "
-                    "uploads or values plain JSON cannot store (e.g. output_schema classes). "
-                    "Executing on the accepting replica instead - bounded and observable, but NOT durable."
-                )
+            elif queue_worker is not None:
+                # EVERY bypass reason warns - a client gets its 202 either way
+                # and must never silently believe acceptance was durable.
+                if (
+                    not payload_is_queueable(queued_payload)
+                    or base64_images
+                    or base64_audios
+                    or base64_videos
+                    or document_files
+                ):
+                    log_warning(
+                        "Background run bypasses the durable queue: the submission carries media "
+                        "uploads or values plain JSON cannot store (e.g. output_schema classes). "
+                        "Executing on the accepting replica instead - bounded and observable, but NOT durable."
+                    )
+                else:
+                    # Off-registry, factory-backed, or version-pinned: the
+                    # worker resolves from the registry, so these cannot ride
+                    # the queue - previously this dropped to the non-durable
+                    # path with no log line at all.
+                    log_warning(
+                        "Background run bypasses the durable queue: the team is not a plain "
+                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
+                        "resolution differs from the worker's registry instance). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
 
-            run_response = await team.arun(  # type: ignore[misc]
-                input=message,
-                session_id=session_id,
-                user_id=user_id,
-                images=base64_images if base64_images else None,
-                audio=base64_audios if base64_audios else None,
-                videos=base64_videos if base64_videos else None,
-                files=document_files if document_files else None,
-                stream=False,
-                background=True,
-                **kwargs,
-            )
+            # Same input-error contract as the inline path: schema violations
+            # are refused up front (the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500), and guardrail
+            # refusals from the dispatch answer 400.
+            validate_seam_input(team, message)
+            try:
+                run_response = await team.arun(  # type: ignore[misc]
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=document_files if document_files else None,
+                    stream=False,
+                    background=True,
+                    **kwargs,
+                )
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
                 content={
@@ -964,6 +1019,11 @@ def get_team_router(
             if auth_token and isinstance(team, RemoteTeam):
                 kwargs["auth_token"] = auth_token
 
+            # Schema violations are refused up front with the seams' shared
+            # check: the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500.
+            validate_seam_input(team, message)
             try:
                 run_response = await team.arun(  # type: ignore[misc]
                     input=message,
@@ -1038,7 +1098,9 @@ def get_team_router(
             return JSONResponse(content={}, status_code=200)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            team = get_team_by_id(
+                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+            )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1128,7 +1190,9 @@ def get_team_router(
                 detail="Stream resumption is not supported for factory teams",
             )
 
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        team = get_team_by_id(
+            team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+        )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):
@@ -1252,6 +1316,8 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except ComponentRehydrationError as rehydration_error:
+                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1327,6 +1393,10 @@ def get_team_router(
             )
             if (
                 queue_worker is not None
+                # LIVE, unlike the submit gates' dead twin: the teams continue
+                # endpoint has no up-front remote rejection, so this is what
+                # routes remote teams past the durable branch (and narrows
+                # the union for the row read below)
                 and not isinstance(team, RemoteTeam)
                 and team_is_queueable
                 and not fork
@@ -1486,20 +1556,15 @@ def get_team_router(
                 # runs alone. Skipped for remote teams and fork/regenerate
                 # (they mint a NEW run_id).
                 if not isinstance(team, RemoteTeam) and not fork and not regenerate:
-                    await acomplete_continue_stream(
+                    # Stream close + paused-ticket settle as one
+                    # cancellation-proof unit (see the streaming twin)
+                    await afinalize_continue_stream(
                         team,
                         run_id,
                         session_id,
+                        queue_worker=getattr(request.app.state, "queue_worker", None),
                         only_if_tracked=True,
                         final_status=getattr(run_response_obj, "status", None),
-                    )
-                    # Inline continue of a DURABLE paused run: terminalize
-                    # the queue ticket too (paused is retention-exempt; the
-                    # CAS no-ops for never-queued or worker-owned runs)
-                    await asettle_paused_ticket(
-                        getattr(request.app.state, "queue_worker", None),
-                        run_id,
-                        getattr(run_response_obj, "status", None),
                     )
                 return run_response_obj.to_dict()
 
@@ -1540,7 +1605,9 @@ def get_team_router(
             user_id = request.state.user_id
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+            team = get_team_by_id(
+                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+            )
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1682,9 +1749,15 @@ def get_team_router(
             # Exclude teams whose IDs are owned by the registry
             exclude_ids = registry.get_team_ids() if registry else None
             db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
-            for db_team in db_teams:
-                team_response = await TeamResponse.from_team(team=db_team, is_component=True)
-                teams.append(team_response)
+            if db_teams:
+                # Apply the same RBAC filtering to DB-loaded teams: without
+                # it, a caller whose scope excludes a team still saw its
+                # config here (the agents endpoint already filters)
+                if getattr(request.state, "authorization_enabled", False):
+                    db_teams = filter_resources_by_access(request, db_teams, "teams")
+                for db_team in db_teams:
+                    team_response = await TeamResponse.from_team(team=db_team, is_component=True)
+                    teams.append(team_response)
 
         return teams
 
@@ -1781,6 +1854,8 @@ def get_team_router(
 
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1824,7 +1899,9 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1845,7 +1922,13 @@ def get_team_router(
                 # inside that beat reports an accepted run as nonexistent -
                 # answer from the ticket instead, tenant-checked, fail-closed.
                 ticket_view = await aticket_poll_fallback(
-                    getattr(request.app.state, "queue_worker", None), run_id, session_id, "team", team_id, user_id
+                    getattr(request.app.state, "queue_worker", None),
+                    run_id,
+                    session_id,
+                    "team",
+                    team_id,
+                    user_id,
+                    user_scoped=user_id is not None,
                 )
                 if ticket_view is not None:
                     return ticket_view
@@ -1855,7 +1938,13 @@ def get_team_router(
         run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
             ticket_view = await aticket_poll_fallback(
-                getattr(request.app.state, "queue_worker", None), run_id, session_id, "team", team_id, user_id
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                session_id,
+                "team",
+                team_id,
+                user_id,
+                user_scoped=user_id is not None,
             )
             if ticket_view is not None:
                 return ticket_view
@@ -1901,7 +1990,9 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1960,7 +2051,9 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -2019,7 +2112,9 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")

@@ -1,3 +1,4 @@
+import time
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
@@ -215,17 +216,28 @@ class SurrealDb(BaseDb):
         return table_name
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; SurrealDB is schemaless here so it is ignored.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        result = self.client.query(
+            "SELECT version FROM ONLY $record",
+            {"record": RecordID(self.versions_table_name, table_name)},
+        )
+        if isinstance(result, dict) and result.get("version"):
+            return str(result["version"])
+        return "2.0.0"
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table."""
+        self.client.query(
+            "UPSERT ONLY $record CONTENT $content",
+            {
+                "record": RecordID(self.versions_table_name, table_name),
+                "content": {"table_name": table_name, "version": version, "updated_at": int(time.time())},
+            },
+        )
 
     def _query(
         self,

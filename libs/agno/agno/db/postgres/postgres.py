@@ -4247,12 +4247,7 @@ class PostgresDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(
-                    select(table).where(
-                        table.c.component_id == component_id,
-                        table.c.deleted_at.is_(None),
-                    )
-                ).fetchone()
+                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
                 if existing is None:
                     # Create new component
                     if component_type is None:
@@ -4388,6 +4383,7 @@ class PostgresDb(BaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -4397,6 +4393,8 @@ class PostgresDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            name: Exact-match filter on the component name; the returned total
+                counts the filtered set.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -4415,6 +4413,8 @@ class PostgresDb(BaseDb):
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:
                     where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
+                if name is not None:
+                    where_clauses.append(table.c.name == name)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(table)
@@ -6573,8 +6573,19 @@ class PostgresDb(BaseDb):
                 "completed_at": None,
                 "updated_at": now,
             }
-            sess.execute(update(table).where(table.c.id == job_id).values(**values))
+            # RETURNING resolves the DB-clock stamps to concrete ints: the
+            # timestamp values are SQL expressions (_db_epoch), and copying
+            # them into the returned dict verbatim would hand callers
+            # unserializable Cast objects where Redis/InMemory return ints.
+            stamped = sess.execute(
+                update(table)
+                .where(table.c.id == job_id)
+                .values(**values)
+                .returning(table.c.available_at, table.c.updated_at)
+            ).fetchone()
             job.update(values)
+            if stamped is not None:
+                job["available_at"], job["updated_at"] = stamped[0], stamped[1]
             return {"outcome": "queued", "job": job}
 
     def queue_stats(self) -> Dict[str, Any]:

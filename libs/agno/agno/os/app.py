@@ -435,6 +435,14 @@ class AgentOS:
         self.lifespan = lifespan
 
         self.registry = registry
+        # Knowledge mirrored into the registry by a sync (component-owned
+        # instances collected for name resolution) is not a knowledge-route
+        # source; anything else on the registry list the user put there -- at
+        # construction or later via add_knowledge -- and feeds the routes on
+        # every (re)sync. Provenance lives on the Registry itself (marked at
+        # mirror time, never snapshotted), because a registry can be shared
+        # between AgentOS instances: another OS's mirror must not look
+        # user-registered here.
 
         # RBAC
         self.authorization = authorization
@@ -448,14 +456,16 @@ class AgentOS:
 
         # Queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap, in-memory transports).
-        # queue.redis wires the cross-container transports; the explicit
-        # event_stream parameter below is applied after and wins by ordering.
+        # queue.redis wires the cross-container transports over the process
+        # defaults only; the explicit event_stream parameter is applied first
+        # and survives the wiring regardless of its type.
         self.queue = queue
 
-        # Event stream FIRST: the coordination wiring below only fills in-memory
-        # defaults and warns on asymmetric transports - it must see the user's
-        # explicit stream, or the one split-Redis config it exists to catch
-        # (custom stream on Redis A, wired cancellation on Redis B) never warns.
+        # Event stream FIRST: the coordination wiring below only replaces the
+        # never-explicitly-set defaults and warns on asymmetric transports - it
+        # must see the user's explicit stream, or the one split-Redis config it
+        # exists to catch (custom stream on Redis A, wired cancellation on
+        # Redis B) never warns.
         if event_stream is not None:
             set_event_stream(event_stream)
 
@@ -901,36 +911,22 @@ class AgentOS:
                 existing_teams[team_id] = team
 
     def _populate_registry_knowledge(self) -> None:
-        """Add discovered knowledge instances to the registry.
+        """Add knowledge instances to the registry so stored components resolve them by name.
 
-        Sources are the knowledge instances collected by
-        ``_auto_discover_knowledge_instances`` (agents, teams, the AgentOS
-        ``knowledge`` param, and ``registry.knowledge``). That discovery only
-        keeps instances backed by a ``contents_db``, so a ``contents_db`` is
-        required for a knowledge base to be resolvable from a Studio/Builder
-        component config (vector-search-only knowledge is not registered).
+        Sources are the contents_db-backed instances collected by
+        ``_auto_discover_knowledge_instances`` (which also feed the knowledge
+        routes) plus every named instance handed to the AgentOS ``knowledge``
+        param: registry resolution is by name and needs no ``contents_db``.
+        Agent- and team-attached knowledge is added by the component walk in
+        ``_populate_registry_components``.
         """
         if self.registry is None:
             self.registry = Registry()
 
-        if self.knowledge_instances:
-            existing_knowledge = {
-                name: k for k in self.registry.knowledge if (name := getattr(k, "name", None)) is not None
-            }
-            for kb in self.knowledge_instances:
-                kb_name = getattr(kb, "name", None)
-                if kb_name is None:
-                    continue
-                existing = existing_knowledge.get(kb_name)
-                if existing is not None:
-                    if existing is not kb:
-                        log_warning(
-                            f"Registry: multiple distinct knowledge instances share name '{kb_name}'; "
-                            "keeping the first. Give them distinct names to avoid one shadowing the other."
-                        )
-                    continue
-                self.registry.knowledge.append(kb)
-                existing_knowledge[kb_name] = kb
+        for kb in self.knowledge_instances or []:
+            self.registry.add_knowledge(kb, mirrored=True)
+        for kb in self.knowledge or []:
+            self.registry.add_knowledge(kb, mirrored=True)
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.
@@ -1256,9 +1252,17 @@ class AgentOS:
 
                 log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
 
+                status_code = getattr(exc, "status_code", 500)
+                # 4xx exceptions that carry their own status wrote their
+                # message for the client; 5xx details must never echo
+                # str(exc) - unhandled server errors are routinely store or
+                # driver failures whose text carries connection strings, SQL
+                # fragments, and hostnames. The full traceback is in the
+                # server log above; the wire gets the exception type only.
+                detail = str(exc) if status_code < 500 else f"Internal server error ({type(exc).__name__})"
                 return JSONResponse(
-                    status_code=getattr(exc, "status_code", 500),
-                    content={"detail": str(exc)},
+                    status_code=status_code,
+                    content={"detail": detail},
                 )
 
         # Update CORS middleware
@@ -1820,6 +1824,16 @@ class AgentOS:
 
         if self.registry is not None:
             for knowledge_base in self.registry.knowledge or []:
+                # Only user-declared registry knowledge feeds the routes.
+                # Syncs mirror member- and step-owned knowledge into the
+                # registry for name resolution; that is not a grant of
+                # route-level exposure -- and the registry, not this OS, keeps
+                # the provenance, so a mirror by another AgentOS sharing the
+                # registry is excluded here too. Everything not mirrored the
+                # user registered, whether at construction or after (resync
+                # picks it up).
+                if self.registry.knowledge_is_mirrored(knowledge_base):
+                    continue
                 _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances

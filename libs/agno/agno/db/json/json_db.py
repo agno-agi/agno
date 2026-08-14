@@ -149,18 +149,24 @@ class JsonDb(BaseDb):
             raise e
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract, but this adapter has no per-table versioning
-        (each table is a single JSON file), so it is ignored.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
+        for row in rows:
+            if row.get("table_name") == table_name:
+                return row.get("version") or "2.0.0"
+        return "2.0.0"
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version into the database. See note on
-        ``get_latest_schema_version`` for why ``table_name`` is ignored."""
-        pass
+        """Record the schema version stamp for the given table."""
+        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
+        entry = {"table_name": table_name, "version": version, "updated_at": int(time.time())}
+        rows = [row for row in rows if row.get("table_name") != table_name]
+        rows.append(entry)
+        self._write_json_file(self.versions_table_name, rows)
 
     # -- Run methods --
 

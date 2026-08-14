@@ -366,17 +366,23 @@ class MongoDb(BaseDb):
             raise
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; MongoDB is schemaless so it is ignored.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        doc = self.database[self.versions_table_name].find_one({"table_name": table_name})
+        if doc is None:
+            return "2.0.0"
+        return doc.get("version") or "2.0.0"
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table."""
+        self.database[self.versions_table_name].update_one(
+            {"table_name": table_name},
+            {"$set": {"table_name": table_name, "version": version, "updated_at": int(time.time())}},
+            upsert=True,
+        )
 
     def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
         """Unset the legacy ``runs`` field from session documents.

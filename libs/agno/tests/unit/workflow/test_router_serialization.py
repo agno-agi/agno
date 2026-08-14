@@ -212,8 +212,9 @@ class TestRouterFromDict:
         assert router.selector == content_based_selector
         assert callable(router.selector)
 
-    def test_from_dict_raises_without_registry_for_selector(self):
-        """Test from_dict raises error when selector needs registry but none provided."""
+    def test_from_dict_without_registry_builds_selector_placeholder_when_lenient(self):
+        """A lenient load without a registry stays constructible; the selector
+        placeholder refuses at execution and round-trips the name."""
         data = {
             "type": "Router",
             "name": "selector-router",
@@ -222,11 +223,17 @@ class TestRouterFromDict:
             "choices": [],
         }
 
-        with pytest.raises(ValueError, match="Registry required"):
-            Router.from_dict(data, registry=None)
+        lenient = Router.from_dict(data, registry=None, strict=False)
 
-    def test_from_dict_raises_for_unknown_selector(self, registry_with_functions):
-        """Test from_dict raises error for unknown selector function."""
+        assert callable(lenient.selector)
+        with pytest.raises(RuntimeError, match="first_choice_selector"):
+            lenient.selector()
+        assert lenient.to_dict()["selector"] == "first_choice_selector"
+
+    def test_from_dict_unknown_selector_raises_under_strict(self, registry_with_functions):
+        """Strict refuses an unresolvable selector loudly and typed."""
+        from agno.exceptions import ComponentRehydrationError
+
         data = {
             "type": "Router",
             "name": "unknown-selector-router",
@@ -235,8 +242,8 @@ class TestRouterFromDict:
             "choices": [],
         }
 
-        with pytest.raises(ValueError, match="not found in registry"):
-            Router.from_dict(data, registry=registry_with_functions)
+        with pytest.raises(ComponentRehydrationError, match="not found in registry"):
+            Router.from_dict(data, registry=registry_with_functions, strict=True)
 
     def test_from_dict_without_selector_uses_hitl(self, registry_with_functions):
         """Test from_dict allows no selector when using HITL."""

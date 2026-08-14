@@ -682,17 +682,21 @@ class FirestoreDb(BaseDb):
             raise e
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; Firestore is schemaless so it is ignored.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        doc = self.db_client.collection(self.versions_table_name).document(table_name).get()
+        if not doc.exists:
+            return "2.0.0"
+        return (doc.to_dict() or {}).get("version") or "2.0.0"
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table."""
+        self.db_client.collection(self.versions_table_name).document(table_name).set(
+            {"table_name": table_name, "version": version, "updated_at": int(time.time())}
+        )
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from the database.

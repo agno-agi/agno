@@ -4196,6 +4196,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -5230,8 +5231,21 @@ class AsyncPostgresDb(AsyncBaseDb):
                     "completed_at": None,
                     "updated_at": now,
                 }
-                await sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                # RETURNING resolves the DB-clock stamps to concrete ints: the
+                # timestamp values are SQL expressions (_db_epoch), and copying
+                # them into the returned dict verbatim would hand callers
+                # unserializable Cast objects where Redis/InMemory return ints.
+                stamped = (
+                    await sess.execute(
+                        update(table)
+                        .where(table.c.id == job_id)
+                        .values(**values)
+                        .returning(table.c.available_at, table.c.updated_at)
+                    )
+                ).fetchone()
                 job.update(values)
+                if stamped is not None:
+                    job["available_at"], job["updated_at"] = stamped[0], stamped[1]
                 return {"outcome": "queued", "job": job}
 
     async def queue_stats(self) -> Dict[str, Any]:

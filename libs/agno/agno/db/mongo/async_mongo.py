@@ -575,18 +575,24 @@ class AsyncMongoDb(AsyncBaseDb):
             aggregate_cursor_or_coro = await aggregate_cursor_or_coro
         return await aggregate_cursor_or_coro.to_list(length=length)
 
-    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+    async def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; MongoDB is schemaless so it is ignored.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        doc = await self.database[self.versions_table_name].find_one({"table_name": table_name})
+        if doc is None:
+            return "2.0.0"
+        return doc.get("version") or "2.0.0"
 
-    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+    async def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Record the schema version stamp for the given table."""
+        await self.database[self.versions_table_name].update_one(
+            {"table_name": table_name},
+            {"$set": {"table_name": table_name, "version": version, "updated_at": int(time.time())}},
+            upsert=True,
+        )
 
     async def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
         """Unset the legacy ``runs`` field from session documents.
@@ -627,7 +633,6 @@ class AsyncMongoDb(AsyncBaseDb):
         this keeps runs whose ``status`` is null/absent — mirroring the SQL
         ``status IS NULL OR status NOT IN (...)`` fast path.
         """
-        # run_index is injected into run_data so RunOutput carries its DB position
         if limit is not None:
             pipeline: List[Dict[str, Any]] = [
                 {
@@ -646,23 +651,18 @@ class AsyncMongoDb(AsyncBaseDb):
                 {"$sort": {"_ri": -1, "_ca": -1}},
                 {"$limit": limit},
             ]
-            raw_docs = await runs_collection.aggregate(pipeline).to_list(length=limit)  # type: ignore[union-attr]
-            docs = [doc for doc in raw_docs if "run_data" in doc]
-            for doc in docs:
-                doc["run_data"]["run_index"] = doc["run_index"]
-            docs.reverse()
-            return [doc["run_data"] for doc in docs]
+            docs = await self._aggregate_to_list(runs_collection, pipeline, length=limit)
+            run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
+            run_docs.reverse()  # back to chronological order
+            return run_docs
 
         pipeline = [
             {"$match": {"session_id": session_id}},
             {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
-        raw_docs = await runs_collection.aggregate(pipeline).to_list(length=None)  # type: ignore[union-attr]
-        docs = [doc for doc in raw_docs if "run_data" in doc]
-        for doc in docs:
-            doc["run_data"]["run_index"] = doc["run_index"]
-        return [doc["run_data"] for doc in docs]
+        docs = await self._aggregate_to_list(runs_collection, pipeline)
+        return [doc["run_data"] for doc in docs if "run_data" in doc]
 
     async def _get_sessions_runs_docs(
         self, runs_collection: AsyncMongoCollectionType, session_ids: List[str]
@@ -722,17 +722,6 @@ class AsyncMongoDb(AsyncBaseDb):
             existing = await runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1})
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
-
-            # Backfill run_index for new runs: compute MAX(run_index) + 1 for this session
-            if row.get("run_index") is None:
-                pipeline: list[dict[str, Any]] = [
-                    {"$match": {"session_id": session_id, "run_index": {"$ne": None}}},
-                    {"$group": {"_id": None, "max_idx": {"$max": "$run_index"}}},
-                ]
-                cursor = runs_collection.aggregate(pipeline)
-                result = await cursor.to_list(length=1)  # type: ignore[union-attr]
-                current_max = result[0]["max_idx"] if result else None
-                row["run_index"] = (current_max + 1) if current_max is not None else 0
 
             await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
         except Exception as e:
