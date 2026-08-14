@@ -32,6 +32,12 @@ def _remove_file_if_exists(path: Optional[str]) -> None:
 class MoviePyVideoTools(Toolkit):
     """Tool for processing video files, extracting audio, and adding captions."""
 
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "enable_process_video": "extract_audio",
+        "enable_generate_captions": "create_srt",
+    }
+
     def __init__(
         self,
         extract_audio: bool = True,

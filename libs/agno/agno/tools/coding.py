@@ -119,6 +119,13 @@ class CodingTools(Toolkit):
             result += "\n\n## Best Practices\n" + "\n".join(best_practices)
         return result
 
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "enable_grep": "run_grep",
+        "enable_find": "run_find",
+        "enable_ls": "run_ls",
+    }
+
     def __init__(
         self,
         base_dir: Optional[Union[Path, str]] = None,

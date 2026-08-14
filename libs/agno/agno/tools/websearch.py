@@ -32,6 +32,12 @@ class WebSearchTools(Toolkit):
         all: Enable all tools.
     """
 
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "enable_search": "search_web",
+        "enable_news": "search_news",
+    }
+
     def __init__(
         self,
         search_web: bool = True,

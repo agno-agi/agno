@@ -29,6 +29,11 @@ except ImportError:
 
 
 class MLXTranscribeTools(Toolkit):
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "enable_read_files_in_base_dir": "read_files",
+    }
+
     def __init__(
         self,
         base_dir: Optional[Path] = None,

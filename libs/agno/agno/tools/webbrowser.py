@@ -12,6 +12,11 @@ class WebBrowserTools(Toolkit):
         open_page: Enable open_page tool. Defaults to False (opens external browser).
     """
 
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "all": "open_page",
+    }
+
     def __init__(self, open_page: bool = False, **kwargs):
         # Backwards compat: enable_X -> X
         if "enable_open_page" in kwargs:

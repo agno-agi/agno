@@ -1,5 +1,6 @@
 from collections import OrderedDict
-from inspect import iscoroutinefunction
+from functools import wraps
+from inspect import iscoroutinefunction, signature
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, cast, get_type_hints
 
@@ -107,10 +108,77 @@ def _emits_toolkit_instructions(
     return True
 
 
+_LEGACY_FLAG_PREFIX = "enable_"
+
+
+def _wrap_init_with_legacy_param_support(cls: type, init: Callable[..., None]) -> Callable[..., None]:
+    """Accept Agno 2.x constructor kwargs on a 3.0 toolkit.
+
+    2.x tool-toggle kwargs (``enable_search``, ``all`` on toolkits that dropped
+    it) are remapped onto their 3.0 names with a deprecation warning instead of
+    raising TypeError. Names that changed beyond losing the ``enable_`` prefix
+    come from the subclass's ``_legacy_param_aliases``; an alias of ``None``
+    means the subclass's own ``__init__`` consumes the legacy kwarg.
+    """
+    param_names: Optional[frozenset] = None
+
+    @wraps(init)
+    def wrapped_init(self, *args: Any, **kw: Any) -> None:
+        nonlocal param_names
+        aliases: Dict[str, Optional[str]] = getattr(cls, "_legacy_param_aliases", None) or {}
+        legacy_keys = [k for k in kw if k.startswith(_LEGACY_FLAG_PREFIX) or k == "all" or k in aliases]
+        if legacy_keys:
+            if param_names is None:
+                param_names = frozenset(signature(init).parameters)
+            for key in legacy_keys:
+                if key in param_names:
+                    continue
+                if key in aliases:
+                    target = aliases[key]
+                    if target is None:
+                        # The subclass's __init__ handles this legacy kwarg itself
+                        continue
+                else:
+                    if key == "all":
+                        kw.pop(key)
+                        log_warning(
+                            f"`all` is no longer supported by {cls.__name__} and was ignored. "
+                            "Enable the individual tool flags instead."
+                        )
+                        continue
+                    target = key[len(_LEGACY_FLAG_PREFIX) :]
+                value = kw.pop(key)
+                if target not in param_names:
+                    log_warning(f"`{key}` is no longer supported by {cls.__name__} and was ignored.")
+                elif target in kw:
+                    log_warning(
+                        f"Both `{key}` and `{target}` were passed to {cls.__name__}; using `{target}`. "
+                        f"`{key}` is deprecated."
+                    )
+                else:
+                    log_warning(f"`{key}` is deprecated for {cls.__name__}; use `{target}` instead.")
+                    kw[target] = value
+        init(self, *args, **kw)
+
+    return wrapped_init
+
+
 class Toolkit:
     # Set to True for toolkits that require connection management (e.g., database connections)
     # When True, the Agent will automatically call connect() before using tools and close() after
     _requires_connect: bool = False
+
+    # Agno 2.x kwargs whose 3.0 name is not simply the stripped `enable_` prefix,
+    # e.g. {"enable_news": "search_news"}. A value of None means the subclass's
+    # __init__ consumes the legacy kwarg itself.
+    _legacy_param_aliases: Dict[str, Optional[str]] = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Every subclass that defines its own __init__ transparently accepts
+        # deprecated 2.x tool-toggle kwargs (see _wrap_init_with_legacy_param_support)
+        if "__init__" in cls.__dict__:
+            cls.__init__ = _wrap_init_with_legacy_param_support(cls, cls.__dict__["__init__"])  # type: ignore[method-assign]
 
     def __init__(
         self,

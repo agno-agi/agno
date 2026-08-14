@@ -50,6 +50,13 @@ class ZepTools(Toolkit):
         all: Enable all tools. Defaults to False.
     """
 
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "enable_add_zep_message": "add_message",
+        "enable_get_zep_memory": "get_memory",
+        "enable_search_zep_memory": "search_memory",
+    }
+
     def __init__(
         self,
         session_id: Optional[str] = None,
