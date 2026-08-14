@@ -118,6 +118,42 @@ class TestOwnerFoldedId:
         assert ids == ["doc_1", "doc_2"]
 
 
+class TestIdLessDocument:
+    """A Document carries no id unless the caller set one, so the adapter has to supply one.
+
+    Dropping it loses the chunk silently, and folding an owner into ``None`` raises.
+    """
+
+    def _idless(self) -> List[Document]:
+        return [Document(content="alpha doc", name="alpha", content_id="c1")]
+
+    @pytest.mark.parametrize("user_id", [None, "alice"])
+    def test_an_id_less_document_is_ingested(self, upstash_db, user_id):
+        upstash_db.upsert(content_hash="h1", documents=self._idless(), user_id=user_id)
+
+        vectors = upstash_db.index.upsert.call_args[0][0]
+        assert len(vectors) == 1
+        assert vectors[0].id
+
+    def test_the_generated_id_is_stable_for_the_same_content(self, upstash_db, mock_upstash_index):
+        upstash_db.upsert(content_hash="h1", documents=self._idless(), user_id="alice")
+        first = upstash_db.index.upsert.call_args[0][0][0].id
+
+        upstash_db.upsert(content_hash="h1", documents=self._idless(), user_id="alice")
+        second = upstash_db.index.upsert.call_args[0][0][0].id
+
+        assert first == second
+
+    def test_two_owners_of_id_less_content_stay_distinct(self, upstash_db):
+        upstash_db.upsert(content_hash="h1", documents=self._idless(), user_id="alice")
+        alice = upstash_db.index.upsert.call_args[0][0][0].id
+
+        upstash_db.upsert(content_hash="h1", documents=self._idless(), user_id="bob")
+        bob = upstash_db.index.upsert.call_args[0][0][0].id
+
+        assert alice != bob
+
+
 class TestFilterInjectionBlocked:
     """A crafted user_id must never break out of its filter literal to leak another owner's chunks."""
 
