@@ -20,6 +20,8 @@ class Mem0Tools(Toolkit):
         api_key: Optional[str] = None,
         host: Optional[str] = None,
         user_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        project_id: Optional[str] = None,
         infer: bool = True,
         add_memory: bool = True,
         search_memory: bool = True,
@@ -35,6 +37,8 @@ class Mem0Tools(Toolkit):
             api_key: Mem0 Platform API key. Defaults to MEM0_API_KEY env var.
             host: Mem0 Platform host URL. Defaults to MEM0_HOST env var.
             user_id: Default user ID for memory operations.
+            org_id: Mem0 Platform organization ID. Defaults to MEM0_ORG_ID env var.
+            project_id: Mem0 Platform project ID. Defaults to MEM0_PROJECT_ID env var.
             infer: Whether to use Mem0's inference when adding memories.
             add_memory: Enable the add_memory tool.
             search_memory: Enable the search_memory tool.
@@ -66,6 +70,8 @@ class Mem0Tools(Toolkit):
         self.api_key = api_key or getenv("MEM0_API_KEY")
         self.host = host or getenv("MEM0_HOST")
         self.user_id = user_id
+        self.org_id = org_id or getenv("MEM0_ORG_ID")
+        self.project_id = project_id or getenv("MEM0_PROJECT_ID")
         self.client: Union[Memory, MemoryClient]
         self.infer = infer
 
@@ -75,6 +81,10 @@ class Mem0Tools(Toolkit):
                 client_kwargs: Dict[str, Any] = {"api_key": self.api_key}
                 if self.host:
                     client_kwargs["host"] = self.host
+                if self.org_id:
+                    client_kwargs["org_id"] = self.org_id
+                if self.project_id:
+                    client_kwargs["project_id"] = self.project_id
                 self.client = MemoryClient(**client_kwargs)
             elif config is not None:
                 log_debug("Using Mem0 with config.")

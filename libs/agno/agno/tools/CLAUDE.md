@@ -14,7 +14,7 @@ pytest libs/agno/tests/unit/tools/
 ./scripts/format.sh && ./scripts/validate.sh
 
 # Cookbook location
-cookbook/91_tools/<toolkit_name>/
+cookbook/91_tools/<toolkit_name>_tools.py
 ```
 
 ---
@@ -137,7 +137,7 @@ class MyTools(Toolkit):
 
 ### Tool Design
 1. Boolean flags without `enable_` prefix (`search: bool` not `enable_search: bool`)
-2. Destructive tools default False + requires_confirmation
+2. Destructive tools default False (optionally recommend `requires_confirmation_tools` in the docstring)
 3. Handle clients internally, not injected
 4. Text tools return `json.dumps()`; media tools return `ToolResult`
 5. Use `logger.exception()` in except blocks; NEVER with `exc_info=True`
@@ -160,7 +160,7 @@ class MyTools(Toolkit):
 20. Coerce `response.content` before string ops
 
 ### Design
-21. No `all` param if ≤2 tools
+21. Prefer no `all` param if ≤2 tools (some existing 2-tool toolkits keep it for API consistency)
 22. Lazy client init for heavy SDKs (`_get_client()`)
 23. Return error string, don't raise on missing context
 24. Let SDK raise auth errors
@@ -176,17 +176,16 @@ class MyTools(Toolkit):
 ## Security Defaults
 
 ```python
-# Destructive → False + confirmation
+# Destructive → False
 delete: bool = False
 run_query: bool = False
 send_message: bool = False
-
-# In __init__:
-confirm = kwargs.pop("requires_confirmation_tools", None) or []
-if all or delete:
-    confirm.append("delete")
-super().__init__(..., requires_confirmation_tools=confirm, **kwargs)
 ```
+
+Shipped toolkits enforce safety through default-False flags: the user must
+opt in to destructive tools at construction time. For extra protection users
+can pass `requires_confirmation_tools=["delete"]` to any toolkit; mention
+this in the class docstring for highly destructive tools (see shell.py).
 
 ---
 
@@ -333,7 +332,7 @@ def _clone_for_run(self) -> "Toolkit":
 
 ## Cookbook Rules
 
-**Location:** `cookbook/91_tools/<name>/`
+**Location:** `cookbook/91_tools/<name>_tools.py` (flat file; grouped services like Google use a subdirectory)
 
 ```python
 """<ToolkitName> — demonstrates <what>.
