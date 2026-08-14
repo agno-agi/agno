@@ -11,6 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.exceptions import ComponentRehydrationError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -273,6 +274,21 @@ def format_sse_event_with_index(
         return f"event: message\ndata: {clean_json}\n\n"
 
 
+# Idle window between tail items before a keepalive (and the settled-ticket
+# truth probe) fires; module-level so tests can shrink it.
+_TAIL_IDLE_RECHECK_SECONDS = 30.0
+
+
+def sse_error_frame(message: str) -> str:
+    """A wire-safe SSE error frame.
+
+    The payload goes through json.dumps: hand-interpolating exception text
+    into an f-string frame emitted invalid JSON the moment the message
+    contained a quote, backslash, or newline.
+    """
+    return f"event: error\ndata: {json.dumps({'event': 'error', 'error': message})}\n\n"
+
+
 async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> Any:
     """SSE response for a durably queued STREAMING run: tail the event stream.
 
@@ -312,9 +328,7 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
             # error frame so the client can distinguish and reconnect
             log_error(f"Queued stream tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
@@ -322,8 +336,39 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
     try:
         while True:
             try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=_TAIL_IDLE_RECHECK_SECONDS)
             except asyncio.TimeoutError:
+                # Idle recheck. If the durable ticket has SETTLED while the
+                # stream never received its terminal sentinel (a lost
+                # terminal write - the producer died between settling the
+                # ticket and closing the stream), nothing will ever end this
+                # tail: it used to keepalive silently until the stream state
+                # expired. Tell the client the truth instead, once, and end -
+                # the complete output is guaranteed via the run row.
+                closed_frame: Optional[str] = None
+                with contextlib.suppress(Exception):
+                    from agno.os.job_queue import get_active_queue_worker, ticket_status_to_api
+
+                    worker = get_active_queue_worker()
+                    job = await worker.store.get_job(run_id) if worker is not None else None
+                    if (
+                        job is not None
+                        and job.get("job_type", "run") == "run"
+                        and job.get("status") in ("completed", "failed", "cancelled")
+                    ):
+                        stream_status = await event_stream.get_run_status(run_id)
+                        if stream_status is None or stream_status in (RunStatus.pending, RunStatus.running):
+                            payload = {
+                                "event": "stream_expired",
+                                "run_id": run_id,
+                                "status": ticket_status_to_api(job.get("status", "")) or "ERROR",
+                                "message": "The run finished but its stream lost the terminal event; "
+                                "poll the run for the complete output.",
+                            }
+                            closed_frame = f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+                if closed_frame is not None:
+                    yield closed_frame
+                    return
                 yield ": keepalive\n\n"
                 continue
             if item is None:
@@ -368,25 +413,26 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
             await pump_task
 
 
-def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
-    """PATH-3 (DB fallback) replay frames, honoring the client's floor.
+def stored_event_replay_dicts(
+    run_output: Any, run_id: str, last_event_index: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """DB-fallback replay payloads, honoring the client's floor.
 
-    ONE implementation for all three routers - the old triplicated loop
-    ignored last_event_index and renumbered every stored event from zero:
-    duplicates for partially-caught-up clients, and destroyed index
-    continuity (stream indices are NOT gapless - retries and continuation
-    legs leave real gaps that positional renumbering compacted away).
+    ONE implementation for every replay surface (the three SSE resume routes
+    and the workflow WS subscription) - the old per-surface loops ignored
+    last_event_index and renumbered every stored event from zero: duplicates
+    for partially-caught-up clients, and destroyed index continuity (stream
+    indices are NOT gapless - retries and continuation legs leave real gaps
+    that positional renumbering compacted away).
 
     Events stamped at publish carry their real stream index (event_index);
     those are floor-filtered and replayed under their stored index.
     Unstamped legacy events keep the positional fallback and are never
     floor-filtered: a floor from live-stream indices does not speak their
-    numbering. The meta frame's total reflects what is actually replayed.
+    numbering.
     """
-    from agno.utils.serialize import json_serializer
-
     floor = last_event_index if last_event_index is not None else -1
-    frames: List[str] = []
+    dicts: List[Dict[str, Any]] = []
     for position, event in enumerate(getattr(run_output, "events", None) or []):
         event_dict = event.to_dict()
         stored_index = event_dict.get("event_index")
@@ -395,6 +441,17 @@ def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: O
         event_dict["event_index"] = int(stored_index) if stored_index is not None else position
         if "run_id" not in event_dict:
             event_dict["run_id"] = run_id
+        dicts.append(event_dict)
+    return dicts
+
+
+def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
+    """SSE framing over ``stored_event_replay_dicts`` (the PATH-3 resume
+    routes). The meta frame's total reflects what is actually replayed."""
+    from agno.utils.serialize import json_serializer
+
+    frames: List[str] = []
+    for event_dict in stored_event_replay_dicts(run_output, run_id, last_event_index):
         event_type = event_dict.get("event", "message")
         frames.append(
             f"event: {event_type}\n"
@@ -467,7 +524,13 @@ async def amark_continue_stream_running(
         # it also clears the pause's completed_at so the reopened run cannot
         # be reaped mid-continuation, and seeds the index counter from the
         # durable floor when the stream's own counter expired.
-        await event_stream.reopen_run(run_id, floor=floor)
+        if not await event_stream.reopen_run(run_id, floor=floor):
+            # Declined: the status already moved past PAUSED (a racing writer
+            # finished or took over the leg). Stamping RUNNING over that
+            # newer state would resurrect a settled stream until the
+            # streamer's finally heals it - honor the reopen contract and
+            # leave the stream alone; the continue itself proceeds.
+            return
         await event_stream.set_run_status(run_id, RunStatus.running)
 
 
@@ -525,6 +588,51 @@ async def acomplete_continue_stream(
     # Returned so callers (the durable continue seams) can settle the queue
     # ticket with the same resolved status instead of re-reading the row
     return final_status
+
+
+async def afinalize_continue_stream(
+    component: Any,
+    run_id: str,
+    session_id: Optional[str],
+    queue_worker: Any = None,
+    only_if_tracked: bool = False,
+    final_status: Any = None,
+) -> Optional[Any]:
+    """The inline continue's terminal-sync obligation as ONE unit that
+    survives client-disconnect cancellation: resolve the run's final status,
+    close the stream view (acomplete_continue_stream), settle a paused
+    ticket (asettle_paused_ticket).
+
+    A disconnecting client cancels the response task, and the first
+    unshielded await in this sequence used to leak that cancellation
+    (contextlib.suppress(Exception) does not catch CancelledError) -
+    abandoning the stream view as RUNNING with no producer (immortal on
+    Redis, whose TTL refresher had enrolled the run, so /resume tails spun
+    on keepalives forever) and skipping the ticket settle entirely. The
+    obligation now runs in its OWN task: the caller's cancellation
+    re-raises here, but the task completes on the loop regardless.
+    """
+    import asyncio
+
+    async def _obligation() -> Optional[Any]:
+        final = await acomplete_continue_stream(
+            component, run_id, session_id, only_if_tracked=only_if_tracked, final_status=final_status
+        )
+        if queue_worker is not None:
+            from agno.os.job_queue import asettle_paused_ticket
+
+            await asettle_paused_ticket(queue_worker, run_id, final)
+        return final
+
+    task = asyncio.ensure_future(_obligation())
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # The obligation finishes in the background; retrieve its eventual
+        # result so it never warns, and let the cancellation propagate so
+        # the response task still ends as cancelled
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        raise
 
 
 def replayed_payload_to_sse(payload: Any, event_index: int, run_id: str) -> str:
@@ -1117,6 +1225,7 @@ def get_agent_by_id(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
@@ -1132,9 +1241,16 @@ def get_agent_by_id(
         agents: List of agents (and/or AgentFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed agent whose references cannot be rehydrated raises
+            instead of loading degraded
 
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed agent's references
+            cannot be resolved
     """
     if agent_id is None:
         return None
@@ -1164,8 +1280,11 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
             return db_agent
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
             return None
@@ -1181,6 +1300,7 @@ async def get_agent_by_id_async(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Async variant of get_agent_by_id that supports async factories."""
     if agent_id is None:
@@ -1210,8 +1330,11 @@ async def get_agent_by_id_async(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
             return db_agent
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
             return None
@@ -1227,6 +1350,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -1241,9 +1365,16 @@ def get_team_by_id(
         teams: List of teams (and/or TeamFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed team whose members or references cannot be rehydrated
+            raises instead of loading degraded
 
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed team's members or
+            references cannot be resolved
     """
     if team_id is None:
         return None
@@ -1266,8 +1397,11 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
             return db_team
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
             return None
@@ -1283,6 +1417,7 @@ async def get_team_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Async variant of get_team_by_id that supports async factories."""
     if team_id is None:
@@ -1306,8 +1441,11 @@ async def get_team_by_id_async(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
             return db_team
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
             return None
@@ -1323,6 +1461,7 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
@@ -1340,9 +1479,16 @@ def get_workflow_by_id(
         version: Workflow version, if needed
         registry: Optional Registry instance
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed workflow whose references cannot be rehydrated raises
+            instead of loading degraded
 
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed workflow's
+            references cannot be resolved
     """
     if workflow_id is None:
         return None
@@ -1367,8 +1513,13 @@ def get_workflow_by_id(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            db_workflow = get_workflow_by_id_db(
+                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+            )
             return db_workflow
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
             return None
@@ -1384,6 +1535,7 @@ async def get_workflow_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Async variant of get_workflow_by_id that supports async factories."""
     if workflow_id is None:
@@ -1409,8 +1561,13 @@ async def get_workflow_by_id_async(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            db_workflow = get_workflow_by_id_db(
+                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+            )
             return db_workflow
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
             return None
@@ -1823,7 +1980,7 @@ def _collect_fallback_models(owner: Any, registry: Registry) -> None:
 
 
 def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> None:
-    """Add the vector db and contents db backing a knowledge instance to the registry.
+    """Add a knowledge instance and its backing vector/contents dbs to the registry.
 
     ``knowledge`` may be a Knowledge instance, a custom KnowledgeProtocol
     implementation, or a callable factory. Attribute access is guarded so any
@@ -1831,12 +1988,13 @@ def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> No
     """
     if knowledge is None:
         return
+    registry.add_knowledge(knowledge, mirrored=True)
     registry.add_vector_db(getattr(knowledge, "vector_db", None))
     registry.add_db(getattr(knowledge, "contents_db", None))
 
 
 def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[int]) -> None:
-    """Add the models, tools, db and vector db referenced by an agent to the registry.
+    """Add the models, tools, schemas, db and vector db referenced by an agent to the registry.
 
     ``visited`` tracks already-walked agents/teams/workflows (by object id) to
     avoid redundant work and infinite recursion on cyclic composition graphs.
@@ -1856,6 +2014,8 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
         for tool in tools:
             registry.add_tool(tool)
 
+    registry.add_schema(getattr(agent, "input_schema", None))
+    registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
 
@@ -1877,6 +2037,8 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
         for tool in tools:
             registry.add_tool(tool)
 
+    registry.add_schema(getattr(team, "input_schema", None))
+    registry.add_schema(getattr(team, "output_schema", None))
     registry.add_db(getattr(team, "db", None))
     _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
 
@@ -1895,6 +2057,7 @@ def collect_components_from_workflow(workflow: Any, registry: Registry, visited:
         return
     visited.add(id(workflow))
 
+    registry.add_schema(getattr(workflow, "input_schema", None))
     registry.add_db(getattr(workflow, "db", None))
 
     # Agentic workflow coordinator (WorkflowAgent is an Agent subclass)
@@ -1942,6 +2105,8 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
         nested_workflow = getattr(step, "workflow", None)
         if nested_workflow is not None:
             collect_components_from_workflow(nested_workflow, registry, visited)
+        if callable(getattr(step, "executor", None)):
+            registry.add_function(step.executor)
 
     elif isinstance(step, Agent):
         collect_components_from_agent(step, registry, visited)
@@ -1953,6 +2118,13 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
         collect_components_from_workflow(step, registry, visited)
 
     elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
+        # Container-level callable refs resolve by function name at rehydration.
+        if isinstance(step, Condition) and callable(getattr(step, "evaluator", None)):
+            registry.add_function(step.evaluator)
+        if isinstance(step, Router) and callable(getattr(step, "selector", None)):
+            registry.add_function(step.selector)
+        if isinstance(step, Loop) and callable(getattr(step, "end_condition", None)):
+            registry.add_function(step.end_condition)
         # Walk every sub-step container: `steps` (all), `else_steps` (Condition)
         # and `choices` (Router, before it is prepared into `steps`).
         for attr in ("steps", "else_steps", "choices"):
@@ -1961,7 +2133,9 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
                 for sub_step in sub_steps:
                     _collect_components_from_step(sub_step, registry, visited)
 
-    # else: plain callable executor or unknown step type -> nothing to collect
+    elif callable(step):
+        # A bare callable used directly as a step serializes as an executor ref.
+        registry.add_function(step)
 
 
 def collect_components_from_os(
@@ -2246,11 +2420,15 @@ async def resolve_agent(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
     For factory agents: builds RequestContext, invokes factory, handles factory-specific errors.
-    For non-factory agents: resolves via deep_copy or DB lookup.
+    For non-factory agents: resolves via deep_copy or DB lookup. With strict=True
+    (the default), a db-backed agent whose references cannot be rehydrated is
+    refused with a 422; pass strict=False for callers that only need a handle
+    on the component (cancel, history reads).
 
     Raises HTTPException on all error paths.
     """
@@ -2275,7 +2453,11 @@ async def resolve_agent(
             raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
     else:
         try:
-            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True)
+            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True, strict=strict)
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -2295,8 +2477,13 @@ async def resolve_team(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Team, RemoteTeam]:
-    """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
+    """Resolve a team by ID with proper error handling for both factory and non-factory paths.
+
+    Raises HTTPException on all error paths; an unrehydratable db-backed team
+    is refused with a 422 unless strict=False.
+    """
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
         if request is None:
@@ -2318,7 +2505,13 @@ async def resolve_team(
             raise HTTPException(status_code=500, detail=f"Error in team factory: {e}")
     else:
         try:
-            team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
+            team = get_team_by_id(
+                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, strict=strict
+            )
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -2338,8 +2531,13 @@ async def resolve_workflow(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Workflow, RemoteWorkflow]:
-    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
+    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths.
+
+    Raises HTTPException on all error paths; an unrehydratable db-backed
+    workflow is refused with a 422 unless strict=False.
+    """
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
@@ -2362,8 +2560,12 @@ async def resolve_workflow(
     else:
         try:
             workflow = get_workflow_by_id(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True
+                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, strict=strict
             )
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")

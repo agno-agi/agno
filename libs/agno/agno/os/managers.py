@@ -237,12 +237,21 @@ class EventsBuffer:
 
         if run_id not in self.events:
             self.events[run_id] = []
-            self._next_index[run_id] = 0
+            # A reclaimed paused run keeps its index; a continuation must not
+            # recycle event indices a client has already seen.
+            self._next_index.setdefault(run_id, 0)
             self.run_metadata[run_id] = {
                 "status": RunStatus.running,
                 "created_at": current_time,
                 "last_updated": current_time,
             }
+        elif self.run_metadata.get(run_id, {}).get("status") == RunStatus.paused:
+            # A continue reuses the paused run's id, so an event arriving on a
+            # paused entry means a new producer took the run over. The pause's
+            # status and completed_at would let the cleanup pass reclaim a live
+            # run and would route /resume to replay instead of subscribing.
+            self.run_metadata[run_id]["status"] = RunStatus.running
+            self.run_metadata[run_id].pop("completed_at", None)
 
         self.events[run_id].append(event)
         self.run_metadata[run_id]["last_updated"] = current_time
@@ -390,7 +399,11 @@ class EventsBuffer:
         """Remove buffer for a completed run (called after retention period)"""
         if run_id in self.events:
             del self.events[run_id]
-        self._next_index.pop(run_id, None)
+        # A paused run can be continued later under the same id: its monotonic
+        # index survives the reclaim, so the continuation's event indices keep
+        # ascending past every index a client has already seen.
+        if (self.run_metadata.get(run_id) or {}).get("status") != RunStatus.paused:
+            self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]
         log_debug(f"Cleaned up event buffer for run {run_id}")
@@ -401,14 +414,23 @@ class EventsBuffer:
         runs_to_cleanup = []
 
         for run_id, metadata in self.run_metadata.items():
-            # NOT paused: reaping a paused run drops _next_index, so the
-            # continue-run's re-register restarts the counter at zero and
-            # reconnecting clients (holding the RunPaused index) dedup away
-            # every post-approval event. Paused runs keep their buffer until
-            # they reach a truly-final state.
-            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+            # Terminal runs, plus paused runs: a pause can wait on an approval
+            # forever, and a reclaimed paused entry is rebuilt by add_event
+            # when the run is eventually continued.
+            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
+                    runs_to_cleanup.append(run_id)
+            elif metadata["status"] == RunStatus.pending:
+                # Accept-side registrations whose runs execute on ANOTHER
+                # replica never advance past PENDING here and used to
+                # accumulate forever (that config is warned against at
+                # worker startup, but the warning must not mean a leak).
+                # Stale-pending reap is safe in-process too: a long-queued
+                # local run's stream state is rebuilt at claim time, and a
+                # tail of a reaped registration gets the honest
+                # stream_expired close while the ticket still vouches.
+                if current_time - metadata.get("last_updated", current_time) > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)
 
         for run_id in runs_to_cleanup:
