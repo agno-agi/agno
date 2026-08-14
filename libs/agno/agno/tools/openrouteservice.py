@@ -16,7 +16,7 @@ Prerequisites:
 Note:
 - OpenRouteService does not provide public transit / train routing. Use the
   `driving-car`, `cycling-*` or `foot-*` profiles for road-based routing, or
-  fall back to `GoogleMapTools` for transit directions.
+  fall back to `GoogleMapsTools` for transit directions.
 """
 
 from os import getenv
