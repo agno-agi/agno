@@ -1,25 +1,22 @@
 """
-Groq Reasoning Plus Claude
-==========================
+9.11 vs 9.9 Comparison
+======================
 
-A Groq-hosted reasoning model thinks; Claude writes the answer.
+Demonstrates Groq with a reasoning model for numeric comparison.
 """
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.deepseek import DeepSeek
 from agno.models.groq import Groq
+
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-5"),
-    reasoning_model=Groq(
-        id="openai/gpt-oss-120b",
-        temperature=0.6,
-        max_tokens=1024,
-        top_p=0.95,
-    ),
+    model=Groq(id="qwen/qwen3.6-27b"),
+    reasoning_model=DeepSeek(id="deepseek-reasoner"),
+    markdown=True,
 )
 
 # ---------------------------------------------------------------------------
