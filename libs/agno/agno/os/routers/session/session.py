@@ -10,6 +10,7 @@ from agno.db.utils import deserialize_session_by_type, resolve_session_type
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
     enforce_owner_on_entity,
+    get_scoped_user_id,
     resolve_db_and_scope,
 )
 from agno.os.schema import (
@@ -256,17 +257,44 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # runs/session_data, and on owner-guarded backends the failed upsert surfaces as a 500.
         # Mirror create_learning / schedules / service-accounts: reject with 409 and steer the
         # caller to PATCH; the stored session is never touched.
+        #
+        # The existence probe must not leak: session_id is a global primary key, so an
+        # unscoped check would let a scoped caller distinguish "another user's session
+        # exists" (409) from "free id" (201). Split the check by visibility:
+        #   - owner-scoped hit  -> the informative 409 the caller is entitled to.
+        #   - not in their scope but the id is taken globally -> a generic 409 that does
+        #     NOT confirm ownership. Same status either way, so no existence oracle, and
+        #     the global-integrity guard (no overwrite / 500) still holds.
+        # For admins / isolation-off, scoped_user_id is None and both checks collapse to
+        # the original unscoped behaviour.
         if create_session_request.session_id is not None:
-            if isinstance(db, AsyncBaseDb):
-                existing_session = await db.get_session(
-                    session_id=session_id, session_type=session_type, deserialize=False
-                )
-            else:
-                existing_session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
-            if existing_session is not None:
+            scoped_user_id = get_scoped_user_id(request)
+
+            async def _get(uid: Optional[str]):
+                if isinstance(db, AsyncBaseDb):
+                    return await db.get_session(
+                        session_id=session_id, session_type=session_type, user_id=uid, deserialize=False
+                    )
+                return db.get_session(session_id=session_id, session_type=session_type, user_id=uid, deserialize=False)
+
+            owned_session = await _get(scoped_user_id)
+            if owned_session is not None:
+                # The caller owns (or, as admin/unscoped, can see) the colliding session:
+                # safe to point them at PATCH, since this reveals nothing they can't read.
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Session with id '{session_id}' already exists. Use PATCH /sessions/{session_id} to update it.",
+                    detail=f"Session with id '{session_id}' already exists. "
+                    f"Use PATCH /sessions/{session_id} to update it.",
+                )
+            if scoped_user_id is not None and await _get(None) is not None:
+                # The id is taken by another owner. session_id is a global primary key, so
+                # the collision itself is unavoidable (as with any client-chosen unique id),
+                # but the response must not confirm that the session belongs to someone else
+                # or steer to a PATCH the caller can't perform. Refuse generically.
+                raise HTTPException(
+                    status_code=409,
+                    detail="Could not create a session with the supplied session_id. "
+                    "Omit session_id to have one generated, or choose a different one.",
                 )
 
         # Prepare session_data with session_state and session_name
