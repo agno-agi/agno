@@ -510,11 +510,17 @@ class MongoDb(BaseDb):
         current_max = agg_result[0]["max_idx"] if agg_result else None
         seed_value = (current_max + 1) if current_max is not None else 0
 
-        # Upsert counter with $setOnInsert to handle concurrent seeders
+        # Insert counter if it doesn't exist, then increment atomically
+        # Use find_one_and_update with upsert but only $set the seed value on insert
+        runs_collection.update_one(
+            {"_id": counter_id},
+            {"$setOnInsert": {"next_run_index": seed_value}},
+            upsert=True,
+        )
+        # Now atomically increment
         result = runs_collection.find_one_and_update(
             {"_id": counter_id},
-            {"$setOnInsert": {"next_run_index": seed_value}, "$inc": {"next_run_index": 1}},
-            upsert=True,
+            {"$inc": {"next_run_index": 1}},
             return_document=True,
         )
         return int(result["next_run_index"]) - 1

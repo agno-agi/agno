@@ -410,14 +410,25 @@ class RedisDb(BaseDb):
             log_error(f"Exception upserting run into Redis: {str(e)}")
             raise e
 
-    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+    def _get_session_runs_data(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get raw run_data dicts for a session, ordered by run_index.
+
+        When ``limit`` is set, only the most recent ``limit`` runs are fetched
+        using ZREVRANGE (indexed), then returned in ascending (chronological) order.
 
         run_index is injected into run_data so RunOutput carries its DB position.
         """
         index_key = self._runs_by_session_index_key(session_id)
         try:
-            run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
+            if limit is not None:
+                # Bounded: fetch last N from sorted set (descending), then reverse
+                run_ids: List[Any] = list(
+                    self.redis_client.zrevrange(index_key, 0, limit - 1)  # type: ignore[arg-type]
+                )
+                run_ids.reverse()
+            else:
+                # Full: fetch all in ascending order
+                run_ids = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
         except Exception:
             run_ids = []
 
@@ -728,11 +739,19 @@ class RedisDb(BaseDb):
                 return None
 
             # Attach runs from the runs keys, merged with any legacy `runs` blob
-            runs_data = self._get_session_runs_data(session_id)
-            session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
-
-            if runs_limit is not None:
-                session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]
+            legacy_runs = session.get("runs")
+            if runs_limit is not None and not legacy_runs:
+                # Fully migrated: push bounded read to Redis sorted set (indexed)
+                runs_data = self._get_session_runs_data(session_id, limit=runs_limit)
+                session["runs"] = runs_data
+            else:
+                # Full load or legacy blob present: load all, merge, filter
+                runs_data = self._get_session_runs_data(session_id)
+                merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                if runs_limit is not None:
+                    session["runs"] = filter_context_runs(merged)[-runs_limit:]
+                else:
+                    session["runs"] = merged
 
             if not deserialize:
                 return session
