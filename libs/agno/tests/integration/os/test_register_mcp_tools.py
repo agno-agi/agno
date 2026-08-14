@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.os import AgentOS
 from agno.team.team import Team
-from agno.tools.mcp import MCPTools, MultiMCPTools
+from agno.tools.mcp import MCPTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -159,27 +159,21 @@ def test_mcp_tools_are_not_registered_multiple_times():
 
 
 def test_subclasses_are_registered():
-    """Test that subclasses of MCPTools and MultiMCPTools also are registered."""
+    """Test that subclasses of MCPTools also are registered."""
 
     class MCPSubclass(MCPTools):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
 
-    class MultiMCPSubclass(MultiMCPTools):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-
     mcp_subclass_instance = MCPSubclass("npm fake-command")
-    multi_mcp_subclass_instance = MultiMCPSubclass(commands=["npm fake-command"])
 
-    # Assert the tools are registered in the Agent
-    agent = Agent(tools=[mcp_subclass_instance, multi_mcp_subclass_instance])
+    # Assert the tool is registered in the Agent
+    agent = Agent(tools=[mcp_subclass_instance])
     assert agent.tools is not None
-    assert len(agent.tools) == 2
+    assert len(agent.tools) == 1
 
-    # Assert the tools are registered in the AgentOS
+    # Assert the tool is registered in the AgentOS
     agent_os = AgentOS(agents=[agent])
     assert agent_os.mcp_tools is not None
-    assert len(agent_os.mcp_tools) == 2
+    assert len(agent_os.mcp_tools) == 1
     assert mcp_subclass_instance in agent_os.mcp_tools
-    assert multi_mcp_subclass_instance in agent_os.mcp_tools

@@ -255,9 +255,9 @@ async def aget_tools(
     # Add provided tools
     if resolved_tools is not None:
         for tool in resolved_tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                c.__name__ == "MCPTools" for c in type(tool).__mro__
             )
 
             if is_mcp_tool:

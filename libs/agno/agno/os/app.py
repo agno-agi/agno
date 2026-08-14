@@ -754,10 +754,10 @@ class AgentOS:
             # Track all MCP tools to later handle their connection
             if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
-                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    # Checking if the tool is an instance of MCPTools or a subclass of it
                     if hasattr(type(tool), "__mro__"):
                         mro_names = {cls.__name__ for cls in type(tool).__mro__}
-                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                        if "MCPTools" in mro_names:
                             if tool not in self.mcp_tools:
                                 self.mcp_tools.append(tool)
 

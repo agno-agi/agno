@@ -95,9 +95,9 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Add provided tools - only if tools is a static list
     if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                c.__name__ == "MCPTools" for c in type(tool).__mro__
             ):
                 if tool.refresh_connection:  # type: ignore
                     try:
@@ -181,9 +181,9 @@ def _determine_tools_for_model(
     # Add provided tools
     if resolved_tools is not None:
         for tool in resolved_tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                c.__name__ == "MCPTools" for c in type(tool).__mro__
             ):
                 # Only add the tool if it successfully connected and built its tools
                 if check_mcp_tools and not tool.initialized:  # type: ignore

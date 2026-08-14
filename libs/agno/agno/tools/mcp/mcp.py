@@ -103,7 +103,10 @@ class MCPTools(Toolkit):
                 transport = "streamable-http"
 
         if transport == "sse":
-            log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
+            log_warning(
+                "SSE as a standalone transport is deprecated and will be removed in a future release. "
+                "Please use Streamable HTTP instead."
+            )
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
         # because tools are not available until `initialize()` is called.

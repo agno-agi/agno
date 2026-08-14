@@ -661,7 +661,7 @@ def _field_names_of(agent: Any) -> List[str]:
 
 def _is_mcp_tool(tool: Any) -> bool:
     mro = getattr(type(tool), "__mro__", ())
-    return any(c.__name__ in ("MCPTools", "MultiMCPTools") for c in mro)
+    return any(c.__name__ == "MCPTools" for c in mro)
 
 
 def _resolved_tools_factory(tools: Any) -> Any:
