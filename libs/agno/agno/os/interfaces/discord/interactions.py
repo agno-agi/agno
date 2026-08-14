@@ -1,0 +1,168 @@
+import asyncio
+from contextlib import asynccontextmanager
+from os import getenv
+from typing import Any, AsyncIterator, Callable, List, Optional, Union
+
+from fastapi import FastAPI
+from fastapi.routing import APIRouter
+
+from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.base import BaseInterface
+from agno.os.interfaces.discord.constants import (
+    DISCORD_API,
+    CommandOptionType,
+    IntegrationType,
+    InteractionContextType,
+)
+from agno.os.interfaces.discord.interactions_router import attach_routes
+from agno.team import RemoteTeam, Team
+from agno.utils.http import get_default_sync_client
+from agno.utils.log import log_info, log_warning
+from agno.workflow import RemoteWorkflow, Workflow
+
+
+class DiscordInteractions(BaseInterface):
+    type = "discord"
+
+    # Requests are verified with Discord's Ed25519 signature, not AgentOS bearer auth
+    authenticates_own_requests = True
+
+    router: APIRouter
+
+    def __init__(
+        self,
+        agent: Optional[Union[Agent, RemoteAgent]] = None,
+        team: Optional[Union[Team, RemoteTeam]] = None,
+        workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+        prefix: str = "/discord",
+        tags: Optional[List[str]] = None,
+        public_key: Optional[str] = None,
+        application_id: Optional[str] = None,
+        bot_token: Optional[str] = None,
+        command_name: str = "ask",
+        command_description: str = "Ask the AI a question",
+        auto_register_command: bool = True,
+        reply_in_thread: bool = True,
+        user_install: bool = True,
+        ephemeral: bool = False,
+    ):
+        self.agent = agent
+        self.team = team
+        self.workflow = workflow
+        self.prefix = prefix
+        self.tags = tags or ["Discord"]
+        self.public_key = public_key or getenv("DISCORD_PUBLIC_KEY")
+        self.application_id = application_id or getenv("DISCORD_APP_ID")
+        self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
+        self.command_name = command_name
+        self.command_description = command_description
+        self.auto_register_command = auto_register_command
+        self.reply_in_thread = reply_in_thread
+        self.user_install = user_install
+        self.ephemeral = ephemeral
+
+        if not (self.agent or self.team or self.workflow):
+            raise ValueError("DiscordInteractions requires an agent, team, or workflow")
+        if not self.public_key:
+            raise ValueError("DISCORD_PUBLIC_KEY is not set. Set the env var or pass public_key.")
+        if not self.application_id:
+            raise ValueError("DISCORD_APP_ID is not set. Set the env var or pass application_id.")
+        needs_bot_token = self.auto_register_command or self.reply_in_thread
+        if needs_bot_token and not self.bot_token:
+            raise ValueError(
+                "DISCORD_BOT_TOKEN is required when auto_register_command=True or reply_in_thread=True. "
+                "Set the env var, pass bot_token, or disable both flags."
+            )
+
+    def _build_command_payload(self) -> List[dict]:
+        payload: List[dict] = [
+            {
+                "name": self.command_name,
+                "description": self.command_description,
+                "options": [
+                    {
+                        "name": "question",
+                        "description": "Your question",
+                        "type": CommandOptionType.STRING,
+                        "required": True,
+                    },
+                    {
+                        "name": "file",
+                        "description": "Attach an image, audio, video, or document",
+                        "type": CommandOptionType.ATTACHMENT,
+                        "required": False,
+                    },
+                    {
+                        "name": "ephemeral",
+                        "description": "Only you can see the reply",
+                        "type": CommandOptionType.BOOLEAN,
+                        "required": False,
+                    },
+                ],
+            },
+            {
+                "name": "new",
+                "description": "Start a fresh conversation in this channel",
+            },
+        ]
+        if self.user_install:
+            # Installable to servers and user accounts; usable in guilds,
+            # bot DMs, and private channels / group DMs
+            for command in payload:
+                command["integration_types"] = [IntegrationType.GUILD_INSTALL, IntegrationType.USER_INSTALL]
+                command["contexts"] = [
+                    InteractionContextType.GUILD,
+                    InteractionContextType.BOT_DM,
+                    InteractionContextType.PRIVATE_CHANNEL,
+                ]
+        return payload
+
+    def _register_commands(self) -> None:
+        # Bulk overwrite with PUT so /ask and /new stay in sync on every restart
+        url = f"{DISCORD_API}/applications/{self.application_id}/commands"
+        headers = {
+            "Authorization": f"Bot {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        payload = self._build_command_payload()
+        try:
+            resp = get_default_sync_client().put(url, headers=headers, json=payload)
+            if 200 <= resp.status_code < 300:
+                log_info(f"Registered Discord slash commands: /{self.command_name}, /new")
+            else:
+                log_warning(f"Discord command registration returned {resp.status_code}: {resp.text}")
+        except Exception as e:
+            log_warning(f"Discord command registration failed: {e}")
+
+    def get_lifespan(self) -> Optional[Callable[[FastAPI], Any]]:
+        """Register slash commands on app startup.
+
+        Registration lives in the lifespan (not get_router) so only the process
+        actually serving the app talks to Discord — building the app (uvicorn's
+        reloader parent, tests, imports) must not PUT to the commands endpoint,
+        and repeated PUTs get rate limited fast.
+        """
+        if not self.auto_register_command:
+            return None
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            await asyncio.to_thread(self._register_commands)
+            yield
+
+        return lifespan
+
+    def get_router(self) -> APIRouter:
+        self.router = attach_routes(
+            router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore[arg-type]
+            agent=self.agent,
+            team=self.team,
+            workflow=self.workflow,
+            public_key=self.public_key,
+            application_id=self.application_id,
+            bot_token=self.bot_token,
+            reply_in_thread=self.reply_in_thread,
+            command_name=self.command_name,
+            ephemeral=self.ephemeral,
+        )
+        return self.router
