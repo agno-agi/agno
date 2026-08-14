@@ -1,4 +1,5 @@
 import uuid
+import warnings
 from os import getenv
 from typing import Callable, List, Optional, Union
 
@@ -27,6 +28,11 @@ class GiphyTools(Toolkit):
             limit: Number of GIFs to return. Defaults to 1.
             search_gifs: Whether to enable GIF search functionality. Defaults to True.
         """
+        # Backwards compat for old param names
+        if "enable_search_gifs" in kwargs:
+            warnings.warn("enable_search_gifs is deprecated, use search_gifs", DeprecationWarning, stacklevel=2)
+            search_gifs = kwargs.pop("enable_search_gifs")
+
         self.api_key = api_key or getenv("GIPHY_API_KEY")
         if not self.api_key:
             log_error("No Giphy API key provided")

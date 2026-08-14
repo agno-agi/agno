@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from pathlib import Path
 from typing import Any, Callable, List, Optional
@@ -60,6 +61,49 @@ class TelegramTools(Toolkit):
         all: bool = False,
         **kwargs: Any,
     ):
+        # Backwards compat for old param names
+        if "enable_send_message" in kwargs:
+            warnings.warn("enable_send_message is deprecated, use send_message", DeprecationWarning, stacklevel=2)
+            send_message = kwargs.pop("enable_send_message")
+        if "enable_send_photo" in kwargs:
+            warnings.warn("enable_send_photo is deprecated, use send_photo", DeprecationWarning, stacklevel=2)
+            send_photo = kwargs.pop("enable_send_photo")
+        if "enable_send_document" in kwargs:
+            warnings.warn("enable_send_document is deprecated, use send_document", DeprecationWarning, stacklevel=2)
+            send_document = kwargs.pop("enable_send_document")
+        if "enable_send_video" in kwargs:
+            warnings.warn("enable_send_video is deprecated, use send_video", DeprecationWarning, stacklevel=2)
+            send_video = kwargs.pop("enable_send_video")
+        if "enable_send_audio" in kwargs:
+            warnings.warn("enable_send_audio is deprecated, use send_audio", DeprecationWarning, stacklevel=2)
+            send_audio = kwargs.pop("enable_send_audio")
+        if "enable_send_animation" in kwargs:
+            warnings.warn("enable_send_animation is deprecated, use send_animation", DeprecationWarning, stacklevel=2)
+            send_animation = kwargs.pop("enable_send_animation")
+        if "enable_send_sticker" in kwargs:
+            warnings.warn("enable_send_sticker is deprecated, use send_sticker", DeprecationWarning, stacklevel=2)
+            send_sticker = kwargs.pop("enable_send_sticker")
+        if "enable_edit_message" in kwargs:
+            warnings.warn("enable_edit_message is deprecated, use edit_message", DeprecationWarning, stacklevel=2)
+            edit_message = kwargs.pop("enable_edit_message")
+        if "enable_delete_message" in kwargs:
+            warnings.warn("enable_delete_message is deprecated, use delete_message", DeprecationWarning, stacklevel=2)
+            delete_message = kwargs.pop("enable_delete_message")
+        if "enable_react_with_emoji" in kwargs:
+            warnings.warn(
+                "enable_react_with_emoji is deprecated, use react_with_emoji", DeprecationWarning, stacklevel=2
+            )
+            react_with_emoji = kwargs.pop("enable_react_with_emoji")
+        if "enable_pin_message" in kwargs:
+            warnings.warn("enable_pin_message is deprecated, use pin_message", DeprecationWarning, stacklevel=2)
+            pin_message = kwargs.pop("enable_pin_message")
+        if "enable_get_chat" in kwargs:
+            warnings.warn("enable_get_chat is deprecated, use get_chat", DeprecationWarning, stacklevel=2)
+            get_chat = kwargs.pop("enable_get_chat")
+        if "enable_get_file" in kwargs:
+            warnings.warn("enable_get_file is deprecated, use get_file", DeprecationWarning, stacklevel=2)
+            get_file = kwargs.pop("enable_get_file")
+
         self.token = token or getenv("TELEGRAM_TOKEN")
         if not self.token:
             raise ValueError("TELEGRAM_TOKEN not set. Please set the TELEGRAM_TOKEN environment variable.")

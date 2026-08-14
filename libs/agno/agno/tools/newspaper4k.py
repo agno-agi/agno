@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -29,6 +30,11 @@ class Newspaper4kTools(Toolkit):
             read_article: Enable the read_article tool.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_read_article" in kwargs:
+            warnings.warn("enable_read_article is deprecated, use read_article", DeprecationWarning, stacklevel=2)
+            read_article = kwargs.pop("enable_read_article")
+
         self.include_summary: bool = include_summary
         self.article_length: Optional[int] = article_length
 

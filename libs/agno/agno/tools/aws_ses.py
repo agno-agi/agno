@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
@@ -20,6 +21,11 @@ class AWSSESTool(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_send_email" in kwargs:
+            warnings.warn("enable_send_email is deprecated, use send_email", DeprecationWarning, stacklevel=2)
+            send_email = kwargs.pop("enable_send_email")
+
         self.client = boto3.client("ses", region_name=region_name)
         self.sender_email = sender_email
         self.sender_name = sender_name

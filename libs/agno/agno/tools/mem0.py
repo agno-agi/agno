@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -42,6 +43,24 @@ class Mem0Tools(Toolkit):
             delete_all_memories: Enable the delete_all_memories tool. Disabled by default (destructive).
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_add_memory" in kwargs:
+            warnings.warn("enable_add_memory is deprecated, use add_memory", DeprecationWarning, stacklevel=2)
+            add_memory = kwargs.pop("enable_add_memory")
+        if "enable_search_memory" in kwargs:
+            warnings.warn("enable_search_memory is deprecated, use search_memory", DeprecationWarning, stacklevel=2)
+            search_memory = kwargs.pop("enable_search_memory")
+        if "enable_get_all_memories" in kwargs:
+            warnings.warn(
+                "enable_get_all_memories is deprecated, use get_all_memories", DeprecationWarning, stacklevel=2
+            )
+            get_all_memories = kwargs.pop("enable_get_all_memories")
+        if "enable_delete_all_memories" in kwargs:
+            warnings.warn(
+                "enable_delete_all_memories is deprecated, use delete_all_memories", DeprecationWarning, stacklevel=2
+            )
+            delete_all_memories = kwargs.pop("enable_delete_all_memories")
+
         tools: List[Callable] = []
         if all or add_memory:
             tools.append(self.mem0_add_memory)

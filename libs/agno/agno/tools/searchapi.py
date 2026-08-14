@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 
@@ -35,6 +36,20 @@ class SearchApiTools(Toolkit):
             search_youtube: Enable YouTube search.
             all: Enable all search engines.
         """
+        # Backwards compat for old param names
+        if "enable_search_google" in kwargs:
+            warnings.warn("enable_search_google is deprecated, use search_google", DeprecationWarning, stacklevel=2)
+            search_google = kwargs.pop("enable_search_google")
+        if "enable_search_news" in kwargs:
+            warnings.warn("enable_search_news is deprecated, use search_news", DeprecationWarning, stacklevel=2)
+            search_news = kwargs.pop("enable_search_news")
+        if "enable_search_images" in kwargs:
+            warnings.warn("enable_search_images is deprecated, use search_images", DeprecationWarning, stacklevel=2)
+            search_images = kwargs.pop("enable_search_images")
+        if "enable_search_youtube" in kwargs:
+            warnings.warn("enable_search_youtube is deprecated, use search_youtube", DeprecationWarning, stacklevel=2)
+            search_youtube = kwargs.pop("enable_search_youtube")
+
         self.api_key = api_key or getenv("SEARCHAPI_API_KEY")
         if not self.api_key:
             log_warning("No SearchAPI key provided. Set the SEARCHAPI_API_KEY environment variable.")

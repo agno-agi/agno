@@ -1,4 +1,5 @@
 import json
+import warnings
 import webbrowser
 from typing import Callable, List
 
@@ -13,6 +14,11 @@ class WebBrowserTools(Toolkit):
     """
 
     def __init__(self, open_page: bool = False, **kwargs):
+        # Backwards compat for old param names
+        if "enable_open_page" in kwargs:
+            warnings.warn("enable_open_page is deprecated, use open_page", DeprecationWarning, stacklevel=2)
+            open_page = kwargs.pop("enable_open_page")
+
         tools: List[Callable] = []
         if open_page:
             tools.append(self.open_page)

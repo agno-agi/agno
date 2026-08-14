@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -69,6 +70,42 @@ class WhatsAppTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_send_text_message" in kwargs:
+            warnings.warn(
+                "enable_send_text_message is deprecated, use send_text_message", DeprecationWarning, stacklevel=2
+            )
+            send_text_message = kwargs.pop("enable_send_text_message")
+        if "enable_send_template_message" in kwargs:
+            warnings.warn(
+                "enable_send_template_message is deprecated, use send_template_message",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            send_template_message = kwargs.pop("enable_send_template_message")
+        if "enable_send_reply_buttons" in kwargs:
+            warnings.warn(
+                "enable_send_reply_buttons is deprecated, use send_reply_buttons", DeprecationWarning, stacklevel=2
+            )
+            send_reply_buttons = kwargs.pop("enable_send_reply_buttons")
+        if "enable_send_list_message" in kwargs:
+            warnings.warn(
+                "enable_send_list_message is deprecated, use send_list_message", DeprecationWarning, stacklevel=2
+            )
+            send_list_message = kwargs.pop("enable_send_list_message")
+        if "enable_send_image" in kwargs:
+            warnings.warn("enable_send_image is deprecated, use send_image", DeprecationWarning, stacklevel=2)
+            send_image = kwargs.pop("enable_send_image")
+        if "enable_send_document" in kwargs:
+            warnings.warn("enable_send_document is deprecated, use send_document", DeprecationWarning, stacklevel=2)
+            send_document = kwargs.pop("enable_send_document")
+        if "enable_send_location" in kwargs:
+            warnings.warn("enable_send_location is deprecated, use send_location", DeprecationWarning, stacklevel=2)
+            send_location = kwargs.pop("enable_send_location")
+        if "enable_send_reaction" in kwargs:
+            warnings.warn("enable_send_reaction is deprecated, use send_reaction", DeprecationWarning, stacklevel=2)
+            send_reaction = kwargs.pop("enable_send_reaction")
+
         self.access_token = access_token or getenv("WHATSAPP_ACCESS_TOKEN")
         if not self.access_token:
             raise ValueError("WHATSAPP_ACCESS_TOKEN is not set. Set the environment variable or pass access_token.")

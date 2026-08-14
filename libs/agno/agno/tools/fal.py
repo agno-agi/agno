@@ -2,6 +2,7 @@
 pip install fal-client
 """
 
+import warnings
 from os import getenv
 from typing import Callable, List, Optional, Union
 from uuid import uuid4
@@ -29,6 +30,14 @@ class FalTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_generate_media" in kwargs:
+            warnings.warn("enable_generate_media is deprecated, use generate_media", DeprecationWarning, stacklevel=2)
+            generate_media = kwargs.pop("enable_generate_media")
+        if "enable_image_to_image" in kwargs:
+            warnings.warn("enable_image_to_image is deprecated, use image_to_image", DeprecationWarning, stacklevel=2)
+            image_to_image = kwargs.pop("enable_image_to_image")
+
         self.api_key = api_key or getenv("FAL_API_KEY")
         if not self.api_key:
             log_error("FAL_API_KEY not set. Please set the FAL_API_KEY environment variable.")

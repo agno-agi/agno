@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -51,6 +52,17 @@ class ValyuTools(Toolkit):
         tool_call_mode: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_academic_search" in kwargs:
+            warnings.warn("enable_academic_search is deprecated, use academic_search", DeprecationWarning, stacklevel=2)
+            academic_search = kwargs.pop("enable_academic_search")
+        if "enable_web_search" in kwargs:
+            warnings.warn("enable_web_search is deprecated, use web_search", DeprecationWarning, stacklevel=2)
+            web_search = kwargs.pop("enable_web_search")
+        if "enable_paper_search" in kwargs:
+            warnings.warn("enable_paper_search is deprecated, use paper_search", DeprecationWarning, stacklevel=2)
+            paper_search = kwargs.pop("enable_paper_search")
+
         self.api_key = api_key or getenv("VALYU_API_KEY")
         if not self.api_key:
             raise ValueError("VALYU_API_KEY not set. Please set the VALYU_API_KEY environment variable.")

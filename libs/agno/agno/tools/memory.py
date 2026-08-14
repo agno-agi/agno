@@ -1,4 +1,5 @@
 import json
+import warnings
 from textwrap import dedent
 from typing import Callable, List, Optional
 from uuid import uuid4
@@ -43,6 +44,26 @@ class MemoryTools(Toolkit):
             few_shot_examples: Custom few-shot examples.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_get_memories" in kwargs:
+            warnings.warn("enable_get_memories is deprecated, use get_memories", DeprecationWarning, stacklevel=2)
+            get_memories = kwargs.pop("enable_get_memories")
+        if "enable_add_memory" in kwargs:
+            warnings.warn("enable_add_memory is deprecated, use add_memory", DeprecationWarning, stacklevel=2)
+            add_memory = kwargs.pop("enable_add_memory")
+        if "enable_update_memory" in kwargs:
+            warnings.warn("enable_update_memory is deprecated, use update_memory", DeprecationWarning, stacklevel=2)
+            update_memory = kwargs.pop("enable_update_memory")
+        if "enable_delete_memory" in kwargs:
+            warnings.warn("enable_delete_memory is deprecated, use delete_memory", DeprecationWarning, stacklevel=2)
+            delete_memory = kwargs.pop("enable_delete_memory")
+        if "enable_analyze" in kwargs:
+            warnings.warn("enable_analyze is deprecated, use analyze", DeprecationWarning, stacklevel=2)
+            analyze = kwargs.pop("enable_analyze")
+        if "enable_think" in kwargs:
+            warnings.warn("enable_think is deprecated, use think", DeprecationWarning, stacklevel=2)
+            think = kwargs.pop("enable_think")
+
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
             if add_few_shot:

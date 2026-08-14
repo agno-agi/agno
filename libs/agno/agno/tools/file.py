@@ -1,5 +1,6 @@
 import json
 import os
+import warnings
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 from uuid import uuid4
@@ -122,6 +123,34 @@ class FileTools(Toolkit):
             exclude_patterns: Patterns to exclude from list/search operations.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_save_file" in kwargs:
+            warnings.warn("enable_save_file is deprecated, use save_file", DeprecationWarning, stacklevel=2)
+            save_file = kwargs.pop("enable_save_file")
+        if "enable_read_file" in kwargs:
+            warnings.warn("enable_read_file is deprecated, use read_file", DeprecationWarning, stacklevel=2)
+            read_file = kwargs.pop("enable_read_file")
+        if "enable_delete_file" in kwargs:
+            warnings.warn("enable_delete_file is deprecated, use delete_file", DeprecationWarning, stacklevel=2)
+            delete_file = kwargs.pop("enable_delete_file")
+        if "enable_list_files" in kwargs:
+            warnings.warn("enable_list_files is deprecated, use list_files", DeprecationWarning, stacklevel=2)
+            list_files = kwargs.pop("enable_list_files")
+        if "enable_search_files" in kwargs:
+            warnings.warn("enable_search_files is deprecated, use search_files", DeprecationWarning, stacklevel=2)
+            search_files = kwargs.pop("enable_search_files")
+        if "enable_read_file_chunk" in kwargs:
+            warnings.warn("enable_read_file_chunk is deprecated, use read_file_chunk", DeprecationWarning, stacklevel=2)
+            read_file_chunk = kwargs.pop("enable_read_file_chunk")
+        if "enable_replace_file_chunk" in kwargs:
+            warnings.warn(
+                "enable_replace_file_chunk is deprecated, use replace_file_chunk", DeprecationWarning, stacklevel=2
+            )
+            replace_file_chunk = kwargs.pop("enable_replace_file_chunk")
+        if "enable_search_content" in kwargs:
+            warnings.warn("enable_search_content is deprecated, use search_content", DeprecationWarning, stacklevel=2)
+            search_content = kwargs.pop("enable_search_content")
+
         self.base_dir: Path = Path(base_dir).resolve() if base_dir else Path.cwd().resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.restrict_to_base_dir = restrict_to_base_dir

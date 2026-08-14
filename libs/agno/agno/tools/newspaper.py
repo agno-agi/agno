@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, List
 
 from agno.tools import Toolkit
@@ -24,6 +25,13 @@ class NewspaperTools(Toolkit):
             all: Enable all tools regardless of individual flags.
             **kwargs: Additional arguments passed to the Toolkit base class.
         """
+        # Backwards compat for old param names
+        if "enable_get_article_text" in kwargs:
+            warnings.warn(
+                "enable_get_article_text is deprecated, use get_article_text", DeprecationWarning, stacklevel=2
+            )
+            get_article_text = kwargs.pop("enable_get_article_text")
+
         tools: List[Callable] = []
         if all or get_article_text:
             tools.append(self.get_article_text)

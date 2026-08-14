@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Any, Callable, List, Optional
 
 from agno.tools import Toolkit
@@ -43,6 +44,49 @@ class YFinanceTools(Toolkit):
         session: Optional[Any] = None,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_stock_price" in kwargs:
+            warnings.warn("enable_stock_price is deprecated, use stock_price", DeprecationWarning, stacklevel=2)
+            stock_price = kwargs.pop("enable_stock_price")
+        if "enable_company_info" in kwargs:
+            warnings.warn("enable_company_info is deprecated, use company_info", DeprecationWarning, stacklevel=2)
+            company_info = kwargs.pop("enable_company_info")
+        if "enable_stock_fundamentals" in kwargs:
+            warnings.warn(
+                "enable_stock_fundamentals is deprecated, use stock_fundamentals", DeprecationWarning, stacklevel=2
+            )
+            stock_fundamentals = kwargs.pop("enable_stock_fundamentals")
+        if "enable_income_statements" in kwargs:
+            warnings.warn(
+                "enable_income_statements is deprecated, use income_statements", DeprecationWarning, stacklevel=2
+            )
+            income_statements = kwargs.pop("enable_income_statements")
+        if "enable_key_financial_ratios" in kwargs:
+            warnings.warn(
+                "enable_key_financial_ratios is deprecated, use key_financial_ratios", DeprecationWarning, stacklevel=2
+            )
+            key_financial_ratios = kwargs.pop("enable_key_financial_ratios")
+        if "enable_analyst_recommendations" in kwargs:
+            warnings.warn(
+                "enable_analyst_recommendations is deprecated, use analyst_recommendations",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            analyst_recommendations = kwargs.pop("enable_analyst_recommendations")
+        if "enable_company_news" in kwargs:
+            warnings.warn("enable_company_news is deprecated, use company_news", DeprecationWarning, stacklevel=2)
+            company_news = kwargs.pop("enable_company_news")
+        if "enable_technical_indicators" in kwargs:
+            warnings.warn(
+                "enable_technical_indicators is deprecated, use technical_indicators", DeprecationWarning, stacklevel=2
+            )
+            technical_indicators = kwargs.pop("enable_technical_indicators")
+        if "enable_historical_prices" in kwargs:
+            warnings.warn(
+                "enable_historical_prices is deprecated, use historical_prices", DeprecationWarning, stacklevel=2
+            )
+            historical_prices = kwargs.pop("enable_historical_prices")
+
         self.session = session
 
         tools: List[Callable] = []

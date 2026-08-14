@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 from typing import Callable, List, Optional, Union
 
@@ -21,6 +22,14 @@ class AirflowTools(Toolkit):
 
         Quickstart: https://airflow.apache.org/docs/apache-airflow/stable/start.html
         """
+        # Backwards compat for old param names
+        if "enable_save_dag_file" in kwargs:
+            warnings.warn("enable_save_dag_file is deprecated, use save_dag_file", DeprecationWarning, stacklevel=2)
+            save_dag_file = kwargs.pop("enable_save_dag_file")
+        if "enable_read_dag_file" in kwargs:
+            warnings.warn("enable_read_dag_file is deprecated, use read_dag_file", DeprecationWarning, stacklevel=2)
+            read_dag_file = kwargs.pop("enable_read_dag_file")
+
         self.dags_dir = Path(dags_dir).resolve() if dags_dir is not None else Path.cwd().resolve()
 
         tools: List[Callable] = []

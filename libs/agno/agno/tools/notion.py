@@ -1,5 +1,6 @@
 import json
 import os
+import warnings
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from agno.tools import Toolkit
@@ -33,6 +34,17 @@ class NotionTools(Toolkit):
         all: bool = False,
         **kwargs: Any,
     ):
+        # Backwards compat for old param names
+        if "enable_create_page" in kwargs:
+            warnings.warn("enable_create_page is deprecated, use create_page", DeprecationWarning, stacklevel=2)
+            create_page = kwargs.pop("enable_create_page")
+        if "enable_update_page" in kwargs:
+            warnings.warn("enable_update_page is deprecated, use update_page", DeprecationWarning, stacklevel=2)
+            update_page = kwargs.pop("enable_update_page")
+        if "enable_search_pages" in kwargs:
+            warnings.warn("enable_search_pages is deprecated, use search_pages", DeprecationWarning, stacklevel=2)
+            search_pages = kwargs.pop("enable_search_pages")
+
         self.api_key = api_key or os.getenv("NOTION_API_KEY")
         self.database_id = database_id or os.getenv("NOTION_DATABASE_ID")
 

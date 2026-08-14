@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -39,6 +40,11 @@ class BaiduSearchTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_baidu_search" in kwargs:
+            warnings.warn("enable_baidu_search is deprecated, use baidu_search", DeprecationWarning, stacklevel=2)
+            baidu_search = kwargs.pop("enable_baidu_search")
+
         self.fixed_max_results = fixed_max_results
         self.fixed_language = fixed_language
         self.headers = headers

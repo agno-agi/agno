@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -35,6 +36,11 @@ class ResendTools(Toolkit):
             send_email: Enable the send_email tool. Disabled by default (write op).
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_send_email" in kwargs:
+            warnings.warn("enable_send_email is deprecated, use send_email", DeprecationWarning, stacklevel=2)
+            send_email = kwargs.pop("enable_send_email")
+
         self.from_email = from_email
         self.api_key = api_key or getenv("RESEND_API_KEY")
         if not self.api_key:

@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 from typing import Callable, List, Optional, Union
 
@@ -23,6 +24,13 @@ class ShellTools(Toolkit):
 
                 ShellTools(requires_confirmation_tools=["run_shell_command"])
         """
+        # Backwards compat for old param names
+        if "enable_run_shell_command" in kwargs:
+            warnings.warn(
+                "enable_run_shell_command is deprecated, use run_shell_command", DeprecationWarning, stacklevel=2
+            )
+            run_shell_command = kwargs.pop("enable_run_shell_command")
+
         self.base_dir: Optional[Path] = None
         if base_dir is not None:
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir

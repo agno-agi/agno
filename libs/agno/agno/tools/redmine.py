@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -52,6 +53,40 @@ class RedmineTools(Toolkit):
             list_versions: Enable the list_versions tool.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_get_issue" in kwargs:
+            warnings.warn("enable_get_issue is deprecated, use get_issue", DeprecationWarning, stacklevel=2)
+            get_issue = kwargs.pop("enable_get_issue")
+        if "enable_create_issue" in kwargs:
+            warnings.warn("enable_create_issue is deprecated, use create_issue", DeprecationWarning, stacklevel=2)
+            create_issue = kwargs.pop("enable_create_issue")
+        if "enable_update_issue" in kwargs:
+            warnings.warn("enable_update_issue is deprecated, use update_issue", DeprecationWarning, stacklevel=2)
+            update_issue = kwargs.pop("enable_update_issue")
+        if "enable_search_issues" in kwargs:
+            warnings.warn("enable_search_issues is deprecated, use search_issues", DeprecationWarning, stacklevel=2)
+            search_issues = kwargs.pop("enable_search_issues")
+        if "enable_add_comment" in kwargs:
+            warnings.warn("enable_add_comment is deprecated, use add_comment", DeprecationWarning, stacklevel=2)
+            add_comment = kwargs.pop("enable_add_comment")
+        if "enable_log_time" in kwargs:
+            warnings.warn("enable_log_time is deprecated, use log_time", DeprecationWarning, stacklevel=2)
+            log_time = kwargs.pop("enable_log_time")
+        if "enable_list_projects" in kwargs:
+            warnings.warn("enable_list_projects is deprecated, use list_projects", DeprecationWarning, stacklevel=2)
+            list_projects = kwargs.pop("enable_list_projects")
+        if "enable_list_users" in kwargs:
+            warnings.warn("enable_list_users is deprecated, use list_users", DeprecationWarning, stacklevel=2)
+            list_users = kwargs.pop("enable_list_users")
+        if "enable_list_project_members" in kwargs:
+            warnings.warn(
+                "enable_list_project_members is deprecated, use list_project_members", DeprecationWarning, stacklevel=2
+            )
+            list_project_members = kwargs.pop("enable_list_project_members")
+        if "enable_list_versions" in kwargs:
+            warnings.warn("enable_list_versions is deprecated, use list_versions", DeprecationWarning, stacklevel=2)
+            list_versions = kwargs.pop("enable_list_versions")
+
         self.server_url = server_url or getenv("REDMINE_SERVER_URL")
         self.username = username or getenv("REDMINE_USERNAME")
         self.password = password or getenv("REDMINE_PASSWORD")

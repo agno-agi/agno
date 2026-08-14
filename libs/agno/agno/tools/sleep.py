@@ -1,4 +1,5 @@
 import time
+import warnings
 from typing import Callable, List
 
 from agno.tools import Toolkit
@@ -18,6 +19,11 @@ class SleepTools(Toolkit):
             sleep: Enable the sleep tool. Defaults to True.
             all: Enable all tools. Defaults to False.
         """
+        # Backwards compat for old param names
+        if "enable_sleep" in kwargs:
+            warnings.warn("enable_sleep is deprecated, use sleep", DeprecationWarning, stacklevel=2)
+            sleep = kwargs.pop("enable_sleep")
+
         tools: List[Callable] = []
         if all or sleep:
             tools.append(self.sleep)

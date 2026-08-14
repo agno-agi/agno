@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
@@ -36,6 +37,21 @@ class YouTubeTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_get_video_captions" in kwargs:
+            warnings.warn(
+                "enable_get_video_captions is deprecated, use get_transcript", DeprecationWarning, stacklevel=2
+            )
+            get_transcript = kwargs.pop("enable_get_video_captions")
+        if "enable_get_video_data" in kwargs:
+            warnings.warn("enable_get_video_data is deprecated, use get_metadata", DeprecationWarning, stacklevel=2)
+            get_metadata = kwargs.pop("enable_get_video_data")
+        if "enable_get_video_timestamps" in kwargs:
+            warnings.warn(
+                "enable_get_video_timestamps is deprecated, use get_timestamps", DeprecationWarning, stacklevel=2
+            )
+            get_timestamps = kwargs.pop("enable_get_video_timestamps")
+
         self.languages: Optional[List[str]] = languages
 
         tools: List[Callable] = []

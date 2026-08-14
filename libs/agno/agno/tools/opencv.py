@@ -1,4 +1,5 @@
 import time
+import warnings
 from pathlib import Path
 from typing import Callable, List
 from uuid import uuid4
@@ -35,6 +36,14 @@ class OpenCVTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_capture_image" in kwargs:
+            warnings.warn("enable_capture_image is deprecated, use capture_image", DeprecationWarning, stacklevel=2)
+            capture_image = kwargs.pop("enable_capture_image")
+        if "enable_capture_video" in kwargs:
+            warnings.warn("enable_capture_video is deprecated, use capture_video", DeprecationWarning, stacklevel=2)
+            capture_video = kwargs.pop("enable_capture_video")
+
         self.show_preview = show_preview
 
         tools: List[Callable] = []

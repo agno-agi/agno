@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, List
 
 from agno.tools import Toolkit
@@ -18,6 +19,14 @@ class AWSLambdaTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_list_functions" in kwargs:
+            warnings.warn("enable_list_functions is deprecated, use list_functions", DeprecationWarning, stacklevel=2)
+            list_functions = kwargs.pop("enable_list_functions")
+        if "enable_invoke_function" in kwargs:
+            warnings.warn("enable_invoke_function is deprecated, use invoke_function", DeprecationWarning, stacklevel=2)
+            invoke_function = kwargs.pop("enable_invoke_function")
+
         self.client = boto3.client("lambda", region_name=region_name)
 
         tools: List[Callable] = []

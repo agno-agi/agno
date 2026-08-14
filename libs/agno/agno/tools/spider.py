@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -36,6 +37,17 @@ class SpiderTools(Toolkit):
             crawl: Enable web crawling. Defaults to False (token heavy).
             all: Enable all tools. Defaults to False.
         """
+        # Backwards compat for old param names
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+        if "enable_scrape" in kwargs:
+            warnings.warn("enable_scrape is deprecated, use scrape", DeprecationWarning, stacklevel=2)
+            scrape = kwargs.pop("enable_scrape")
+        if "enable_crawl" in kwargs:
+            warnings.warn("enable_crawl is deprecated, use crawl", DeprecationWarning, stacklevel=2)
+            crawl = kwargs.pop("enable_crawl")
+
         self.api_key = api_key or getenv("SPIDER_API_KEY")
         self.default_url = default_url
         self.max_results = max_results

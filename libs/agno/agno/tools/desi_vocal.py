@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
@@ -24,6 +25,14 @@ class DesiVocalTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_get_voices" in kwargs:
+            warnings.warn("enable_get_voices is deprecated, use get_voices", DeprecationWarning, stacklevel=2)
+            get_voices = kwargs.pop("enable_get_voices")
+        if "enable_text_to_speech" in kwargs:
+            warnings.warn("enable_text_to_speech is deprecated, use text_to_speech", DeprecationWarning, stacklevel=2)
+            text_to_speech = kwargs.pop("enable_text_to_speech")
+
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
         if not self.api_key:
             log_error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")

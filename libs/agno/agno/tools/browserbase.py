@@ -1,5 +1,6 @@
 import json
 import re
+import warnings
 from os import getenv
 from typing import Callable, Dict, List, Optional
 
@@ -44,6 +45,22 @@ class BrowserbaseTools(Toolkit):
             max_content_length (int, optional): Maximum character length for page content. Defaults to 100000.
                 Content exceeding this limit will be truncated with a notice. Set to None for no limit.
         """
+        # Backwards compat for old param names
+        if "enable_navigate_to" in kwargs:
+            warnings.warn("enable_navigate_to is deprecated, use navigate_to", DeprecationWarning, stacklevel=2)
+            navigate_to = kwargs.pop("enable_navigate_to")
+        if "enable_screenshot" in kwargs:
+            warnings.warn("enable_screenshot is deprecated, use screenshot", DeprecationWarning, stacklevel=2)
+            screenshot = kwargs.pop("enable_screenshot")
+        if "enable_get_page_content" in kwargs:
+            warnings.warn(
+                "enable_get_page_content is deprecated, use get_page_content", DeprecationWarning, stacklevel=2
+            )
+            get_page_content = kwargs.pop("enable_get_page_content")
+        if "enable_close_session" in kwargs:
+            warnings.warn("enable_close_session is deprecated, use close_session", DeprecationWarning, stacklevel=2)
+            close_session = kwargs.pop("enable_close_session")
+
         self.parse_html = parse_html
         self.max_content_length = max_content_length
 

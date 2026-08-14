@@ -1,5 +1,6 @@
 import asyncio
 import json
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
@@ -26,6 +27,11 @@ class Crawl4aiTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_crawl" in kwargs:
+            warnings.warn("enable_crawl is deprecated, use crawl", DeprecationWarning, stacklevel=2)
+            crawl = kwargs.pop("enable_crawl")
+
         tools: List[Callable] = []
         async_tools: List[tuple] = []
         if all or crawl:

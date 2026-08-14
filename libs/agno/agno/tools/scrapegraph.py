@@ -16,6 +16,7 @@ Tools:
 
 import json
 import time
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 
@@ -65,6 +66,23 @@ class ScrapeGraphTools(Toolkit):
             crawl_max_wait (int): Max seconds to wait for a crawl to complete. Defaults to 180. Raise this if your crawls legitimately take longer.
             all (bool): Enable all tools. Defaults to False.
         """
+        # Backwards compat for old param names
+        if "enable_smartscraper" in kwargs:
+            warnings.warn("enable_smartscraper is deprecated, use smartscraper", DeprecationWarning, stacklevel=2)
+            smartscraper = kwargs.pop("enable_smartscraper")
+        if "enable_markdownify" in kwargs:
+            warnings.warn("enable_markdownify is deprecated, use markdownify", DeprecationWarning, stacklevel=2)
+            markdownify = kwargs.pop("enable_markdownify")
+        if "enable_searchscraper" in kwargs:
+            warnings.warn("enable_searchscraper is deprecated, use searchscraper", DeprecationWarning, stacklevel=2)
+            searchscraper = kwargs.pop("enable_searchscraper")
+        if "enable_crawl" in kwargs:
+            warnings.warn("enable_crawl is deprecated, use crawl", DeprecationWarning, stacklevel=2)
+            crawl = kwargs.pop("enable_crawl")
+        if "enable_scrape" in kwargs:
+            warnings.warn("enable_scrape is deprecated, use scrape", DeprecationWarning, stacklevel=2)
+            scrape = kwargs.pop("enable_scrape")
+
         self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
         if not self.api_key:
             log_error("SGAI_API_KEY not set. Please set the SGAI_API_KEY environment variable.")

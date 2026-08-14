@@ -1,6 +1,7 @@
 """Discord integration tools for interacting with Discord channels and servers."""
 
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 
@@ -22,6 +23,27 @@ class DiscordTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_send_message" in kwargs:
+            warnings.warn("enable_send_message is deprecated, use send_message", DeprecationWarning, stacklevel=2)
+            send_message = kwargs.pop("enable_send_message")
+        if "enable_get_channel_messages" in kwargs:
+            warnings.warn(
+                "enable_get_channel_messages is deprecated, use get_channel_messages", DeprecationWarning, stacklevel=2
+            )
+            get_channel_messages = kwargs.pop("enable_get_channel_messages")
+        if "enable_get_channel_info" in kwargs:
+            warnings.warn(
+                "enable_get_channel_info is deprecated, use get_channel_info", DeprecationWarning, stacklevel=2
+            )
+            get_channel_info = kwargs.pop("enable_get_channel_info")
+        if "enable_list_channels" in kwargs:
+            warnings.warn("enable_list_channels is deprecated, use list_channels", DeprecationWarning, stacklevel=2)
+            list_channels = kwargs.pop("enable_list_channels")
+        if "enable_delete_message" in kwargs:
+            warnings.warn("enable_delete_message is deprecated, use delete_message", DeprecationWarning, stacklevel=2)
+            delete_message = kwargs.pop("enable_delete_message")
+
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
         if not self.bot_token:
             log_error("Discord bot token is required")

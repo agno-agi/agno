@@ -1,5 +1,6 @@
 import json
 import shlex
+import warnings
 from os import getenv
 from pathlib import Path
 from textwrap import dedent
@@ -133,6 +134,66 @@ class SuperserveTools(Toolkit):
             instructions: Override the default toolkit instructions.
             add_instructions: Whether to add the instructions to the agent's system message.
         """
+        # Backwards compat for old param names
+        if "enable_run_python_code" in kwargs:
+            warnings.warn("enable_run_python_code is deprecated, use run_python_code", DeprecationWarning, stacklevel=2)
+            run_python_code = kwargs.pop("enable_run_python_code")
+        if "enable_run_command" in kwargs:
+            warnings.warn("enable_run_command is deprecated, use run_command", DeprecationWarning, stacklevel=2)
+            run_command = kwargs.pop("enable_run_command")
+        if "enable_create_file" in kwargs:
+            warnings.warn("enable_create_file is deprecated, use create_file", DeprecationWarning, stacklevel=2)
+            create_file = kwargs.pop("enable_create_file")
+        if "enable_read_file" in kwargs:
+            warnings.warn("enable_read_file is deprecated, use read_file", DeprecationWarning, stacklevel=2)
+            read_file = kwargs.pop("enable_read_file")
+        if "enable_list_files" in kwargs:
+            warnings.warn("enable_list_files is deprecated, use list_files", DeprecationWarning, stacklevel=2)
+            list_files = kwargs.pop("enable_list_files")
+        if "enable_delete_file" in kwargs:
+            warnings.warn("enable_delete_file is deprecated, use delete_file", DeprecationWarning, stacklevel=2)
+            delete_file = kwargs.pop("enable_delete_file")
+        if "enable_download_directory" in kwargs:
+            warnings.warn(
+                "enable_download_directory is deprecated, use download_directory", DeprecationWarning, stacklevel=2
+            )
+            download_directory = kwargs.pop("enable_download_directory")
+        if "enable_get_sandbox_info" in kwargs:
+            warnings.warn(
+                "enable_get_sandbox_info is deprecated, use get_sandbox_info", DeprecationWarning, stacklevel=2
+            )
+            get_sandbox_info = kwargs.pop("enable_get_sandbox_info")
+        if "enable_list_sandboxes" in kwargs:
+            warnings.warn("enable_list_sandboxes is deprecated, use list_sandboxes", DeprecationWarning, stacklevel=2)
+            list_sandboxes = kwargs.pop("enable_list_sandboxes")
+        if "enable_shutdown_sandbox" in kwargs:
+            warnings.warn(
+                "enable_shutdown_sandbox is deprecated, use shutdown_sandbox", DeprecationWarning, stacklevel=2
+            )
+            shutdown_sandbox = kwargs.pop("enable_shutdown_sandbox")
+        if "enable_shutdown_sandbox_by_id" in kwargs:
+            warnings.warn(
+                "enable_shutdown_sandbox_by_id is deprecated, use shutdown_sandbox_by_id",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            shutdown_sandbox_by_id = kwargs.pop("enable_shutdown_sandbox_by_id")
+        if "enable_get_preview_url" in kwargs:
+            warnings.warn("enable_get_preview_url is deprecated, use get_preview_url", DeprecationWarning, stacklevel=2)
+            get_preview_url = kwargs.pop("enable_get_preview_url")
+        if "enable_pause_sandbox" in kwargs:
+            warnings.warn("enable_pause_sandbox is deprecated, use pause_sandbox", DeprecationWarning, stacklevel=2)
+            pause_sandbox = kwargs.pop("enable_pause_sandbox")
+        if "enable_resume_sandbox" in kwargs:
+            warnings.warn("enable_resume_sandbox is deprecated, use resume_sandbox", DeprecationWarning, stacklevel=2)
+            resume_sandbox = kwargs.pop("enable_resume_sandbox")
+        if "enable_attach_secret" in kwargs:
+            warnings.warn("enable_attach_secret is deprecated, use attach_secret", DeprecationWarning, stacklevel=2)
+            attach_secret = kwargs.pop("enable_attach_secret")
+        if "enable_detach_secret" in kwargs:
+            warnings.warn("enable_detach_secret is deprecated, use detach_secret", DeprecationWarning, stacklevel=2)
+            detach_secret = kwargs.pop("enable_detach_secret")
+
         self.api_key = api_key or getenv("SUPERSERVE_API_KEY")
         if not self.api_key:
             raise ValueError("SUPERSERVE_API_KEY not set. Please set the SUPERSERVE_API_KEY environment variable.")

@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, List, Optional
 
@@ -46,6 +47,17 @@ class GoogleBigQueryTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_list_tables" in kwargs:
+            warnings.warn("enable_list_tables is deprecated, use list_tables", DeprecationWarning, stacklevel=2)
+            list_tables = kwargs.pop("enable_list_tables")
+        if "enable_describe_table" in kwargs:
+            warnings.warn("enable_describe_table is deprecated, use describe_table", DeprecationWarning, stacklevel=2)
+            describe_table = kwargs.pop("enable_describe_table")
+        if "enable_run_sql_query" in kwargs:
+            warnings.warn("enable_run_sql_query is deprecated, use run_sql_query", DeprecationWarning, stacklevel=2)
+            run_sql_query = kwargs.pop("enable_run_sql_query")
+
         self.project = project or getenv("GOOGLE_CLOUD_PROJECT")
         self.location = location or getenv("GOOGLE_CLOUD_LOCATION")
 

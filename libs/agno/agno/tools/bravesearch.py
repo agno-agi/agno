@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -30,6 +31,11 @@ class BraveSearchTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_brave_search" in kwargs:
+            warnings.warn("enable_brave_search is deprecated, use brave_search", DeprecationWarning, stacklevel=2)
+            brave_search = kwargs.pop("enable_brave_search")
+
         self.api_key = api_key or getenv("BRAVE_API_KEY")
         if not self.api_key:
             raise ValueError("BRAVE_API_KEY is required. Please set the BRAVE_API_KEY environment variable.")

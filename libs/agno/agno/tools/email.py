@@ -1,5 +1,6 @@
 import json
 import smtplib
+import warnings
 from email.message import EmailMessage
 from typing import Callable, List, Optional
 
@@ -18,6 +19,11 @@ class EmailTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_email_user" in kwargs:
+            warnings.warn("enable_email_user is deprecated, use email_user", DeprecationWarning, stacklevel=2)
+            email_user = kwargs.pop("enable_email_user")
+
         self.receiver_email: Optional[str] = receiver_email
         self.sender_name: Optional[str] = sender_name
         self.sender_email: Optional[str] = sender_email

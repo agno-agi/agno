@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Literal, Optional
 
@@ -49,6 +50,17 @@ class SofyaTools(Toolkit):
             timeout: Request timeout in seconds. Defaults to 180.
             **kwargs: Additional arguments passed to Toolkit.
         """
+        # Backwards compat for old param names
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+        if "enable_extract" in kwargs:
+            warnings.warn("enable_extract is deprecated, use extract", DeprecationWarning, stacklevel=2)
+            extract = kwargs.pop("enable_extract")
+        if "enable_research" in kwargs:
+            warnings.warn("enable_research is deprecated, use research", DeprecationWarning, stacklevel=2)
+            research = kwargs.pop("enable_research")
+
         self.api_key: Optional[str] = api_key or getenv("SOFYA_API_KEY")
         if not self.api_key:
             log_error("SOFYA_API_KEY not provided")

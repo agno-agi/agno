@@ -1,5 +1,6 @@
 import json
 import re
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -48,6 +49,19 @@ class TwilioTools(Toolkit):
             list_messages: Enable list_messages tool. Default True.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_send_sms" in kwargs:
+            warnings.warn("enable_send_sms is deprecated, use send_sms", DeprecationWarning, stacklevel=2)
+            send_sms = kwargs.pop("enable_send_sms")
+        if "enable_get_call_details" in kwargs:
+            warnings.warn(
+                "enable_get_call_details is deprecated, use get_call_details", DeprecationWarning, stacklevel=2
+            )
+            get_call_details = kwargs.pop("enable_get_call_details")
+        if "enable_list_messages" in kwargs:
+            warnings.warn("enable_list_messages is deprecated, use list_messages", DeprecationWarning, stacklevel=2)
+            list_messages = kwargs.pop("enable_list_messages")
+
         # Get credentials from environment if not provided
         self.account_sid = account_sid or getenv("TWILIO_ACCOUNT_SID")
         self.auth_token = auth_token or getenv("TWILIO_AUTH_TOKEN")

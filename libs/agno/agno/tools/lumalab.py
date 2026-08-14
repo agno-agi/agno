@@ -1,5 +1,6 @@
 import time
 import uuid
+import warnings
 from os import getenv
 from typing import Callable, Dict, List, Literal, Optional, TypedDict, Union
 
@@ -53,6 +54,14 @@ class LumaLabTools(Toolkit):
             image_to_video: Enable the image_to_video tool.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_generate_video" in kwargs:
+            warnings.warn("enable_generate_video is deprecated, use generate_video", DeprecationWarning, stacklevel=2)
+            generate_video = kwargs.pop("enable_generate_video")
+        if "enable_image_to_video" in kwargs:
+            warnings.warn("enable_image_to_video is deprecated, use image_to_video", DeprecationWarning, stacklevel=2)
+            image_to_video = kwargs.pop("enable_image_to_video")
+
         self.model: Literal["ray-2", "ray-flash-2"] = model
         self.duration = duration
         self.resolution = resolution

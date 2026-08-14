@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, Dict, List, Optional
 
@@ -32,6 +33,14 @@ class JinaReaderTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_read_url" in kwargs:
+            warnings.warn("enable_read_url is deprecated, use read_url", DeprecationWarning, stacklevel=2)
+            read_url = kwargs.pop("enable_read_url")
+        if "enable_search_query" in kwargs:
+            warnings.warn("enable_search_query is deprecated, use search_query", DeprecationWarning, stacklevel=2)
+            search_query = kwargs.pop("enable_search_query")
+
         self.api_key = api_key or getenv("JINA_API_KEY")
         self.config: JinaReaderToolsConfig = JinaReaderToolsConfig(
             api_key=self.api_key,

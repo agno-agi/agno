@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 
@@ -55,6 +56,20 @@ class FirecrawlTools(Toolkit):
         api_url: Optional[str] = "https://api.firecrawl.dev",
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_scrape" in kwargs:
+            warnings.warn("enable_scrape is deprecated, use scrape", DeprecationWarning, stacklevel=2)
+            scrape = kwargs.pop("enable_scrape")
+        if "enable_crawl" in kwargs:
+            warnings.warn("enable_crawl is deprecated, use crawl", DeprecationWarning, stacklevel=2)
+            crawl = kwargs.pop("enable_crawl")
+        if "enable_mapping" in kwargs:
+            warnings.warn("enable_mapping is deprecated, use mapping", DeprecationWarning, stacklevel=2)
+            mapping = kwargs.pop("enable_mapping")
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+
         self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
         if not self.api_key:
             log_error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")

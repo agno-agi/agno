@@ -1,4 +1,5 @@
 import json
+import warnings
 from textwrap import dedent
 from typing import Callable, List, Optional
 
@@ -23,6 +24,17 @@ class KnowledgeTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_think" in kwargs:
+            warnings.warn("enable_think is deprecated, use think", DeprecationWarning, stacklevel=2)
+            think = kwargs.pop("enable_think")
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+        if "enable_analyze" in kwargs:
+            warnings.warn("enable_analyze is deprecated, use analyze", DeprecationWarning, stacklevel=2)
+            analyze = kwargs.pop("enable_analyze")
+
         if knowledge is None:
             raise ValueError("knowledge must be provided when using KnowledgeTools")
 

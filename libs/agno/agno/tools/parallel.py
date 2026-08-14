@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
@@ -74,6 +75,20 @@ class ParallelTools(Toolkit):
         default_output_schema: Optional[Union[Dict[str, Any], str]] = None,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+        if "enable_extract" in kwargs:
+            warnings.warn("enable_extract is deprecated, use extract", DeprecationWarning, stacklevel=2)
+            extract = kwargs.pop("enable_extract")
+        if "enable_task" in kwargs:
+            warnings.warn("enable_task is deprecated, use task", DeprecationWarning, stacklevel=2)
+            task = kwargs.pop("enable_task")
+        if "enable_monitor" in kwargs:
+            warnings.warn("enable_monitor is deprecated, use monitor", DeprecationWarning, stacklevel=2)
+            monitor = kwargs.pop("enable_monitor")
+
         self.api_key: Optional[str] = api_key or getenv("PARALLEL_API_KEY")
         if not self.api_key:
             log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")

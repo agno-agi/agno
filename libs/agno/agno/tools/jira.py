@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional, cast
 
@@ -26,6 +27,23 @@ class JiraTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_get_issue" in kwargs:
+            warnings.warn("enable_get_issue is deprecated, use get_issue", DeprecationWarning, stacklevel=2)
+            get_issue = kwargs.pop("enable_get_issue")
+        if "enable_create_issue" in kwargs:
+            warnings.warn("enable_create_issue is deprecated, use create_issue", DeprecationWarning, stacklevel=2)
+            create_issue = kwargs.pop("enable_create_issue")
+        if "enable_search_issues" in kwargs:
+            warnings.warn("enable_search_issues is deprecated, use search_issues", DeprecationWarning, stacklevel=2)
+            search_issues = kwargs.pop("enable_search_issues")
+        if "enable_add_comment" in kwargs:
+            warnings.warn("enable_add_comment is deprecated, use add_comment", DeprecationWarning, stacklevel=2)
+            add_comment = kwargs.pop("enable_add_comment")
+        if "enable_add_worklog" in kwargs:
+            warnings.warn("enable_add_worklog is deprecated, use add_worklog", DeprecationWarning, stacklevel=2)
+            add_worklog = kwargs.pop("enable_add_worklog")
+
         self.server_url = server_url or getenv("JIRA_SERVER_URL")
         self.username = username or getenv("JIRA_USERNAME")
         self.password = password or getenv("JIRA_PASSWORD")

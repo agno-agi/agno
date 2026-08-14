@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
@@ -28,6 +29,17 @@ class CartesiaTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_text_to_speech" in kwargs:
+            warnings.warn("enable_text_to_speech is deprecated, use text_to_speech", DeprecationWarning, stacklevel=2)
+            text_to_speech = kwargs.pop("enable_text_to_speech")
+        if "enable_list_voices" in kwargs:
+            warnings.warn("enable_list_voices is deprecated, use list_voices", DeprecationWarning, stacklevel=2)
+            list_voices = kwargs.pop("enable_list_voices")
+        if "enable_localize_voice" in kwargs:
+            warnings.warn("enable_localize_voice is deprecated, use localize_voice", DeprecationWarning, stacklevel=2)
+            localize_voice = kwargs.pop("enable_localize_voice")
+
         self.api_key = api_key or getenv("CARTESIA_API_KEY")
 
         if not self.api_key:

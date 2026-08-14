@@ -17,6 +17,7 @@ Authentication (pick one):
 
 import json
 import textwrap
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 
@@ -101,6 +102,35 @@ class SalesforceTools(Toolkit):
             instructions: Custom instructions for the agent.
             add_instructions: Whether to include default SOQL/SOSL instructions.
         """
+        # Backwards compat for old param names
+        if "enable_list_objects" in kwargs:
+            warnings.warn("enable_list_objects is deprecated, use list_objects", DeprecationWarning, stacklevel=2)
+            list_objects = kwargs.pop("enable_list_objects")
+        if "enable_describe_object" in kwargs:
+            warnings.warn("enable_describe_object is deprecated, use describe_object", DeprecationWarning, stacklevel=2)
+            describe_object = kwargs.pop("enable_describe_object")
+        if "enable_get_record" in kwargs:
+            warnings.warn("enable_get_record is deprecated, use get_record", DeprecationWarning, stacklevel=2)
+            get_record = kwargs.pop("enable_get_record")
+        if "enable_query" in kwargs:
+            warnings.warn("enable_query is deprecated, use query", DeprecationWarning, stacklevel=2)
+            query = kwargs.pop("enable_query")
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+        if "enable_create_record" in kwargs:
+            warnings.warn("enable_create_record is deprecated, use create_record", DeprecationWarning, stacklevel=2)
+            create_record = kwargs.pop("enable_create_record")
+        if "enable_update_record" in kwargs:
+            warnings.warn("enable_update_record is deprecated, use update_record", DeprecationWarning, stacklevel=2)
+            update_record = kwargs.pop("enable_update_record")
+        if "enable_delete_record" in kwargs:
+            warnings.warn("enable_delete_record is deprecated, use delete_record", DeprecationWarning, stacklevel=2)
+            delete_record = kwargs.pop("enable_delete_record")
+        if "enable_get_report" in kwargs:
+            warnings.warn("enable_get_report is deprecated, use get_report", DeprecationWarning, stacklevel=2)
+            get_report = kwargs.pop("enable_get_report")
+
         self.instructions = instructions or SALESFORCE_INSTRUCTIONS if add_instructions else None
         self.max_records = max_records
         self.max_fields = max_fields

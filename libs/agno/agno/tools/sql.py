@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -48,6 +49,17 @@ class SQLTools(Toolkit):
             run_sql_query: Enable running arbitrary SQL. Defaults to False (security).
             all: Enable all tools. Defaults to False.
         """
+        # Backwards compat for old param names
+        if "enable_list_tables" in kwargs:
+            warnings.warn("enable_list_tables is deprecated, use list_tables", DeprecationWarning, stacklevel=2)
+            list_tables = kwargs.pop("enable_list_tables")
+        if "enable_describe_table" in kwargs:
+            warnings.warn("enable_describe_table is deprecated, use describe_table", DeprecationWarning, stacklevel=2)
+            describe_table = kwargs.pop("enable_describe_table")
+        if "enable_run_sql_query" in kwargs:
+            warnings.warn("enable_run_sql_query is deprecated, use run_sql_query", DeprecationWarning, stacklevel=2)
+            run_sql_query = kwargs.pop("enable_run_sql_query")
+
         # Get the database engine
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:

@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, List
 
 import httpx
@@ -21,6 +22,11 @@ class WebTools(Toolkit):
         expand_url: bool = True,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_expand_url" in kwargs:
+            warnings.warn("enable_expand_url is deprecated, use expand_url", DeprecationWarning, stacklevel=2)
+            expand_url = kwargs.pop("enable_expand_url")
+
         self.retries = retries
 
         tools: List[Callable] = []

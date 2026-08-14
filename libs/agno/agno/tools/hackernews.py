@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, List
 
 import httpx
@@ -24,6 +25,16 @@ class HackerNewsTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_get_top_stories" in kwargs:
+            warnings.warn("enable_get_top_stories is deprecated, use get_top_stories", DeprecationWarning, stacklevel=2)
+            get_top_stories = kwargs.pop("enable_get_top_stories")
+        if "enable_get_user_details" in kwargs:
+            warnings.warn(
+                "enable_get_user_details is deprecated, use get_user_details", DeprecationWarning, stacklevel=2
+            )
+            get_user_details = kwargs.pop("enable_get_user_details")
+
         tools: List[Callable] = []
         if get_top_stories:
             tools.append(self.get_top_hackernews_stories)

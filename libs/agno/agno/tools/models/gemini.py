@@ -1,5 +1,6 @@
 import base64
 import time
+import warnings
 from os import getenv
 from typing import Any, Optional
 from uuid import uuid4
@@ -33,6 +34,14 @@ class GeminiTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_generate_image" in kwargs:
+            warnings.warn("enable_generate_image is deprecated, use generate_image", DeprecationWarning, stacklevel=2)
+            generate_image = kwargs.pop("enable_generate_image")
+        if "enable_generate_video" in kwargs:
+            warnings.warn("enable_generate_video is deprecated, use generate_video", DeprecationWarning, stacklevel=2)
+            generate_video = kwargs.pop("enable_generate_video")
+
         tools = []
         if all or generate_image:
             tools.append(self.gemini_generate_image)

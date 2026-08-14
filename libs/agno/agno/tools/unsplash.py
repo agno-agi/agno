@@ -7,6 +7,7 @@ Get your free API key at: https://unsplash.com/developers
 """
 
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode
@@ -64,6 +65,22 @@ class UnsplashTools(Toolkit):
             timeout: Per-request HTTP timeout in seconds. Default is 30.
             **kwargs: Additional arguments passed to the Toolkit base class.
         """
+        # Backwards compat for old param names
+        if "enable_search_photos" in kwargs:
+            warnings.warn("enable_search_photos is deprecated, use search_photos", DeprecationWarning, stacklevel=2)
+            search_photos = kwargs.pop("enable_search_photos")
+        if "enable_get_photo" in kwargs:
+            warnings.warn("enable_get_photo is deprecated, use get_photo", DeprecationWarning, stacklevel=2)
+            get_photo = kwargs.pop("enable_get_photo")
+        if "enable_get_random_photo" in kwargs:
+            warnings.warn(
+                "enable_get_random_photo is deprecated, use get_random_photo", DeprecationWarning, stacklevel=2
+            )
+            get_random_photo = kwargs.pop("enable_get_random_photo")
+        if "enable_download_photo" in kwargs:
+            warnings.warn("enable_download_photo is deprecated, use download_photo", DeprecationWarning, stacklevel=2)
+            download_photo = kwargs.pop("enable_download_photo")
+
         self.access_key = access_key or getenv("UNSPLASH_ACCESS_KEY")
         if not self.access_key:
             logger.warning("No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable.")

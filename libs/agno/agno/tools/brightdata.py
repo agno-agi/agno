@@ -1,5 +1,6 @@
 import base64
 import json
+import warnings
 from os import getenv
 from typing import Callable, Dict, List, Optional
 from uuid import uuid4
@@ -47,6 +48,20 @@ class BrightDataTools(Toolkit):
         timeout: int = 600,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_scrape_markdown" in kwargs:
+            warnings.warn("enable_scrape_markdown is deprecated, use scrape_markdown", DeprecationWarning, stacklevel=2)
+            scrape_markdown = kwargs.pop("enable_scrape_markdown")
+        if "enable_screenshot" in kwargs:
+            warnings.warn("enable_screenshot is deprecated, use screenshot", DeprecationWarning, stacklevel=2)
+            screenshot = kwargs.pop("enable_screenshot")
+        if "enable_search_engine" in kwargs:
+            warnings.warn("enable_search_engine is deprecated, use search_engine", DeprecationWarning, stacklevel=2)
+            search_engine = kwargs.pop("enable_search_engine")
+        if "enable_web_data_feed" in kwargs:
+            warnings.warn("enable_web_data_feed is deprecated, use web_data_feed", DeprecationWarning, stacklevel=2)
+            web_data_feed = kwargs.pop("enable_web_data_feed")
+
         self.api_key = api_key or getenv("BRIGHT_DATA_API_KEY")
         if not self.api_key:
             log_error("No Bright Data API key provided")

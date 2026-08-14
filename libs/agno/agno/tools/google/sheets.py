@@ -45,6 +45,7 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import json
+import warnings
 from typing import Any, Callable, List, Optional, Union
 
 from agno.tools.google.auth import google_authenticate
@@ -90,6 +91,24 @@ class GoogleSheetsTools(GoogleToolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_read_sheet" in kwargs:
+            warnings.warn("enable_read_sheet is deprecated, use read_sheet", DeprecationWarning, stacklevel=2)
+            read_sheet = kwargs.pop("enable_read_sheet")
+        if "enable_create_sheet" in kwargs:
+            warnings.warn("enable_create_sheet is deprecated, use create_sheet", DeprecationWarning, stacklevel=2)
+            create_sheet = kwargs.pop("enable_create_sheet")
+        if "enable_update_sheet" in kwargs:
+            warnings.warn("enable_update_sheet is deprecated, use update_sheet", DeprecationWarning, stacklevel=2)
+            update_sheet = kwargs.pop("enable_update_sheet")
+        if "enable_create_duplicate_sheet" in kwargs:
+            warnings.warn(
+                "enable_create_duplicate_sheet is deprecated, use create_duplicate_sheet",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            create_duplicate_sheet = kwargs.pop("enable_create_duplicate_sheet")
+
         """Initialize GoogleSheetsTools with the specified configuration.
 
         Args:

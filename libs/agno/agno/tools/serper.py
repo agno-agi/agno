@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 
@@ -35,6 +36,20 @@ class SerperTools(Toolkit):
             date_range Optional[str]: Default date range filter for searches.
             timeout Optional[int]: Per-request HTTP timeout in seconds. Default is 30.
         """
+        # Backwards compat for old param names
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+        if "enable_search_news" in kwargs:
+            warnings.warn("enable_search_news is deprecated, use search_news", DeprecationWarning, stacklevel=2)
+            search_news = kwargs.pop("enable_search_news")
+        if "enable_search_scholar" in kwargs:
+            warnings.warn("enable_search_scholar is deprecated, use search_scholar", DeprecationWarning, stacklevel=2)
+            search_scholar = kwargs.pop("enable_search_scholar")
+        if "enable_scrape_webpage" in kwargs:
+            warnings.warn("enable_scrape_webpage is deprecated, use scrape_webpage", DeprecationWarning, stacklevel=2)
+            scrape_webpage = kwargs.pop("enable_scrape_webpage")
+
         self.api_key = api_key or getenv("SERPER_API_KEY")
         if not self.api_key:
             log_debug("No Serper API key provided")

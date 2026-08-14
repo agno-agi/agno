@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -20,6 +21,14 @@ class SerpApiTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_search_google" in kwargs:
+            warnings.warn("enable_search_google is deprecated, use search_google", DeprecationWarning, stacklevel=2)
+            search_google = kwargs.pop("enable_search_google")
+        if "enable_search_youtube" in kwargs:
+            warnings.warn("enable_search_youtube is deprecated, use search_youtube", DeprecationWarning, stacklevel=2)
+            search_youtube = kwargs.pop("enable_search_youtube")
+
         self.api_key = api_key or getenv("SERP_API_KEY")
         if not self.api_key:
             logger.warning("No Serpapi API key provided")

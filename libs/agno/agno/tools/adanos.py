@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Literal, Optional, Union
 from urllib.parse import quote
@@ -47,6 +48,24 @@ class AdanosTools(Toolkit):
             market_sentiment: Register the aggregate market sentiment tool.
             all: Register all tools regardless of individual flags.
         """
+        # Backwards compat for old param names
+        if "enable_stock_sentiment" in kwargs:
+            warnings.warn("enable_stock_sentiment is deprecated, use stock_sentiment", DeprecationWarning, stacklevel=2)
+            stock_sentiment = kwargs.pop("enable_stock_sentiment")
+        if "enable_crypto_sentiment" in kwargs:
+            warnings.warn(
+                "enable_crypto_sentiment is deprecated, use crypto_sentiment", DeprecationWarning, stacklevel=2
+            )
+            crypto_sentiment = kwargs.pop("enable_crypto_sentiment")
+        if "enable_trending" in kwargs:
+            warnings.warn("enable_trending is deprecated, use trending", DeprecationWarning, stacklevel=2)
+            trending = kwargs.pop("enable_trending")
+        if "enable_market_sentiment" in kwargs:
+            warnings.warn(
+                "enable_market_sentiment is deprecated, use market_sentiment", DeprecationWarning, stacklevel=2
+            )
+            market_sentiment = kwargs.pop("enable_market_sentiment")
+
         self.api_key = api_key or getenv("ADANOS_API_KEY")
         self.base_url = base_url.rstrip("/")
         self.timeout = httpx.Timeout(timeout)

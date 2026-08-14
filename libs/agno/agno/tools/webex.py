@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -30,6 +31,14 @@ class WebexTools(Toolkit):
         list_rooms: bool = True,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_send_message" in kwargs:
+            warnings.warn("enable_send_message is deprecated, use send_message", DeprecationWarning, stacklevel=2)
+            send_message = kwargs.pop("enable_send_message")
+        if "enable_list_rooms" in kwargs:
+            warnings.warn("enable_list_rooms is deprecated, use list_rooms", DeprecationWarning, stacklevel=2)
+            list_rooms = kwargs.pop("enable_list_rooms")
+
         access_token = access_token or getenv("WEBEX_ACCESS_TOKEN")
         if access_token is None:
             raise ValueError("Webex access token is not set. Please set the WEBEX_ACCESS_TOKEN environment variable.")

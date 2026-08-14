@@ -1,4 +1,5 @@
 import json
+import warnings
 from datetime import datetime
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
@@ -36,6 +37,30 @@ class CalComTools(Toolkit):
             user_timezone: User's timezone in IANA format (e.g., 'Asia/Kolkata')
             timeout: Per-request HTTP timeout in seconds. Defaults to 30.
         """
+        # Backwards compat for old param names
+        if "enable_get_available_slots" in kwargs:
+            warnings.warn(
+                "enable_get_available_slots is deprecated, use get_available_slots", DeprecationWarning, stacklevel=2
+            )
+            get_available_slots = kwargs.pop("enable_get_available_slots")
+        if "enable_create_booking" in kwargs:
+            warnings.warn("enable_create_booking is deprecated, use create_booking", DeprecationWarning, stacklevel=2)
+            create_booking = kwargs.pop("enable_create_booking")
+        if "enable_get_upcoming_bookings" in kwargs:
+            warnings.warn(
+                "enable_get_upcoming_bookings is deprecated, use get_upcoming_bookings",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            get_upcoming_bookings = kwargs.pop("enable_get_upcoming_bookings")
+        if "enable_reschedule_booking" in kwargs:
+            warnings.warn(
+                "enable_reschedule_booking is deprecated, use reschedule_booking", DeprecationWarning, stacklevel=2
+            )
+            reschedule_booking = kwargs.pop("enable_reschedule_booking")
+        if "enable_cancel_booking" in kwargs:
+            warnings.warn("enable_cancel_booking is deprecated, use cancel_booking", DeprecationWarning, stacklevel=2)
+            cancel_booking = kwargs.pop("enable_cancel_booking")
 
         # Get credentials from environment if not provided
         self.api_key = api_key or getenv("CALCOM_API_KEY")

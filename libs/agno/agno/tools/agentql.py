@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -21,6 +22,18 @@ class AgentQLTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_scrape_website" in kwargs:
+            warnings.warn("enable_scrape_website is deprecated, use scrape_website", DeprecationWarning, stacklevel=2)
+            scrape_website = kwargs.pop("enable_scrape_website")
+        if "enable_custom_scrape_website" in kwargs:
+            warnings.warn(
+                "enable_custom_scrape_website is deprecated, use custom_scrape_website",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            custom_scrape_website = kwargs.pop("enable_custom_scrape_website")
+
         self.api_key = api_key or getenv("AGENTQL_API_KEY")
         if not self.api_key:
             raise ValueError("AGENTQL_API_KEY not set. Please set the AGENTQL_API_KEY environment variable.")

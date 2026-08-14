@@ -3,6 +3,7 @@ Brandfetch API toolkit for retrieving brand data and searching brands.
 """
 
 import json
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -45,6 +46,16 @@ class BrandfetchTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_search_by_identifier" in kwargs:
+            warnings.warn(
+                "enable_search_by_identifier is deprecated, use search_by_identifier", DeprecationWarning, stacklevel=2
+            )
+            search_by_identifier = kwargs.pop("enable_search_by_identifier")
+        if "enable_search_by_brand" in kwargs:
+            warnings.warn("enable_search_by_brand is deprecated, use search_by_brand", DeprecationWarning, stacklevel=2)
+            search_by_brand = kwargs.pop("enable_search_by_brand")
+
         self.api_key = api_key or getenv("BRANDFETCH_API_KEY")
         self.client_id = client_id or getenv("BRANDFETCH_CLIENT_ID")
         self.base_url = base_url

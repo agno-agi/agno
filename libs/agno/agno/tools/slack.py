@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import warnings
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
@@ -191,6 +192,52 @@ class SlackTools(Toolkit):
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
             thread_message_limit (int): Maximum number of messages to fetch in get_thread. Defaults to 20.
         """
+        # Backwards compat for old param names
+        if "enable_send_message" in kwargs:
+            warnings.warn("enable_send_message is deprecated, use send_message", DeprecationWarning, stacklevel=2)
+            send_message = kwargs.pop("enable_send_message")
+        if "enable_send_message_thread" in kwargs:
+            warnings.warn(
+                "enable_send_message_thread is deprecated, use send_message_thread", DeprecationWarning, stacklevel=2
+            )
+            send_message_thread = kwargs.pop("enable_send_message_thread")
+        if "enable_list_channels" in kwargs:
+            warnings.warn("enable_list_channels is deprecated, use list_channels", DeprecationWarning, stacklevel=2)
+            list_channels = kwargs.pop("enable_list_channels")
+        if "enable_get_channel_history" in kwargs:
+            warnings.warn(
+                "enable_get_channel_history is deprecated, use get_channel_history", DeprecationWarning, stacklevel=2
+            )
+            get_channel_history = kwargs.pop("enable_get_channel_history")
+        if "enable_upload_file" in kwargs:
+            warnings.warn("enable_upload_file is deprecated, use upload_file", DeprecationWarning, stacklevel=2)
+            upload_file = kwargs.pop("enable_upload_file")
+        if "enable_download_file" in kwargs:
+            warnings.warn("enable_download_file is deprecated, use download_file", DeprecationWarning, stacklevel=2)
+            download_file = kwargs.pop("enable_download_file")
+        if "enable_search_messages" in kwargs:
+            warnings.warn("enable_search_messages is deprecated, use search_messages", DeprecationWarning, stacklevel=2)
+            search_messages = kwargs.pop("enable_search_messages")
+        if "enable_search_workspace" in kwargs:
+            warnings.warn(
+                "enable_search_workspace is deprecated, use search_workspace", DeprecationWarning, stacklevel=2
+            )
+            search_workspace = kwargs.pop("enable_search_workspace")
+        if "enable_get_thread" in kwargs:
+            warnings.warn("enable_get_thread is deprecated, use get_thread", DeprecationWarning, stacklevel=2)
+            get_thread = kwargs.pop("enable_get_thread")
+        if "enable_list_users" in kwargs:
+            warnings.warn("enable_list_users is deprecated, use list_users", DeprecationWarning, stacklevel=2)
+            list_users = kwargs.pop("enable_list_users")
+        if "enable_get_user_info" in kwargs:
+            warnings.warn("enable_get_user_info is deprecated, use get_user_info", DeprecationWarning, stacklevel=2)
+            get_user_info = kwargs.pop("enable_get_user_info")
+        if "enable_get_channel_info" in kwargs:
+            warnings.warn(
+                "enable_get_channel_info is deprecated, use get_channel_info", DeprecationWarning, stacklevel=2
+            )
+            get_channel_info = kwargs.pop("enable_get_channel_info")
+
         _token = token or getenv("SLACK_TOKEN")
         if not _token:
             raise ValueError("SLACK_TOKEN is not set")

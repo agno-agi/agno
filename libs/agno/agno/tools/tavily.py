@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Literal, Optional
 
@@ -72,6 +73,17 @@ class TavilyTools(Toolkit):
             chunks_per_source: Number of content chunks per source (1-3).
             search_params: Additional parameters merged into every search request.
         """
+        # Backwards compat for old param names
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+        if "enable_search_context" in kwargs:
+            warnings.warn("enable_search_context is deprecated, use search_context", DeprecationWarning, stacklevel=2)
+            search_context = kwargs.pop("enable_search_context")
+        if "enable_extract" in kwargs:
+            warnings.warn("enable_extract is deprecated, use extract", DeprecationWarning, stacklevel=2)
+            extract = kwargs.pop("enable_extract")
+
         self.api_key = api_key or getenv("TAVILY_API_KEY")
         if not self.api_key:
             log_error("TAVILY_API_KEY not provided")

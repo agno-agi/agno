@@ -1,3 +1,4 @@
+import warnings
 from os import getenv
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -31,6 +32,19 @@ class GroqTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_transcribe_audio" in kwargs:
+            warnings.warn(
+                "enable_transcribe_audio is deprecated, use transcribe_audio", DeprecationWarning, stacklevel=2
+            )
+            transcribe_audio = kwargs.pop("enable_transcribe_audio")
+        if "enable_translate_audio" in kwargs:
+            warnings.warn("enable_translate_audio is deprecated, use translate_audio", DeprecationWarning, stacklevel=2)
+            translate_audio = kwargs.pop("enable_translate_audio")
+        if "enable_generate_speech" in kwargs:
+            warnings.warn("enable_generate_speech is deprecated, use generate_speech", DeprecationWarning, stacklevel=2)
+            generate_speech = kwargs.pop("enable_generate_speech")
+
         tools: List[Callable] = []
         if all or transcribe_audio:
             tools.append(self.groq_transcribe_audio)

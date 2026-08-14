@@ -1,3 +1,4 @@
+import warnings
 from textwrap import dedent
 from typing import Callable, List, Optional
 
@@ -19,6 +20,13 @@ class ReasoningTools(Toolkit):
         **kwargs,
     ):
         """A toolkit that provides step-by-step reasoning tools: Think and Analyze."""
+        # Backwards compat for old param names
+        if "enable_think" in kwargs:
+            warnings.warn("enable_think is deprecated, use think", DeprecationWarning, stacklevel=2)
+            think = kwargs.pop("enable_think")
+        if "enable_analyze" in kwargs:
+            warnings.warn("enable_analyze is deprecated, use analyze", DeprecationWarning, stacklevel=2)
+            analyze = kwargs.pop("enable_analyze")
 
         # Add instructions for using this toolkit
         if instructions is None:

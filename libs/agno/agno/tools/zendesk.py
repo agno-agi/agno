@@ -1,5 +1,6 @@
 import json
 import re
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 from urllib.parse import quote_plus
@@ -33,6 +34,11 @@ class ZendeskTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_search_zendesk" in kwargs:
+            warnings.warn("enable_search_zendesk is deprecated, use search_zendesk", DeprecationWarning, stacklevel=2)
+            search_zendesk = kwargs.pop("enable_search_zendesk")
+
         self.username = username or getenv("ZENDESK_USERNAME")
         self.password = password or getenv("ZENDESK_PASSWORD")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")

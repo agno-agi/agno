@@ -300,7 +300,9 @@ class DuckDbTools(Toolkit):
         log_debug(f"Created table {table} from {path}")
         return table
 
-    def export_duckdb_table_to_path(self, table: str, format: Optional[str] = "PARQUET", path: Optional[str] = None) -> str:
+    def export_duckdb_table_to_path(
+        self, table: str, format: Optional[str] = "PARQUET", path: Optional[str] = None
+    ) -> str:
         """Save a table in a desired format (default: parquet)
         If the path is provided, the table will be saved under that path.
             Eg: If path is /tmp, the table will be saved as /tmp/table.parquet

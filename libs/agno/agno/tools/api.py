@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
@@ -25,6 +26,11 @@ class CustomApiTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_make_request" in kwargs:
+            warnings.warn("enable_make_request is deprecated, use make_request", DeprecationWarning, stacklevel=2)
+            make_request = kwargs.pop("enable_make_request")
+
         self.base_url = base_url
         self.username = username
         self.password = password

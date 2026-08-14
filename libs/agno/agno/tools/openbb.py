@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, List, Literal, Optional
 
@@ -41,6 +42,33 @@ class OpenBBTools(Toolkit):
             get_price_targets: Enable price targets tool.
             all: Enable all tools regardless of individual flags.
         """
+        # Backwards compat for old param names
+        if "enable_get_stock_price" in kwargs:
+            warnings.warn("enable_get_stock_price is deprecated, use get_stock_price", DeprecationWarning, stacklevel=2)
+            get_stock_price = kwargs.pop("enable_get_stock_price")
+        if "enable_search_company_symbol" in kwargs:
+            warnings.warn(
+                "enable_search_company_symbol is deprecated, use search_company_symbol",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            search_company_symbol = kwargs.pop("enable_search_company_symbol")
+        if "enable_get_company_news" in kwargs:
+            warnings.warn(
+                "enable_get_company_news is deprecated, use get_company_news", DeprecationWarning, stacklevel=2
+            )
+            get_company_news = kwargs.pop("enable_get_company_news")
+        if "enable_get_company_profile" in kwargs:
+            warnings.warn(
+                "enable_get_company_profile is deprecated, use get_company_profile", DeprecationWarning, stacklevel=2
+            )
+            get_company_profile = kwargs.pop("enable_get_company_profile")
+        if "enable_get_price_targets" in kwargs:
+            warnings.warn(
+                "enable_get_price_targets is deprecated, use get_price_targets", DeprecationWarning, stacklevel=2
+            )
+            get_price_targets = kwargs.pop("enable_get_price_targets")
+
         self.obb = obb or openbb_app
 
         try:

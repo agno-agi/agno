@@ -1,5 +1,6 @@
 import json
 import re
+import warnings
 from os import getenv
 from typing import Callable, List, Optional
 
@@ -45,6 +46,28 @@ class PlivoTools(Toolkit):
             lookup_number: Register the lookup_number tool
             all: Register all tools regardless of the individual flags
         """
+        # Backwards compat for old param names
+        if "enable_send_sms" in kwargs:
+            warnings.warn("enable_send_sms is deprecated, use send_sms", DeprecationWarning, stacklevel=2)
+            send_sms = kwargs.pop("enable_send_sms")
+        if "enable_make_call" in kwargs:
+            warnings.warn("enable_make_call is deprecated, use make_call", DeprecationWarning, stacklevel=2)
+            make_call = kwargs.pop("enable_make_call")
+        if "enable_get_call_details" in kwargs:
+            warnings.warn(
+                "enable_get_call_details is deprecated, use get_call_details", DeprecationWarning, stacklevel=2
+            )
+            get_call_details = kwargs.pop("enable_get_call_details")
+        if "enable_list_messages" in kwargs:
+            warnings.warn("enable_list_messages is deprecated, use list_messages", DeprecationWarning, stacklevel=2)
+            list_messages = kwargs.pop("enable_list_messages")
+        if "enable_list_calls" in kwargs:
+            warnings.warn("enable_list_calls is deprecated, use list_calls", DeprecationWarning, stacklevel=2)
+            list_calls = kwargs.pop("enable_list_calls")
+        if "enable_lookup_number" in kwargs:
+            warnings.warn("enable_lookup_number is deprecated, use lookup_number", DeprecationWarning, stacklevel=2)
+            lookup_number = kwargs.pop("enable_lookup_number")
+
         self.auth_id = auth_id or getenv("PLIVO_AUTH_ID")
         self.auth_token = auth_token or getenv("PLIVO_AUTH_TOKEN")
 

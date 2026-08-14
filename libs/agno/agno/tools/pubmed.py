@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, Dict, List, Optional
 from xml.etree import ElementTree
 
@@ -40,6 +41,11 @@ class PubmedTools(Toolkit):
             search_pubmed: Enable the search_pubmed tool.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_search_pubmed" in kwargs:
+            warnings.warn("enable_search_pubmed is deprecated, use search_pubmed", DeprecationWarning, stacklevel=2)
+            search_pubmed = kwargs.pop("enable_search_pubmed")
+
         self.max_results: Optional[int] = max_results
         self.email: str = email
         self.results_expanded: bool = results_expanded

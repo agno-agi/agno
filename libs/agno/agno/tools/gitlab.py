@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, cast
 from urllib.parse import quote_plus
@@ -31,6 +32,27 @@ class GitlabTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_list_projects" in kwargs:
+            warnings.warn("enable_list_projects is deprecated, use list_projects", DeprecationWarning, stacklevel=2)
+            list_projects = kwargs.pop("enable_list_projects")
+        if "enable_get_projects" in kwargs:
+            warnings.warn("enable_get_projects is deprecated, use get_projects", DeprecationWarning, stacklevel=2)
+            get_projects = kwargs.pop("enable_get_projects")
+        if "enable_list_merge_requests" in kwargs:
+            warnings.warn(
+                "enable_list_merge_requests is deprecated, use list_merge_requests", DeprecationWarning, stacklevel=2
+            )
+            list_merge_requests = kwargs.pop("enable_list_merge_requests")
+        if "enable_get_merge_request" in kwargs:
+            warnings.warn(
+                "enable_get_merge_request is deprecated, use get_merge_request", DeprecationWarning, stacklevel=2
+            )
+            get_merge_request = kwargs.pop("enable_get_merge_request")
+        if "enable_list_issues" in kwargs:
+            warnings.warn("enable_list_issues is deprecated, use list_issues", DeprecationWarning, stacklevel=2)
+            list_issues = kwargs.pop("enable_list_issues")
+
         self.access_token = access_token or getenv("GITLAB_ACCESS_TOKEN")
         self.base_url = (base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com").rstrip("/")
         self.timeout = timeout

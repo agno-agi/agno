@@ -1,4 +1,5 @@
 import json
+import warnings
 from textwrap import dedent
 from typing import Callable, List, Optional
 
@@ -21,6 +22,11 @@ class UserControlFlowTools(Toolkit):
             get_user_input: Whether to enable the get_user_input tool.
             **kwargs: Additional arguments passed to the Toolkit base class.
         """
+        # Backwards compat for old param names
+        if "enable_get_user_input" in kwargs:
+            warnings.warn("enable_get_user_input is deprecated, use get_user_input", DeprecationWarning, stacklevel=2)
+            get_user_input = kwargs.pop("enable_get_user_input")
+
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
         else:

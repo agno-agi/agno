@@ -1,3 +1,4 @@
+import warnings
 from os import getenv
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, List, Optional, Tuple, Union
@@ -37,6 +38,11 @@ class ReplicateTools(Toolkit):
             generate_media: Enable the generate_media tool.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_generate_media" in kwargs:
+            warnings.warn("enable_generate_media is deprecated, use generate_media", DeprecationWarning, stacklevel=2)
+            generate_media = kwargs.pop("enable_generate_media")
+
         self.api_key = api_key or getenv("REPLICATE_API_KEY")
         if not self.api_key:
             log_error("REPLICATE_API_KEY not set. Please set the REPLICATE_API_KEY environment variable.")

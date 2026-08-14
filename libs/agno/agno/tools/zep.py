@@ -1,5 +1,6 @@
 import json
 import uuid
+import warnings
 from os import getenv
 from textwrap import dedent
 from typing import Callable, List, Optional
@@ -64,6 +65,17 @@ class ZepTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_add_zep_message" in kwargs:
+            warnings.warn("enable_add_zep_message is deprecated, use add_message", DeprecationWarning, stacklevel=2)
+            add_message = kwargs.pop("enable_add_zep_message")
+        if "enable_get_zep_memory" in kwargs:
+            warnings.warn("enable_get_zep_memory is deprecated, use get_memory", DeprecationWarning, stacklevel=2)
+            get_memory = kwargs.pop("enable_get_zep_memory")
+        if "enable_search_zep_memory" in kwargs:
+            warnings.warn("enable_search_zep_memory is deprecated, use search_memory", DeprecationWarning, stacklevel=2)
+            search_memory = kwargs.pop("enable_search_zep_memory")
+
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
@@ -290,6 +302,17 @@ class ZepAsyncTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_add_zep_message" in kwargs:
+            warnings.warn("enable_add_zep_message is deprecated, use add_message", DeprecationWarning, stacklevel=2)
+            add_message = kwargs.pop("enable_add_zep_message")
+        if "enable_get_zep_memory" in kwargs:
+            warnings.warn("enable_get_zep_memory is deprecated, use get_memory", DeprecationWarning, stacklevel=2)
+            get_memory = kwargs.pop("enable_get_zep_memory")
+        if "enable_search_zep_memory" in kwargs:
+            warnings.warn("enable_search_zep_memory is deprecated, use search_memory", DeprecationWarning, stacklevel=2)
+            search_memory = kwargs.pop("enable_search_zep_memory")
+
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(

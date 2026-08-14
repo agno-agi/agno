@@ -1,3 +1,4 @@
+import warnings
 from typing import Callable, Dict, List
 
 from agno.tools import Toolkit
@@ -24,6 +25,22 @@ class PandasTools(Toolkit):
             run_dataframe_operation: Enable the run_dataframe_operation tool.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_create_pandas_dataframe" in kwargs:
+            warnings.warn(
+                "enable_create_pandas_dataframe is deprecated, use create_pandas_dataframe",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            create_pandas_dataframe = kwargs.pop("enable_create_pandas_dataframe")
+        if "enable_run_dataframe_operation" in kwargs:
+            warnings.warn(
+                "enable_run_dataframe_operation is deprecated, use run_dataframe_operation",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            run_dataframe_operation = kwargs.pop("enable_run_dataframe_operation")
+
         self.dataframes: Dict[str, pd.DataFrame] = {}
 
         tools: List[Callable] = []

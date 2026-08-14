@@ -1,4 +1,5 @@
 import json
+import warnings
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
@@ -69,6 +70,23 @@ class ExaTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search", DeprecationWarning, stacklevel=2)
+            search = kwargs.pop("enable_search")
+        if "enable_get_contents" in kwargs:
+            warnings.warn("enable_get_contents is deprecated, use get_contents", DeprecationWarning, stacklevel=2)
+            get_contents = kwargs.pop("enable_get_contents")
+        if "enable_find_similar" in kwargs:
+            warnings.warn("enable_find_similar is deprecated, use find_similar", DeprecationWarning, stacklevel=2)
+            find_similar = kwargs.pop("enable_find_similar")
+        if "enable_answer" in kwargs:
+            warnings.warn("enable_answer is deprecated, use answer", DeprecationWarning, stacklevel=2)
+            answer = kwargs.pop("enable_answer")
+        if "enable_research" in kwargs:
+            warnings.warn("enable_research is deprecated, use research", DeprecationWarning, stacklevel=2)
+            research = kwargs.pop("enable_research")
+
         self.api_key = api_key or getenv("EXA_API_KEY")
         if not self.api_key:
             log_error("EXA_API_KEY not set. Please set the EXA_API_KEY environment variable.")

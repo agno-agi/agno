@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from io import BytesIO
 from typing import Callable, List, Optional
 from uuid import uuid4
@@ -57,6 +58,11 @@ class NanoBananaTools(Toolkit):
             all: Enable all tools at once
             create_image: Enable the create_image tool
         """
+        # Backwards compat for old param names
+        if "enable_create_image" in kwargs:
+            warnings.warn("enable_create_image is deprecated, use create_image", DeprecationWarning, stacklevel=2)
+            create_image = kwargs.pop("enable_create_image")
+
         self.model = model
         self.aspect_ratio = aspect_ratio
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")

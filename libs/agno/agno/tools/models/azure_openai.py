@@ -1,3 +1,4 @@
+import warnings
 from os import getenv
 from typing import Any, Dict, Literal, Optional
 from uuid import uuid4
@@ -34,7 +35,13 @@ class AzureOpenAITools(Toolkit):
         image_quality: Literal["standard", "hd"] = "standard",  # Note: "hd" quality is only available for dall-e-3.
         generate_image: bool = True,
         all: bool = False,
+        **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_generate_image" in kwargs:
+            warnings.warn("enable_generate_image is deprecated, use generate_image", DeprecationWarning, stacklevel=2)
+            generate_image = kwargs.pop("enable_generate_image")
+
         # Set credentials from parameters or environment variables
         self.api_key = api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
@@ -62,7 +69,7 @@ class AzureOpenAITools(Toolkit):
         else:
             log_error("Missing required image generation parameters or invalid model")
 
-        super().__init__(name="azure_openai_tools", tools=tools)
+        super().__init__(name="azure_openai_tools", tools=tools, **kwargs)
 
         self.image_quality = image_quality
 

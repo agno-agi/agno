@@ -1,4 +1,5 @@
 import json
+import warnings
 from textwrap import dedent
 from typing import Any, Dict, Optional
 
@@ -45,6 +46,17 @@ class WorkflowTools(Toolkit):
         async_mode: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_run_workflow" in kwargs:
+            warnings.warn("enable_run_workflow is deprecated, use run_workflow", DeprecationWarning, stacklevel=2)
+            run_workflow = kwargs.pop("enable_run_workflow")
+        if "enable_think" in kwargs:
+            warnings.warn("enable_think is deprecated, use think", DeprecationWarning, stacklevel=2)
+            think = kwargs.pop("enable_think")
+        if "enable_analyze" in kwargs:
+            warnings.warn("enable_analyze is deprecated, use analyze", DeprecationWarning, stacklevel=2)
+            analyze = kwargs.pop("enable_analyze")
+
         # Add instructions for using this toolkit
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS

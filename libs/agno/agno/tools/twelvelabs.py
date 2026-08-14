@@ -1,5 +1,6 @@
 import json
 import time
+import warnings
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 
@@ -45,6 +46,17 @@ class TwelveLabsTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_analyze_video" in kwargs:
+            warnings.warn("enable_analyze_video is deprecated, use analyze_video", DeprecationWarning, stacklevel=2)
+            analyze_video = kwargs.pop("enable_analyze_video")
+        if "enable_embed_text" in kwargs:
+            warnings.warn("enable_embed_text is deprecated, use embed_text", DeprecationWarning, stacklevel=2)
+            embed_text = kwargs.pop("enable_embed_text")
+        if "enable_embed_video" in kwargs:
+            warnings.warn("enable_embed_video is deprecated, use embed_video", DeprecationWarning, stacklevel=2)
+            embed_video = kwargs.pop("enable_embed_video")
+
         self.api_key = api_key or getenv("TWELVELABS_API_KEY")
         if not self.api_key:
             logger.warning("No TwelveLabs API key provided. Set TWELVELABS_API_KEY or pass api_key.")

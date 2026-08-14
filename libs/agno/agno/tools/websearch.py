@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Callable, List, Literal, Optional
 
 from agno.tools import Toolkit
@@ -47,6 +48,14 @@ class WebSearchTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_search" in kwargs:
+            warnings.warn("enable_search is deprecated, use search_web", DeprecationWarning, stacklevel=2)
+            search_web = kwargs.pop("enable_search")
+        if "enable_news" in kwargs:
+            warnings.warn("enable_news is deprecated, use search_news", DeprecationWarning, stacklevel=2)
+            search_news = kwargs.pop("enable_news")
+
         # Validate timelimit parameter
         if timelimit is not None and timelimit not in VALID_TIMELIMITS:
             raise ValueError(
