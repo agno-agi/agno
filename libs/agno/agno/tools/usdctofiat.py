@@ -1,7 +1,7 @@
 """UsdctoFiatTools — first-party Agno toolkit.
 
 USDCtoFiat by Galleon Labs. Built on the public Peer/ZKP2P protocol.
-Not a Peer Cash product. https://usdctofiat.xyz/developers
+Docs: https://usdctofiat.xyz/developers
 
 Wraps `usdctofiat.cashout(mode="fast"|"best")`, `watch`, `withdraw`/`close`,
 `deposits`, and `estimate`. Mode is required on every priced or mutating call.
@@ -39,7 +39,7 @@ _BANNED_KEY_KWARGS = (
 
 
 class UsdctoFiatTools(Toolkit):
-    """USDCtoFiat tools for Agno agents. Galleon Labs. Not Peer Cash.
+    """USDCtoFiat tools for Agno agents by Galleon Labs.
 
     Args:
         signer: Optional callback `(unsigned_tx) -> hash | {hash, deposit_id}`.
@@ -119,7 +119,7 @@ class UsdctoFiatTools(Toolkit):
         """Cash out Base USDC to fiat via USDCtoFiat by Galleon Labs.
 
         mode is required. There is no default.
-        - fast: 0% spread / 0 bps. We earn TOFIAT.
+        - fast: Live market pricing with 0% spread / 0 bps.
         - best: Delegate, 10 bps.
 
         If a signer was injected, unsigned txs are submitted and the deposit

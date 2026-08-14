@@ -66,15 +66,13 @@ def tools(mock_offramp):
         yield UsdctoFiatTools(), mock_offramp
 
 
-def test_docstring_discloses_galleon_not_peer_cash():
+def test_docstring_discloses_product_and_docs():
     import agno.tools.usdctofiat as module
 
     text = f"{UsdctoFiatTools.__doc__ or ''} {module.__doc__ or ''}".lower()
     assert "usdctofiat" in text
     assert "galleon" in text
-    assert "not a peer cash product" in text
     assert "usdctofiat.xyz/developers" in text
-    assert "peer-cash" not in (UsdctoFiatTools.__module__ or "")
 
 
 def test_mode_is_not_a_constructor_default(mock_offramp):

@@ -2,7 +2,7 @@
 USDCtoFiat Tools — USDC to fiat cash-out on Base
 
 USDCtoFiat by Galleon Labs. Built on the public Peer/ZKP2P protocol.
-Not a Peer Cash product. https://usdctofiat.xyz/developers
+Docs: https://usdctofiat.xyz/developers
 
 UsdctoFiatTools is a small toolkit (<6 functions) so it uses enable_ flags.
 mode is required on cashout and estimate: "fast" (0% / TOFIAT) or
@@ -33,12 +33,12 @@ agent = Agent(
     tools=[UsdctoFiatTools(signer=signer)],
     description=(
         "You help users cash out Base USDC to fiat via USDCtoFiat by Galleon Labs. "
-        "Built on the public Peer/ZKP2P protocol. Not a Peer Cash product."
+        "Built on the public Peer/ZKP2P protocol."
     ),
     instructions=[
         "Always ask the user to choose mode=fast (0% / TOFIAT) or mode=best (Delegate, 10 bps).",
         "Never invent a mode default. Never ask for or accept a wallet private key.",
-        "Fast earns TOFIAT. Best attaches the Delegate rate manager at 10 bps.",
+        "Fast uses live market pricing with 0% spread. Best uses Delegate pricing at 10 bps.",
     ],
     markdown=True,
 )
