@@ -33,7 +33,7 @@ async def run_agent(message: str) -> None:
     npx_command = "npx.cmd" if os.name == "nt" else "npx"
 
     async with MCPTools(
-        command=f"{npx_command} -y peer-cash-mcp@0.1.1",
+        command=f"{npx_command} -y peer-cash-mcp@0.1.2",
         timeout_seconds=60,
     ) as peer_cash:
         agent = Agent(
