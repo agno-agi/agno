@@ -31,6 +31,10 @@ from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 
+# Pinecone caps ``top_k`` at 10 000 and returns no cursor, so filtered reads page by
+# excluding the ids already collected.
+_QUERY_PAGE_SIZE = 10000
+
 
 class PineconeDb(VectorDb):
     """A class representing a Pinecone database.
@@ -602,19 +606,36 @@ class PineconeDb(VectorDb):
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     def _collect_ids_by_filter(self, filter_conditions: Dict[str, Any]) -> List[str]:
-        """Collect the ids of the vectors matching a metadata filter."""
+        """Collect the ids of the vectors matching a metadata filter.
+
+        ``top_k`` is capped at 10 000 per query and Pinecone offers no cursor, so a single
+        call silently truncates: the surplus chunks are never deleted and stay searchable
+        after a re-upsert. Excluding the ids already seen turns the cap into a page size.
+        """
         if self.dimension is None:
             raise ValueError("Dimension is not set for this Pinecone index")
         dummy_vector = [0.0] * self.dimension
-        response = self.index.query(
-            vector=dummy_vector,
-            top_k=10000,
-            namespace=self.namespace,
-            filter=filter_conditions,
-            include_metadata=False,
-            include_values=False,
-        )
-        return [match.id for match in response.matches]
+        collected: List[str] = []
+        seen: set = set()
+        while True:
+            page_filter = dict(filter_conditions)
+            if seen:
+                page_filter["id"] = {"$nin": list(seen)}
+            response = self.index.query(
+                vector=dummy_vector,
+                top_k=_QUERY_PAGE_SIZE,
+                namespace=self.namespace,
+                filter=page_filter,
+                include_metadata=False,
+                include_values=False,
+            )
+            page = [match.id for match in response.matches if match.id not in seen]
+            if not page:
+                return collected
+            collected.extend(page)
+            seen.update(page)
+            if len(response.matches) < _QUERY_PAGE_SIZE:
+                return collected
 
     def _delete_by_filter(self, filter_conditions: Dict[str, Any]) -> bool:
         """Resolve a metadata filter to ids and delete them.
@@ -767,21 +788,35 @@ class PineconeDb(VectorDb):
         # Never let a caller reassign the owner field
         metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
         try:
-            # Query for vectors with the given content_id
-            query_response = self.index.query(
-                filter={"content_id": {"$eq": content_id}},
-                top_k=10000,  # Get all matching vectors
-                include_metadata=True,
-                namespace=self.namespace,
-            )
+            # top_k caps at 10 000 with no cursor, so page by excluding the ids already
+            # seen — otherwise the surplus chunks keep their stale metadata.
+            matches = []
+            seen: set = set()
+            while True:
+                page_filter: Dict[str, Any] = {"content_id": {"$eq": content_id}}
+                if seen:
+                    page_filter["id"] = {"$nin": list(seen)}
+                query_response = self.index.query(
+                    filter=page_filter,
+                    top_k=_QUERY_PAGE_SIZE,
+                    include_metadata=True,
+                    namespace=self.namespace,
+                )
+                page = [match for match in query_response.matches if match.id not in seen]
+                if not page:
+                    break
+                matches.extend(page)
+                seen.update(match.id for match in page)
+                if len(query_response.matches) < _QUERY_PAGE_SIZE:
+                    break
 
-            if not query_response.matches:
+            if not matches:
                 logger.debug(f"No documents found with content_id: {content_id}")
                 return
 
             # Prepare updates for each matching vector
             update_data = []
-            for match in query_response.matches:
+            for match in matches:
                 vector_id = match.id
                 current_metadata = match.metadata or {}
 

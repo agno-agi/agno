@@ -200,3 +200,44 @@ class TestOwnerFoldedId:
 
         sent_filter = pinecone_db.index.query.call_args.kwargs["filter"]
         assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$eq": "bob"}}
+
+
+class TestFilteredReadsPaginate:
+    """Pinecone caps ``top_k`` at 10 000 and returns no cursor.
+
+    A single query silently truncates, so a delete resolved from a filter leaves the surplus
+    chunks in place — still searchable after the re-upsert that was meant to replace them.
+    """
+
+    def _page(self, ids):
+        response = MagicMock()
+        response.matches = [MagicMock(id=i) for i in ids]
+        return response
+
+    def test_collect_ids_walks_past_the_top_k_cap(self, pinecone_db):
+        first = [f"v{i}" for i in range(10000)]
+        second = [f"v{i}" for i in range(10000, 10500)]
+        pinecone_db.index.query.side_effect = [self._page(first), self._page(second)]
+
+        ids = pinecone_db._collect_ids_by_filter({"content_hash": {"$eq": "h1"}})
+
+        assert len(ids) == 10500
+        # The second page must exclude what the first already returned, or it repeats forever
+        assert set(pinecone_db.index.query.call_args_list[1].kwargs["filter"]["id"]["$nin"]) == set(first)
+
+    def test_a_single_short_page_issues_one_query(self, pinecone_db):
+        pinecone_db.index.query.side_effect = [self._page(["v1", "v2"])]
+
+        ids = pinecone_db._collect_ids_by_filter({"content_hash": {"$eq": "h1"}})
+
+        assert ids == ["v1", "v2"]
+        assert pinecone_db.index.query.call_count == 1
+
+    def test_a_repeating_page_terminates(self, pinecone_db):
+        """A backend that ignores the exclusion must not spin the loop forever."""
+        page = self._page([f"v{i}" for i in range(10000)])
+        pinecone_db.index.query.side_effect = [page, page]
+
+        ids = pinecone_db._collect_ids_by_filter({"content_hash": {"$eq": "h1"}})
+
+        assert len(ids) == 10000

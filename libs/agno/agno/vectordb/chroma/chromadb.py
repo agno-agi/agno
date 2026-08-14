@@ -170,16 +170,31 @@ class ChromaDb(VectorDb):
         """
         return md5(user_id.encode("utf-8")).hexdigest()[:16]
 
+    # Chroma rejects a collection name outside 3-512 chars, so the base has to leave room
+    # for the ``__`` separator and the 16-char owner digest.
+    _CHROMA_MAX_NAME_LEN = 512
+    _OWNER_SUFFIX_LEN = 2 + 16  # "__" + md5[:16]
+
     def _collection_name_for(self, user_id: Optional[str]) -> str:
         """Resolve the physical collection name for a scope.
 
         ``None`` is the base collection; every other value, ``""`` included, is an owner
         and gets its own.
+
+        A base name long enough to push the owner suffix past Chroma's limit is itself
+        digested, so a scoped operation still resolves to a legal name instead of failing
+        on every call. Unscoped access keeps the base name untouched.
         """
         if user_id is None:
             return self.collection_name
-        safe = self._sanitize_user_id_for_collection(user_id)
-        return f"{self.collection_name}__{safe}"
+        base = self.collection_name
+        if len(base) + self._OWNER_SUFFIX_LEN > self._CHROMA_MAX_NAME_LEN:
+            # Keep a readable prefix so the collection is still recognisable, and fold the
+            # whole base in so two long names cannot collide on their shared prefix.
+            digest = md5(base.encode("utf-8")).hexdigest()[:16]
+            keep = self._CHROMA_MAX_NAME_LEN - self._OWNER_SUFFIX_LEN - len(digest) - 1
+            base = f"{base[:keep]}_{digest}"
+        return f"{base}__{self._sanitize_user_id_for_collection(user_id)}"
 
     def _get_or_create_collection(self, user_id: Optional[str]) -> Collection:
         """Resolve, cache and if needed create the collection for an owner scope."""

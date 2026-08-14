@@ -93,6 +93,29 @@ class TestCollectionNaming:
 
         assert attacker_name != chroma_db._collection_name_for(victim)
 
+    @pytest.mark.parametrize("base_length", [10, 480, 494, 495, 512, 600])
+    def test_a_long_base_name_still_resolves_within_chromas_limit(self, mock_embedder, base_length):
+        """Chroma rejects a name over 512 chars, and the owner suffix costs 18 of them.
+
+        A base long enough to push past the limit used to fail every scoped operation, so
+        the base is digested too rather than letting the name grow unbounded.
+        """
+        db = ChromaDb(collection="b" * base_length, embedder=mock_embedder)
+
+        name = db._collection_name_for("alice")
+
+        assert 3 <= len(name) <= 512
+        # The unscoped name is the caller's own and stays untouched
+        assert db._collection_name_for(None) == "b" * base_length
+
+    def test_two_long_base_names_do_not_collide(self, mock_embedder):
+        """Truncating alone would fold every base sharing a 494-char prefix into one collection."""
+        shared_prefix = "b" * 600
+        first = ChromaDb(collection=shared_prefix + "one", embedder=mock_embedder)
+        second = ChromaDb(collection=shared_prefix + "two", embedder=mock_embedder)
+
+        assert first._collection_name_for("alice") != second._collection_name_for("alice")
+
 
 class TestWriteStampsOwner:
     """Test that an insert lands in the caller's collection, or the base one when unowned."""
