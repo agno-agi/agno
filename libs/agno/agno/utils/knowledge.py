@@ -61,3 +61,44 @@ def get_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
             f"{getattr(fn, '__qualname__', fn)} does not accept user_id, so this call is not scoped to a single owner."
         )
     return {}
+
+
+def strict_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
+    """``{"user_id": ...}`` when the callee accepts it; fail closed when it can't honour a scope.
+
+    The strict sibling of :func:`get_user_id_kwarg`, used at the
+    ``Knowledge`` -> ``VectorDb`` boundary. A pre-v3 custom adapter (no
+    ``user_id`` in its signatures) keeps working exactly like v2 for unscoped
+    calls — the kwarg is simply omitted instead of raising a ``TypeError``
+    that the surrounding catch-alls would swallow into empty results. A
+    *scoped* call against such an adapter raises instead of silently running
+    without isolation.
+
+    Args:
+        fn: The vector-db method the kwarg will be passed to.
+        user_id: The owner to scope the call to. ``None`` = unscoped.
+
+    Returns:
+        Dict[str, Any]: {"user_id": user_id} when the callee accepts it, empty for
+        unscoped calls to legacy callables.
+
+    Raises:
+        ValueError: when ``user_id`` is set but the callee does not accept it.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        # Uninspectable callables (C extensions, exotic wrappers) are assumed
+        # current — they receive the kwarg and surface their own TypeError.
+        return {"user_id": user_id}
+    if "user_id" in parameters or any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
+        return {"user_id": user_id}
+    if user_id is None:
+        return {}
+    raise ValueError(
+        f"user_id={user_id!r} was passed but {getattr(fn, '__qualname__', fn)} does not accept it. "
+        "This vector db predates per-user isolation — add user_id parameters to its methods "
+        "(see agno.vectordb.base.VectorDb) before running user-scoped operations."
+    )

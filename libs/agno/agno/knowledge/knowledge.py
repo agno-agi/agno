@@ -26,6 +26,7 @@ from agno.knowledge.remote_knowledge import RemoteKnowledge
 from agno.knowledge.types import ContentType
 from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
+from agno.utils.knowledge import strict_user_id_kwarg
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
@@ -604,7 +605,12 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
+            return self.vector_db.search(
+                query=query,
+                limit=_max_results,
+                filters=search_filters,
+                **strict_user_id_kwarg(self.vector_db.search, user_id),
+            )
         except ValueError:
             # The adapters raise these outside their own catch-alls on purpose.
             raise
@@ -642,11 +648,19 @@ class Knowledge(RemoteKnowledge):
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
                 return await self.vector_db.async_search(
-                    query=query, limit=_max_results, filters=search_filters, user_id=user_id
+                    query=query,
+                    limit=_max_results,
+                    filters=search_filters,
+                    **strict_user_id_kwarg(self.vector_db.async_search, user_id),
                 )
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
+                return self.vector_db.search(
+                    query=query,
+                    limit=_max_results,
+                    filters=search_filters,
+                    **strict_user_id_kwarg(self.vector_db.search, user_id),
+                )
         except ValueError:
             # See the matching comment in ``search``.
             raise
@@ -804,7 +818,9 @@ class Knowledge(RemoteKnowledge):
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
                 # Backends without per-user isolation accept ``user_id`` as a no-op
-                self.vector_db.delete_by_content_id(content_id, user_id=user_id)
+                self.vector_db.delete_by_content_id(
+                    content_id, **strict_user_id_kwarg(self.vector_db.delete_by_content_id, user_id)
+                )
 
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
@@ -828,7 +844,9 @@ class Knowledge(RemoteKnowledge):
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
                 # See the matching comment in ``remove_content_by_id``.
-                self.vector_db.delete_by_content_id(content_id, user_id=user_id)
+                self.vector_db.delete_by_content_id(
+                    content_id, **strict_user_id_kwarg(self.vector_db.delete_by_content_id, user_id)
+                )
 
         if self.contents_db is not None:
             if isinstance(self.contents_db, AsyncBaseDb):
@@ -1306,7 +1324,13 @@ class Knowledge(RemoteKnowledge):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
-        if self.vector_db and self.vector_db.content_hash_exists(content_hash, user_id=user_id) and skip_if_exists:
+        if (
+            self.vector_db
+            and self.vector_db.content_hash_exists(
+                content_hash, **strict_user_id_kwarg(self.vector_db.content_hash_exists, user_id)
+            )
+            and skip_if_exists
+        ):
             log_debug(f"Content already exists: {content_hash}, skipping...")
             return True
 
@@ -1796,7 +1820,10 @@ class Knowledge(RemoteKnowledge):
                 if self.vector_db.upsert_available() and upsert:
                     try:
                         await self.vector_db.async_upsert(
-                            doc_hash, source_docs, content.metadata, user_id=content.user_id
+                            doc_hash,
+                            source_docs,
+                            content.metadata,
+                            **strict_user_id_kwarg(self.vector_db.async_upsert, content.user_id),
                         )
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
@@ -1807,7 +1834,7 @@ class Knowledge(RemoteKnowledge):
                             doc_hash,
                             documents=source_docs,
                             filters=content.metadata,
-                            user_id=content.user_id,
+                            **strict_user_id_kwarg(self.vector_db.async_insert, content.user_id),
                         )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
@@ -1957,7 +1984,12 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        self.vector_db.upsert(doc_hash, source_docs, content.metadata, user_id=content.user_id)
+                        self.vector_db.upsert(
+                            doc_hash,
+                            source_docs,
+                            content.metadata,
+                            **strict_user_id_kwarg(self.vector_db.upsert, content.user_id),
+                        )
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
@@ -1967,7 +1999,7 @@ class Knowledge(RemoteKnowledge):
                             doc_hash,
                             documents=source_docs,
                             filters=content.metadata,
-                            user_id=content.user_id,
+                            **strict_user_id_kwarg(self.vector_db.insert, content.user_id),
                         )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
@@ -2631,7 +2663,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     read_documents,
                     content.metadata,
-                    user_id=content.user_id,
+                    **strict_user_id_kwarg(self.vector_db.async_upsert, content.user_id),
                 )
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
@@ -2645,7 +2677,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
-                    user_id=content.user_id,
+                    **strict_user_id_kwarg(self.vector_db.async_insert, content.user_id),
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -2676,7 +2708,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     read_documents,
                     content.metadata,
-                    user_id=content.user_id,
+                    **strict_user_id_kwarg(self.vector_db.upsert, content.user_id),
                 )
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
@@ -2690,7 +2722,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
-                    user_id=content.user_id,
+                    **strict_user_id_kwarg(self.vector_db.insert, content.user_id),
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")

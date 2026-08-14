@@ -192,7 +192,15 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             "updated_at": None,
         }
 
-        result = await _db_call("create_schedule", schedule_dict)
+        try:
+            result = await _db_call("create_schedule", schedule_dict)
+        except Exception as e:
+            # The name check above races under concurrent creates; the DB's unique
+            # (user_id, name) backstop turns the loser into an integrity error,
+            # which maps to the same 409 the check itself produces.
+            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                raise HTTPException(status_code=409, detail=f"Schedule with name '{body.name}' already exists")
+            raise
         if result is None:
             raise HTTPException(status_code=500, detail="Failed to create schedule")
         return result
