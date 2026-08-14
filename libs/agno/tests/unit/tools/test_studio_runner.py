@@ -726,6 +726,20 @@ class TestDispatchIsolation:
         assert "lost its identity" in out["error"]
         assert downcast.seen is None
 
+    def test_tool_copy_failure_refuses_dispatch(self, db):
+        """A tool deepcopy exception must not make Studio dispatch the original tool."""
+        from agno.agent import Agent
+
+        class _RaisingTool:
+            def __deepcopy__(self, memo):
+                raise RuntimeError("tool cannot be copied")
+
+        agent = Agent(id="tool-copy-failure", name="Tool Copy Failure", tools=[_RaisingTool()])
+        runner = StudioRunnerTools(db=db, agents_list=[agent])
+
+        with pytest.raises(Exception, match="deep_copy failed.*tool cannot be copied"):
+            runner._agent_for_run("tool-copy-failure")
+
     def test_copy_dropping_model_instructions_or_member_isolation_refuses_dispatch(self, db):
         # The fidelity loop checks model, instructions and member isolation, not
         # only id and name: a rebuild that keeps the identity fields but drops
