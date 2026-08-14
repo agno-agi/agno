@@ -1,13 +1,17 @@
 # mypy: disable-error-code=var-annotated
 """Use this script to backfill the shared-owner sentinel on your VectorDBs (v2 -> v3)
 
-This script works with Redis, Valkey, Couchbase and Cassandra.
+This script works with Redis, Couchbase and Cassandra.
 
 v3 adds per-user RAG isolation. These backends spell "shared" as a literal ``user_id``
 value ``"__shared__"`` and their scoped search has no "field is absent" branch, so pre-v3
 vectors — which carry no ``user_id`` — are invisible to scoped callers until stamped. This
 backfill is mandatory for them, and idempotent: vectors that already carry a ``user_id``
 are left untouched.
+
+Valkey is not listed: it shipped with the ``user_id`` TAG in its schema from the start
+(v2.7.3), so no Valkey index predates per-user isolation and there is nothing to
+backfill.
 
 To use the script simply:
 - Fill in the config block for the backend(s) you use
@@ -26,15 +30,6 @@ redis_config: Dict[str, Any] = {
     # "index_names": ["my_index"],   # the RedisDB index_name(s) to migrate
 }
 # -----------------------------------------
-
-# ------------ Setup for Valkey ------------
-# Valkey is Redis-compatible; provide a valkey/redis URL or a client.
-valkey_config: Dict[str, Any] = {
-    # "valkey_url": "redis://localhost:6379",
-    # "valkey_client": None,
-    # "index_names": ["my_index"],
-}
-# ------------------------------------------
 
 # ------------ Setup for Couchbase ------------
 # The FTS index MUST be updated to include user_id for scoped search to work.
@@ -172,86 +167,6 @@ def migrate_redis_index(index_name: str) -> None:
             f"Redis index '{index_name}': vectors are stamped, but the index schema could not be "
             f"rebuilt ({e}). Scoped search stays unavailable until the index carries the "
             f"'{field}' field: recreate it from your own RedisDB instance (same embedder), which "
-            "rebuilds the schema without touching the stored vectors."
-        )
-
-
-def migrate_valkey_index(index_name: str) -> None:
-    """Stamp the shared sentinel onto every Valkey vector lacking a ``user_id``.
-
-    Args:
-        index_name: The ValkeyDb ``index_name`` whose vectors should be backfilled.
-    """
-    try:
-        from agno.vectordb.valkey.valkeydb import ValkeyDB
-
-        log_info(f"Starting shared-sentinel backfill for Valkey index: {index_name}")
-
-        valkey_url = valkey_config.get("valkey_url")
-        client = valkey_config.get("valkey_client")
-        if client is None and valkey_url is None:
-            log_warning("Valkey: provide `valkey_url` or `valkey_client` in valkey_config. Skipping.")
-            return
-        if client is None:
-            from redis import Redis
-
-            assert valkey_url is not None  # narrows for the type checker
-            client = Redis.from_url(valkey_url)
-
-        field = ValkeyDB.USER_ID_FIELD
-        sentinel = ValkeyDB.SHARED_OWNER_TAG
-
-        patched = 0
-        scanned = 0
-        for key in client.scan_iter(match=f"{index_name}:*", count=1000):
-            scanned += 1
-            existing = client.hget(key, field)
-            if existing in (None, b"", ""):
-                client.hset(key, field, sentinel)
-                patched += 1
-
-        log_info(
-            f"Valkey index '{index_name}': scanned {scanned} vectors, backfilled {patched} with user_id='{sentinel}'."
-        )
-
-    except Exception as e:
-        log_error(f"Error backfilling Valkey index {index_name}: {e}")
-        raise
-
-    # See ``migrate_redis_index`` — the stamped hashes are only half of it; the index schema
-    # has to carry the ``user_id`` TAG before a scope filter can match. Reported rather than
-    # raised so a rebuild failure cannot undo a backfill that already succeeded.
-    try:
-        from urllib.parse import urlparse
-
-        from glide_sync import ft as glide_ft
-
-        parsed = urlparse(valkey_url or "redis://localhost:6379")
-        db = ValkeyDB(index_name=index_name, host=parsed.hostname or "localhost", port=parsed.port or 6379)
-        if field in db._indexed_field_names():
-            log_info(f"Valkey index '{index_name}': schema already has '{field}'. No rebuild needed.")
-            return
-
-        # Keep the dimension the stored vectors were written with.
-        live_dimensions = _indexed_vector_dimensions(glide_ft.info(db._get_client(), index_name))
-        if live_dimensions is None:
-            raise ValueError("could not read the vector dimension from the live index")
-        if live_dimensions != db.dimensions:
-            log_info(f"Valkey index '{index_name}': preserving the live vector dimension {live_dimensions}.")
-            db.dimensions = live_dimensions
-
-        log_info(f"Valkey index '{index_name}': rebuilding schema to add the '{field}' field...")
-        # Schema-only drop. ``ValkeyDB.drop()`` also calls _delete_all_keys(), which would
-        # erase the vectors this migration just stamped.
-        glide_ft.dropindex(db._get_client(), index_name)
-        db._owner_field_exists = None
-        db.create()
-        log_info(f"Valkey index '{index_name}': schema rebuilt; scoped search is now available.")
-    except Exception as e:
-        log_warning(
-            f"Valkey index '{index_name}': vectors are stamped, but the index schema could not be "
-            f"rebuilt ({e}). Scoped search stays unavailable until the index carries the "
-            f"'{field}' field: recreate it from your own ValkeyDB instance (same embedder), which "
             "rebuilds the schema without touching the stored vectors."
         )
 
@@ -496,8 +411,6 @@ def run() -> None:
     tasks: List[Tuple[str, Callable[[], None]]] = []
     for name in redis_config.get("index_names", []):
         tasks.append((f"redis:{name}", partial(migrate_redis_index, name)))
-    for name in valkey_config.get("index_names", []):
-        tasks.append((f"valkey:{name}", partial(migrate_valkey_index, name)))
     if couchbase_config.get("collection_name"):
         tasks.append(("couchbase", migrate_couchbase))
     if cassandra_config.get("table_name"):

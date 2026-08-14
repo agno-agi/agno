@@ -79,49 +79,6 @@ class TestRedisSentinelBackfill:
         mod.migrate_redis_index("empty_index")
 
 
-class TestValkeySentinelBackfill:
-    def _client(self):
-        fakeredis = pytest.importorskip("fakeredis")
-        # ValkeyDB import needs the valkey driver; skip cleanly if it's absent.
-        pytest.importorskip("agno.vectordb.valkey.valkeydb")
-        return fakeredis.FakeStrictRedis()
-
-    def _uid(self, client, key):
-        v = client.hget(key, "user_id")
-        return v.decode() if v else None
-
-    def test_stamps_shared_on_legacy_and_preserves_owners(self):
-        from agno.vectordb.valkey.valkeydb import ValkeyDB
-
-        client = self._client()
-        index = "vindex"
-        for i in range(3):
-            client.hset(f"{index}:doc{i}", mapping={"id": f"doc{i}", "content": f"c{i}"})
-        client.hset(f"{index}:owned", mapping={"id": "owned", "content": "c", "user_id": "alice"})
-
-        mod = _load("migrate_sentinel_vectordbs.py")
-        mod.valkey_config["valkey_client"] = client
-        mod.migrate_valkey_index(index)
-
-        for i in range(3):
-            assert self._uid(client, f"{index}:doc{i}") == ValkeyDB.SHARED_OWNER_TAG
-        assert self._uid(client, f"{index}:owned") == "alice"
-
-    def test_idempotent(self):
-        from agno.vectordb.valkey.valkeydb import ValkeyDB
-
-        client = self._client()
-        index = "v"
-        client.hset(f"{index}:d1", mapping={"id": "d1", "content": "x"})
-
-        mod = _load("migrate_sentinel_vectordbs.py")
-        mod.valkey_config["valkey_client"] = client
-        mod.migrate_valkey_index(index)
-        mod.migrate_valkey_index(index)
-
-        assert self._uid(client, f"{index}:d1") == ValkeyDB.SHARED_OWNER_TAG
-
-
 class TestSurrealDbSchemaMigration:
     def _conn(self):
         surrealdb = pytest.importorskip("surrealdb")
@@ -303,7 +260,7 @@ class TestScriptsImportCleanly:
             ("migrate_sql_vectordbs.py", ["migrate_pgvector_table", "migrate_singlestore_table", "run"]),
             (
                 "migrate_sentinel_vectordbs.py",
-                ["migrate_redis_index", "migrate_valkey_index", "migrate_couchbase", "migrate_cassandra", "run"],
+                ["migrate_redis_index", "migrate_couchbase", "migrate_cassandra", "run"],
             ),
             (
                 "migrate_field_vectordbs.py",
