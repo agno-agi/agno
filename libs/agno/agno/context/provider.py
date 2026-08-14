@@ -89,12 +89,7 @@ class ContextProvider(ABC):
         query_tool_name: str | None = None,
         update_tool_name: str | None = None,
         stream_sub_agent_events: bool = True,
-        **kwargs,
     ) -> None:
-        if kwargs:
-            unexpected = ", ".join(repr(k) for k in sorted(kwargs))
-            raise TypeError(f"{type(self).__name__} got unexpected keyword argument(s): {unexpected}")
-
         if not read and not write:
             raise ValueError(
                 f"{type(self).__name__}: at least one of `read` or `write` must be True "
