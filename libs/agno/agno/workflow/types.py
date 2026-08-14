@@ -17,20 +17,6 @@ from agno.utils.media import (
 )
 from agno.utils.timer import Timer
 
-_session_state_param_deprecation_warned: set = set()
-
-
-def warn_session_state_param_deprecated(func: Any, component: str) -> None:
-    """Warn once per function that the injected session_state parameter is deprecated."""
-    key = component + ":" + getattr(func, "__name__", repr(func))
-    if key in _session_state_param_deprecation_warned:
-        return
-    _session_state_param_deprecation_warned.add(key)
-    log_warning(
-        f"The 'session_state' parameter for {component} is deprecated and will be removed in a future release. "
-        "Accept 'run_context: RunContext' and use 'run_context.session_state' instead."
-    )
-
 
 class OnReject(str, Enum):
     """Action to take when a step requiring confirmation is rejected.
