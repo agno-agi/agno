@@ -158,6 +158,82 @@ def test_add_team_history_to_members(shared_db):
     assert "Task 1003" in acknowledge_agent_input_str, acknowledge_agent_input_str
 
 
+def test_add_team_history_to_members_nested_team(shared_db):
+    """A nested sub-team receives its OWN history (team_id-filtered), not the root team's.
+
+    The root routes one task to a solo agent and the rest to the sub-team. The sub-team's
+    injected history must contain its own prior task but never the solo branch's task -
+    that solo task is exactly what leaked into the sub-team before the team_id filter.
+    """
+
+    analyst = Agent(
+        name="Analyst",
+        id="analyst",
+        role="Internal worker; only acts when the Research Team assigns it a subtask",
+        model=OpenAIChat(id="gpt-5-mini"),
+        instructions="Acknowledge the task with a simple 'Ack.'",
+    )
+
+    research_team = Team(
+        name="Research Team",
+        id="research_team",
+        model=OpenAIChat(id="gpt-5-mini"),
+        members=[analyst],
+        role="The only member that handles SUB tasks",
+    )
+
+    solo_agent = Agent(
+        name="Solo Agent",
+        id="solo_agent",
+        role="The only member that handles SOLO tasks",
+        model=OpenAIChat(id="gpt-5-mini"),
+        instructions="Acknowledge the task with a simple 'Ack.'",
+    )
+
+    team = Team(
+        model=OpenAIChat(id="gpt-5-mini"),
+        members=[solo_agent, research_team],
+        db=shared_db,
+        instructions=[
+            "You are a router. Delegate every request to exactly one member and never answer directly.",
+            "If the request starts with 'SOLO', delegate the whole request to member id 'solo_agent'.",
+            "If the request starts with 'SUB', delegate the whole request to member id 'research_team' (the Research Team).",
+            "For 'SUB' requests always delegate to 'research_team' itself - never to any agent nested inside it.",
+        ],
+        add_team_history_to_members=True,
+        num_team_history_runs=5,  # Send all history so the solo task would leak if unfiltered
+        determine_input_for_members=False,
+    )
+
+    session_id = str(uuid4())
+
+    # SOLO tasks route to the solo agent; SUB tasks route to the sub-team.
+    team.run("SOLO-TASK-1", session_id=session_id)
+    team.run("SUB-TASK-1", session_id=session_id)
+    team.run("SUB-TASK-2", session_id=session_id)
+
+    # The sub-team's runs live in the parent's shared session, tagged with its team_id.
+    session = shared_db.get_session(session_id=session_id, session_type="team")
+    research_team_runs = [run for run in session.runs if getattr(run, "team_id", None) == "research_team"]
+    assert research_team_runs, "Expected at least one SUB task to be delegated to the sub-team"
+
+    # (1) Delegation wiring: the sub-team is fed its OWN history, so the solo branch's task
+    # must never appear in what was injected into any of its runs. On the pre-fix code the
+    # sub-team received the ROOT history, which includes SOLO-TASK-1.
+    all_sub_team_input = "\n".join(run.input.input_content_string() for run in research_team_runs)
+    assert "SOLO-TASK-1" not in all_sub_team_input, all_sub_team_input
+
+    # (2) Own-history recall, checked routing-independently against the accumulated session:
+    # the sub-team's own history holds whichever SUB task(s) actually reached it (not a
+    # hardcoded one), is scoped to it, and differs from the root history that leaked before
+    # the fix. Only requires the sub-team to have run at least once (asserted above).
+    own_history = session.get_team_history_context(team_id="research_team")
+    root_history = session.get_team_history_context()
+    assert own_history is not None and "SUB-TASK" in own_history, own_history
+    assert "SOLO-TASK-1" not in own_history, own_history
+    assert root_history is not None and "SOLO-TASK-1" in root_history, root_history
+
+
 def test_share_member_interactions(shared_db):
     """Test that member interactions during the current run are shared when share_member_interactions=True."""
 
