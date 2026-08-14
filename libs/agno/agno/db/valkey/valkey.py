@@ -16,9 +16,11 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     metric_record_day,
+    metrics_starting_date_from_records,
 )
 from agno.db.valkey.utils import (
     apply_filters,
@@ -1793,21 +1795,9 @@ class ValkeyDb(BaseDb):
         try:
             all_metrics = self._get_all_records("metrics")
 
-            if all_metrics:
-                # Find the latest completed metric
-                completed_metrics = [m for m in all_metrics if m.get("completed", False)]
-                if completed_metrics:
-                    latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    latest_day = metric_record_day(latest_completed)
-                    if latest_day is not None:
-                        return latest_day + timedelta(days=1)
-                else:
-                    # Find the earliest incomplete metric
-                    incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
-                    if incomplete_metrics:
-                        earliest_day = metric_record_day(min(incomplete_metrics, key=lambda x: x.get("date", "")))
-                        if earliest_day is not None:
-                            return earliest_day
+            resume_date = metrics_starting_date_from_records(all_metrics)
+            if resume_date is not None:
+                return resume_date
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1928,9 +1918,20 @@ class ValkeyDb(BaseDb):
                     filtered_metrics.append(metric)
                 all_metrics = filtered_metrics
 
-            # Filter by user_id if requested.
+            # Before the owner filter, not inside it: this is the one backend that ever wrote a
+            # record holding a whole day under the unowned bucket, so "" would select it
+            all_metrics = drop_legacy_metrics(all_metrics)
+
+            # Filter by user_id if requested. A whole-day record with no per-user rows covering
+            # its day survives the drop above and also carries "", but it holds the day for
+            # every user, so it must never match the unowned bucket. users_count tells them
+            # apart: the fresh unowned bucket has no owner to count and stays at zero.
             if user_id is not None:
-                all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
+                all_metrics = [
+                    m
+                    for m in all_metrics
+                    if m.get("user_id") == user_id and not (user_id == "" and m.get("users_count"))
+                ]
 
             # Get latest updated_at
             latest_updated_at = None

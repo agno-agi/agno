@@ -344,7 +344,9 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
     results = []
     batch = collection_ref._client.batch()
 
-    for i, record in enumerate(metrics_records):
+    batch_count = 0
+
+    for record in metrics_records:
         record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
         try:
             # ``record["id"]`` is deterministic per (date, user_id), so re-runs update the same doc.
@@ -352,22 +354,20 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
             doc_ref = collection_ref.document(doc_id)
             batch.set(doc_ref, record, merge=True)
             results.append(record)
-
-            # Firestore batch limit is 500 operations
-            if (i + 1) % 500 == 0:
-                batch.commit()
-                batch = collection_ref._client.batch()
+            batch_count += 1
 
         except Exception as e:
             log_error(f"Error preparing metrics record for batch: {str(e)}")
             continue
 
-    # Commit remaining operations
-    if len(metrics_records) % 500 != 0:
-        try:
+        # Firestore batch limit is 500 operations
+        if batch_count % 500 == 0:
             batch.commit()
-        except Exception as e:
-            log_error(f"Error committing metrics batch: {str(e)}")
+            batch = collection_ref._client.batch()
+
+    # Commit remaining operations
+    if batch_count % 500 != 0:
+        batch.commit()
 
     return results
 

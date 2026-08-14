@@ -1,14 +1,15 @@
 import logging
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import List, Optional, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
 from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.utils import aggregate_metrics_by_date, identify_metrics_by_owner
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.routers.metrics.schemas import (
     DayAggregatedMetrics,
     MetricsRefreshResponse,
@@ -27,89 +28,6 @@ from agno.os.utils import get_db, to_utc_datetime
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
-
-_METRIC_COUNT_FIELDS = (
-    "agent_sessions_count",
-    "team_sessions_count",
-    "workflow_sessions_count",
-    "agent_runs_count",
-    "team_runs_count",
-    "workflow_runs_count",
-    "users_count",
-)
-
-
-def _merge_model_metrics(target: List[dict], extra: List[dict]) -> None:
-    """Merge extra model_metrics into target in place, summing counts per model."""
-    index: Dict[Any, dict] = {}
-    for m in [*target, *extra]:
-        key = (m.get("model_id"), m.get("model_provider"))
-        entry = index.get(key)
-        if entry is None:
-            index[key] = dict(m)
-        else:
-            entry["count"] = (entry.get("count") or 0) + (m.get("count") or 0)
-    target[:] = list(index.values())
-
-
-def _merge_timestamp(current: Any, candidate: Any, *, latest: bool) -> Any:
-    """Merge two timestamps into the later (or earlier) one, tolerating None."""
-    if candidate is None:
-        return current
-    if current is None:
-        return candidate
-    try:
-        if latest:
-            return candidate if candidate > current else current
-        return candidate if candidate < current else current
-    except TypeError:
-        # Adapters store epoch ints; a row carrying a datetime cannot be ordered against one.
-        return current
-
-
-def _aggregate_metrics_by_date(rows: List[dict]) -> List[dict]:
-    """Collapse per-user metric rows into one aggregate row per date and period.
-
-    The id is synthesised rather than carried over: stored per-user ids embed the owner
-    on most key-value backends, and rows arrive in no particular order.
-    """
-    by_bucket: Dict[Any, dict] = {}
-    for row in rows:
-        # A period-less row belongs in the daily bucket, and the bucket key has to be
-        # what reaches the id, or two buckets can end up sharing one id.
-        period = row.get("aggregation_period") or "daily"
-        day = row.get("date")
-        # The date arrives as a date, a datetime or a string; the key is a day.
-        if isinstance(day, datetime):
-            day = day.date()
-        if isinstance(day, date):
-            day_key = day.isoformat()
-        elif isinstance(day, str):
-            day_key = day
-        elif isinstance(day, (int, float)) and not isinstance(day, bool):
-            # SurrealDB is the one backend that stores the day as an epoch second.
-            day_key = datetime.fromtimestamp(day, tz=timezone.utc).date().isoformat()
-        else:
-            # The response carries a day, so a record whose date is not one cannot be
-            # returned at all. Skip it rather than fail every other user's row.
-            logger.warning("Skipping metrics record %s: date %r is not a day", row.get("id"), day)
-            continue
-        bucket = (day_key, period)
-        agg = by_bucket.get(bucket)
-        if agg is None:
-            agg = {**row, "id": f"{day_key}_{period}"}
-            agg["token_metrics"] = dict(row.get("token_metrics") or {})
-            agg["model_metrics"] = [dict(m) for m in (row.get("model_metrics") or [])]
-            by_bucket[bucket] = agg
-            continue
-        for field in _METRIC_COUNT_FIELDS:
-            agg[field] = (agg.get(field) or 0) + (row.get(field) or 0)
-        for token, value in (row.get("token_metrics") or {}).items():
-            agg["token_metrics"][token] = (agg["token_metrics"].get(token) or 0) + (value or 0)
-        _merge_model_metrics(agg["model_metrics"], row.get("model_metrics") or [])
-        agg["created_at"] = _merge_timestamp(agg.get("created_at"), row.get("created_at"), latest=False)
-        agg["updated_at"] = _merge_timestamp(agg.get("updated_at"), row.get("updated_at"), latest=True)
-    return list(by_bucket.values())
 
 
 def get_metrics_router(
@@ -190,13 +108,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ending_date: Optional[date] = Query(
             default=None, description="Ending date for metrics range (YYYY-MM-DD format)"
         ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's metrics. Ignored for non-admin callers"
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query metrics from"),
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> MetricsResponse:
         try:
-            db = await get_db(dbs, db_id, table)
-
-            scoped_user_id = get_scoped_user_id(request)
+            db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(request)
@@ -206,22 +125,23 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 )
 
             if isinstance(db, AsyncBaseDb):
-                db = cast(AsyncBaseDb, db)
                 metrics, latest_updated_at = await db.get_metrics(
-                    starting_date=starting_date, ending_date=ending_date, user_id=scoped_user_id
+                    starting_date=starting_date, ending_date=ending_date, user_id=effective_user_id
                 )
             else:
                 metrics, latest_updated_at = await run_in_threadpool(
                     db.get_metrics,
                     starting_date=starting_date,
                     ending_date=ending_date,
-                    user_id=scoped_user_id,
+                    user_id=effective_user_id,
                 )
 
-            # Unscoped callers (admins, or user_isolation off) get the legacy one-row-per-day
-            # aggregate; scoped callers already receive only their own bucket.
-            if scoped_user_id is None:
-                metrics = _aggregate_metrics_by_date(metrics)
+            # A read of one owner keeps that owner's rows; every other read collapses to the
+            # legacy one-row-per-day shape.
+            if effective_user_id is None:
+                metrics = aggregate_metrics_by_date(metrics)
+            else:
+                metrics = identify_metrics_by_owner(metrics, effective_user_id)
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
@@ -239,6 +159,29 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     # so no lock is needed. Per-process: each worker tracks the refreshes it started.
     refresh_states: dict[str, MetricsRefreshStatusResponse] = {}
 
+    def _refresh_is_running(refresh_key: str) -> bool:
+        state = refresh_states.get(refresh_key)
+        return state is not None and state.status == "running"
+
+    def _mark_refresh_running(refresh_key: str) -> None:
+        refresh_states[refresh_key] = MetricsRefreshStatusResponse(
+            status="running", started_at=datetime.now(timezone.utc)
+        )
+
+    def _record_refresh_outcome(refresh_key: str, error: Optional[str] = None) -> None:
+        state = refresh_states.get(refresh_key)
+        refresh_states[refresh_key] = MetricsRefreshStatusResponse(
+            status="failed" if error else "completed",
+            started_at=state.started_at if state else None,
+            finished_at=datetime.now(timezone.utc),
+            error=error,
+        )
+
+    def _already_running_response() -> MetricsRefreshResponse:
+        return MetricsRefreshResponse(
+            status="already_running", message="A metrics refresh is already in progress for this database"
+        )
+
     async def _do_refresh(
         db: Union[BaseDb, AsyncBaseDb, RemoteDb],
         db_id: Optional[str],
@@ -246,9 +189,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         headers: Optional[dict],
     ) -> None:
         refresh_key = str(db.id)
-        current_state = refresh_states.get(refresh_key)
-        started_at = current_state.started_at if current_state else None
-        final_state = MetricsRefreshStatusResponse(status="completed", started_at=started_at)
         try:
             if isinstance(db, RemoteDb):
                 await db.refresh_metrics(db_id=db_id, table=table, headers=headers, background=True)
@@ -258,10 +198,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 await run_in_threadpool(db.calculate_metrics)
         except Exception as e:
             logger.error(f"Metrics refresh failed: {e}")
-            final_state = MetricsRefreshStatusResponse(status="failed", started_at=started_at, error=str(e))
-        finally:
-            final_state.finished_at = datetime.now(timezone.utc)
-            refresh_states[refresh_key] = final_state
+            _record_refresh_outcome(refresh_key, error=str(e))
+        else:
+            _record_refresh_outcome(refresh_key)
 
     @router.post(
         "/metrics/refresh",
@@ -325,52 +264,64 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         background_tasks: BackgroundTasks,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for metrics calculation"),
         table: Optional[str] = Query(default=None, description="Table to use for metrics calculation"),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's metrics. Ignored for non-admin callers"
+        ),
         background: bool = Query(
             default=False, description="Run the refresh in the background and return 202 immediately"
         ),
     ) -> Union[List[DayAggregatedMetrics], MetricsRefreshResponse]:
         try:
-            db = await get_db(dbs, db_id, table)
-
             # Resolved before the background branch so an identity-less token cannot start a refresh.
-            scoped_user_id = get_scoped_user_id(request)
+            db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
             headers = None
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
 
+            refresh_key = str(db.id)
+
             if background:
                 response.status_code = 202
-                refresh_key = str(db.id)
-                current_state = refresh_states.get(refresh_key)
-                if current_state is not None and current_state.status == "running":
-                    return MetricsRefreshResponse(
-                        status="already_running", message="A metrics refresh is already in progress for this database"
-                    )
+                if _refresh_is_running(refresh_key):
+                    return _already_running_response()
 
-                refresh_states[refresh_key] = MetricsRefreshStatusResponse(
-                    status="running", started_at=datetime.now(timezone.utc)
-                )
+                _mark_refresh_running(refresh_key)
                 background_tasks.add_task(_do_refresh, db, db_id, table, headers)
 
                 return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
 
+            # A remote database keeps its own state, so it is left to guard itself
             if isinstance(db, RemoteDb):
                 return await db.refresh_metrics(db_id=db_id, table=table, headers=headers)
 
-            if isinstance(db, AsyncBaseDb):
-                result = await db.calculate_metrics()
-            else:
-                result = await run_in_threadpool(db.calculate_metrics)
+            # The same guard the background path has: without it every concurrent caller
+            # starts its own full recalculation of every date the database still needs
+            if _refresh_is_running(refresh_key):
+                return _already_running_response()
+
+            _mark_refresh_running(refresh_key)
+            try:
+                if isinstance(db, AsyncBaseDb):
+                    result = await db.calculate_metrics()
+                else:
+                    result = await run_in_threadpool(db.calculate_metrics)
+            except Exception as e:
+                _record_refresh_outcome(refresh_key, error=str(e))
+                raise
+            _record_refresh_outcome(refresh_key)
+
             if result is None:
                 return []
 
-            # Scoped callers see only their own bucket; unscoped callers get the legacy aggregate.
-            if scoped_user_id is not None:
-                result = [metric for metric in result if metric.get("user_id") == scoped_user_id]
+            # A read of one owner keeps that owner's rows; every other read collapses to the
+            # legacy one-row-per-day shape.
+            if effective_user_id is not None:
+                owned = [metric for metric in result if metric.get("user_id") == effective_user_id]
+                result = identify_metrics_by_owner(owned, effective_user_id)
             else:
-                result = _aggregate_metrics_by_date(result)
+                result = aggregate_metrics_by_date(result)
 
             return [DayAggregatedMetrics.from_dict(metric) for metric in result]
 

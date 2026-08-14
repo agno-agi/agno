@@ -35,8 +35,10 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1943,14 +1945,25 @@ class MongoDb(BaseDb):
     def _get_metrics_calculation_starting_date(self, collection: Collection) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
         try:
-            result = collection.find_one({}, sort=[("date", -1)], limit=1)
+            # resume at the earliest incomplete day after the latest completed one, otherwise the day after
+            # that one (:func:`metrics_starting_date_from_days`): the dates are ISO strings, so both queries order
+            # lexicographically and the collection is never loaded whole
+            completed_record = collection.find_one({"completed": True}, sort=[("date", -1)])
+            latest_completed = completed_record["date"] if completed_record else None
 
-            if result is not None:
-                result_date = datetime.strptime(result["date"], "%Y-%m-%d").date()
-                if result.get("completed"):
-                    return result_date + timedelta(days=1)
-                else:
-                    return result_date
+            incomplete_filter: Dict[str, Any] = {"completed": {"$ne": True}}
+            if latest_completed is not None:
+                incomplete_filter["date"] = {"$gt": latest_completed}
+            earliest_incomplete = collection.find_one(incomplete_filter, sort=[("date", 1)])
+
+            starting_date = metrics_starting_date_from_days(
+                datetime.strptime(latest_completed, "%Y-%m-%d").date() if latest_completed is not None else None,
+                datetime.strptime(earliest_incomplete["date"], "%Y-%m-%d").date()
+                if earliest_incomplete is not None
+                else None,
+            )
+            if starting_date is not None:
+                return starting_date
 
             # No metrics records. Return the date of the first recorded session.
             first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2054,6 +2067,10 @@ class MongoDb(BaseDb):
                 query["user_id"] = user_id
 
             records = list(collection.find(query))
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                records = drop_legacy_metrics(records)
             if not records:
                 return [], None
 

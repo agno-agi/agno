@@ -31,8 +31,10 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1769,7 +1771,7 @@ class FirestoreDb(BaseDb):
         """Get all sessions of all types for metrics calculation."""
         try:
             collection_ref = self._get_collection(table_type="sessions")
-            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=True)
 
             query = collection_ref
             if start_timestamp is not None:
@@ -1828,16 +1830,13 @@ class FirestoreDb(BaseDb):
     def _get_metrics_calculation_starting_date(self, collection_ref) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
         try:
-            query = collection_ref.order_by("date", direction="DESCENDING").limit(1)
-            docs = query.stream()
+            # Only the two fields the rule reads, and no filter on completed: pairing it with
+            # date would need a composite index that may not be built yet
+            docs = collection_ref.select(["date", "completed"]).stream()
 
-            for doc in docs:
-                data = doc.to_dict()
-                result_date = datetime.strptime(data["date"], "%Y-%m-%d").date()
-                if data.get("completed"):
-                    return result_date + timedelta(days=1)
-                else:
-                    return result_date
+            resume_date = metrics_starting_date_from_records([doc.to_dict() for doc in docs])
+            if resume_date is not None:
+                return resume_date
 
             # No metrics records. Return the date of the first recorded session.
             first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1872,9 +1871,13 @@ class FirestoreDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1938,12 +1941,16 @@ class FirestoreDb(BaseDb):
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
 
-            docs = query.stream()
+            docs = [doc.to_dict() for doc in query.stream()]
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                docs = drop_legacy_metrics(docs)
+
             records = []
             latest_updated_at = 0
 
-            for doc in docs:
-                data = doc.to_dict()
+            for data in docs:
                 # Map the sentinel empty-string user_id back to None.
                 if data.get("user_id") == "":
                     data["user_id"] = None

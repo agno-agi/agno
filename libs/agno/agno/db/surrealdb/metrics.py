@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -8,6 +8,7 @@ from agno.db.base import SessionType
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.models import desurrealize_session, surrealize_dates
 from agno.db.surrealdb.queries import WhereClause
+from agno.db.utils import metrics_starting_date_from_days
 from agno.utils.log import log_error
 
 
@@ -53,6 +54,20 @@ def get_all_sessions_for_metrics_calculation(
     return [desurrealize_session(x) for x in results]
 
 
+def _stored_day(value: Any) -> Optional[date]:
+    """The day a stored metrics row covers, as a plain date.
+
+    SurrealDB hands back a tz-aware datetime for the date column, but the shared decision
+    compares days, so anything that is not already one is normalised here rather than trusted.
+    """
+    # datetime is a subclass of date, so it has to be narrowed first or a stamp passes through whole
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
 def get_metrics_calculation_starting_date(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, get_sessions: Callable
 ) -> Optional[date]:
@@ -68,22 +83,44 @@ def get_metrics_calculation_starting_date(
     Returns:
         Optional[date]: The starting date for which metrics calculation is needed.
     """
-    query = dedent(f"""
-        SELECT * FROM ONLY {table}
-        ORDER BY date DESC
-        LIMIT 1
-    """)
-    result = utils.query_one(client, query, {}, dict)
-    if result:
-        # 1. Return the date of the first day without a complete metrics record
-        result_date = result["date"]
-        assert isinstance(result_date, datetime)
-        result_date = result_date.date()
+    # 1. resume at the earliest incomplete day after the latest completed one, otherwise the
+    # day after that one: the date column is a datetime stamped at midnight, so the strict
+    # comparison below excludes the completed day itself
+    completed_record = utils.query_one(
+        client,
+        dedent(f"""
+            SELECT * FROM ONLY {table}
+            WHERE completed = true
+            ORDER BY date DESC
+            LIMIT 1
+        """),
+        {},
+        dict,
+    )
+    stored_completed_day = completed_record["date"] if completed_record else None
 
-        if result.get("completed"):
-            return result_date + timedelta(days=1)
-        else:
-            return result_date
+    incomplete_where = (
+        "WHERE completed = false" if stored_completed_day is None else "WHERE completed = false AND date > $last"
+    )
+    incomplete_vars: Dict[str, Any] = {} if stored_completed_day is None else {"last": stored_completed_day}
+    incomplete_record = utils.query_one(
+        client,
+        dedent(f"""
+            SELECT * FROM ONLY {table}
+            {incomplete_where}
+            ORDER BY date ASC
+            LIMIT 1
+        """),
+        incomplete_vars,
+        dict,
+    )
+
+    latest_completed = _stored_day(stored_completed_day)
+    earliest_incomplete = _stored_day(incomplete_record["date"]) if incomplete_record else None
+
+    starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+    if starting_date is not None:
+        return starting_date
 
     # 2. No metrics records. Return the date of the first recorded session
     first_session, _ = get_sessions(
@@ -118,6 +155,30 @@ def get_metrics_calculation_starting_date(
         raise ValueError(f"Unexpected type for created_at: {type(first_session_date)}")
 
 
+def desurrealize_metric(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a stored metric record in the plain shape every other adapter returns.
+
+    SurrealDB hands back a RecordID and its own datetimes, which the response model rejects,
+    so both the read and the recalculation pass their rows through here.
+    """
+    row = dict(record)
+
+    if hasattr(row.get("id"), "id"):
+        row["id"] = row["id"].id
+    elif isinstance(row.get("id"), RecordID):
+        row["id"] = str(row["id"].id)
+
+    for field in ("created_at", "updated_at", "date"):
+        if isinstance(row.get(field), datetime):
+            row[field] = int(row[field].timestamp())
+
+    # Unowned rows are stored with an empty-string user_id
+    if row.get("user_id") == "":
+        row["user_id"] = None
+
+    return row
+
+
 def bulk_upsert_metrics(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     table: str,
@@ -137,26 +198,27 @@ def bulk_upsert_metrics(
 
     metrics_records = [surrealize_dates(x) for x in metrics_records]
 
-    try:
-        results = []
-        from agno.utils.log import log_debug
+    results = []
+    from agno.utils.log import log_debug
 
-        for metric in metrics_records:
-            log_debug(f"Upserting metric: {metric}")  # Add this
+    for metric in metrics_records:
+        log_debug(f"Upserting metric: {metric}")
+        # Per-record: a mid-run failure must not discard the records that already landed
+        try:
             result = utils.query_one(
                 client,
                 "UPSERT $record CONTENT $content",
                 {"record": RecordID(table, metric["id"]), "content": metric},
                 dict,
             )
-            if result:
-                results.append(result)
-        return results
+        except Exception as e:
+            log_error(f"Error upserting metrics record: {str(e)}")
+            continue
 
-    except Exception as e:
-        log_error(f"Error upserting metrics: {str(e)}")
+        if result:
+            results.append(result)
 
-    return []
+    return results
 
 
 def fetch_all_sessions_data(

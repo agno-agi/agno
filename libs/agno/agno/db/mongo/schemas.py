@@ -80,7 +80,7 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "created_at"},
     {"key": "updated_at"},
     # user_id joined the unique key with per-user aggregation. Collections created before that
-    # keep the old (date, aggregation_period) unique index, which must be dropped by hand.
+    # keep the old (date, aggregation_period) unique index, which index creation drops.
     {"key": [("user_id", 1), ("date", 1), ("aggregation_period", 1)], "unique": True},
 ]
 

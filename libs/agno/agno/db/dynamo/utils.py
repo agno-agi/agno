@@ -580,6 +580,22 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
         log_error(f"Failed to bulk upsert metrics: {str(e)}")
 
 
+def deserialize_metrics_date(value: Any) -> Any:
+    """Return a metrics record's stored day as a ``date``, the shape every other adapter returns.
+
+    DynamoDB has no date type, so the day is written as the ISO string "2026-08-11". Readers
+    render that day as a timestamp, and a string parses back without a timezone: the day then
+    reads as local midnight and shifts for anyone outside UTC. A value that is not a day is
+    handed back untouched, so records callers already skip keep behaving as they did.
+    """
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            return value
+    return value
+
+
 # -- Query utils --
 
 

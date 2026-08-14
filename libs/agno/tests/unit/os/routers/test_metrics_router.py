@@ -74,8 +74,8 @@ def client(mock_db, settings):
 
 
 def _scope(user_id):
-    """Patch the router's view of who is calling."""
-    return patch("agno.os.routers.metrics.metrics.get_scoped_user_id", return_value=user_id)
+    """Patch who is calling, at the helper the router resolves the scope through."""
+    return patch("agno.os.middleware.user_scope.get_scoped_user_id", return_value=user_id)
 
 
 # =============================================================================
@@ -114,13 +114,40 @@ class TestGetMetrics:
         metrics = resp.json()["metrics"]
         assert len(metrics) == 1
         assert metrics[0]["agent_runs_count"] == 2
-        assert metrics[0]["id"] == alice_row["id"]
+        assert mock_db.get_metrics.call_args.kwargs["user_id"] == "alice"
+
+    def test_scoped_row_id_does_not_come_from_storage(self, client, mock_db, alice_row):
+        """Stored ids are the backend's own -- a uuid on SQL, an owner-bearing string on Redis."""
+        alice_row["id"] = "ac086ccf-66d7-4b97-ac92-8c5d6e38da1a"
+        mock_db.get_metrics.return_value = ([alice_row], int(time.time()))
+        with _scope("alice"):
+            resp = client.get("/metrics")
+
+        assert resp.json()["metrics"][0]["id"] == "2026-01-01_alice_daily"
+
+    def test_admin_can_narrow_to_one_user(self, client, mock_db, alice_row):
+        mock_db.get_metrics.return_value = ([alice_row], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics?user_id=alice")
+
+        assert mock_db.get_metrics.call_args.kwargs["user_id"] == "alice"
+        metrics = resp.json()["metrics"]
+        assert len(metrics) == 1
+        assert metrics[0]["agent_runs_count"] == 2
+        assert metrics[0]["id"] == "2026-01-01_alice_daily"
+
+    def test_scoped_caller_cannot_widen_to_another_user(self, client, mock_db, alice_row):
+        """The JWT subject wins over the query param, so ?user_id=bob cannot reach bob."""
+        mock_db.get_metrics.return_value = ([alice_row], int(time.time()))
+        with _scope("alice"):
+            client.get("/metrics?user_id=bob")
+
         assert mock_db.get_metrics.call_args.kwargs["user_id"] == "alice"
 
     def test_identity_less_caller_gets_403_not_500(self, client):
         """The fail-closed scoping status must not be masked by the broad handler."""
         with patch(
-            "agno.os.routers.metrics.metrics.get_scoped_user_id",
+            "agno.os.middleware.user_scope.get_scoped_user_id",
             side_effect=HTTPException(status_code=403, detail="Authenticated request is missing a user identity"),
         ):
             resp = client.get("/metrics")
@@ -162,12 +189,47 @@ class TestRefreshMetrics:
 
     def test_identity_less_caller_gets_403_not_500(self, client):
         with patch(
-            "agno.os.routers.metrics.metrics.get_scoped_user_id",
+            "agno.os.middleware.user_scope.get_scoped_user_id",
             side_effect=HTTPException(status_code=403, detail="Authenticated request is missing a user identity"),
         ):
             resp = client.post("/metrics/refresh")
 
         assert resp.status_code == 403
+
+    def test_a_second_caller_is_told_one_is_already_running(self, client, mock_db):
+        """The guard the background path always had, now on the synchronous path too."""
+        seen = {}
+
+        def reenter():
+            # Fired while the first refresh is still in flight, so the state says "running"
+            seen["inner"] = client.post("/metrics/refresh").json()
+            return []
+
+        mock_db.calculate_metrics.side_effect = reenter
+        with _scope(None):
+            outer = client.post("/metrics/refresh")
+
+        assert outer.status_code == 200
+        assert seen["inner"]["status"] == "already_running"
+
+    def test_sync_refresh_records_its_outcome(self, client):
+        """It used to leave no state at all, so the status endpoint reported idle."""
+        with _scope(None):
+            client.post("/metrics/refresh")
+            status = client.get("/metrics/refresh/status").json()
+
+        assert status["status"] == "completed"
+        assert status["started_at"] is not None and status["finished_at"] is not None
+
+    def test_failed_sync_refresh_is_recorded_and_still_raises(self, client, mock_db):
+        mock_db.calculate_metrics.side_effect = RuntimeError("boom")
+        with _scope(None):
+            resp = client.post("/metrics/refresh")
+            status = client.get("/metrics/refresh/status").json()
+
+        assert resp.status_code == 500
+        assert status["status"] == "failed"
+        assert status["finished_at"] is not None
 
     def test_no_metrics_returns_empty_list(self, client, mock_db):
         mock_db.calculate_metrics.return_value = None
@@ -306,3 +368,57 @@ class TestAggregationEdges:
 
         ids = [m["id"] for m in resp.json()["metrics"]]
         assert sorted(ids) == ["2026-01-01_daily", "2026-01-01_weekly", "2026-01-02_daily"]
+
+
+class TestSupersededRecords:
+    """Records written before metrics were bucketed per user must not be summed twice."""
+
+    def test_record_without_a_user_id_is_dropped(self, client, mock_db, alice_row, bob_row):
+        legacy = _make_metric("alice", runs=5)
+        del legacy["user_id"]
+        mock_db.get_metrics.return_value = ([alice_row, bob_row, legacy], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics")
+
+        assert resp.json()["metrics"][0]["agent_runs_count"] == 5
+
+    def test_unowned_record_carrying_a_user_count_is_dropped(self, client, mock_db, alice_row, bob_row):
+        """An earlier Valkey filed the whole day under the unowned bucket, counting its users."""
+        legacy = _make_metric("", runs=5)
+        legacy["users_count"] = 2
+        mock_db.get_metrics.return_value = ([alice_row, bob_row, legacy], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics")
+
+        day = resp.json()["metrics"][0]
+        assert day["agent_runs_count"] == 5
+        assert day["users_count"] == 2
+
+    def test_unowned_record_with_no_user_count_is_kept(self, client, mock_db, alice_row):
+        """The bucket the per-user writer produces for unowned sessions is real traffic."""
+        mock_db.get_metrics.return_value = ([alice_row, _make_metric("", runs=3)], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics")
+
+        assert resp.json()["metrics"][0]["agent_runs_count"] == 5
+
+    def test_superseded_record_alone_is_still_the_day(self, client, mock_db):
+        """With nothing to replace it, it is the only record of that day."""
+        legacy = _make_metric("", runs=7)
+        legacy["users_count"] = 3
+        mock_db.get_metrics.return_value = ([legacy], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics")
+
+        assert resp.json()["metrics"][0]["agent_runs_count"] == 7
+
+    def test_a_bucket_it_does_not_cover_is_untouched(self, client, mock_db, alice_row):
+        """Dropping keys off the bucket, so another day's record survives."""
+        legacy = _make_metric("", date="2026-01-02", runs=7)
+        legacy["users_count"] = 3
+        mock_db.get_metrics.return_value = ([alice_row, legacy], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics")
+
+        by_id = {m["id"]: m["agent_runs_count"] for m in resp.json()["metrics"]}
+        assert by_id == {"2026-01-01_daily": 2, "2026-01-02_daily": 7}
