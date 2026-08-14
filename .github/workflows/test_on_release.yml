@@ -1014,6 +1014,14 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
+          # These tests fetch fixtures over HTTPS from public hosts. ``truststore`` (pulled in
+          # transitively, never imported by Agno) patches SSL to verify against the OS trust
+          # store, and aborts the interpreter under many concurrent async connections —
+          # SIGABRT, so no test failure is reported and pytest-rerunfailures cannot retry it.
+          # Pointing SSL_CERT_FILE at the certifi bundle keeps verification on the standard
+          # path, which is what every local run already uses. Drop this once truststore is
+          # fixed, or if CI ever moves to a runner behind a TLS-inspecting proxy.
+          export SSL_CERT_FILE="$(python -m certifi)"
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
