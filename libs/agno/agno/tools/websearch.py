@@ -72,13 +72,13 @@ class WebSearchTools(Toolkit):
         if all or search_web:
             tools.append(self.search_web)
         if all or search_news:
-            tools.append(self.web_search_news)
+            tools.append(self.search_news)
 
         super().__init__(name="websearch", tools=tools, **kwargs)
 
         # Backwards compat: old method names
         self.web_search = self.search_web
-        self.search_news = self.web_search_news
+        self.web_search_news = self.search_news
 
     def search_web(self, query: str, max_results: int = 5) -> str:
         """Search the web for a query.
@@ -108,7 +108,7 @@ class WebSearchTools(Toolkit):
 
         return json.dumps(results, indent=2, ensure_ascii=False)
 
-    def web_search_news(self, query: str, max_results: int = 5) -> str:
+    def search_news(self, query: str, max_results: int = 5) -> str:
         """Search for the latest news on a topic.
 
         Args:

@@ -43,7 +43,7 @@ class GroqTools(Toolkit):
         if all or transcribe_audio:
             tools.append(self.groq_transcribe_audio)
         if all or translate_audio:
-            tools.append(self.translate_audio)
+            tools.append(self.groq_translate_audio)
         if all or generate_speech:
             tools.append(self.groq_generate_speech)
 
@@ -92,7 +92,7 @@ class GroqTools(Toolkit):
             log_error(f"Failed to transcribe audio source '{audio_source}' with Groq: {str(e)}")
             return f"Failed to transcribe audio source '{audio_source}' with Groq: {str(e)}"
 
-    def translate_audio(self, audio_source: str) -> str:
+    def groq_translate_audio(self, audio_source: str) -> str:
         """Translate audio file or URL to English using Groq's Whisper API.
         Args:
             audio_source: Path to the local audio file or a publicly accessible URL to the audio.

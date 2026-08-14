@@ -25,7 +25,7 @@ agent = Agent(
     tools=[
         AgentQLTools(
             enable_scrape_website=True,
-            enable_custom_scrape_website=False,
+            custom_scrape_website=False,
             agentql_query="your_query_here",
         )
     ],
@@ -50,7 +50,7 @@ custom_agent = Agent(
     tools=[
         AgentQLTools(
             enable_scrape_website=True,
-            enable_custom_scrape_website=True,
+            custom_scrape_website=True,
             agentql_query=custom_query,
         )
     ],

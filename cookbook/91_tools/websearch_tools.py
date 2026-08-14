@@ -23,7 +23,7 @@ agent = Agent(
 
 # Example 2: Enable only news search
 news_agent = Agent(
-    tools=[WebSearchTools(search=False, news=True)],
+    tools=[WebSearchTools(search_web=False, search_news=True)],
     description="You are a news agent that helps users find the latest news.",
     instructions=[
         "Given a topic by the user, respond with the latest news about that topic."
