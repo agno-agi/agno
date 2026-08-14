@@ -220,3 +220,18 @@ class GoogleMapsTools(Toolkit):
         except Exception as e:
             log_error(f"Error getting timezone: {e}")
             return json.dumps({"error": str(e)})
+
+
+# Backwards compat for old name
+class GoogleMapTools(GoogleMapsTools):
+    """Deprecated: Use GoogleMapsTools instead."""
+
+    def __init__(self, *args, **kwargs):
+        import warnings
+
+        warnings.warn(
+            "GoogleMapTools is deprecated, use GoogleMapsTools instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

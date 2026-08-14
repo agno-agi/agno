@@ -7,6 +7,7 @@ __all__ = [
     "GoogleDriveTools",
     "GmailTools",
     "GoogleMapsTools",
+    "GoogleMapTools",  # deprecated alias
     "GooglePlacesTools",
     "GoogleSheetsTools",
 ]
@@ -45,6 +46,10 @@ def __getattr__(name: str):
         from agno.tools.google.maps import GoogleMapsTools
 
         return GoogleMapsTools
+    if name == "GoogleMapTools":
+        from agno.tools.google.maps import GoogleMapTools
+
+        return GoogleMapTools
     if name == "GooglePlacesTools":
         from agno.tools.google.places import GooglePlacesTools
 
