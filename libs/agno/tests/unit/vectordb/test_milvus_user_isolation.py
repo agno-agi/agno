@@ -2,6 +2,7 @@
 
 import logging
 from typing import List, Optional
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -258,3 +259,47 @@ class TestDeleteScope:
         """Carol owns nothing; her scoped delete of doc-1 removes no rows."""
         content_id_corpus.delete_by_content_id("doc-1", user_id="carol")
         assert _count(content_id_corpus) == 3
+
+
+class TestPreV3Guard:
+    """A collection created before the owner field existed must refuse a scoped call.
+
+    Milvus spells "shared" as the ``"__shared__"`` sentinel and its scope filter has no
+    field-absent branch, so a pre-v3 entity matches neither arm and simply stops appearing.
+    Returning nothing reads as "this user has no data" — the one outcome that hides the
+    missing migration. pgvector and weaviate raise; so does this.
+    """
+
+    def test_a_pre_v3_collection_refuses_a_scoped_call(self, milvus_db, monkeypatch):
+        monkeypatch.setattr(milvus_db, "_user_id_field_exists", lambda: False)
+
+        with pytest.raises(ValueError, match="migration"):
+            milvus_db._require_owner_field("alice")
+
+    def test_a_pre_v3_collection_still_serves_unscoped_calls(self, milvus_db, monkeypatch):
+        monkeypatch.setattr(milvus_db, "_user_id_field_exists", lambda: False)
+
+        assert milvus_db._require_owner_field(None) is False
+
+    def test_a_migrated_collection_is_not_refused(self, milvus_db):
+        milvus_db._owner_field_exists = True
+
+        assert milvus_db._require_owner_field("alice") is True
+        assert milvus_db._require_owner_field(None) is True
+
+    def test_the_verdict_is_re_inspected_after_a_live_migration(self, milvus_db, monkeypatch):
+        """A collection migrated while the process is alive recovers without a restart."""
+        answers = [False, True]
+        monkeypatch.setattr(milvus_db, "_user_id_field_exists", lambda: answers.pop(0))
+
+        assert milvus_db._require_owner_field("alice") is True
+
+    def test_an_uninspectable_collection_is_not_refused_and_is_not_cached(self, milvus_db, monkeypatch):
+        """A blip must not permanently mask a pre-v3 collection, so it is re-checked next time."""
+        milvus_db._owner_field_exists = None
+        monkeypatch.setattr(
+            type(milvus_db.client), "has_collection", MagicMock(side_effect=RuntimeError("server unreachable"))
+        )
+
+        assert milvus_db._user_id_field_exists() is True
+        assert milvus_db._owner_field_exists is None
