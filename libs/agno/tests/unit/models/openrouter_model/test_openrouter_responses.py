@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pytest
+from openai.types.responses import ResponseUsage
 
 from agno.exceptions import ModelAuthenticationError
 from agno.models.openrouter import OpenRouterResponses
@@ -121,6 +122,34 @@ def test_openrouter_responses_get_metrics_parses_cost():
     model = OpenRouterResponses(id="openai/gpt-4o-mini", api_key="test-key")
 
     metrics = model._get_metrics(MockResponseUsage(cost=3.6e-06))  # type: ignore[arg-type]
+
+    assert metrics.cost == 3.6e-06
+    assert metrics.input_tokens == 12
+    assert metrics.output_tokens == 3
+    assert metrics.total_tokens == 15
+
+
+def test_openrouter_responses_get_metrics_parses_cost_from_real_sdk_usage():
+    """Test cost is preserved through OpenAI SDK ResponseUsage into MessageMetrics."""
+    model = OpenRouterResponses(id="openai/gpt-4o-mini", api_key="test-key")
+
+    usage = ResponseUsage.model_validate(
+        {
+            "input_tokens": 12,
+            "input_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 0,
+            },
+            "output_tokens": 3,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": 15,
+            "cost": 3.6e-06,
+        }
+    )
+
+    assert getattr(usage, "cost", None) == 3.6e-06
+
+    metrics = model._get_metrics(usage)
 
     assert metrics.cost == 3.6e-06
     assert metrics.input_tokens == 12
