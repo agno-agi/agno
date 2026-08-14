@@ -17,7 +17,9 @@ def test_save_and_read_file():
         # Save a file
         content = "Hello, World!"
         result = file_tools.save_file(contents=content, file_name="test.txt")
-        assert result == "test.txt"
+        saved = json.loads(result)
+        assert saved["status"] == "saved"
+        assert saved["file_path"].endswith("test.txt")
 
         # Read it back
         read_content = file_tools.read_file(file_name="test.txt")
@@ -37,7 +39,7 @@ def test_list_files_returns_relative_paths():
 
         # List files
         result = file_tools.list_files()
-        files = json.loads(result)
+        files = json.loads(result)["files"]
 
         # Verify we have 3 files
         assert len(files) == 3
@@ -69,8 +71,8 @@ def test_list_files_empty_directory_falls_back_to_base_dir():
 
         (base_dir / "file1.txt").write_text("content1")
 
-        assert json.loads(file_tools.list_files(directory="")) == ["file1.txt"]
-        assert file_tools.list_files(directory="") == file_tools.list_files()
+        assert json.loads(file_tools.list_files(directory=""))["files"] == ["file1.txt"]
+        assert json.loads(file_tools.list_files(directory=""))["files"] == json.loads(file_tools.list_files())["files"]
 
 
 def test_search_files_returns_relative_paths():
@@ -139,13 +141,13 @@ def test_search_files_does_not_return_traversal_matches_outside_base():
 
 def test_save_and_delete_file():
     with tempfile.TemporaryDirectory() as tmpdirname:
-        f = FileTools(base_dir=Path(tmpdirname), enable_delete_file=True)
+        f = FileTools(base_dir=Path(tmpdirname), delete_file=True)
         res = f.save_file(contents="contents", file_name="file.txt")
-        assert res == "file.txt"
+        assert json.loads(res)["status"] == "saved"
         contents = f.read_file(file_name="file.txt")
         assert contents == "contents"
         result = f.delete_file(file_name="file.txt")
-        assert result == ""
+        assert json.loads(result) == {"file": "file.txt", "status": "deleted"}
         contents = f.read_file(file_name="file.txt")
         assert contents != "contents"
 
@@ -167,7 +169,7 @@ def test_replace_file_chunk():
         f = FileTools(base_dir=Path(tempdirname))
         f.save_file(contents="line0\nline1\nline2\nline3\n", file_name="file1.txt")
         res = f.replace_file_chunk(file_name="file1.txt", start_line=1, end_line=2, chunk="some\nstuff")
-        assert res == "file1.txt"
+        assert json.loads(res)["status"] == "saved"
         new_contents = f.read_file(file_name="file1.txt")
         assert new_contents == "line0\nsome\nstuff\nline3\n"
 
@@ -249,7 +251,7 @@ def test_list_files_skips_symlink_targets_outside_base():
             pytest.skip("Symlink creation not permitted on this platform")
         file_tools = FileTools(base_dir=base_dir)
 
-        files = json.loads(file_tools.list_files())
+        files = json.loads(file_tools.list_files())["files"]
 
         assert "inside.txt" in files
         assert "linked-secret.txt" not in files
@@ -319,7 +321,7 @@ def test_default_exclude_patterns_hide_junk():
         search_result = json.loads(file_tools.search_files(pattern="**/*.py"))
         assert search_result["matches_found"] == 0
 
-        listed = json.loads(file_tools.list_files(directory="tmp"))
+        listed = json.loads(file_tools.list_files(directory="tmp"))["files"]
         assert ".venv" not in [Path(p).name for p in listed]
         assert "tmp/foo.txt" in listed
 
@@ -412,7 +414,7 @@ def test_default_excludes_env_family():
         (base_dir / "env.yaml").write_text("key: value")
         (base_dir / "keep.txt").write_text("visible")
 
-        listed = sorted(json.loads(file_tools.list_files()))
+        listed = sorted(json.loads(file_tools.list_files())["files"])
         assert listed == ["env.yaml", "environment.py", "keep.txt"]
 
 

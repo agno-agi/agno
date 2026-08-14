@@ -105,7 +105,7 @@ class FileTools(Toolkit):
 
         Args:
             base_dir: Root directory for all file operations. Defaults to cwd.
-            default_extension: Default file extension when none specified.
+            default_extension: Extension appended to auto-generated file names.
             restrict_to_base_dir: If True, all paths must stay within base_dir.
             save_file: Enable the save_file tool.
             read_file: Enable the read_file tool.
@@ -141,7 +141,6 @@ class FileTools(Toolkit):
             search_content = kwargs.pop("enable_search_content")
 
         self.base_dir: Path = Path(base_dir).resolve() if base_dir else Path.cwd().resolve()
-        self.base_dir.mkdir(parents=True, exist_ok=True)
         self.restrict_to_base_dir = restrict_to_base_dir
         self.default_extension = default_extension.lstrip(".")
 
@@ -199,19 +198,24 @@ class FileTools(Toolkit):
 
         Args:
             contents: The contents to save.
-            file_name: The name of the file. Auto-generated UUID if not provided.
+            file_name: The name of the file, saved exactly as given. Auto-generated UUID if not provided.
             overwrite: Overwrite the file if it already exists.
             encoding: File encoding. Defaults to utf-8.
-            extension: File extension. Uses default_extension if not provided.
+            extension: Force this file extension, replacing any existing one.
 
         Returns:
             JSON with file path and status or error.
         """
         try:
+            generated_name = file_name is None
             file_name = file_name or str(uuid4())
-            name_path = Path(file_name)
-            ext = (extension or name_path.suffix.lstrip(".") or self.default_extension).lstrip(".")
-            full_name = str(name_path.with_name(f"{name_path.stem}.{ext}"))
+            if extension:
+                full_name = str(Path(file_name).with_suffix("." + extension.lstrip(".")))
+            elif generated_name and self.default_extension:
+                full_name = f"{file_name}.{self.default_extension}"
+            else:
+                # Explicit names are saved exactly as given (Makefile stays Makefile)
+                full_name = file_name
 
             safe, file_path = self.check_escape(full_name)
             if not safe:
