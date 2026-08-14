@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
+from agno.metrics import MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent

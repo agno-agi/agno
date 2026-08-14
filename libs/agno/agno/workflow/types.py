@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.models.metrics import RunMetrics
+from agno.metrics import RunMetrics
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_warning
 from agno.utils.media import (

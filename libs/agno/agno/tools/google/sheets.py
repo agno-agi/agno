@@ -81,17 +81,10 @@ class GoogleSheetsTools(GoogleToolkit):
         token_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         oauth_port: int = 0,
-        # Deprecated alias (use credentials_path instead)
-        creds_path: Optional[str] = None,
         read_sheet: bool = True,
         create_sheet: bool = False,
         update_sheet: bool = False,
         create_duplicate_sheet: bool = False,
-        # Backward compat aliases (deprecated)
-        enable_read_sheet: Optional[bool] = None,
-        enable_create_sheet: Optional[bool] = None,
-        enable_update_sheet: Optional[bool] = None,
-        enable_create_duplicate_sheet: Optional[bool] = None,
         all: bool = False,
         **kwargs,
     ):
@@ -110,48 +103,28 @@ class GoogleSheetsTools(GoogleToolkit):
             create_sheet (bool): Enable creating a sheet.
             update_sheet (bool): Enable updating a sheet.
             create_duplicate_sheet (bool): Enable creating a duplicate sheet.
-            enable_read_sheet (Optional[bool]): Deprecated alias for read_sheet.
-            enable_create_sheet (Optional[bool]): Deprecated alias for create_sheet.
-            enable_update_sheet (Optional[bool]): Deprecated alias for update_sheet.
-            enable_create_duplicate_sheet (Optional[bool]): Deprecated alias for create_duplicate_sheet.
             all (bool): Enable all tools.
         """
-        # Resolve deprecated aliases: explicit deprecated flag overrides new flag
-        _read_sheet = enable_read_sheet if enable_read_sheet is not None else read_sheet
-        _create_sheet = enable_create_sheet if enable_create_sheet is not None else create_sheet
-        _update_sheet = enable_update_sheet if enable_update_sheet is not None else update_sheet
-        _create_duplicate_sheet = (
-            enable_create_duplicate_sheet if enable_create_duplicate_sheet is not None else create_duplicate_sheet
-        )
-
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         # Determine required scopes based on operations if no custom scopes provided
-        # Handle deprecated alias
-        if creds_path is not None:
-            from agno.utils.log import log_warning
-
-            log_warning("creds_path is deprecated, use credentials_path instead")
-            if credentials_path is None:
-                credentials_path = creds_path
-
         if scopes is None:
             self.scopes = []
-            if _read_sheet:
+            if read_sheet:
                 self.scopes.append(self.DEFAULT_SCOPES["read"])
-            if _create_sheet or _update_sheet or _create_duplicate_sheet:
+            if create_sheet or update_sheet or create_duplicate_sheet:
                 self.scopes.append(self.DEFAULT_SCOPES["write"])
             # Remove duplicates while preserving order
             self.scopes = list(dict.fromkeys(self.scopes))
         else:
             self.scopes = scopes
             # Validate that required scopes are present for requested operations
-            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.DEFAULT_SCOPES[
+            if (create_sheet or update_sheet or create_duplicate_sheet) and self.DEFAULT_SCOPES[
                 "write"
             ] not in self.scopes:
                 raise ValueError(f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations")
             if (
-                _read_sheet
+                read_sheet
                 and self.DEFAULT_SCOPES["read"] not in self.scopes
                 and self.DEFAULT_SCOPES["write"] not in self.scopes
             ):
@@ -160,13 +133,13 @@ class GoogleSheetsTools(GoogleToolkit):
                 )
 
         tools: List[Any] = []
-        if all or _read_sheet:
+        if all or read_sheet:
             tools.append(self.read_sheet)
-        if all or _create_sheet:
+        if all or create_sheet:
             tools.append(self.create_sheet)
-        if all or _update_sheet:
+        if all or update_sheet:
             tools.append(self.update_sheet)
-        if all or _create_duplicate_sheet:
+        if all or create_duplicate_sheet:
             tools.append(self.create_duplicate_sheet)
 
         super().__init__(

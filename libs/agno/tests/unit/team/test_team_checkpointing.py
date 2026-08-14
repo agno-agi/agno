@@ -21,7 +21,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
+from agno.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
