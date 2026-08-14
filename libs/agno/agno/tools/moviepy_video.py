@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import warnings
 from contextlib import suppress
 from typing import Callable, Dict, List, Optional
 
@@ -48,6 +49,17 @@ class MoviePyVideoTools(Toolkit):
             embed_captions: Enable the embed_captions tool.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_process_video" in kwargs:
+            warnings.warn("enable_process_video is deprecated, use extract_audio", DeprecationWarning, stacklevel=2)
+            extract_audio = kwargs.pop("enable_process_video")
+        if "enable_generate_captions" in kwargs:
+            warnings.warn("enable_generate_captions is deprecated, use create_srt", DeprecationWarning, stacklevel=2)
+            create_srt = kwargs.pop("enable_generate_captions")
+        if "enable_embed_captions" in kwargs:
+            warnings.warn("enable_embed_captions is deprecated, use embed_captions", DeprecationWarning, stacklevel=2)
+            embed_captions = kwargs.pop("enable_embed_captions")
+
         tools: List[Callable] = []
         if all or extract_audio:
             tools.append(self.extract_audio)

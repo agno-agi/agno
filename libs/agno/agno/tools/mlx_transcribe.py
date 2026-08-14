@@ -16,6 +16,7 @@ provides high-quality transcription capabilities.
 """
 
 import json
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -77,6 +78,13 @@ class MLXTranscribeTools(Toolkit):
             read_files: Enable the read_files tool.
             all: Enable all tools.
         """
+        # Backwards compat for old param names
+        if "enable_read_files_in_base_dir" in kwargs:
+            warnings.warn(
+                "enable_read_files_in_base_dir is deprecated, use read_files", DeprecationWarning, stacklevel=2
+            )
+            read_files = kwargs.pop("enable_read_files_in_base_dir")
+
         self.base_dir: Path = (base_dir or Path.cwd()).resolve()
         self.restrict_to_base_dir = restrict_to_base_dir
         self.path_or_hf_repo: str = path_or_hf_repo

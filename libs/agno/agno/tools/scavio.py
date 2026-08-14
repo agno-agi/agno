@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Any, Callable, List, Optional
 
@@ -76,6 +77,55 @@ class ScavioTools(Toolkit):
             # Exclude TikTok tools
             ScavioTools(exclude_tools=[ScavioTools.GET_TIKTOK_PROFILE, ScavioTools.LIST_TIKTOK_POSTS])
         """
+        # Backwards compat for old enable_* params - convert to exclude_tools
+        _exclude = list(kwargs.pop("exclude_tools", []) or [])
+        _deprecated_enable_flags = {
+            "enable_google": [ScavioTools.SEARCH_GOOGLE],
+            "enable_amazon": [ScavioTools.SEARCH_AMAZON, ScavioTools.GET_AMAZON_PRODUCT],
+            "enable_walmart": [ScavioTools.SEARCH_WALMART, ScavioTools.GET_WALMART_PRODUCT],
+            "enable_youtube": [ScavioTools.SEARCH_YOUTUBE, ScavioTools.GET_YOUTUBE_VIDEO],
+            "enable_reddit": [ScavioTools.SEARCH_REDDIT, ScavioTools.GET_REDDIT_POST],
+            "enable_tiktok": [
+                ScavioTools.GET_TIKTOK_PROFILE,
+                ScavioTools.LIST_TIKTOK_POSTS,
+                ScavioTools.GET_TIKTOK_VIDEO,
+                ScavioTools.LIST_TIKTOK_VIDEO_COMMENTS,
+                ScavioTools.LIST_TIKTOK_COMMENT_REPLIES,
+                ScavioTools.SEARCH_TIKTOK_VIDEOS,
+                ScavioTools.SEARCH_TIKTOK_USERS,
+                ScavioTools.GET_TIKTOK_HASHTAG,
+                ScavioTools.LIST_TIKTOK_HASHTAG_VIDEOS,
+                ScavioTools.LIST_TIKTOK_FOLLOWERS,
+                ScavioTools.LIST_TIKTOK_FOLLOWINGS,
+            ],
+            "enable_instagram": [
+                ScavioTools.GET_INSTAGRAM_PROFILE,
+                ScavioTools.LIST_INSTAGRAM_POSTS,
+                ScavioTools.LIST_INSTAGRAM_REELS,
+                ScavioTools.LIST_INSTAGRAM_TAGGED,
+                ScavioTools.LIST_INSTAGRAM_STORIES,
+                ScavioTools.GET_INSTAGRAM_POST,
+                ScavioTools.LIST_INSTAGRAM_POST_COMMENTS,
+                ScavioTools.LIST_INSTAGRAM_COMMENT_REPLIES,
+                ScavioTools.SEARCH_INSTAGRAM_USERS,
+                ScavioTools.SEARCH_INSTAGRAM_HASHTAGS,
+                ScavioTools.LIST_INSTAGRAM_FOLLOWERS,
+                ScavioTools.LIST_INSTAGRAM_FOLLOWINGS,
+            ],
+        }
+        for old_flag, tool_names in _deprecated_enable_flags.items():
+            if old_flag in kwargs:
+                new_param = old_flag.replace("enable_", "")
+                warnings.warn(
+                    f"{old_flag} is deprecated, use exclude_tools=[ScavioTools.{new_param.upper()}_*]",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                if not kwargs.pop(old_flag):
+                    _exclude.extend(tool_names)
+        if _exclude:
+            kwargs["exclude_tools"] = _exclude
+
         self.api_key = api_key or getenv("SCAVIO_API_KEY")
         if not self.api_key:
             log_error("SCAVIO_API_KEY not provided")

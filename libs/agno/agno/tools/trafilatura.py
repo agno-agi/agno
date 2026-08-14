@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from agno.tools import Toolkit
@@ -77,6 +78,25 @@ class TrafilaturaTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_extract_text" in kwargs:
+            warnings.warn("enable_extract_text is deprecated, use scrape", DeprecationWarning, stacklevel=2)
+            scrape = kwargs.pop("enable_extract_text")
+        if "enable_extract_metadata_only" in kwargs:
+            warnings.warn(
+                "enable_extract_metadata_only is deprecated, use get_metadata", DeprecationWarning, stacklevel=2
+            )
+            get_metadata = kwargs.pop("enable_extract_metadata_only")
+        if "enable_html_to_text" in kwargs:
+            warnings.warn("enable_html_to_text is deprecated, use convert_html", DeprecationWarning, stacklevel=2)
+            convert_html = kwargs.pop("enable_html_to_text")
+        if "enable_extract_batch" in kwargs:
+            warnings.warn("enable_extract_batch is deprecated, use scrape_batch", DeprecationWarning, stacklevel=2)
+            scrape_batch = kwargs.pop("enable_extract_batch")
+        if "enable_crawl_website" in kwargs:
+            warnings.warn("enable_crawl_website is deprecated, use crawl", DeprecationWarning, stacklevel=2)
+            crawl = kwargs.pop("enable_crawl_website")
+
         self.output_format = output_format
         self.include_comments = include_comments
         self.include_tables = include_tables

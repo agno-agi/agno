@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import warnings
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -105,6 +106,29 @@ class FileGenerationTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_json_generation" in kwargs:
+            warnings.warn("enable_json_generation is deprecated, use generate_json", DeprecationWarning, stacklevel=2)
+            generate_json = kwargs.pop("enable_json_generation")
+        if "enable_csv_generation" in kwargs:
+            warnings.warn("enable_csv_generation is deprecated, use generate_csv", DeprecationWarning, stacklevel=2)
+            generate_csv = kwargs.pop("enable_csv_generation")
+        if "enable_pdf_generation" in kwargs:
+            warnings.warn("enable_pdf_generation is deprecated, use generate_pdf", DeprecationWarning, stacklevel=2)
+            generate_pdf = kwargs.pop("enable_pdf_generation")
+        if "enable_docx_generation" in kwargs:
+            warnings.warn("enable_docx_generation is deprecated, use generate_docx", DeprecationWarning, stacklevel=2)
+            generate_docx = kwargs.pop("enable_docx_generation")
+        if "enable_txt_generation" in kwargs:
+            warnings.warn("enable_txt_generation is deprecated, use generate_txt", DeprecationWarning, stacklevel=2)
+            generate_txt = kwargs.pop("enable_txt_generation")
+        if "enable_html_generation" in kwargs:
+            warnings.warn("enable_html_generation is deprecated, use generate_html", DeprecationWarning, stacklevel=2)
+            generate_html = kwargs.pop("enable_html_generation")
+        if "enable_code_generation" in kwargs:
+            warnings.warn("enable_code_generation is deprecated, use generate_code", DeprecationWarning, stacklevel=2)
+            generate_code = kwargs.pop("enable_code_generation")
+
         self.generate_json = generate_json
         self.generate_csv = generate_csv
         self.generate_pdf = generate_pdf and PDF_AVAILABLE

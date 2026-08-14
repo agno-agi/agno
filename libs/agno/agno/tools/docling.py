@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -74,6 +75,54 @@ class DoclingTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat for old param names
+        if "enable_convert_to_markdown" in kwargs:
+            warnings.warn(
+                "enable_convert_to_markdown is deprecated, use convert_to_markdown", DeprecationWarning, stacklevel=2
+            )
+            convert_to_markdown = kwargs.pop("enable_convert_to_markdown")
+        if "enable_convert_to_text" in kwargs:
+            warnings.warn("enable_convert_to_text is deprecated, use convert_to_text", DeprecationWarning, stacklevel=2)
+            convert_to_text = kwargs.pop("enable_convert_to_text")
+        if "enable_convert_to_html" in kwargs:
+            warnings.warn("enable_convert_to_html is deprecated, use convert_to_html", DeprecationWarning, stacklevel=2)
+            convert_to_html = kwargs.pop("enable_convert_to_html")
+        if "enable_convert_to_html_split_page" in kwargs:
+            warnings.warn(
+                "enable_convert_to_html_split_page is deprecated, use convert_to_html_split_page",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            convert_to_html_split_page = kwargs.pop("enable_convert_to_html_split_page")
+        if "enable_convert_to_json" in kwargs:
+            warnings.warn("enable_convert_to_json is deprecated, use convert_to_json", DeprecationWarning, stacklevel=2)
+            convert_to_json = kwargs.pop("enable_convert_to_json")
+        if "enable_convert_to_yaml" in kwargs:
+            warnings.warn("enable_convert_to_yaml is deprecated, use convert_to_yaml", DeprecationWarning, stacklevel=2)
+            convert_to_yaml = kwargs.pop("enable_convert_to_yaml")
+        if "enable_convert_to_doctags" in kwargs:
+            warnings.warn(
+                "enable_convert_to_doctags is deprecated, use convert_to_doctags", DeprecationWarning, stacklevel=2
+            )
+            convert_to_doctags = kwargs.pop("enable_convert_to_doctags")
+        if "enable_convert_to_vtt" in kwargs:
+            warnings.warn("enable_convert_to_vtt is deprecated, use convert_to_vtt", DeprecationWarning, stacklevel=2)
+            convert_to_vtt = kwargs.pop("enable_convert_to_vtt")
+        if "enable_convert_string_content" in kwargs:
+            warnings.warn(
+                "enable_convert_string_content is deprecated, use convert_string_content",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            convert_string_content = kwargs.pop("enable_convert_string_content")
+        if "enable_list_supported_parsers" in kwargs:
+            warnings.warn(
+                "enable_list_supported_parsers is deprecated, use list_supported_parsers",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            list_supported_parsers = kwargs.pop("enable_list_supported_parsers")
+
         self.converter: DocumentConverter = converter or self._build_converter(
             allowed_input_formats=allowed_input_formats,
             format_options=format_options,

@@ -1,4 +1,5 @@
 import json
+import warnings
 from os import getenv
 from typing import Callable, Dict, List, Optional
 
@@ -37,6 +38,22 @@ class OpenWeatherTools(Toolkit):
             all: Register all tools regardless of individual flags.
             timeout: Per-request HTTP timeout in seconds.
         """
+        # Backwards compat for old param names
+        if "enable_current_weather" in kwargs:
+            warnings.warn(
+                "enable_current_weather is deprecated, use get_current_weather", DeprecationWarning, stacklevel=2
+            )
+            get_current_weather = kwargs.pop("enable_current_weather")
+        if "enable_forecast" in kwargs:
+            warnings.warn("enable_forecast is deprecated, use get_forecast", DeprecationWarning, stacklevel=2)
+            get_forecast = kwargs.pop("enable_forecast")
+        if "enable_air_pollution" in kwargs:
+            warnings.warn("enable_air_pollution is deprecated, use get_air_pollution", DeprecationWarning, stacklevel=2)
+            get_air_pollution = kwargs.pop("enable_air_pollution")
+        if "enable_geocoding" in kwargs:
+            warnings.warn("enable_geocoding is deprecated, use geocode_location", DeprecationWarning, stacklevel=2)
+            geocode_location = kwargs.pop("enable_geocoding")
+
         self.api_key = api_key or getenv("OPENWEATHER_API_KEY")
         if not self.api_key:
             raise ValueError(
