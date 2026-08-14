@@ -481,6 +481,44 @@ class MongoDb(BaseDb):
             runs_by_session.setdefault(sid, []).append(run_data)
         return runs_by_session
 
+    def _allocate_run_index(self, runs_collection: Any, session_id: str) -> int:
+        """Atomically allocate the next run_index for a session.
+
+        Uses a per-session counter document for O(1) atomic allocation. The counter
+        document uses a synthetic _id and is excluded from run queries by lacking run_data.
+
+        On first allocation for a session (no counter exists), seeds the counter from
+        MAX(run_index) of existing runs to handle pre-existing data.
+        """
+        counter_id = f"__run_counter__:{session_id}"
+
+        # Fast path: atomic increment on existing counter
+        result = runs_collection.find_one_and_update(
+            {"_id": counter_id, "next_run_index": {"$exists": True}},
+            {"$inc": {"next_run_index": 1}},
+            return_document=True,
+        )
+        if result is not None:
+            return int(result["next_run_index"]) - 1
+
+        # Seed path: counter doesn't exist, find max from existing runs
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"session_id": session_id, "run_index": {"$ne": None}}},
+            {"$group": {"_id": None, "max_idx": {"$max": "$run_index"}}},
+        ]
+        agg_result = list(runs_collection.aggregate(pipeline))
+        current_max = agg_result[0]["max_idx"] if agg_result else None
+        seed_value = (current_max + 1) if current_max is not None else 0
+
+        # Upsert counter with $setOnInsert to handle concurrent seeders
+        result = runs_collection.find_one_and_update(
+            {"_id": counter_id},
+            {"$setOnInsert": {"next_run_index": seed_value}, "$inc": {"next_run_index": 1}},
+            upsert=True,
+            return_document=True,
+        )
+        return int(result["next_run_index"]) - 1
+
     def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -525,15 +563,9 @@ class MongoDb(BaseDb):
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
 
-            # Backfill run_index for new runs: compute MAX(run_index) + 1 for this session
+            # Allocate run_index atomically for new runs
             if row.get("run_index") is None:
-                pipeline: list[dict[str, Any]] = [
-                    {"$match": {"session_id": session_id, "run_index": {"$ne": None}}},
-                    {"$group": {"_id": None, "max_idx": {"$max": "$run_index"}}},
-                ]
-                result = list(runs_collection.aggregate(pipeline))
-                current_max = result[0]["max_idx"] if result else None
-                row["run_index"] = (current_max + 1) if current_max is not None else 0
+                row["run_index"] = self._allocate_run_index(runs_collection, session_id)
 
             runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
         except Exception as e:
@@ -578,7 +610,8 @@ class MongoDb(BaseDb):
             if collection is None:
                 return [] if deserialize else ([], 0)
 
-            query: Dict[str, Any] = {}
+            # Exclude counter documents (they lack run_data)
+            query: Dict[str, Any] = {"run_data": {"$exists": True}}
             if session_id is not None:
                 query["session_id"] = session_id
             if user_id is not None:
@@ -690,9 +723,10 @@ class MongoDb(BaseDb):
                 log_debug(f"No session found to delete with session_id: {session_id}")
                 return False
 
-            # Cascade-delete the session's runs
+            # Cascade-delete the session's runs and counter
             if runs_collection is not None:
                 runs_collection.delete_many({"session_id": session_id})
+                runs_collection.delete_one({"_id": f"__run_counter__:{session_id}"})
 
             log_debug(f"Successfully deleted session with session_id: {session_id}")
             return True

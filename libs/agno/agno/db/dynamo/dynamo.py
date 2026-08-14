@@ -275,6 +275,70 @@ class DynamoDb(BaseDb):
             grouped[sid] = self._get_session_runs_data(sid)
         return grouped
 
+    def _allocate_run_index(self, table_name: str, session_id: str) -> int:
+        """Atomically allocate the next run_index for a session.
+
+        Uses a per-session counter item for O(1) atomic allocation. The counter
+        item lives in the runs table under a synthetic key and is invisible to
+        session queries because it omits the session_id attribute (sparse GSI).
+
+        On first allocation for a session (no counter item exists), seeds the
+        counter from MAX(run_index) of existing runs to handle pre-existing data.
+        """
+        counter_key = {"run_id": {"S": f"__run_counter__:{session_id}"}}
+
+        # Fast path: atomic increment on existing counter (most common case)
+        try:
+            response = self.client.update_item(
+                TableName=table_name,
+                Key=counter_key,
+                UpdateExpression="ADD next_run_index :one",
+                ConditionExpression="attribute_exists(next_run_index)",
+                ExpressionAttributeValues={":one": {"N": "1"}},
+                ReturnValues="UPDATED_NEW",
+            )
+            return int(response["Attributes"]["next_run_index"]["N"]) - 1
+        except self.client.exceptions.ConditionalCheckFailedException:
+            pass
+
+        # Seed path: counter doesn't exist, find max from existing runs
+        current_max: Optional[int] = None
+        try:
+            response = self.client.query(
+                TableName=table_name,
+                IndexName="session_id-created_at-index",
+                KeyConditionExpression="session_id = :sid",
+                ExpressionAttributeValues={":sid": {"S": session_id}},
+                ProjectionExpression="run_index",
+            )
+            items = response.get("Items", [])
+            while "LastEvaluatedKey" in response:
+                response = self.client.query(
+                    TableName=table_name,
+                    IndexName="session_id-created_at-index",
+                    KeyConditionExpression="session_id = :sid",
+                    ExpressionAttributeValues={":sid": {"S": session_id}},
+                    ProjectionExpression="run_index",
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
+                )
+                items.extend(response.get("Items", []))
+            valid_indices = [int(it["run_index"]["N"]) for it in items if "run_index" in it and "N" in it["run_index"]]
+            current_max = max(valid_indices) if valid_indices else None
+        except self.client.exceptions.ResourceNotFoundException:
+            pass
+
+        # Seed counter at max+1 (or 0 if no runs exist), atomically increment
+        # if_not_exists handles concurrent seeders: loser's seed is ignored
+        seed_value = (current_max + 1) if current_max is not None else 0
+        response = self.client.update_item(
+            TableName=table_name,
+            Key=counter_key,
+            UpdateExpression="SET next_run_index = if_not_exists(next_run_index, :seed) + :one",
+            ExpressionAttributeValues={":seed": {"N": str(seed_value)}, ":one": {"N": "1"}},
+            ReturnValues="UPDATED_NEW",
+        )
+        return int(response["Attributes"]["next_run_index"]["N"]) - 1
+
     def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -315,7 +379,9 @@ class DynamoDb(BaseDb):
 
             # Preserve the original run_index if the item already exists
             try:
-                existing_resp = self.client.get_item(TableName=table_name, Key={"run_id": {"S": row["run_id"]}})
+                existing_resp = self.client.get_item(
+                    TableName=table_name, Key={"run_id": {"S": row["run_id"]}}, ConsistentRead=True
+                )
                 existing_item = existing_resp.get("Item")
                 if existing_item:
                     existing = deserialize_from_dynamodb_item(existing_item)
@@ -324,35 +390,9 @@ class DynamoDb(BaseDb):
             except self.client.exceptions.ResourceNotFoundException:
                 pass
 
-            # Backfill run_index for new runs: query session runs and find max client-side
-            # DynamoDB has no MAX aggregation; query with projection to minimize data transfer
+            # Allocate run_index atomically for new runs
             if row.get("run_index") is None:
-                try:
-                    response = self.client.query(
-                        TableName=table_name,
-                        IndexName="session_id-created_at-index",
-                        KeyConditionExpression="session_id = :sid",
-                        ExpressionAttributeValues={":sid": {"S": session_id}},
-                        ProjectionExpression="run_index",
-                    )
-                    items = response.get("Items", [])
-                    while "LastEvaluatedKey" in response:
-                        response = self.client.query(
-                            TableName=table_name,
-                            IndexName="session_id-created_at-index",
-                            KeyConditionExpression="session_id = :sid",
-                            ExpressionAttributeValues={":sid": {"S": session_id}},
-                            ProjectionExpression="run_index",
-                            ExclusiveStartKey=response["LastEvaluatedKey"],
-                        )
-                        items.extend(response.get("Items", []))
-                    valid_indices: list[int] = [
-                        int(it["run_index"]["N"]) for it in items if "run_index" in it and "N" in it["run_index"]
-                    ]
-                    current_max = max(valid_indices) if valid_indices else None
-                except self.client.exceptions.ResourceNotFoundException:
-                    current_max = None
-                row["run_index"] = (current_max + 1) if current_max is not None else 0
+                row["run_index"] = self._allocate_run_index(table_name, session_id)
 
             payload = {k: v for k, v in row.items() if v is not None}
             if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
@@ -364,11 +404,23 @@ class DynamoDb(BaseDb):
             raise e
 
     def _delete_session_runs(self, session_id: str) -> int:
-        """Cascade-delete every run row for a session."""
+        """Cascade-delete every run row and the run counter for a session."""
+        table_name = self._get_table("runs", create_table_if_not_found=False)
+        if table_name is None:
+            return 0
+
+        # Delete run counter item (not returned by GSI query because it lacks session_id attr)
+        try:
+            self.client.delete_item(
+                TableName=table_name,
+                Key={"run_id": {"S": f"__run_counter__:{session_id}"}},
+            )
+        except self.client.exceptions.ResourceNotFoundException:
+            pass
+
         items = self._query_runs_by_session(session_id)
         if not items:
             return 0
-        table_name = self._get_table("runs", create_table_if_not_found=False)
         run_ids = [it.get("run_id", {}).get("S") for it in items]
         run_ids = [r for r in run_ids if r]
         for i in range(0, len(run_ids), DYNAMO_BATCH_SIZE_LIMIT):
@@ -459,6 +511,9 @@ class DynamoDb(BaseDb):
             row = deserialize_from_dynamodb_item(item)
             if not deserialize:
                 return row
+            # Inject run_index into run_data before deserializing
+            if "run_data" in row and row.get("run_index") is not None:
+                row["run_data"]["run_index"] = row["run_index"]
             return deserialize_run(row.get("run_type"), row["run_data"])
         except self.client.exceptions.ResourceNotFoundException:
             return None
@@ -498,6 +553,8 @@ class DynamoDb(BaseDb):
                 items = []
 
             rows = [deserialize_from_dynamodb_item(it) for it in items]
+            # Filter out counter items (they lack run_data)
+            rows = [r for r in rows if "run_data" in r]
 
             if user_id is not None:
                 rows = [r for r in rows if r.get("user_id") == user_id]
@@ -523,6 +580,10 @@ class DynamoDb(BaseDb):
 
             if not deserialize:
                 return rows, total_count
+            # Inject run_index into run_data before deserializing
+            for r in rows:
+                if "run_data" in r and r.get("run_index") is not None:
+                    r["run_data"]["run_index"] = r["run_index"]
             return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
         except Exception as e:
             log_error(f"Error reading runs: {str(e)}")

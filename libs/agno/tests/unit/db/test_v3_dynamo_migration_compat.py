@@ -111,7 +111,8 @@ class _FakeDynamoClient:
         self._tables[TableName][pk_val] = Item
         return {}
 
-    def get_item(self, TableName: str, Key: Dict[str, Any]) -> Dict[str, Any]:
+    def get_item(self, TableName: str, Key: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        # kwargs accepts ConsistentRead, ProjectionExpression, etc. (ignored in fake)
         if TableName not in self._tables:
             raise _ResourceNotFoundException(TableName)
         pk_val = self._pk_value(TableName, Key)
@@ -162,23 +163,61 @@ class _FakeDynamoClient:
         ue = kwargs.get("UpdateExpression", "")
         names = kwargs.get("ExpressionAttributeNames", {})
         values = kwargs.get("ExpressionAttributeValues", {})
+
+        # ConditionExpression handling for atomic counters
+        ce = kwargs.get("ConditionExpression", "")
+        if "attribute_exists(next_run_index)" in ce:
+            if "next_run_index" not in existing:
+                raise _ConditionalCheckFailedException()
+
         if ue.strip().startswith("REMOVE"):
             for token in ue.replace("REMOVE", "").split(","):
                 attr = token.strip()
                 attr = names.get(attr, attr)
                 existing.pop(attr, None)
-        elif ue.strip().startswith("SET"):
-            # crude SET handling: parse "SET a = :a, b = :b"
+        elif ue.strip().startswith("ADD"):
+            # ADD attr :val — numeric add, missing attribute treated as 0
             body = ue.strip()[3:].strip()
             for assignment in body.split(","):
-                left, right = assignment.split("=")
-                attr = left.strip()
+                parts = assignment.split()
+                attr = parts[0].strip()
                 attr = names.get(attr, attr)
-                placeholder = right.strip()
-                existing[attr] = values[placeholder]
+                placeholder = parts[1].strip()
+                delta = int(values[placeholder]["N"])
+                current_val = int(existing.get(attr, {}).get("N", "0"))
+                existing[attr] = {"N": str(current_val + delta)}
+        elif ue.strip().startswith("SET"):
+            import re
+
+            # Handle SET next_run_index = if_not_exists(next_run_index, :seed) + :one
+            body = ue.strip()[3:].strip()
+            m = re.match(r"(\w+)\s*=\s*if_not_exists\((\w+),\s*(:\w+)\)\s*\+\s*(:\w+)", body)
+            if m:
+                attr, check_attr, seed_ph, incr_ph = m.groups()
+                attr = names.get(attr, attr)
+                check_attr = names.get(check_attr, check_attr)
+                if check_attr in existing:
+                    base_val = int(existing[check_attr]["N"])
+                else:
+                    base_val = int(values[seed_ph]["N"])
+                incr_val = int(values[incr_ph]["N"])
+                existing[attr] = {"N": str(base_val + incr_val)}
+            else:
+                # Simple SET a = :a, b = :b
+                for assignment in body.split(","):
+                    left, right = assignment.split("=", 1)
+                    attr = left.strip()
+                    attr = names.get(attr, attr)
+                    placeholder = right.strip()
+                    existing[attr] = values[placeholder]
         for k, v in Key.items():
             existing[k] = v
         self._tables[TableName][pk_val] = existing
+
+        # ReturnValues handling
+        rv = kwargs.get("ReturnValues", "")
+        if rv == "UPDATED_NEW":
+            return {"Attributes": existing}
         return {"Attributes": existing}
 
     def _item_matches(self, item: Dict[str, Any], attr: str, expected: Dict[str, Any]) -> bool:
@@ -354,3 +393,119 @@ def test_get_run_get_runs_apis():
 
     db.delete_session("sx")
     assert len(db.client._tables[db.runs_table_name]) == 0
+
+
+# ---------------------------------------------------------------------------
+# Atomic run_index counter tests
+# ---------------------------------------------------------------------------
+
+
+def test_run_index_auto_allocation():
+    """New runs without explicit run_index get sequential indices via atomic counter."""
+    db = _new_db()
+    session = AgentSession(session_id="s-auto", agent_id="agent-1", user_id="u1")
+    db.upsert_session(session)
+
+    # Upsert 3 runs without providing run_index
+    for i in range(3):
+        r = _make_run(f"r{i}", "s-auto", f"c{i}")
+        db.upsert_run(run=r, session_id="s-auto", user_id="u1")
+
+    # Counter item should exist
+    counter_key = f"__run_counter__:s-auto"
+    assert counter_key in db.client._tables[db.runs_table_name]
+    counter_item = db.client._tables[db.runs_table_name][counter_key]
+    assert counter_item["next_run_index"]["N"] == "3"
+
+    # Each run should have the expected run_index
+    runs = db.get_runs(session_id="s-auto")
+    assert [r.run_index for r in runs] == [0, 1, 2]
+
+
+def test_run_index_explicit_preserves_counter():
+    """Explicit run_index should not bump the counter."""
+    db = _new_db()
+    session = AgentSession(session_id="s-explicit", agent_id="agent-1", user_id="u1")
+    db.upsert_session(session)
+
+    # Upsert with explicit run_index
+    r = _make_run("r0", "s-explicit", "c0")
+    db.upsert_run(run=r, session_id="s-explicit", user_id="u1", run_index=5)
+
+    # Counter should NOT exist yet (no auto-allocation happened)
+    counter_key = f"__run_counter__:s-explicit"
+    assert counter_key not in db.client._tables[db.runs_table_name]
+
+    # Now auto-allocate: should start from max(5)+1=6
+    r2 = _make_run("r1", "s-explicit", "c1")
+    db.upsert_run(run=r2, session_id="s-explicit", user_id="u1")
+
+    runs = db.get_runs(session_id="s-explicit")
+    indices = sorted([r.run_index for r in runs])
+    assert indices == [5, 6]
+
+
+def test_run_index_preserved_on_update():
+    """Re-upserting an existing run should preserve its original run_index."""
+    db = _new_db()
+    session = AgentSession(session_id="s-update", agent_id="agent-1", user_id="u1")
+    db.upsert_session(session)
+
+    r = _make_run("r0", "s-update", "original")
+    db.upsert_run(run=r, session_id="s-update", user_id="u1")
+
+    # Update the same run with new content
+    r.content = "updated"
+    r.status = RunStatus.completed
+    db.upsert_run(run=r, session_id="s-update", user_id="u1")
+
+    # Should still have run_index=0, not bumped
+    runs = db.get_runs(session_id="s-update")
+    assert len(runs) == 1
+    assert runs[0].run_index == 0
+    assert runs[0].content == "updated"
+
+    # Counter should be at 1 (only incremented once)
+    counter_key = f"__run_counter__:s-update"
+    counter_item = db.client._tables[db.runs_table_name][counter_key]
+    assert counter_item["next_run_index"]["N"] == "1"
+
+
+def test_counter_deleted_with_session():
+    """delete_session should remove the counter item along with runs."""
+    db = _new_db()
+    session = AgentSession(session_id="s-del", agent_id="agent-1", user_id="u1")
+    db.upsert_session(session)
+
+    for i in range(2):
+        r = _make_run(f"r{i}", "s-del", f"c{i}")
+        db.upsert_run(run=r, session_id="s-del", user_id="u1")
+
+    counter_key = f"__run_counter__:s-del"
+    assert counter_key in db.client._tables[db.runs_table_name]
+    assert len(db.client._tables[db.runs_table_name]) == 3  # 2 runs + 1 counter
+
+    db.delete_session("s-del")
+
+    # Everything should be gone
+    assert len(db.client._tables[db.runs_table_name]) == 0
+
+
+def test_counter_invisible_in_get_runs():
+    """Counter items should never appear in get_runs results."""
+    db = _new_db()
+    session = AgentSession(session_id="s-vis", agent_id="agent-1", user_id="u1")
+    db.upsert_session(session)
+
+    r = _make_run("r0", "s-vis", "c0")
+    db.upsert_run(run=r, session_id="s-vis", user_id="u1")
+
+    # Query by session
+    runs = db.get_runs(session_id="s-vis")
+    assert len(runs) == 1
+    assert runs[0].run_id == "r0"
+
+    # Full scan (no session_id filter) should also exclude counters
+    all_runs = db.get_runs()
+    assert len(all_runs) == 1
+    assert all_runs[0].run_id == "r0"

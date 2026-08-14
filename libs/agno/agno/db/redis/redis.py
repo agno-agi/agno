@@ -311,6 +311,39 @@ class RedisDb(BaseDb):
         """Sorted-set key listing run_ids for a session, scored by run_index."""
         return self._RUNS_BY_SESSION_INDEX_PATTERN.format(prefix=self.db_prefix, session_id=session_id)
 
+    def _run_counter_key(self, session_id: str) -> str:
+        """Key for the atomic run_index counter for a session."""
+        return f"{self.db_prefix}:run_counter:{session_id}"
+
+    def _allocate_run_index(self, session_id: str) -> int:
+        """Atomically allocate the next run_index for a session.
+
+        Uses INCR for O(1) atomic allocation. On first allocation, seeds from
+        MAX(run_index) of existing runs to handle pre-existing data.
+        """
+        counter_key = self._run_counter_key(session_id)
+
+        # Check if counter exists
+        if self.redis_client.exists(counter_key):
+            # Fast path: atomic increment
+            new_val = self.redis_client.incr(counter_key)
+            if self.expire is not None:
+                self.redis_client.expire(counter_key, self.expire)
+            return int(new_val) - 1
+
+        # Seed path: find max from existing runs in sorted set
+        index_key = self._runs_by_session_index_key(session_id)
+        top: list = self.redis_client.zrevrange(index_key, 0, 0, withscores=True)  # type: ignore[assignment]
+        current_max = int(top[0][1]) if top else None
+        seed_value = (current_max + 1) if current_max is not None else 0
+
+        # SETNX + INCR to handle concurrent seeders
+        self.redis_client.setnx(counter_key, seed_value)
+        new_val = self.redis_client.incr(counter_key)
+        if self.expire is not None:
+            self.redis_client.expire(counter_key, self.expire)
+        return int(new_val) - 1
+
     def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -350,12 +383,11 @@ class RedisDb(BaseDb):
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
 
-            # Backfill run_index for new runs: get max score from sorted set + 1
-            index_key = self._runs_by_session_index_key(session_id)
+            # Allocate run_index atomically for new runs
             if row.get("run_index") is None:
-                top: list = self.redis_client.zrevrange(index_key, 0, 0, withscores=True)  # type: ignore[assignment]
-                current_max = int(top[0][1]) if top else None
-                row["run_index"] = (current_max + 1) if current_max is not None else 0
+                row["run_index"] = self._allocate_run_index(session_id)
+
+            index_key = self._runs_by_session_index_key(session_id)
             run_key = generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=row["run_id"])
 
             pipe = self.redis_client.pipeline()
@@ -423,9 +455,10 @@ class RedisDb(BaseDb):
                 index_fields=["session_id", "user_id", "agent_id", "team_id", "workflow_id", "run_type", "status"],
             ):
                 deleted += 1
-        # Drop the sorted-set itself
+        # Drop the sorted-set and counter
         try:
             self.redis_client.delete(index_key)
+            self.redis_client.delete(self._run_counter_key(session_id))
         except Exception:
             pass
         return deleted
