@@ -51,7 +51,7 @@ class SlackContextProvider(ContextProvider):
         name: str = "Slack",
         read_instructions: str | None = None,
         write_instructions: str | None = None,
-        media_tools: bool = False,
+        media_tools: bool | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         read: bool = True,
@@ -59,6 +59,23 @@ class SlackContextProvider(ContextProvider):
         stream_sub_agent_events: bool = True,
         **kwargs,
     ) -> None:
+        # Handle deprecated param before calling super
+        if "enable_media_tools" in kwargs:
+            enable_media_tools = kwargs.pop("enable_media_tools")
+            if media_tools is None:
+                warnings.warn(
+                    "SlackContextProvider(enable_media_tools=...) is deprecated; use media_tools instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                media_tools = enable_media_tools
+            else:
+                warnings.warn(
+                    "Both media_tools and enable_media_tools provided; enable_media_tools is deprecated and ignored.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+
         super().__init__(
             id=id,
             name=name,
@@ -67,6 +84,7 @@ class SlackContextProvider(ContextProvider):
             read=read,
             write=write,
             stream_sub_agent_events=stream_sub_agent_events,
+            **kwargs,
         )
         self.token = token or getenv("SLACK_BOT_TOKEN") or getenv("SLACK_TOKEN")
         if not self.token:
@@ -83,11 +101,7 @@ class SlackContextProvider(ContextProvider):
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_SLACK_WRITE_INSTRUCTIONS
         )
-        # Backwards compat for old param name
-        if "enable_media_tools" in kwargs:
-            warnings.warn("enable_media_tools is deprecated, use media_tools", DeprecationWarning, stacklevel=2)
-            media_tools = kwargs.pop("enable_media_tools")
-        self.media_tools = media_tools
+        self.media_tools = media_tools if media_tools is not None else False
         self._bot_read_tools: SlackTools | None = None
         self._assisted_read_tools: SlackTools | None = None
         self._write_tools: SlackTools | None = None
