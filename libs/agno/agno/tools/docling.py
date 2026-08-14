@@ -45,6 +45,15 @@ class DoclingTools(Toolkit):
     active environment.
     """
 
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "pdf_enable_ocr": "pdf_ocr",
+        "pdf_enable_table_structure": "pdf_table_structure",
+        "pdf_enable_picture_description": "pdf_picture_description",
+        "pdf_enable_picture_classification": "pdf_picture_classification",
+        "pdf_enable_remote_services": "pdf_remote_services",
+    }
+
     def __init__(
         self,
         converter: Optional[DocumentConverter] = None,
@@ -61,16 +70,16 @@ class DoclingTools(Toolkit):
         pdf_picture_classification: Optional[bool] = None,
         pdf_document_timeout: Optional[float] = None,
         pdf_remote_services: Optional[bool] = None,
-        convert_to_markdown: bool = False,
-        convert_to_text: bool = False,
-        convert_to_html: bool = False,
-        convert_to_html_split_page: bool = False,
-        convert_to_json: bool = False,
-        convert_to_yaml: bool = False,
-        convert_to_doctags: bool = False,
-        convert_to_vtt: bool = False,
-        convert_string_content: bool = False,
-        list_supported_parsers: bool = False,
+        convert_to_markdown: bool = True,
+        convert_to_text: bool = True,
+        convert_to_html: bool = True,
+        convert_to_html_split_page: bool = True,
+        convert_to_json: bool = True,
+        convert_to_yaml: bool = True,
+        convert_to_doctags: bool = True,
+        convert_to_vtt: bool = True,
+        convert_string_content: bool = True,
+        list_supported_parsers: bool = True,
         all: bool = False,
         **kwargs,
     ):

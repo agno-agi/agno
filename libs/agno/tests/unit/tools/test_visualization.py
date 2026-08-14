@@ -33,11 +33,11 @@ def test_initialization_with_selective_charts(temp_output_dir):
     """Test initialization with only selected chart types."""
     tools = VisualizationTools(
         output_dir=temp_output_dir,
-        enable_create_bar_chart=True,
-        enable_create_line_chart=True,
-        enable_create_pie_chart=False,
-        enable_create_scatter_plot=False,
-        enable_create_histogram=True,
+        create_bar_chart=True,
+        create_line_chart=True,
+        create_pie_chart=False,
+        create_scatter_plot=False,
+        create_histogram=True,
     )
 
     function_names = [func.name for func in tools.functions.values()]

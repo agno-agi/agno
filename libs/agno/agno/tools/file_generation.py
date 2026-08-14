@@ -91,15 +91,26 @@ CODE_LANGUAGE_MAP: Dict[str, Tuple[str, str]] = {
 
 
 class FileGenerationTools(Toolkit):
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "enable_json_generation": "generate_json",
+        "enable_csv_generation": "generate_csv",
+        "enable_pdf_generation": "generate_pdf",
+        "enable_docx_generation": "generate_docx",
+        "enable_txt_generation": "generate_txt",
+        "enable_html_generation": "generate_html",
+        "enable_code_generation": "generate_code",
+    }
+
     def __init__(
         self,
-        generate_json: bool = False,
-        generate_csv: bool = False,
-        generate_pdf: bool = False,
-        generate_docx: bool = False,
-        generate_txt: bool = False,
-        generate_html: bool = False,
-        generate_code: bool = False,
+        generate_json: bool = True,
+        generate_csv: bool = True,
+        generate_pdf: bool = True,
+        generate_docx: bool = True,
+        generate_txt: bool = True,
+        generate_html: bool = True,
+        generate_code: bool = True,
         output_directory: Optional[str] = None,
         save_files: bool = False,
         all: bool = False,

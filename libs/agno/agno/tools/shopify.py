@@ -41,7 +41,7 @@ class ShopifyTools(Toolkit):
         get_sales_by_date_range: Enable get_sales_by_date_range tool. Defaults to True.
         get_order_analytics: Enable get_order_analytics tool. Defaults to True.
         get_product_sales_breakdown: Enable get_product_sales_breakdown tool. Defaults to True.
-        get_customer_order_history: Enable get_customer_order_history tool. Defaults to False (token heavy).
+        get_customer_order_history: Enable get_customer_order_history tool. Defaults to True (token heavy).
         get_inventory_levels: Enable get_inventory_levels tool. Defaults to True.
         get_low_stock_products: Enable get_low_stock_products tool. Defaults to True.
         get_sales_trends: Enable get_sales_trends tool. Defaults to True.
@@ -64,7 +64,7 @@ class ShopifyTools(Toolkit):
         get_sales_by_date_range: bool = True,
         get_order_analytics: bool = True,
         get_product_sales_breakdown: bool = True,
-        get_customer_order_history: bool = False,
+        get_customer_order_history: bool = True,
         get_inventory_levels: bool = True,
         get_low_stock_products: bool = True,
         get_sales_trends: bool = True,

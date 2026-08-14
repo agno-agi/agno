@@ -57,6 +57,7 @@ def tools(mock_db):
             db=mock_db,
             default_endpoint="/agents/test-agent/runs",
             default_payload={"message": "Default scheduled run"},
+            all=True,
         )
         t.manager = manager_instance
         yield t
@@ -67,7 +68,7 @@ def tools_no_defaults(mock_db):
     with patch("agno.tools.scheduler.ScheduleManager") as MockManager:
         manager_instance = MagicMock()
         MockManager.return_value = manager_instance
-        t = SchedulerTools(db=mock_db)
+        t = SchedulerTools(db=mock_db, all=True)
         t.manager = manager_instance
         yield t
 
@@ -106,6 +107,13 @@ class TestSchedulerToolsInitialization:
     def test_tool_count(self, tools):
         assert len(tools.functions) == 8
         assert len(tools.async_functions) == 8
+
+    def test_default_tools_are_read_only(self, mock_db):
+        """By default only the read-only tools are registered; mutations are opt-in."""
+        with patch("agno.tools.scheduler.ScheduleManager"):
+            t = SchedulerTools(db=mock_db)
+        assert set(t.functions.keys()) == {"list_schedules", "get_schedule", "get_schedule_runs"}
+        assert set(t.async_functions.keys()) == {"list_schedules", "get_schedule", "get_schedule_runs"}
 
     def test_default_config(self, tools):
         assert tools.default_endpoint == "/agents/test-agent/runs"

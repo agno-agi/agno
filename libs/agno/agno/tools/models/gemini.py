@@ -29,7 +29,7 @@ class GeminiTools(Toolkit):
         image_generation_model: str = "imagen-4.0-generate-001",
         video_generation_model: str = "veo-3.0-generate-001",
         generate_image: bool = True,
-        generate_video: bool = False,
+        generate_video: bool = True,
         all: bool = False,
         **kwargs,
     ):

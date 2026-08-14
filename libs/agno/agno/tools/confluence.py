@@ -23,8 +23,8 @@ class ConfluenceTools(Toolkit):
         verify_ssl: bool = True,
         get_page_content: bool = True,
         get_space_key: bool = True,
-        get_all_space_detail: bool = False,
-        get_all_page_from_space: bool = False,
+        get_all_space_detail: bool = True,
+        get_all_page_from_space: bool = True,
         create_page: bool = False,
         update_page: bool = False,
         all: bool = False,
@@ -40,8 +40,8 @@ class ConfluenceTools(Toolkit):
             verify_ssl: Verify SSL certificates. Defaults to True.
             get_page_content: Enable get_page_content tool. Defaults to True.
             get_space_key: Enable get_space_key tool. Defaults to True.
-            get_all_space_detail: Enable get_all_space_detail tool. Defaults to False (token heavy).
-            get_all_page_from_space: Enable get_all_page_from_space tool. Defaults to False (token heavy).
+            get_all_space_detail: Enable get_all_space_detail tool. Defaults to True (token heavy).
+            get_all_page_from_space: Enable get_all_page_from_space tool. Defaults to True (token heavy).
             create_page: Enable create_page tool. Defaults to False (creates external content).
             update_page: Enable update_page tool. Defaults to False (modifies external content).
             all: Enable all tools. Defaults to False.

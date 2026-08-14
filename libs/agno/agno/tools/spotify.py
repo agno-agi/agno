@@ -34,8 +34,8 @@ class SpotifyTools(Toolkit):
         get_track_recommendations: Enable get_track_recommendations tool. Defaults to True.
         get_artist_top_tracks: Enable get_artist_top_tracks tool. Defaults to True.
         get_album_tracks: Enable get_album_tracks tool. Defaults to True.
-        get_my_top_tracks: Enable get_my_top_tracks tool. Defaults to False (token heavy).
-        get_my_top_artists: Enable get_my_top_artists tool. Defaults to False (token heavy).
+        get_my_top_tracks: Enable get_my_top_tracks tool. Defaults to True (token heavy).
+        get_my_top_artists: Enable get_my_top_artists tool. Defaults to True (token heavy).
         create_playlist: Enable create_playlist tool. Defaults to False (creates external resource).
         add_tracks_to_playlist: Enable add_tracks_to_playlist tool. Defaults to False (modifies external resource).
         update_playlist_details: Enable update_playlist_details tool. Defaults to False (modifies external resource).
@@ -63,8 +63,8 @@ class SpotifyTools(Toolkit):
         get_current_user: bool = True,
         get_playlist: bool = True,
         get_currently_playing: bool = True,
-        get_my_top_tracks: bool = False,
-        get_my_top_artists: bool = False,
+        get_my_top_tracks: bool = True,
+        get_my_top_artists: bool = True,
         create_playlist: bool = False,
         add_tracks_to_playlist: bool = False,
         update_playlist_details: bool = False,

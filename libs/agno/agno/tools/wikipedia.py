@@ -18,7 +18,8 @@ class WikipediaTools(Toolkit):
     """Tools for searching Wikipedia articles.
 
     Provides search functionality to retrieve Wikipedia content. When a Knowledge base
-    is provided, search results are automatically added to the knowledge base.
+    is provided, an additional tool that stores search results in the knowledge base
+    is also registered.
 
     Args:
         knowledge: Optional Knowledge base to store search results.
@@ -43,12 +44,10 @@ class WikipediaTools(Toolkit):
         self.auto_suggest = auto_suggest
         self.knowledge: Optional[Knowledge] = knowledge
 
-        if self.knowledge is not None and isinstance(self.knowledge, Knowledge):
-            if all or search_wikipedia_and_update_knowledge_base:
-                tools.append(self.search_wikipedia_and_update_knowledge_base)
-        else:
-            if all or search_wikipedia:
-                tools.append(self.search_wikipedia)  # type: ignore
+        if all or search_wikipedia:
+            tools.append(self.search_wikipedia)  # type: ignore
+        if isinstance(self.knowledge, Knowledge) and (all or search_wikipedia_and_update_knowledge_base):
+            tools.append(self.search_wikipedia_and_update_knowledge_base)
 
         super().__init__(name="wikipedia_tools", tools=tools, **kwargs)
 

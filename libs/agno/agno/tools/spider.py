@@ -19,8 +19,8 @@ class SpiderTools(Toolkit):
         max_results: Optional[int] = None,
         optional_params: Optional[dict] = None,
         search: bool = True,
-        scrape: bool = False,
-        crawl: bool = False,
+        scrape: bool = True,
+        crawl: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -32,8 +32,8 @@ class SpiderTools(Toolkit):
             max_results: Default maximum number of search results.
             optional_params: Additional parameters for operations.
             search: Enable web search. Defaults to True.
-            scrape: Enable web scraping. Defaults to False (token heavy).
-            crawl: Enable web crawling. Defaults to False (token heavy).
+            scrape: Enable web scraping. Defaults to True (token heavy).
+            crawl: Enable web crawling. Defaults to True (token heavy).
             all: Enable all tools. Defaults to False.
         """
         # Backwards compat: enable_X -> X

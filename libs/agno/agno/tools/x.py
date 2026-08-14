@@ -26,7 +26,7 @@ class XTools(Toolkit):
         send_dm: bool = False,
         get_my_info: bool = True,
         get_user_info: bool = True,
-        get_home_timeline: bool = False,
+        get_home_timeline: bool = True,
         search_posts: bool = True,
         all: bool = False,
         **kwargs,
@@ -46,7 +46,7 @@ class XTools(Toolkit):
             send_dm: Enable send_dm tool. Defaults to False (externally visible).
             get_my_info: Enable get_my_info tool. Defaults to True.
             get_user_info: Enable get_user_info tool. Defaults to True.
-            get_home_timeline: Enable get_home_timeline tool. Defaults to False (token heavy).
+            get_home_timeline: Enable get_home_timeline tool. Defaults to True (token heavy).
             search_posts: Enable search_posts tool. Defaults to True.
             all: Enable all tools. Defaults to False.
         """

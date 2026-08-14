@@ -38,10 +38,10 @@ class GoogleMapsTools(Toolkit):
         get_directions: bool = True,
         geocode_address: bool = True,
         reverse_geocode: bool = True,
-        validate_address: bool = False,
-        get_distance_matrix: bool = False,
-        get_elevation: bool = False,
-        get_timezone: bool = False,
+        validate_address: bool = True,
+        get_distance_matrix: bool = True,
+        get_elevation: bool = True,
+        get_timezone: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -52,10 +52,10 @@ class GoogleMapsTools(Toolkit):
             get_directions: Enable directions between locations. Defaults to True.
             geocode_address: Enable address to coordinates conversion. Defaults to True.
             reverse_geocode: Enable coordinates to address conversion. Defaults to True.
-            validate_address: Enable address validation. Defaults to False.
-            get_distance_matrix: Enable distance/time calculations. Defaults to False.
-            get_elevation: Enable elevation lookups. Defaults to False.
-            get_timezone: Enable timezone lookups. Defaults to False.
+            validate_address: Enable address validation. Defaults to True.
+            get_distance_matrix: Enable distance/time calculations. Defaults to True.
+            get_elevation: Enable elevation lookups. Defaults to True.
+            get_timezone: Enable timezone lookups. Defaults to True.
             all: Enable all tools. Defaults to False.
         """
         self.api_key = key or getenv("GOOGLE_MAPS_API_KEY")

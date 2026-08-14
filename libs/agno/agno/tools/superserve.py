@@ -22,7 +22,9 @@ DEFAULT_INSTRUCTIONS = dedent(
     """\
     You have access to a Superserve sandbox: an isolated cloud environment (Firecracker microVM) for running code.
     The sandbox persists across tool calls, so files you write and packages you install remain available.
-    Available tools:
+    Tools are opt-in: the list below describes the full toolkit surface when all tools are enabled.
+    Only use the tools that are actually available to you.
+    Full toolkit surface:
     - `run_python_code`: Execute Python code and return its output
     - `run_command`: Execute a shell command (bash)
     - `create_file`: Create or overwrite a file
@@ -52,11 +54,11 @@ DEFAULT_TEMPLATE = "superserve/code-interpreter"
 class SuperserveTools(Toolkit):
     """Run agent-generated code in an isolated Superserve sandbox.
 
-    A focused set of code-execution and file tools is enabled by default. The
-    sandbox lifecycle tools (pause/resume) and secret-binding tools are opt-in via
-    their respective flags, or turn everything on with `all=True`. Every tool has
-    both a sync and an async variant, so the toolkit works with `agent.run()` and
-    `agent.arun()`.
+    Only the read-only `read_file` and `get_sandbox_info` tools are enabled by
+    default. Code execution, file writes, lifecycle, and secret-binding tools are
+    opt-in via their respective flags, or turn everything on with `all=True`.
+    Every tool has both a sync and an async variant, so the toolkit works with
+    `agent.run()` and `agent.arun()`.
     """
 
     def __init__(

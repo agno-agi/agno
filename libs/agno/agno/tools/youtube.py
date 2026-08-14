@@ -1,5 +1,5 @@
 import json
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
@@ -18,21 +18,30 @@ class YouTubeTools(Toolkit):
     """Toolkit for fetching YouTube video metadata, transcripts, and timestamps.
 
     Args:
-        get_transcript: Enable get_transcript tool. Defaults to False.
+        get_transcript: Enable get_transcript tool. Defaults to True.
         get_metadata: Enable get_metadata tool. Defaults to True.
-        get_timestamps: Enable get_timestamps tool. Defaults to False.
+        get_timestamps: Enable get_timestamps tool. Defaults to True.
         all: Enable all tools. Defaults to False.
         languages: Preferred languages for transcripts.
+        proxies: Proxy configuration passed to the transcript API.
         timeout: Request timeout in seconds. Defaults to 30.
     """
 
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "enable_get_video_captions": "get_transcript",
+        "enable_get_video_data": "get_metadata",
+        "enable_get_video_timestamps": "get_timestamps",
+    }
+
     def __init__(
         self,
-        get_transcript: bool = False,
+        get_transcript: bool = True,
         get_metadata: bool = True,
-        get_timestamps: bool = False,
+        get_timestamps: bool = True,
         all: bool = False,
         languages: Optional[List[str]] = None,
+        proxies: Optional[Dict[str, Any]] = None,
         timeout: int = 30,
         **kwargs,
     ):
@@ -45,6 +54,7 @@ class YouTubeTools(Toolkit):
             get_timestamps = kwargs.pop("enable_get_video_timestamps")
 
         self.languages: Optional[List[str]] = languages
+        self.proxies: Optional[Dict[str, Any]] = proxies
 
         tools: List[Callable] = []
         if all or get_transcript:
@@ -148,6 +158,8 @@ class YouTubeTools(Toolkit):
             kwargs: Dict = {}
             if self.languages:
                 kwargs["languages"] = self.languages or ["en"]
+            if self.proxies:
+                kwargs["proxies"] = self.proxies
             if video_id is not None:
                 captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
             else:
@@ -184,6 +196,8 @@ class YouTubeTools(Toolkit):
             kwargs: Dict = {}
             if self.languages:
                 kwargs["languages"] = self.languages or ["en"]
+            if self.proxies:
+                kwargs["proxies"] = self.proxies
 
             captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
             timestamps = []

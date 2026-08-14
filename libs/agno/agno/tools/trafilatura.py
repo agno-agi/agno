@@ -45,13 +45,22 @@ class TrafilaturaTools(Toolkit):
         max_tree_size: Maximum tree size for processing.
         max_crawl_urls: Maximum number of URLs to crawl per website.
         max_known_urls: Maximum number of known URLs during crawling.
-        scrape: Enable scrape tool (fetch URL, extract text). Defaults to False (token heavy).
-        get_metadata: Enable get_metadata tool. Defaults to False (token heavy).
-        convert_html: Enable convert_html tool (local HTML to text). Defaults to False.
-        scrape_batch: Enable scrape_batch tool. Defaults to False (token heavy).
-        crawl: Enable crawl tool (spider a website). Defaults to False (token heavy).
+        scrape: Enable scrape tool (fetch URL, extract text). Defaults to True (token heavy).
+        get_metadata: Enable get_metadata tool. Defaults to True (token heavy).
+        convert_html: Enable convert_html tool (local HTML to text). Defaults to True.
+        scrape_batch: Enable scrape_batch tool. Defaults to True (token heavy).
+        crawl: Enable crawl tool (spider a website). Defaults to True (token heavy).
         all: Enable all tools. Defaults to False.
     """
+
+    # Agno 2.x kwarg names accepted for backwards compatibility
+    _legacy_param_aliases = {
+        "enable_extract_text": "scrape",
+        "enable_extract_metadata_only": "get_metadata",
+        "enable_html_to_text": "convert_html",
+        "enable_extract_batch": "scrape_batch",
+        "enable_crawl_website": "crawl",
+    }
 
     def __init__(
         self,
@@ -69,11 +78,11 @@ class TrafilaturaTools(Toolkit):
         max_tree_size: Optional[int] = None,
         max_crawl_urls: int = 10,
         max_known_urls: int = 100000,
-        scrape: bool = False,
-        get_metadata: bool = False,
-        convert_html: bool = False,
-        scrape_batch: bool = False,
-        crawl: bool = False,
+        scrape: bool = True,
+        get_metadata: bool = True,
+        convert_html: bool = True,
+        scrape_batch: bool = True,
+        crawl: bool = True,
         all: bool = False,
         **kwargs,
     ):

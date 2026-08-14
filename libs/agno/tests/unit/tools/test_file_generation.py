@@ -176,17 +176,17 @@ def test_generate_code_file_language_aliases(alias, expected_ext):
 
 
 def test_code_generation_can_be_disabled():
-    """generate_code_file is registered only when enable_code_generation is True."""
-    enabled = FileGenerationTools(enable_code_generation=True)
+    """generate_code_file is registered only when generate_code is True."""
+    enabled = FileGenerationTools(generate_code=True)
     assert "generate_code_file" in enabled.functions
 
-    disabled = FileGenerationTools(enable_code_generation=False)
+    disabled = FileGenerationTools(generate_code=False)
     assert "generate_code_file" not in disabled.functions
 
 
 def test_code_file_registered_with_all_flag():
     """The `all=True` shorthand registers generate_code_file even if the flag is off."""
-    tools = FileGenerationTools(enable_code_generation=False, all=True)
+    tools = FileGenerationTools(generate_code=False, all=True)
     assert "generate_code_file" in tools.functions
 
 

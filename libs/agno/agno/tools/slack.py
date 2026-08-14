@@ -148,9 +148,9 @@ class SlackTools(Toolkit):
         send_message: bool = False,
         send_message_thread: bool = False,
         list_channels: bool = True,
-        get_channel_history: bool = False,
+        get_channel_history: bool = True,
         upload_file: bool = False,
-        download_file: bool = False,
+        download_file: bool = True,
         search_messages: bool = False,
         search_workspace: bool = False,
         get_thread: bool = False,
@@ -175,9 +175,9 @@ class SlackTools(Toolkit):
             send_message (bool): Enable the send_message tool. Defaults to False (externally visible).
             send_message_thread (bool): Enable the send_message_thread tool. Defaults to False (externally visible).
             list_channels (bool): Enable the list_channels tool. Defaults to True.
-            get_channel_history (bool): Enable the get_channel_history tool. Defaults to False (token heavy).
+            get_channel_history (bool): Enable the get_channel_history tool. Defaults to True (token heavy).
             upload_file (bool): Enable the upload_file tool. Defaults to False (externally visible).
-            download_file (bool): Enable the download_file tool. Defaults to False (token heavy).
+            download_file (bool): Enable the download_file tool. Defaults to True (token heavy).
             search_messages (bool): Enable the search_messages tool (legacy API, requires user token). Defaults to False.
             search_workspace (bool): Enable the search_workspace tool (assistant.search.context API).
                 Requires search:read.public, search:read.files, and search:read.users bot scopes.

@@ -18,16 +18,16 @@ class FinancialDatasetsTools(Toolkit):
         get_company_info: Enable get_company_info tool. Defaults to True.
         get_stock_prices: Enable get_stock_prices tool. Defaults to True.
         get_news: Enable get_news tool. Defaults to True.
-        get_income_statements: Enable get_income_statements tool. Defaults to False.
-        get_balance_sheets: Enable get_balance_sheets tool. Defaults to False.
-        get_cash_flow_statements: Enable get_cash_flow_statements tool. Defaults to False.
-        get_segmented_financials: Enable get_segmented_financials tool. Defaults to False.
-        get_financial_metrics: Enable get_financial_metrics tool. Defaults to False.
-        get_earnings: Enable get_earnings tool. Defaults to False.
-        get_insider_trades: Enable get_insider_trades tool. Defaults to False.
-        get_institutional_ownership: Enable get_institutional_ownership tool. Defaults to False.
-        get_sec_filings: Enable get_sec_filings tool. Defaults to False.
-        get_crypto_prices: Enable get_crypto_prices tool. Defaults to False.
+        get_income_statements: Enable get_income_statements tool. Defaults to True.
+        get_balance_sheets: Enable get_balance_sheets tool. Defaults to True.
+        get_cash_flow_statements: Enable get_cash_flow_statements tool. Defaults to True.
+        get_segmented_financials: Enable get_segmented_financials tool. Defaults to True.
+        get_financial_metrics: Enable get_financial_metrics tool. Defaults to True.
+        get_earnings: Enable get_earnings tool. Defaults to True.
+        get_insider_trades: Enable get_insider_trades tool. Defaults to True.
+        get_institutional_ownership: Enable get_institutional_ownership tool. Defaults to True.
+        get_sec_filings: Enable get_sec_filings tool. Defaults to True.
+        get_crypto_prices: Enable get_crypto_prices tool. Defaults to True.
         all: Enable all tools. Defaults to False.
     """
 
@@ -39,16 +39,16 @@ class FinancialDatasetsTools(Toolkit):
         get_company_info: bool = True,
         get_stock_prices: bool = True,
         get_news: bool = True,
-        get_income_statements: bool = False,
-        get_balance_sheets: bool = False,
-        get_cash_flow_statements: bool = False,
-        get_segmented_financials: bool = False,
-        get_financial_metrics: bool = False,
-        get_earnings: bool = False,
-        get_insider_trades: bool = False,
-        get_institutional_ownership: bool = False,
-        get_sec_filings: bool = False,
-        get_crypto_prices: bool = False,
+        get_income_statements: bool = True,
+        get_balance_sheets: bool = True,
+        get_cash_flow_statements: bool = True,
+        get_segmented_financials: bool = True,
+        get_financial_metrics: bool = True,
+        get_earnings: bool = True,
+        get_insider_trades: bool = True,
+        get_institutional_ownership: bool = True,
+        get_sec_filings: bool = True,
+        get_crypto_prices: bool = True,
         all: bool = False,
         **kwargs,
     ):

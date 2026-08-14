@@ -40,14 +40,16 @@ def test_init_registers_default_tools():
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools()
             names = [f.name for f in tools.functions.values()]
-            # v3.0 security defaults: only safe read tools enabled by default
+            # Safe read tools are enabled by default
             assert "list_slack_channels" in names
             assert "list_slack_users" in names
             assert "get_slack_user_info" in names
             assert "get_slack_channel_info" in names
+            assert "get_slack_channel_history" in names
+            assert "download_slack_file" in names
             # send_message defaults to False (externally visible)
             assert "send_slack_message" not in names
-            assert len(names) == 4
+            assert len(names) == 6
 
 
 def test_init_all_flag_enables_all():

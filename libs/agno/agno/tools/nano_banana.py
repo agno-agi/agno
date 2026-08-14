@@ -45,7 +45,7 @@ class NanoBananaTools(Toolkit):
         aspect_ratio: str = "1:1",
         api_key: Optional[str] = None,
         all: bool = False,
-        create_image: bool = False,
+        create_image: bool = True,
         **kwargs,
     ):
         """Initialize NanoBananaTools for image generation using Google's Gemini models.
@@ -55,7 +55,7 @@ class NanoBananaTools(Toolkit):
             aspect_ratio: Output image aspect ratio (e.g., "1:1", "16:9", "9:16")
             api_key: Google API key, falls back to GOOGLE_API_KEY env var
             all: Enable all tools at once
-            create_image: Enable the create_image tool
+            create_image: Enable the create_image tool. Defaults to True.
         """
         # Backwards compat: enable_X -> X
         if "enable_create_image" in kwargs:
