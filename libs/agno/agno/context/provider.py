@@ -89,6 +89,7 @@ class ContextProvider(ABC):
         query_tool_name: str | None = None,
         update_tool_name: str | None = None,
         stream_sub_agent_events: bool = True,
+        **kwargs,
     ) -> None:
         if not read and not write:
             raise ValueError(
