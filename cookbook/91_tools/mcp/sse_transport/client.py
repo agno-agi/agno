@@ -39,7 +39,9 @@ async def run_agent(message: str) -> None:
 # We can connect to multiple MCP servers at once, even if they use different transports.
 # In this example we connect to both our example server (SSE transport), and a different server (stdio transport).
 async def run_agent_with_multiple_servers(message: str) -> None:
-    airbnb_tools = MCPTools(command="npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt")
+    airbnb_tools = MCPTools(
+        command="npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"
+    )
     sse_tools = MCPTools(
         transport="sse",
         url=server_url,

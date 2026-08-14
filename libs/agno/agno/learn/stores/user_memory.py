@@ -1521,4 +1521,3 @@ class UserMemoryStore(LearningStore):
             raw_data=memories_data,
             raw=raw,
         )
-

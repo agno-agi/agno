@@ -59,9 +59,7 @@ def test_init_with_default_scopes():
 def test_init_with_custom_scopes():
     """Test initialization with custom scopes."""
     custom_scopes = [GoogleSheetsTools.DEFAULT_SCOPES["read"]]
-    tools = GoogleSheetsTools(
-        scopes=custom_scopes, read_sheet=True, create_sheet=False, update_sheet=False
-    )
+    tools = GoogleSheetsTools(scopes=custom_scopes, read_sheet=True, create_sheet=False, update_sheet=False)
     assert tools.scopes == custom_scopes
 
 

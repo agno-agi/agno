@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_warning
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,

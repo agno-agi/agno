@@ -178,7 +178,6 @@ class UserMemoryConfig:
         return f"UserMemoryConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
 
 
-
 @dataclass
 class SessionContextConfig:
     """Configuration for Session Context learning type.

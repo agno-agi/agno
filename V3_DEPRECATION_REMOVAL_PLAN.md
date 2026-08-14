@@ -1,5 +1,27 @@
 # v3.0 Deprecation Audit and Removal Plan
 
+## Execution status (2026-08-14)
+
+Tiers 0-3 are REMOVED on this branch (see the tiered commits in this PR), with two
+deviations, both conservative:
+
+- **SSE standalone transport (3.4): kept, warning upgraded.** SSE is live functionality
+  (SSE-only servers exist; the Pipedream/mem0 cookbooks point at SSE endpoints), and the
+  only prior signal was a `log_info`. This branch upgrades it to a `log_warning` naming the
+  removal; full removal should be its own PR after the cookbooks are re-verified against
+  streamable-http endpoints.
+- **LanceDB `table_names` fallback: kept.** Could not verify `list_tables` exists at the
+  pinned `lancedb>=0.26.0` floor in this environment; the `hasattr` fallback is cheap and
+  safe. Drop it once verified.
+- **Seltz legacy SDK path: kept.** Removing it requires a `seltz` version-floor bump that
+  could not be verified (current pin `seltz>=0.2.0`). Only the deprecated `max_documents`
+  alias was removed.
+
+Tier 4 (silent deprecations needing a warning cycle or product decision) and Tier 5
+(data-migration-gated) remain as documented below - they are the follow-up work.
+
+---
+
 Exhaustive inventory of every deprecated, to-be-deprecated, and backward-compat item in
 `libs/agno/agno` as of `feat/v3.0` (audited at commit `7206f7763`, 2026-08-14).
 `libs/agno_infra` and `libs/agnoctl` were swept and contain no deprecation markers.

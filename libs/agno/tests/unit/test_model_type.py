@@ -14,9 +14,9 @@ from unittest.mock import MagicMock
 
 from agno.metrics import (
     MessageMetrics,
-    RunMetrics,
     ModelMetrics,
     ModelType,
+    RunMetrics,
     SessionMetrics,
     accumulate_eval_metrics,
     accumulate_model_metrics,

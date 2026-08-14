@@ -440,7 +440,6 @@ class RunMetrics(BaseMetrics):
             self.time_to_first_token = self.timer.elapsed
 
 
-
 # ---------------------------------------------------------------------------
 # Session metrics – aggregated across runs
 # ---------------------------------------------------------------------------
