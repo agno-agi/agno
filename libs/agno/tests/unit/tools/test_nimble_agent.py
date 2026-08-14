@@ -691,7 +691,8 @@ def test_result_completed_degraded_when_uncited(tools):
 def test_result_uses_all_claims_for_grounding_before_bounding_public_claims(tools):
     result = completed_result_dict(with_citation=False)
     trust = result["output"]["trust"]
-    trust["claims"] = trust["claims"] * 11
+    claim = trust["claims"][0]
+    trust["claims"] = [{**claim, "citations": []} for _ in range(11)]
     trust["claims"][10]["citations"] = [{"url": "https://example.com/source"}]
 
     reader = tools._sync_client.with_options.return_value
