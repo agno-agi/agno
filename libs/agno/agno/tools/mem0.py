@@ -117,7 +117,7 @@ class Mem0Tools(Toolkit):
 
         resolved_user_id = self._get_user_id("add_memory", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory:"):
-            return resolved_user_id
+            return json.dumps({"error": resolved_user_id})
         try:
             if isinstance(content, dict):
                 log_debug("Wrapping dict message into content string")
@@ -153,7 +153,7 @@ class Mem0Tools(Toolkit):
 
         resolved_user_id = self._get_user_id("search_memory", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in search_memory:"):
-            return resolved_user_id
+            return json.dumps({"error": resolved_user_id})
         try:
             results = self.client.search(
                 query=query,
@@ -188,7 +188,7 @@ class Mem0Tools(Toolkit):
 
         resolved_user_id = self._get_user_id("get_all_memories", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in get_all_memories:"):
-            return resolved_user_id
+            return json.dumps({"error": resolved_user_id})
         try:
             results = self.client.get_all(
                 user_id=resolved_user_id,

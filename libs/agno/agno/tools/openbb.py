@@ -110,7 +110,7 @@ class OpenBBTools(Toolkit):
                 )
             return json.dumps(clean_results, indent=2, default=str)
         except Exception as e:
-            return f"Error fetching current price for {symbol}: {e}"
+            return json.dumps({"error": f"Error fetching current price for {symbol}: {e}"})
 
     def search_company_symbol(self, company_name: str) -> str:
         """Search for ticker symbols by company name.
@@ -145,7 +145,7 @@ class OpenBBTools(Toolkit):
             result = self.obb.equity.estimates.consensus(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
             return json.dumps(result.to_dicts(), indent=2, default=str)
         except Exception as e:
-            return f"Error fetching company news for {symbol}: {e}"
+            return json.dumps({"error": f"Error fetching company news for {symbol}: {e}"})
 
     def openbb_get_company_news(self, symbol: str, num_stories: int = 10) -> str:
         """Get company news for a stock symbol.
@@ -167,7 +167,7 @@ class OpenBBTools(Toolkit):
                     clean_results.append(row)
             return json.dumps(clean_results[:num_stories], indent=2, default=str)
         except Exception as e:
-            return f"Error fetching company news for {symbol}: {e}"
+            return json.dumps({"error": f"Error fetching company news for {symbol}: {e}"})
 
     def get_company_profile(self, symbol: str) -> str:
         """Get company profile and overview for a stock symbol.
@@ -183,4 +183,4 @@ class OpenBBTools(Toolkit):
             result = self.obb.equity.profile(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
             return json.dumps(result.to_dicts(), indent=2, default=str)
         except Exception as e:
-            return f"Error fetching company profile for {symbol}: {e}"
+            return json.dumps({"error": f"Error fetching company profile for {symbol}: {e}"})

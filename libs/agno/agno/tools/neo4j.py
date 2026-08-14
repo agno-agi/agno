@@ -95,10 +95,10 @@ class Neo4jTools(Toolkit):
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.labels()")
                 labels = [record["label"] for record in result]
-            return json.dumps(labels)
-        except Exception:
+            return json.dumps(labels, default=str)
+        except Exception as e:
             logger.exception("Error listing labels")
-            return json.dumps([])
+            return json.dumps({"error": f"Error listing labels: {e}"})
 
     def list_neo4j_relationship_types(self) -> str:
         """
@@ -112,10 +112,10 @@ class Neo4jTools(Toolkit):
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.relationshipTypes()")
                 types = [record["relationshipType"] for record in result]
-            return json.dumps(types)
-        except Exception:
+            return json.dumps(types, default=str)
+        except Exception as e:
             logger.exception("Error listing relationship types")
-            return json.dumps([])
+            return json.dumps({"error": f"Error listing relationship types: {e}"})
 
     def get_neo4j_schema(self) -> str:
         """
@@ -129,10 +129,10 @@ class Neo4jTools(Toolkit):
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.schema.visualization()")
                 schema_data = result.data()
-            return json.dumps(schema_data)
-        except Exception:
+            return json.dumps(schema_data, default=str)
+        except Exception as e:
             logger.exception("Error getting Neo4j schema")
-            return json.dumps([])
+            return json.dumps({"error": f"Error getting Neo4j schema: {e}"})
 
     def run_neo4j_cypher_query(self, query: str) -> str:
         """
@@ -149,7 +149,7 @@ class Neo4jTools(Toolkit):
             with self.driver.session(database=self.database) as session:
                 result = session.run(query)  # type: ignore[arg-type]
                 data = result.data()
-            return json.dumps(data)
-        except Exception:
+            return json.dumps(data, default=str)
+        except Exception as e:
             logger.exception("Error running Cypher query")
-            return json.dumps([])
+            return json.dumps({"error": f"Error running Cypher query: {e}"})

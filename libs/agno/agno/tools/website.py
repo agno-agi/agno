@@ -33,11 +33,11 @@ class WebsiteTools(Toolkit):
         :return: 'Success' if the website was added to the knowledge base.
         """
         if self.knowledge is None:
-            return "Knowledge base not provided"
+            return json.dumps({"error": "Knowledge base not provided"})
 
         log_debug(f"Adding to knowledge base: {url}")
         self.knowledge.insert(url=url)
-        return "Success"
+        return json.dumps({"status": "success", "url": url})
 
     def website_read(self, url: str) -> str:
         """This function reads a url and returns the content.

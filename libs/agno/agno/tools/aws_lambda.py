@@ -60,10 +60,15 @@ class AWSLambdaTools(Toolkit):
         try:
             response = self.client.invoke(FunctionName=function_name, Payload=payload)
             result_payload = response["Payload"].read().decode("utf-8")
+            try:
+                parsed_payload = json.loads(result_payload) if result_payload else None
+            except ValueError:
+                # Lambda payloads are not required to be JSON; return the raw string
+                parsed_payload = result_payload
             return json.dumps(
                 {
                     "status_code": response["StatusCode"],
-                    "payload": json.loads(result_payload) if result_payload else None,
+                    "payload": parsed_payload,
                 }
             )
         except Exception as e:

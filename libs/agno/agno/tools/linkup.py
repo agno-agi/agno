@@ -29,7 +29,7 @@ class LinkupTools(Toolkit):
         if not self.api_key:
             log_error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")
 
-        self.linkup = LinkupClient(api_key=api_key)
+        self.linkup = LinkupClient(api_key=self.api_key)
         self.depth = depth
         self.output_type = output_type
 
@@ -58,6 +58,8 @@ class LinkupTools(Toolkit):
             )
             if isinstance(response, str):
                 return response
-            return json.dumps(response)
+            if hasattr(response, "model_dump"):
+                return json.dumps(response.model_dump(), default=str)
+            return json.dumps(response, default=str)
         except Exception as e:
             return json.dumps({"error": str(e)})
