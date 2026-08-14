@@ -177,6 +177,12 @@ def get_scoped_user_id_for_ws(
 
     Workflow WebSocket handlers have no ``Request`` to read ``request.state`` from,
     so the auth flags are passed explicitly.
+
+    Raises 403 (like the REST helper) when isolation is on and the authenticated
+    caller carries no identity: returning ``None`` there would read as "unscoped
+    caller" and skip the run-ownership gates, so an identity-less token could
+    stream or continue any user's runs. Handlers catch the HTTPException and
+    surface it as a WS error event.
     """
     if is_admin:
         return None
@@ -187,7 +193,10 @@ def get_scoped_user_id_for_ws(
     if not (jwt_enabled and user_isolation_enabled):
         return None
 
-    return user_id or None
+    if not user_id:
+        raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
+
+    return user_id
 
 
 def resolve_run_user_id(request: Request, client_user_id: Optional[str] = None) -> Optional[str]:

@@ -1,13 +1,17 @@
 # mypy: disable-error-code=var-annotated
 """Use this script to backfill the shared-owner sentinel on your VectorDBs (v2 -> v3)
 
-This script works with Redis, Valkey, Couchbase and Cassandra.
+This script works with Redis, Couchbase and Cassandra.
 
 v3 adds per-user RAG isolation. These backends spell "shared" as a literal ``user_id``
 value ``"__shared__"`` and their scoped search has no "field is absent" branch, so pre-v3
 vectors — which carry no ``user_id`` — are invisible to scoped callers until stamped. This
 backfill is mandatory for them, and idempotent: vectors that already carry a ``user_id``
 are left untouched.
+
+Valkey is not listed: it shipped with the ``user_id`` TAG in its schema from the start
+(v2.7.3), so no Valkey index predates per-user isolation and there is nothing to
+backfill.
 
 To use the script simply:
 - Fill in the config block for the backend(s) you use
@@ -26,15 +30,6 @@ redis_config: Dict[str, Any] = {
     # "index_names": ["my_index"],   # the RedisDB index_name(s) to migrate
 }
 # -----------------------------------------
-
-# ------------ Setup for Valkey ------------
-# Valkey is Redis-compatible; provide a valkey/redis URL or a client.
-valkey_config: Dict[str, Any] = {
-    # "valkey_url": "redis://localhost:6379",
-    # "valkey_client": None,
-    # "index_names": ["my_index"],
-}
-# ------------------------------------------
 
 # ------------ Setup for Couchbase ------------
 # The FTS index MUST be updated to include user_id for scoped search to work.
@@ -58,6 +53,39 @@ cassandra_config: Dict[str, Any] = {
     # "table_name": "my_table",
 }
 # -----------------------------------------
+
+
+def _decode(value: Any) -> Any:
+    """FT.INFO answers in bytes on some clients and str on others."""
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def _indexed_vector_dimensions(info: Any) -> Any:
+    """Read the vector dimension out of an FT.INFO payload.
+
+    The rebuilt schema has to keep the dimension the stored vectors were written with:
+    the adapter takes it from the embedder, so a migration run with a different (or
+    default) embedder would otherwise silently orphan every stored vector.
+
+    Returns None when the payload has no vector attribute to read.
+    """
+    items = info.items() if hasattr(info, "items") else []
+    for key, value in items:
+        if _decode(key) != "attributes":
+            continue
+        for attribute in value:
+            flat = [_decode(entry) for entry in attribute]
+            if "VECTOR" not in flat:
+                continue
+            for entry in flat:
+                # The vector params arrive as a nested [name, value, ...] sequence
+                if isinstance(entry, (list, tuple)):
+                    params = [_decode(param) for param in entry]
+                    if "dimensions" in params:
+                        return params[params.index("dimensions") + 1]
+            if "dim" in flat:
+                return flat[flat.index("dim") + 1]
+    return None
 
 
 def migrate_redis_index(index_name: str) -> None:
@@ -104,48 +132,43 @@ def migrate_redis_index(index_name: str) -> None:
         log_error(f"Error backfilling Redis index {index_name}: {e}")
         raise
 
-
-def migrate_valkey_index(index_name: str) -> None:
-    """Stamp the shared sentinel onto every Valkey vector lacking a ``user_id``.
-
-    Args:
-        index_name: The ValkeyDb ``index_name`` whose vectors should be backfilled.
-    """
+    # A pre-v3 index has no ``user_id`` TAG in its schema,
+    # so the scope filter still matches nothing. The schema is fixed at FT.CREATE, so it has
+    # to be dropped and rebuilt. The vectors are already stamped at this point, so a failure
+    # here is reported rather than raised — it must not undo a backfill that succeeded.
     try:
-        from agno.vectordb.valkey.valkeydb import ValkeyDB
-
-        log_info(f"Starting shared-sentinel backfill for Valkey index: {index_name}")
-
-        valkey_url = valkey_config.get("valkey_url")
-        client = valkey_config.get("valkey_client")
-        if client is None and valkey_url is None:
-            log_warning("Valkey: provide `valkey_url` or `valkey_client` in valkey_config. Skipping.")
+        db = RedisDB(index_name=index_name, redis_url=redis_url, redis_client=client)
+        if db._index_has_user_id_field():
+            log_info(f"Redis index '{index_name}': schema already has '{field}'. No rebuild needed.")
             return
-        if client is None:
-            from redis import Redis
 
-            assert valkey_url is not None  # narrows for the type checker
-            client = Redis.from_url(valkey_url)
+        # The rebuilt schema must keep the dimension the stored vectors were written with.
+        # It comes from the embedder, so read it off the live index rather than defaulting.
+        live_dimensions = _indexed_vector_dimensions(db.index.info())
+        if live_dimensions is None:
+            raise ValueError("could not read the vector dimension from the live index")
+        if live_dimensions != db.dimensions:
+            log_info(f"Redis index '{index_name}': preserving the live vector dimension {live_dimensions}.")
+            db.dimensions = live_dimensions
+            # RedisDB snapshots its schema in __init__, so the new dimension only reaches
+            # FT.CREATE if the schema and the index built from it are regenerated here.
+            db.schema = db._get_schema()
+            db.index = db._create_index()
 
-        field = ValkeyDB.USER_ID_FIELD
-        sentinel = ValkeyDB.SHARED_OWNER_TAG
-
-        patched = 0
-        scanned = 0
-        for key in client.scan_iter(match=f"{index_name}:*", count=1000):
-            scanned += 1
-            existing = client.hget(key, field)
-            if existing in (None, b"", ""):
-                client.hset(key, field, sentinel)
-                patched += 1
-
-        log_info(
-            f"Valkey index '{index_name}': scanned {scanned} vectors, backfilled {patched} with user_id='{sentinel}'."
-        )
-
+        log_info(f"Redis index '{index_name}': rebuilding schema to add the '{field}' field...")
+        # drop=False is FT.DROPINDEX without DD: it removes the schema and leaves every
+        # hash in place. ``drop()`` on the adapter would delete the vectors as well.
+        db.index.delete(drop=False)
+        db._owner_field_exists = None
+        db.create()
+        log_info(f"Redis index '{index_name}': schema rebuilt; scoped search is now available.")
     except Exception as e:
-        log_error(f"Error backfilling Valkey index {index_name}: {e}")
-        raise
+        log_warning(
+            f"Redis index '{index_name}': vectors are stamped, but the index schema could not be "
+            f"rebuilt ({e}). Scoped search stays unavailable until the index carries the "
+            f"'{field}' field: recreate it from your own RedisDB instance (same embedder), which "
+            "rebuilds the schema without touching the stored vectors."
+        )
 
 
 def migrate_couchbase() -> None:
@@ -388,8 +411,6 @@ def run() -> None:
     tasks: List[Tuple[str, Callable[[], None]]] = []
     for name in redis_config.get("index_names", []):
         tasks.append((f"redis:{name}", partial(migrate_redis_index, name)))
-    for name in valkey_config.get("index_names", []):
-        tasks.append((f"valkey:{name}", partial(migrate_valkey_index, name)))
     if couchbase_config.get("collection_name"):
         tasks.append(("couchbase", migrate_couchbase))
     if cassandra_config.get("table_name"):

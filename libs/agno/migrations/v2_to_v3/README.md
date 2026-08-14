@@ -9,7 +9,7 @@ kinds of migration, one script each:
 | --- | --- | --- |
 | `migrate_sql_vectordbs.py` | pgvector, singlestore | Add the `user_id` column to existing tables. |
 | `migrate_field_vectordbs.py` | milvus, lancedb, clickhouse, surrealdb | Add the `user_id` field/column/property to existing stores (+ optional Qdrant owner assignment). Milvus also backfills the `"__shared__"` sentinel. Weaviate cannot be migrated in place — the script refuses and tells you to recreate. |
-| `migrate_sentinel_vectordbs.py` | redis, valkey, couchbase, cassandra | Backfill `user_id = "__shared__"` onto existing vectors. |
+| `migrate_sentinel_vectordbs.py` | redis, couchbase, cassandra | Backfill `user_id = "__shared__"` onto existing vectors. |
 
 Two things decide whether a backend needs work:
 
@@ -36,7 +36,7 @@ Two things decide whether a backend needs work:
 | **clickhouse** | `String DEFAULT ''` column | `''` | scoped query fails until column exists | schema — `ALTER TABLE ADD COLUMN` |
 | **surrealdb** | `SCHEMAFUL` field | `NONE` | visible; new owner-writes silently dropped until field exists | schema — `DEFINE FIELD IF NOT EXISTS` |
 | **redis** | hash TAG field | `"__shared__"` | **invisible** until backfilled | data backfill |
-| **valkey** | hash TAG field | `"__shared__"` | **invisible** until backfilled | data backfill |
+| **valkey** | hash TAG field | `"__shared__"` | n/a — shipped with `user_id` from the start | none (see note) |
 | **couchbase** | document field + FTS index | `"__shared__"` | **invisible** until backfilled + FTS updated | data backfill (N1QL UPDATE) + FTS index update (see note) |
 | **cassandra** | `metadata_s` map | `"__shared__"` | **invisible** until backfilled | data backfill (CQL map update) |
 | **qdrant** | payload field (schemaless) | absent | visible | none (optional owner assignment) |
@@ -45,9 +45,9 @@ Two things decide whether a backend needs work:
 | **pineconedb** | metadata field (schemaless) | absent | visible | none |
 | **chromadb** | collection-per-user | base collection | visible | none |
 | **opensearch** | dynamic-mapping field | absent | visible | none |
-| **lightrag** | — (external graph) | — | — | not possible |
-| **llamaindex** | — (external retriever) | — | — | not possible |
-| **langchaindb** | — (external vectorstore) | — | — | not possible |
+| **lightrag** | — (no per-vector owner) | — | visible; `user_id` ignored, results never scoped | not possible |
+| **llamaindex** | — (no per-vector owner) | — | visible; `user_id` ignored, results never scoped | not possible |
+| **langchaindb** | — (no per-vector owner) | — | visible; `user_id` ignored, results never scoped | not possible |
 
 > **Milvus note:** v3 switched Milvus from `NULL`-shared to sentinel-shared (`"__shared__"`),
 > and its scoped search has no "is null" branch — so a pre-v3 entity is invisible to every
@@ -70,7 +70,17 @@ Two things decide whether a backend needs work:
 > collection. Pre-v3 data lives in the base collection, so it stays visible as shared.
 
 > **opensearch note:** mappings are dynamic — a scoped read uses `must_not exists` on `user_id`,
-> which matches existing (field-absent) documents, and new owner-writes auto-create the mapping.
+> which matches existing (field-absent) documents, so pre-v3 data stays visible as shared and no
+> backfill is needed. The adapter declares `user_id` as a `keyword` on the live index before the
+> first owner-write: OpenSearch would otherwise dynamic-map that first value as analyzed `text`,
+> a scope filter would match its tokens rather than the owner (`user_id="123"` also matching
+> `"team-123"`), and a field's type cannot be changed once set.
+
+> **valkey note (no backfill):** unlike Redis, Valkey shipped with the `user_id` TAG already in
+> its index schema (v2.7.3), so no Valkey index predates per-user isolation and there is
+> nothing to stamp. The adapter still checks the live schema before a scoped call: an index
+> created outside Agno — by a provisioning script or a hand-written `FT.CREATE` — can lack the
+> field, and the check turns that into a clear error instead of an empty result set.
 
 > **Couchbase note (FTS index update required):** Couchbase uses a separate FTS (Full-Text Search)
 > index for vector search. Stamping `user_id` on documents via N1QL is not enough — the FTS index
@@ -80,8 +90,11 @@ Two things decide whether a backend needs work:
 > to your FTS index mapping with `analyzer: "keyword"` and wait for reindexing.
 
 > **lightrag / llamaindex / langchaindb:** these wrap an external index and store no per-vector
-> `user_id` in Agno, so there is nothing to backfill and scoped calls fail closed. Isolation for
-> those deployments must be handled at the external index / application layer.
+> `user_id` in Agno, so there is nothing to backfill. They also cannot enforce a scope: a
+> `user_id` passed to one of them is logged as unsupported and **ignored**, and the call returns
+> the external index's results unscoped — every owner's chunks, not the caller's. Do not rely on
+> `user_id` for isolation on these backends. Isolation for those deployments must be handled at
+> the external index / application layer, or by using a vector db that supports it natively.
 
 ---
 

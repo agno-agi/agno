@@ -1216,6 +1216,9 @@ class OpenSearch(VectorDb):
             log_info(f"Index {self.index_name} does not exist, creating it")
             self.create()
 
+        # Claim the owner field's type before any value can imply it
+        self._ensure_owner_field_mapped(user_id)
+
         try:
             bulk_data, prepared_count = prepare_func(documents, user_id)
             if bulk_data:
@@ -1259,6 +1262,9 @@ class OpenSearch(VectorDb):
         if not await self.async_exists():
             log_info(f"Index {self.index_name} does not exist, creating it")
             await self.async_create()
+
+        # Claim the owner field's type before any value can imply it
+        await asyncio.to_thread(self._ensure_owner_field_mapped, user_id)
 
         try:
             # Embed documents in batch if requested
@@ -1857,6 +1863,43 @@ class OpenSearch(VectorDb):
                 )
                 return True
         return self._owner_field_exact
+
+    def _ensure_owner_field_mapped(self, user_id: Optional[str]) -> None:
+        """Declare ``user_id`` as a keyword before the first owner-stamped write.
+
+        An index created before the field existed has no mapping for it, so the first
+        scoped write lets OpenSearch dynamic-map the value — and its default for a string
+        is analyzed ``text``. The scope filter then matches tokens rather than the owner
+        (``user_id="123"`` also matches ``"team-123"``), and because a field type is fixed
+        for the life of the index, that write permanently bricks scoped access.
+
+        Adding a field to an existing mapping is allowed; only *changing* one is not. So
+        the type is claimed here, before any value can imply it. A failure is logged and
+        swallowed: the write still has to be gated, and ``_require_owner_field`` is what
+        refuses it.
+        """
+        if user_id is None:
+            return
+        try:
+            # A cached True only means "safe to filter" — on a legacy index that is the
+            # absent-field case, which is exactly the one that still needs declaring.
+            mappings = self.client.indices.get_mapping(index=self.index_name)
+            if any(
+                USER_ID_FIELD in index_mapping.get("mappings", {}).get("properties", {})
+                for index_mapping in mappings.values()
+            ):
+                return
+            self.client.indices.put_mapping(
+                index=self.index_name,
+                body={"properties": {USER_ID_FIELD: {"type": "keyword"}}},
+            )
+            self._owner_field_exact = True
+            log_debug(f"Declared '{USER_ID_FIELD}' as keyword on index '{self.index_name}'")
+        except Exception as e:
+            logger.warning(
+                f"Could not declare '{USER_ID_FIELD}' as a keyword on index '{self.index_name}': {e}. "
+                "A scoped write may dynamic-map it as analyzed text, which cannot be undone."
+            )
 
     def _validate_user_id(self, user_id: Optional[str]) -> None:
         """

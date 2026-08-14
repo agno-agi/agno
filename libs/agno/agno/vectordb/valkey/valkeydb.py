@@ -419,6 +419,11 @@ class ValkeyDB(VectorDb):
     def _user_id_field_exists(self) -> bool:
         """Cached check for whether the live index schema contains the owner tag field.
 
+        Valkey shipped with this field from the start, so no index Agno created can lack it
+        and there is no backfill for it in the v2 -> v3 migration. The check is kept for an
+        index created outside Agno — a provisioning script or a hand-written ``FT.CREATE`` —
+        where a scope filter on an unindexed field is rejected and read back as "no results".
+
         An inconclusive inspection (connection failure, etc.) assumes "migrated" for
         this call alone and does not cache.
         """
@@ -450,9 +455,10 @@ class ValkeyDB(VectorDb):
         if self._user_id_field_exists():
             return True
         raise ValueError(
-            f"user_id={user_id!r} was passed but Valkey index '{self.index_name}' predates per-user "
-            f"isolation and has no '{self.USER_ID_FIELD}' field. Recreate the index "
-            "and run the v2 -> v3 migration (libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py)."
+            f"user_id={user_id!r} was passed but Valkey index '{self.index_name}' has no "
+            f"'{self.USER_ID_FIELD}' field, so a scoped search cannot match anything. Agno always "
+            "creates the field, so this index was created elsewhere — drop it with FT.DROPINDEX "
+            "(without DD, which keeps the stored vectors) and let ValkeyDB.create() rebuild it."
         )
 
     def create(self) -> None:
@@ -474,7 +480,10 @@ class ValkeyDB(VectorDb):
                     log_warning(
                         f"Valkey index '{self.index_name}' was created without the "
                         f"'{self.USER_ID_FIELD}' field; per-user scoped searches will not match. "
-                        f"Drop and recreate the index to enable per-user isolation."
+                        "Agno always creates the field, so this index was created elsewhere. Drop "
+                        "it with FT.DROPINDEX (without DD, which keeps the stored vectors) and let "
+                        "ValkeyDB.create() rebuild it. Do not call drop() — it deletes the vectors "
+                        "along with the index."
                     )
         except Exception as e:
             log_error(f"Error creating Valkey index: {str(e)}")

@@ -4453,6 +4453,14 @@ async def _acontinue_run_background_stream(
     # 1. Persist PENDING status so the run is visible in the DB immediately.
     # Execution (and the RUNNING transition) waits for a concurrency slot.
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+
+    # Fall back to the owner the run paused with, so the resume retrieves under
+    # the same scope.
+    if user_id is None:
+        user_id = _resolve_continue_owner(run_response, run_id=_run_id, session=agent_session)
+        if user_id is not None:
+            run_context.user_id = user_id
+
     update_metadata(agent, session=agent_session)
 
     # HITL continues may arrive with run_response=None (router passes only
@@ -4728,6 +4736,13 @@ async def _acontinue_run(
 
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+
+                # Fall back to the owner the run paused with, so the resume retrieves under
+                # the same scope.
+                if user_id is None:
+                    user_id = _resolve_continue_owner(run_response, run_id=run_id, session=agent_session)
+                    if user_id is not None:
+                        run_context.user_id = user_id
 
                 # 2. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -5206,6 +5221,13 @@ async def _acontinue_run_stream(
                 run_messages: Optional[RunMessages] = None
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+
+                # Fall back to the owner the run paused with, so the resume retrieves under
+                # the same scope.
+                if user_id is None:
+                    user_id = _resolve_continue_owner(run_response, run_id=run_id, session=agent_session)
+                    if user_id is not None:
+                        run_context.user_id = user_id
 
                 # 2. Update session state and metadata
                 update_metadata(agent, session=agent_session)

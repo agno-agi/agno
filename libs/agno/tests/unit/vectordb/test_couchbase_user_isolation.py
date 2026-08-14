@@ -411,3 +411,51 @@ class TestDeleteScope:
         n1ql, params = couchbase_db.recorder.queries[-1]
         assert "user_id" not in n1ql
         assert params == {"content_id": "cid-1"}
+
+
+def _keyword_field(analyzer="keyword"):
+    return {"user_id": {"fields": [{"name": "user_id", "index": True, "type": "text", "analyzer": analyzer}]}}
+
+
+class TestFtsMappingHonoursTheScopeFilter:
+    """The scope filter is a TermQuery, so ``user_id`` has to be indexed as a whole value.
+
+    The index definition is supplied by the user, so it may index the owner with the default
+    analyzer — which splits it into word pieces and makes a search scoped to "123" match
+    "team-123"'s chunks. Presence of the field is therefore not enough to accept it.
+    """
+
+    @pytest.mark.parametrize(
+        "mapping,expected",
+        [
+            ({"types": {"s.c": {"properties": _keyword_field()}}}, True),
+            ({"properties": _keyword_field()}, True),
+            ({"default_mapping": {"properties": _keyword_field()}}, True),
+            # Declared, but analyzed — a TermQuery would match this owner's tokens
+            ({"types": {"s.c": {"properties": _keyword_field(analyzer="standard")}}}, False),
+            # Declared with no analyzer at all, so the index default applies
+            ({"types": {"s.c": {"properties": {"user_id": {"fields": [{"name": "user_id"}]}}}}}, False),
+            # A dynamic mapping declares nothing; its values are analyzed
+            ({"default_mapping": {"dynamic": True, "enabled": True}, "index_dynamic": True}, False),
+            ({"types": {"s.c": {"properties": {"content": {"fields": []}}}}}, False),
+        ],
+    )
+    def test_only_a_keyword_analyzer_is_accepted(self, couchbase_db, mapping, expected):
+        index_def = MagicMock()
+        index_def.params = {"mapping": mapping}
+        manager = MagicMock()
+        manager.get_index.return_value = index_def
+
+        with patch.object(type(couchbase_db), "scope", property(lambda _: MagicMock(search_indexes=lambda: manager))):
+            assert couchbase_db._fts_has_user_id_field() is expected
+
+    def test_an_analyzed_owner_field_refuses_a_scoped_call(self, couchbase_db):
+        index_def = MagicMock()
+        index_def.params = {"mapping": {"types": {"s.c": {"properties": _keyword_field(analyzer="standard")}}}}
+        manager = MagicMock()
+        manager.get_index.return_value = index_def
+        couchbase_db._owner_field_exists = None
+
+        with patch.object(type(couchbase_db), "scope", property(lambda _: MagicMock(search_indexes=lambda: manager))):
+            with pytest.raises(ValueError, match="does not"):
+                couchbase_db._require_owner_field("123")

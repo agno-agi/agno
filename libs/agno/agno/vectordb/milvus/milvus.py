@@ -103,6 +103,7 @@ class Milvus(VectorDb):
         self.token: Optional[str] = token
         self._client: Optional[MilvusClient] = None
         self._async_client: Optional[AsyncMilvusClient] = None
+        self._owner_field_exists: Optional[bool] = None
         self.search_type: SearchType = search_type
         self.reranker: Optional[Reranker] = reranker
         self.sparse_vector_dimensions = sparse_vector_dimensions
@@ -216,6 +217,32 @@ class Milvus(VectorDb):
 
         return schema
 
+    def _create_owner_index(self) -> None:
+        """Index the owner field so the scope predicate is a lookup, not a scan.
+
+        Every scoped search ANDs an equality on ``user_id``; without a scalar index Milvus
+        evaluates it per row and the cost grows with the whole collection rather than with
+        the caller's share of it.
+
+        Added after the collection exists rather than alongside the vector indexes: Milvus
+        Lite rejects scalar indexes outright, and bundling this one would take the whole
+        create down with it. A server that declines it keeps working, just unindexed.
+        """
+        try:
+            index_params = self.client.prepare_index_params()
+            index_params.add_index(
+                field_name=USER_ID_FIELD,
+                index_name=f"{USER_ID_FIELD}_index",
+                index_type="INVERTED",
+            )
+            self.client.create_index(collection_name=self.collection, index_params=index_params)
+            log_debug(f"Created scalar index on '{USER_ID_FIELD}' for collection {self.collection}")
+        except Exception as e:
+            log_debug(
+                f"Could not create a scalar index on '{USER_ID_FIELD}' for collection "
+                f"{self.collection}: {e}. Scoped searches still work, unindexed."
+            )
+
     def _prepare_vector_index_params(self) -> Any:
         """Prepare index parameters for the dense vector field."""
         index_params = self.client.prepare_index_params()
@@ -226,7 +253,6 @@ class Milvus(VectorDb):
             index_type="AUTOINDEX",
             metric_type=self._get_metric_type(),
         )
-
         return index_params
 
     def _prepare_hybrid_index_params(self) -> Any:
@@ -249,7 +275,6 @@ class Milvus(VectorDb):
             metric_type="IP",
             params={"drop_ratio_build": 0.2},
         )
-
         return index_params
 
     def _validate_user_id(self, user_id: Optional[str]) -> None:
@@ -259,6 +284,54 @@ class Milvus(VectorDb):
                 f"user_id must not be '{SHARED_USER_ID_VALUE}' - that value is reserved to mark content "
                 "shared with every user"
             )
+
+    def _user_id_field_exists(self) -> bool:
+        """Whether the live collection declares the owner field. Inspected once, then cached.
+
+        An inconclusive inspection assumes "migrated" for this call alone and is not cached:
+        caching a blip would permanently mask a pre-v3 collection.
+        """
+        if self._owner_field_exists is None:
+            try:
+                if not self.client.has_collection(self.collection):
+                    # No live collection yet — it will be created with the field.
+                    self._owner_field_exists = True
+                    return True
+                description = self.client.describe_collection(collection_name=self.collection)
+                fields = description.get("fields", []) if isinstance(description, dict) else []
+                self._owner_field_exists = any(field.get("name") == USER_ID_FIELD for field in fields)
+            except Exception:
+                log_warning(
+                    f"Could not inspect Milvus collection '{self.collection}' for the "
+                    f"'{USER_ID_FIELD}' field; proceeding as migrated for this operation."
+                )
+                return True
+        return self._owner_field_exists
+
+    def _require_owner_field(self, user_id: Optional[str]) -> bool:
+        """Gate every owner-field reference on the live schema.
+
+        Milvus spells "shared" as the literal ``"__shared__"`` sentinel and its scope filter
+        has no field-absent branch, so a pre-v3 entity matches neither arm and simply stops
+        appearing — the caller reads that as "no data" rather than "not migrated". Refusing
+        is what pgvector and weaviate do; returning nothing is the one outcome that hides the
+        problem. Unscoped calls never name the field and are left alone.
+        """
+        if self._user_id_field_exists():
+            return True
+        if user_id is None:
+            return False
+        # The cached answer may predate a migration run — re-inspect once before refusing
+        self._owner_field_exists = None
+        if self._user_id_field_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but Milvus collection '{self.collection}' predates "
+            f"per-user isolation and has no '{USER_ID_FIELD}' field, so a scoped search would "
+            "silently return nothing. Run the v2 -> v3 migration "
+            "(libs/agno/migrations/v2_to_v3/migrate_field_vectordbs.py), which adds the field and "
+            "backfills the shared sentinel."
+        )
 
     def _scoped_doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the same content get distinct ids.
@@ -329,6 +402,7 @@ class Milvus(VectorDb):
         index_params = self._prepare_hybrid_index_params()
 
         self.client.create_collection(collection_name=self.collection, schema=schema, index_params=index_params)
+        self._create_owner_index()
 
     async def _async_create_hybrid_collection(self) -> None:
         """Create a hybrid collection asynchronously."""
@@ -340,6 +414,7 @@ class Milvus(VectorDb):
         await self.async_client.create_collection(
             collection_name=self.collection, schema=schema, index_params=index_params
         )
+        await asyncio.to_thread(self._create_owner_index)
 
     def _create_vector_collection(self) -> None:
         """Create a collection for the default dense vector search."""
@@ -349,6 +424,7 @@ class Milvus(VectorDb):
         index_params = self._prepare_vector_index_params()
 
         self.client.create_collection(collection_name=self.collection, schema=schema, index_params=index_params)
+        self._create_owner_index()
 
     async def _async_create_vector_collection(self) -> None:
         """Create a collection for the default dense vector search asynchronously."""
@@ -360,6 +436,7 @@ class Milvus(VectorDb):
         await self.async_client.create_collection(
             collection_name=self.collection, schema=schema, index_params=index_params
         )
+        await asyncio.to_thread(self._create_owner_index)
 
     def create(self) -> None:
         """Create a collection based on search type if it doesn't exist."""
@@ -424,6 +501,7 @@ class Milvus(VectorDb):
             bool: True if a document with the given content hash exists, False otherwise.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         if self.client:
             expr = f'content_hash == "{content_hash}"'
             if user_id is not None:
@@ -478,6 +556,7 @@ class Milvus(VectorDb):
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         log_debug(f"Inserting {len(documents)} documents")
 
         if self.search_type == SearchType.hybrid:
@@ -529,6 +608,7 @@ class Milvus(VectorDb):
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         log_info(f"Inserting {len(documents)} documents asynchronously")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -640,6 +720,7 @@ class Milvus(VectorDb):
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         log_debug(f"Upserting {len(documents)} documents")
 
         # ``upsert`` replaces by primary key, so a shrunk document would leave its dropped chunks behind
@@ -698,6 +779,7 @@ class Milvus(VectorDb):
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
         # See the matching comment in ``upsert``.
@@ -845,6 +927,7 @@ class Milvus(VectorDb):
             List[Document]: List of matching documents
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
             filters = None
@@ -918,6 +1001,7 @@ class Milvus(VectorDb):
             List[Document]: List of matching documents
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
             filters = None
@@ -1317,6 +1401,7 @@ class Milvus(VectorDb):
             bool: True if documents were deleted, False otherwise
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             log_debug(f"Milvus VectorDB : Deleting documents with content_id {content_id} (user_id={user_id})")
 

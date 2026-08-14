@@ -8422,6 +8422,14 @@ async def _acontinue_run_background_stream(
     # 1. Persist PENDING status so the run is visible in the DB immediately.
     # Execution (and the RUNNING transition) waits for a concurrency slot.
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+
+    # Fall back to the owner the run paused with, so the resume retrieves under
+    # the same scope.
+    if user_id is None:
+        user_id = _resolve_continue_owner_team(run_response, run_id=_run_id, session=team_session)
+        if user_id is not None:
+            run_context.user_id = user_id
+
     _update_metadata(team, session=team_session)
 
     def _get_session_run(session: TeamSession) -> Optional[TeamRunOutput]:
@@ -9050,6 +9058,13 @@ async def _acontinue_run(
                     run_id=run_id,
                 )
 
+                # Fall back to the owner the run paused with, so the resume retrieves under
+                # the same scope.
+                if user_id is None:
+                    user_id = _resolve_continue_owner_team(run_response, run_id=run_id, session=team_session)
+                    if user_id is not None:
+                        run_context.user_id = user_id
+
                 # Resolve run_response from run_id if needed
                 if run_response is None and run_id is not None:
                     runs = team_session.runs or []
@@ -9515,6 +9530,13 @@ async def _acontinue_run_stream(
                     user_id=user_id,
                     run_id=run_id,
                 )
+
+                # Fall back to the owner the run paused with, so the resume retrieves under
+                # the same scope.
+                if user_id is None:
+                    user_id = _resolve_continue_owner_team(run_response, run_id=run_id, session=team_session)
+                    if user_id is not None:
+                        run_context.user_id = user_id
 
                 # Resolve run_response from run_id if needed
                 if run_response is None and run_id is not None:
