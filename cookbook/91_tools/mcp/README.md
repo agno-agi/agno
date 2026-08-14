@@ -40,6 +40,10 @@ This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to se
 
 This example connects to the hosted DeepWiki MCP server (public, no API key) to answer questions about GitHub repositories. It shows how a tool's `structuredContent` is preserved on `ToolResult.metadata["structured_content"]` and read back through a tool hook.
 
+10. Peer Cash Agent (`peer_cash.py`)
+
+This example connects to the published Peer Cash MCP server to discover fiat payout rails, read market-rate estimates, prepare unsigned Base USDC cash-outs, and track their order state. Wallet custody stays outside the agent: the server never accepts private keys, signs transactions, or broadcasts them.
+
 
 ## Getting Started
 
@@ -66,6 +70,7 @@ python filesystem.py
 python github.py
 python bgpt.py
 python structured_content.py
+python peer_cash.py
 ```
 
 ## How It Works

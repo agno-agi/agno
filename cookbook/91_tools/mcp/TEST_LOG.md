@@ -1,5 +1,15 @@
 # Test Log
 
+### peer_cash.py
+
+**Status:** PASS
+
+**Description:** Uses Agno 2.9.0 `MCPTools` to launch `peer-cash-mcp@0.1.1` over stdio with the same command as the cookbook, completes MCP initialization, and calls the live production capabilities tool.
+
+**Result:** Agno discovered all nine tools and `peer_cash_capabilities` returned the Base 8453 USDC destination plus the live payout catalog. The example also passes Python compilation and Ruff checks.
+
+---
+
 ### structured_content.py
 
 **Status:** PASS
