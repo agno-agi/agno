@@ -12,6 +12,8 @@ import pytest
 
 pytest.importorskip("pymongo", reason="pymongo not installed")
 
+from pymongo.errors import ConnectionFailure, OperationFailure  # noqa: E402
+
 from agno.db.migrations.versions.v3_0_0 import _migrate_async_mongo, _migrate_mongo, _revert_mongo  # noqa: E402
 from agno.db.mongo.schemas import get_collection_indexes  # noqa: E402
 from agno.db.mongo.utils import create_collection_indexes, create_collection_indexes_async  # noqa: E402
@@ -47,20 +49,43 @@ def _mock_async_db(collection, collection_names=("agno_schedules",)):
 class TestPerIndexBootstrap:
     def test_one_conflicting_index_does_not_starve_the_rest(self):
         collection = MagicMock()
-        collection.create_index.side_effect = [None, Exception("IndexOptionsConflict"), *([None] * 20)]
+        collection.create_index.side_effect = [
+            None,
+            OperationFailure("IndexOptionsConflict", code=85),
+            *([None] * 20),
+        ]
 
         create_collection_indexes(collection, "schedules")
 
         assert collection.create_index.call_count == len(get_collection_indexes("schedules"))
 
+    def test_connection_failure_aborts_instead_of_timing_out_per_index(self):
+        collection = MagicMock()
+        collection.create_index.side_effect = [None, ConnectionFailure("server selection timed out")]
+
+        create_collection_indexes(collection, "schedules")
+
+        assert collection.create_index.call_count == 2
+
     @pytest.mark.asyncio
     async def test_async_one_conflicting_index_does_not_starve_the_rest(self):
         collection = MagicMock()
-        collection.create_index = AsyncMock(side_effect=[None, Exception("IndexOptionsConflict"), *([None] * 20)])
+        collection.create_index = AsyncMock(
+            side_effect=[None, OperationFailure("IndexOptionsConflict", code=85), *([None] * 20)]
+        )
 
         await create_collection_indexes_async(collection, "schedules")
 
         assert collection.create_index.call_count == len(get_collection_indexes("schedules"))
+
+    @pytest.mark.asyncio
+    async def test_async_connection_failure_aborts_instead_of_timing_out_per_index(self):
+        collection = MagicMock()
+        collection.create_index = AsyncMock(side_effect=[None, ConnectionFailure("server selection timed out")])
+
+        await create_collection_indexes_async(collection, "schedules")
+
+        assert collection.create_index.call_count == 2
 
 
 class TestMigrateSchedulesIndexes:

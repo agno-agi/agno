@@ -12,6 +12,7 @@ from agno.utils.log import log_error, log_warning
 
 try:
     from pymongo.collection import Collection
+    from pymongo.errors import OperationFailure
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
 
@@ -41,8 +42,14 @@ def create_collection_indexes(collection: Collection, collection_type: str) -> N
                 collection.create_index(key, unique=unique)
             else:
                 collection.create_index([(key, 1)], unique=unique)
-        except Exception as e:
+        except OperationFailure as e:
+            # e.g. IndexOptionsConflict on a legacy collection: skip this index, try the rest
             log_warning(f"Error creating index {key!r} for {collection_type} collection: {str(e)}")
+        except Exception as e:
+            # Connection-level failure: the remaining creates would all fail too
+            # (each waiting out the server-selection timeout), so stop here
+            log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+            return
 
 
 async def create_collection_indexes_async(collection: Any, collection_type: str) -> None:
@@ -66,8 +73,14 @@ async def create_collection_indexes_async(collection: Any, collection_type: str)
                 await collection.create_index(key, unique=unique)
             else:
                 await collection.create_index([(key, 1)], unique=unique)
-        except Exception as e:
+        except OperationFailure as e:
+            # e.g. IndexOptionsConflict on a legacy collection: skip this index, try the rest
             log_warning(f"Error creating index {key!r} for {collection_type} collection: {str(e)}")
+        except Exception as e:
+            # Connection-level failure: the remaining creates would all fail too
+            # (each waiting out the server-selection timeout), so stop here
+            log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+            return
 
 
 def apply_sorting(
