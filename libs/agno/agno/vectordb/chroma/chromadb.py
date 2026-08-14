@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import md5
@@ -159,17 +158,16 @@ class ChromaDb(VectorDb):
     # One collection per user, ``{collection_name}__{user_id}``. ``None`` maps to the
     # base collection, which stays the shared bucket so existing deployments keep working.
 
-    _CHROMA_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,61}[A-Za-z0-9]$")
-
     def _sanitize_user_id_for_collection(self, user_id: str) -> str:
-        """Return a Chroma-safe name component. Chroma names are 3-63 chars of
-        alphanumerics plus ``_`` / ``.`` / ``-``, so anything else is hashed."""
-        candidate = user_id
-        # Reserve enough budget for the base ``{collection_name}__`` prefix.
-        suffix_budget = 63 - len(self.collection_name) - 2  # "__"
-        if self._CHROMA_NAME_RE.match(candidate) and len(candidate) <= suffix_budget and ".." not in candidate:
-            return candidate
-        # Fallback: 16-char hex hash. Stable per-user across processes.
+        """Return the Chroma-safe name component for an owner.
+
+        Always a hash, never the raw id. Chroma names are 3-63 chars of alphanumerics plus
+        ``_`` / ``.`` / ``-``, so an id that does not fit has to be hashed anyway — and mixing
+        the two schemes would let one owner land in another's collection: a hash digest is
+        itself a valid verbatim name, so an owner who picks ``md5(victim)[:16]`` as their id
+        resolves to the victim's collection and gets read, write and delete on it. Hashing
+        unconditionally leaves a single namespace with no verbatim names to collide with.
+        """
         return md5(user_id.encode("utf-8")).hexdigest()[:16]
 
     def _collection_name_for(self, user_id: Optional[str]) -> str:
