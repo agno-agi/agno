@@ -7,7 +7,7 @@ Demonstrates SlackContextProvider with:
 - **search_messages** — Search using the legacy API (works with user
   tokens `xoxp-`). Both bot and assisted read agents now have this
   enabled alongside `search_workspace`.
-- **enable_media_tools** — Opt-in file handling:
+- **media_tools** — Opt-in file handling:
   - `download_file` on read agents (fetch images/files for multimodal)
   - `upload_file` on write agent (post generated content)
 
@@ -40,7 +40,7 @@ from agno.models.google import Gemini
 
 slack = SlackContextProvider(
     model=Gemini(id="gemini-3.5-flash"),
-    enable_media_tools=True,
+    media_tools=True,
 )
 
 agent = Agent(

@@ -24,6 +24,7 @@ back to ``SLACK_TOKEN`` since that's the variable agno's
 from __future__ import annotations
 
 import asyncio
+import warnings
 from os import getenv
 from typing import TYPE_CHECKING
 
@@ -50,12 +51,13 @@ class SlackContextProvider(ContextProvider):
         name: str = "Slack",
         read_instructions: str | None = None,
         write_instructions: str | None = None,
-        enable_media_tools: bool = False,
+        media_tools: bool = False,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         read: bool = True,
         write: bool = True,
         stream_sub_agent_events: bool = True,
+        **kwargs,
     ) -> None:
         super().__init__(
             id=id,
@@ -81,7 +83,11 @@ class SlackContextProvider(ContextProvider):
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_SLACK_WRITE_INSTRUCTIONS
         )
-        self.enable_media_tools = enable_media_tools
+        # Backwards compat for old param name
+        if "enable_media_tools" in kwargs:
+            warnings.warn("enable_media_tools is deprecated, use media_tools", DeprecationWarning, stacklevel=2)
+            media_tools = kwargs.pop("enable_media_tools")
+        self.media_tools = media_tools
         self._bot_read_tools: SlackTools | None = None
         self._assisted_read_tools: SlackTools | None = None
         self._write_tools: SlackTools | None = None
@@ -204,7 +210,7 @@ class SlackContextProvider(ContextProvider):
                 send_message=False,
                 send_message_thread=False,
                 upload_file=False,
-                download_file=self.enable_media_tools,
+                download_file=self.media_tools,
                 list_channels=True,
                 get_channel_history=True,
                 search_messages=self._enable_search_messages,
@@ -224,7 +230,7 @@ class SlackContextProvider(ContextProvider):
                 send_message=False,
                 send_message_thread=False,
                 upload_file=False,
-                download_file=self.enable_media_tools,
+                download_file=self.media_tools,
                 list_channels=True,
                 get_channel_history=True,
                 search_messages=self._enable_search_messages,
@@ -244,7 +250,7 @@ class SlackContextProvider(ContextProvider):
                 token=self.token,
                 send_message=True,
                 send_message_thread=True,
-                upload_file=self.enable_media_tools,
+                upload_file=self.media_tools,
                 download_file=False,
                 list_channels=True,
                 get_channel_history=False,
