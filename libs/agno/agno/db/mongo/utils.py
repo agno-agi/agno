@@ -21,37 +21,53 @@ if TYPE_CHECKING:
 
 # -- DB util methods --
 def create_collection_indexes(collection: Collection, collection_type: str) -> None:
-    """Create all required indexes for a collection"""
+    """Create all required indexes for a collection.
+
+    Each index is attempted independently: one conflicting index (e.g. a legacy
+    collection whose index exists with different options) must not prevent the
+    remaining indexes from being created.
+    """
     try:
         indexes = get_collection_indexes(collection_type)
-        for index_spec in indexes:
-            key = index_spec["key"]
-            unique = index_spec.get("unique", False)
+    except Exception as e:
+        log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+        return
+    for index_spec in indexes:
+        key = index_spec["key"]
+        unique = index_spec.get("unique", False)
 
+        try:
             if isinstance(key, list):
                 collection.create_index(key, unique=unique)
             else:
                 collection.create_index([(key, 1)], unique=unique)
-
-    except Exception as e:
-        log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+        except Exception as e:
+            log_warning(f"Error creating index {key!r} for {collection_type} collection: {str(e)}")
 
 
 async def create_collection_indexes_async(collection: Any, collection_type: str) -> None:
-    """Create all required indexes for a collection (async version for Motor)"""
+    """Create all required indexes for a collection (async version for Motor).
+
+    Each index is attempted independently: one conflicting index (e.g. a legacy
+    collection whose index exists with different options) must not prevent the
+    remaining indexes from being created.
+    """
     try:
         indexes = get_collection_indexes(collection_type)
-        for index_spec in indexes:
-            key = index_spec["key"]
-            unique = index_spec.get("unique", False)
+    except Exception as e:
+        log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+        return
+    for index_spec in indexes:
+        key = index_spec["key"]
+        unique = index_spec.get("unique", False)
 
+        try:
             if isinstance(key, list):
                 await collection.create_index(key, unique=unique)
             else:
                 await collection.create_index([(key, 1)], unique=unique)
-
-    except Exception as e:
-        log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+        except Exception as e:
+            log_warning(f"Error creating index {key!r} for {collection_type} collection: {str(e)}")
 
 
 def apply_sorting(

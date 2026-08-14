@@ -146,12 +146,12 @@ def run() -> None:
     tasks = []
     if pg_vector_config:
         tasks += [
-            (f"pgvector:{t}", lambda t=t: migrate_pgvector_table(t, pg_vector_config["schema"]))  # type: ignore
+            (f"pgvector:{t}", lambda t=t: migrate_pgvector_table(t, pg_vector_config.get("schema", "ai")))  # type: ignore
             for t in pg_vector_config["table_names"]
         ]
     if singlestore_config:
         tasks += [
-            (f"singlestore:{t}", lambda t=t: migrate_singlestore_table(t, singlestore_config["schema"]))  # type: ignore
+            (f"singlestore:{t}", lambda t=t: migrate_singlestore_table(t, singlestore_config.get("schema", "ai")))  # type: ignore
             for t in singlestore_config["table_names"]
         ]
 

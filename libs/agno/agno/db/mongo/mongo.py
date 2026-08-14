@@ -3177,9 +3177,9 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            query: Dict[str, Any] = {"name": name}
-            if user_id is not None:
-                query["user_id"] = user_id
+            # Names are unique per owner: ``None`` addresses the unowned bucket
+            # ({"user_id": None} matches null and missing), never another owner's schedule.
+            query: Dict[str, Any] = {"name": name, "user_id": user_id}
             result = collection.find_one(query)
             if result is None:
                 return None

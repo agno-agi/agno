@@ -1367,7 +1367,11 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get a schedule by name."""
+        """Get a schedule by name within one owner bucket.
+
+        Names are unique per owner: ``user_id=None`` matches only unowned
+        schedules, never another owner's schedule of the same name.
+        """
         raise NotImplementedError
 
     def get_schedules(
@@ -2491,7 +2495,11 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get a schedule by name."""
+        """Get a schedule by name within one owner bucket.
+
+        Names are unique per owner: ``user_id=None`` matches only unowned
+        schedules, never another owner's schedule of the same name.
+        """
         raise NotImplementedError
 
     async def get_schedules(

@@ -4416,8 +4416,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return None
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.name == name)
+                # Names are unique per owner: ``None`` addresses the unowned bucket,
+                # never another owner's schedule of the same name.
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
                 result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None

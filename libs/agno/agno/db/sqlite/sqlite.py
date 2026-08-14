@@ -5593,8 +5593,12 @@ class SqliteDb(BaseDb):
                 return None
             with self.Session() as sess:
                 stmt = select(table).where(table.c.name == name)
+                # Names are unique per owner: ``None`` addresses the unowned bucket,
+                # never another owner's schedule of the same name.
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
                 result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:

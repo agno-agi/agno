@@ -1157,13 +1157,74 @@ async def _revert_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> bool
 # ---------------------------------------------------------------------------
 
 
+def _index_keys(index_info: Dict[str, Any]) -> List[Any]:
+    """Normalize an ``index_information()`` entry's key spec to a list of tuples."""
+    return [tuple(pair) for pair in index_info.get("key", [])]
+
+
+def _migrate_mongo_schedules(db: BaseDb, table_name: str) -> bool:
+    """Drop the legacy global-unique ``name`` index and build the v3 index set.
+
+    Pre-3.0.0 declared schedule names unique across all owners. v3 names are
+    unique per owner, so on a legacy collection the surviving unique index both
+    rejects cross-user name reuse (raw DuplicateKeyError instead of the
+    router's 409) and conflicts with the runtime index bootstrap.
+    """
+    from agno.db.mongo.utils import create_collection_indexes
+
+    database = db.database  # type: ignore[attr-defined]
+    if table_name not in database.list_collection_names():
+        log_info(f"Schedules collection {table_name} does not exist, skipping migration")
+        return False
+
+    collection = database[table_name]
+    for index_name, info in collection.index_information().items():
+        if _index_keys(info) == [("name", 1)] and info.get("unique"):
+            log_info(
+                f"-- Dropping legacy unique index '{index_name}' on {table_name}.name "
+                "(v3 schedule names are unique per owner)"
+            )
+            collection.drop_index(index_name)
+
+    # Build the v3 index set (non-unique name, user_id, and the compound claim/list indexes)
+    create_collection_indexes(collection, "schedules")
+    log_info(f"-- Ensured v3 indexes on schedules collection {table_name}")
+    return True
+
+
+def _revert_mongo_schedules(db: BaseDb, table_name: str) -> bool:
+    """Restore the v2 global-unique ``name`` index on the schedules collection."""
+    database = db.database  # type: ignore[attr-defined]
+    if table_name not in database.list_collection_names():
+        return False
+
+    collection = database[table_name]
+    for index_name, info in collection.index_information().items():
+        if _index_keys(info) == [("name", 1)] and not info.get("unique"):
+            collection.drop_index(index_name)
+    try:
+        collection.create_index([("name", 1)], unique=True)
+        log_info(f"-- Restored v2 unique index on {table_name}.name")
+    except Exception as e:
+        log_warning(
+            f"Could not restore the v2 unique name index on {table_name} - per-owner duplicate "
+            f"schedule names likely exist. Resolve the duplicates, then create it manually: {e}"
+        )
+    return True
+
+
 def _migrate_mongo(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Copy runs from the legacy `runs` field on session documents into the runs collection.
 
     Non-destructive: the legacy `runs` field is left in place. Call
     ``db.cleanup_legacy_runs_field()`` to remove it once you have verified
     the migration and taken a backup.
+
+    For the schedules collection, repairs the legacy index layout instead
+    (see :func:`_migrate_mongo_schedules`).
     """
+    if table_type == "schedules":
+        return _migrate_mongo_schedules(db, table_name)
     if table_type != "sessions":
         return False
 
@@ -1204,6 +1265,8 @@ def _revert_mongo(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     The runs collection is dropped at the end.
     """
+    if table_type == "schedules":
+        return _revert_mongo_schedules(db, table_name)
     if table_type != "sessions":
         return False
 
@@ -1234,8 +1297,56 @@ def _revert_mongo(db: BaseDb, table_type: str, table_name: str) -> bool:
     return True
 
 
+async def _migrate_async_mongo_schedules(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async variant of :func:`_migrate_mongo_schedules`."""
+    from agno.db.mongo.utils import create_collection_indexes_async
+
+    database = db.database  # type: ignore[attr-defined]
+    if table_name not in await database.list_collection_names():
+        log_info(f"Schedules collection {table_name} does not exist, skipping migration")
+        return False
+
+    collection = database[table_name]
+    index_info = await collection.index_information()
+    for index_name, info in index_info.items():
+        if _index_keys(info) == [("name", 1)] and info.get("unique"):
+            log_info(
+                f"-- Dropping legacy unique index '{index_name}' on {table_name}.name "
+                "(v3 schedule names are unique per owner)"
+            )
+            await collection.drop_index(index_name)
+
+    await create_collection_indexes_async(collection, "schedules")
+    log_info(f"-- Ensured v3 indexes on schedules collection {table_name}")
+    return True
+
+
+async def _revert_async_mongo_schedules(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async variant of :func:`_revert_mongo_schedules`."""
+    database = db.database  # type: ignore[attr-defined]
+    if table_name not in await database.list_collection_names():
+        return False
+
+    collection = database[table_name]
+    index_info = await collection.index_information()
+    for index_name, info in index_info.items():
+        if _index_keys(info) == [("name", 1)] and not info.get("unique"):
+            await collection.drop_index(index_name)
+    try:
+        await collection.create_index([("name", 1)], unique=True)
+        log_info(f"-- Restored v2 unique index on {table_name}.name")
+    except Exception as e:
+        log_warning(
+            f"Could not restore the v2 unique name index on {table_name} - per-owner duplicate "
+            f"schedule names likely exist. Resolve the duplicates, then create it manually: {e}"
+        )
+    return True
+
+
 async def _migrate_async_mongo(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async variant of :func:`_migrate_mongo`."""
+    if table_type == "schedules":
+        return await _migrate_async_mongo_schedules(db, table_name)
     if table_type != "sessions":
         return False
 
@@ -1271,6 +1382,8 @@ async def _migrate_async_mongo(db: AsyncBaseDb, table_type: str, table_name: str
 
 async def _revert_async_mongo(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async variant of :func:`_revert_mongo`."""
+    if table_type == "schedules":
+        return await _revert_async_mongo_schedules(db, table_name)
     if table_type != "sessions":
         return False
 
