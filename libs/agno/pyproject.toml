@@ -154,6 +154,7 @@ telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
 todoist = ["todoist-api-python"]
 trafilatura = ["trafilatura"]
 twelvelabs = ["twelvelabs>=1.2.8"]
+usdctofiat = ["usdctofiat>=0.1.0"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
 whatsapp-crypto = ["cryptography>=41.0"]
@@ -305,6 +306,7 @@ tools = [
   "agno[todoist]",
   "agno[trafilatura]",
   "agno[twelvelabs]",
+  "agno[usdctofiat]",
   "agno[valyu]",
   "agno[webex]",
   "agno[whatsapp-crypto]",
@@ -621,6 +623,7 @@ module = [
   "tzlocal.*",
   "upstash_vector.*",
   "urllib3.*",
+  "usdctofiat.*",
   "uvicorn.*",
   "valyu.*",
   "vertexai.*",
