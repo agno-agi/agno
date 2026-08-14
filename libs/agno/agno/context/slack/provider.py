@@ -24,7 +24,6 @@ back to ``SLACK_TOKEN`` since that's the variable agno's
 from __future__ import annotations
 
 import asyncio
-import warnings
 from os import getenv
 from typing import TYPE_CHECKING
 
@@ -59,22 +58,9 @@ class SlackContextProvider(ContextProvider):
         stream_sub_agent_events: bool = True,
         **kwargs,
     ) -> None:
-        # Handle deprecated param before calling super
+        # Backwards compat: enable_media_tools -> media_tools (old wins)
         if "enable_media_tools" in kwargs:
-            enable_media_tools = kwargs.pop("enable_media_tools")
-            if media_tools is None:
-                warnings.warn(
-                    "SlackContextProvider(enable_media_tools=...) is deprecated; use media_tools instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                media_tools = enable_media_tools
-            else:
-                warnings.warn(
-                    "Both media_tools and enable_media_tools provided; enable_media_tools is deprecated and ignored.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
+            media_tools = kwargs.pop("enable_media_tools")
 
         super().__init__(
             id=id,
