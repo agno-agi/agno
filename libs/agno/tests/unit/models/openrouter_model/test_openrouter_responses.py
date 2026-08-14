@@ -91,3 +91,59 @@ def test_openrouter_responses_client_params():
     assert params["base_url"] == "https://openrouter.ai/api/v1"
     assert params["timeout"] == 30.0
     assert params["max_retries"] == 3
+
+
+class MockResponseUsage:
+    """Mock ResponseUsage object for testing cost parsing."""
+
+    def __init__(self, cost=None):
+        self.input_tokens = 12
+        self.output_tokens = 3
+        self.total_tokens = 15
+        self.input_tokens_details = None
+        self.output_tokens_details = None
+        self.cost = cost
+
+
+class MockResponseUsageWithoutCost:
+    """Mock ResponseUsage object that has no cost attribute."""
+
+    def __init__(self):
+        self.input_tokens = 12
+        self.output_tokens = 3
+        self.total_tokens = 15
+        self.input_tokens_details = None
+        self.output_tokens_details = None
+
+
+def test_openrouter_responses_get_metrics_parses_cost():
+    """Test OpenRouterResponses parses cost from ResponseUsage into MessageMetrics."""
+    model = OpenRouterResponses(id="openai/gpt-4o-mini", api_key="test-key")
+
+    metrics = model._get_metrics(MockResponseUsage(cost=3.6e-06))  # type: ignore[arg-type]
+
+    assert metrics.cost == 3.6e-06
+    assert metrics.input_tokens == 12
+    assert metrics.output_tokens == 3
+    assert metrics.total_tokens == 15
+
+
+def test_openrouter_responses_get_metrics_cost_defaults_to_none_when_unavailable():
+    """Test OpenRouterResponses leaves cost as None when usage has no cost attribute."""
+    model = OpenRouterResponses(id="openai/gpt-4o-mini", api_key="test-key")
+
+    metrics = model._get_metrics(MockResponseUsageWithoutCost())  # type: ignore[arg-type]
+
+    assert metrics.cost is None
+    assert metrics.input_tokens == 12
+    assert metrics.output_tokens == 3
+    assert metrics.total_tokens == 15
+
+
+def test_openrouter_responses_get_metrics_zero_cost():
+    """Test OpenRouterResponses preserves a zero cost from ResponseUsage."""
+    model = OpenRouterResponses(id="openai/gpt-4o-mini", api_key="test-key")
+
+    metrics = model._get_metrics(MockResponseUsage(cost=0.0))  # type: ignore[arg-type]
+
+    assert metrics.cost == 0.0
