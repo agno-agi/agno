@@ -15,6 +15,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Union,
 )
@@ -33,6 +34,12 @@ from agno.run.team import (
 from agno.session import TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.toolkit import (
+    ToolkitKey,
+    _emits_toolkit_instructions,
+    _group_source_toolkits,
+    _toolkit_key,
+)
 from agno.utils.agent import (
     collect_joint_audios,
     collect_joint_files,
@@ -324,7 +331,37 @@ def _determine_tools_for_model(
 
     _function_names = []
     _functions: List[Union[Function, dict]] = []
+    _toolkit_instruction_keys: Set[ToolkitKey] = set()
+    _source_toolkit_last_index, _source_toolkit_members, _toolkit_keys = _group_source_toolkits(_tools)
     team._tool_instructions = []
+
+    def toolkit_key(toolkit: Toolkit) -> ToolkitKey:
+        # The key folds the toolkit's whole function surface; memoized so one
+        # collection pass computes it once per toolkit, not once per member.
+        key = _toolkit_keys.get(id(toolkit))
+        if key is None:
+            key = _toolkit_keys[id(toolkit)] = _toolkit_key(toolkit)
+        return key
+
+    def add_toolkit_instructions(toolkit: Toolkit) -> None:
+        key = toolkit_key(toolkit)
+        if key in _toolkit_instruction_keys:
+            return
+        if toolkit.add_instructions and toolkit.instructions is not None:
+            if team._tool_instructions is None:
+                team._tool_instructions = []
+            team._tool_instructions.append(toolkit.instructions)
+            _toolkit_instruction_keys.add(key)
+
+    def emits_toolkit_instructions(source_toolkit: Toolkit, index: int) -> bool:
+        return _emits_toolkit_instructions(
+            source_toolkit,
+            index,
+            key=toolkit_key(source_toolkit),
+            last_index=_source_toolkit_last_index,
+            members=_source_toolkit_members,
+            async_mode=async_mode,
+        )
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -339,7 +376,7 @@ def _determine_tools_for_model(
     ):
         strict = True
 
-    for tool in _tools:
+    for tool_index, tool in enumerate(_tools):
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent
@@ -377,14 +414,17 @@ def _determine_tools_for_model(
                     team._tool_instructions.append(_func.instructions)
 
             # Add instructions from the toolkit
-            if tool.add_instructions and tool.instructions is not None:
-                if team._tool_instructions is None:
-                    team._tool_instructions = []
-                team._tool_instructions.append(tool.instructions)
+            add_toolkit_instructions(tool)
 
         elif isinstance(tool, Function):
+            source_toolkit = tool.source_toolkit if isinstance(tool.source_toolkit, Toolkit) else None
+            emit_toolkit_instructions = source_toolkit is not None and emits_toolkit_instructions(
+                source_toolkit, tool_index
+            )
             if tool.name in _function_names:
                 log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
+                if emit_toolkit_instructions and source_toolkit is not None:
+                    add_toolkit_instructions(source_toolkit)
                 continue
             _function_names.append(tool.name)
             tool = tool.model_copy(deep=True)
@@ -404,6 +444,13 @@ def _determine_tools_for_model(
                 if team._tool_instructions is None:
                     team._tool_instructions = []
                 team._tool_instructions.append(tool.instructions)
+
+            # DB-loaded toolkit members are bare Functions. Their live owning
+            # Toolkit is restored by Registry.rehydrate_function; add its
+            # guidance after all its member Functions, matching live Toolkit
+            # instruction order, and only once.
+            if emit_toolkit_instructions and source_toolkit is not None:
+                add_toolkit_instructions(source_toolkit)
 
         elif callable(tool):
             # We add the tools, which are callable functions

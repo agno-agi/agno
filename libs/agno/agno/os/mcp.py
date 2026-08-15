@@ -594,6 +594,7 @@ async def _resolve_run_component(
     *,
     user_id: Optional[str],
     session_id: Optional[str],
+    strict: bool = True,
 ) -> Any:
     """Resolve a component for a run/lifecycle tool exactly as the REST routes do.
 
@@ -616,7 +617,14 @@ async def _resolve_run_component(
     try:
         if kind == "agents":
             return await resolve_agent(
-                component_id, os.agents, os.db, os.registry, request=request, user_id=user_id, session_id=session_id
+                component_id,
+                os.agents,
+                os.db,
+                os.registry,
+                request=request,
+                user_id=user_id,
+                session_id=session_id,
+                strict=strict,
             )
         if kind == "teams":
             return await resolve_team(
@@ -627,6 +635,7 @@ async def _resolve_run_component(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                strict=strict,
             )
         return await resolve_workflow(
             component_id,
@@ -636,6 +645,7 @@ async def _resolve_run_component(
             request=request,
             user_id=user_id,
             session_id=session_id,
+            strict=strict,
         )
     except HTTPException as e:
         # Keep the id in the not-found message (the resolvers say only "Agent not found"),
@@ -960,7 +970,11 @@ def build_mcp_server(
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
-        component = await _resolve_run_component(os, component_type, component_id, user_id=None, session_id=session_id)
+        # Lenient: cancel needs only a handle on the component, and a drifted
+        # registry must never make a run uncancellable. Matches the REST route.
+        component = await _resolve_run_component(
+            os, component_type, component_id, user_id=None, session_id=session_id, strict=False
+        )
         await _verify_run_ownership(component, component_type, component_id, session_id, run_id)
         await run_service.cancel_component_run(component, run_id)
         return f"Run {run_id} cancellation requested"

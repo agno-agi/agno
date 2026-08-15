@@ -72,7 +72,9 @@ class ScheduleManager:
             raise NotImplementedError(f"Database does not support {method_name}")
         if asyncio.iscoroutinefunction(fn):
             return await fn(*args, **kwargs)
-        return fn(*args, **kwargs)
+        # A sync adapter (SqliteDb, sync PostgresDb) would hold the event loop for the
+        # whole query, so it runs on a worker thread.
+        return await asyncio.to_thread(fn, *args, **kwargs)
 
     @staticmethod
     def _to_schedule(data: Any) -> Optional[Schedule]:

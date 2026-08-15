@@ -268,30 +268,30 @@ class FileTools(Toolkit):
             log_error(f"Error removing {file_name}: {str(e)}")
             return f"Error removing file: {e}"
 
-    def list_files(self, **kwargs) -> str:
+    def list_files(self, directory: str = ".") -> str:
         """Returns a list of files in directory
         :param directory: (Optional) name of directory to list.
 
         :return: The contents of the file if successful, otherwise returns an error message.
         """
-        directory = kwargs.get("directory", ".")
         try:
-            log_debug(f"Reading files in : {self.base_dir}/{directory}")
-            safe, d = self.check_escape(directory)
-            if safe:
-                files = []
-                for file_path in d.iterdir():
-                    rel_path = file_path.relative_to(self.base_dir).as_posix()
-                    try:
-                        safe_join_relative_path(self.base_dir, rel_path)
-                    except PathSecurityError:
-                        continue
-                    if self._is_excluded(file_path):
-                        continue
-                    files.append(rel_path)
-                return json.dumps(files, indent=4)
-            else:
-                return "{}"
+            d = self.base_dir
+            if directory:
+                safe, d = self.check_escape(directory)
+                if not safe:
+                    return "{}"
+            log_debug(f"Reading files in : {d}")
+            files = []
+            for file_path in d.iterdir():
+                rel_path = file_path.relative_to(self.base_dir).as_posix()
+                try:
+                    safe_join_relative_path(self.base_dir, rel_path)
+                except PathSecurityError:
+                    continue
+                if self._is_excluded(file_path):
+                    continue
+                files.append(rel_path)
+            return json.dumps(files, indent=4)
         except Exception as e:
             log_error(f"Error reading files: {str(e)}")
             return f"Error reading files: {e}"

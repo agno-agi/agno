@@ -401,6 +401,14 @@ class AgentOS:
         self.lifespan = lifespan
 
         self.registry = registry
+        # Knowledge mirrored into the registry by a sync (component-owned
+        # instances collected for name resolution) is not a knowledge-route
+        # source; anything else on the registry list the user put there -- at
+        # construction or later via add_knowledge -- and feeds the routes on
+        # every (re)sync. Provenance lives on the Registry itself (marked at
+        # mirror time, never snapshotted), because a registry can be shared
+        # between AgentOS instances: another OS's mirror must not look
+        # user-registered here.
 
         # RBAC
         self.authorization = authorization
@@ -842,36 +850,22 @@ class AgentOS:
                 existing_teams[team_id] = team
 
     def _populate_registry_knowledge(self) -> None:
-        """Add discovered knowledge instances to the registry.
+        """Add knowledge instances to the registry so stored components resolve them by name.
 
-        Sources are the knowledge instances collected by
-        ``_auto_discover_knowledge_instances`` (agents, teams, the AgentOS
-        ``knowledge`` param, and ``registry.knowledge``). That discovery only
-        keeps instances backed by a ``contents_db``, so a ``contents_db`` is
-        required for a knowledge base to be resolvable from a Studio/Builder
-        component config (vector-search-only knowledge is not registered).
+        Sources are the contents_db-backed instances collected by
+        ``_auto_discover_knowledge_instances`` (which also feed the knowledge
+        routes) plus every named instance handed to the AgentOS ``knowledge``
+        param: registry resolution is by name and needs no ``contents_db``.
+        Agent- and team-attached knowledge is added by the component walk in
+        ``_populate_registry_components``.
         """
         if self.registry is None:
             self.registry = Registry()
 
-        if self.knowledge_instances:
-            existing_knowledge = {
-                name: k for k in self.registry.knowledge if (name := getattr(k, "name", None)) is not None
-            }
-            for kb in self.knowledge_instances:
-                kb_name = getattr(kb, "name", None)
-                if kb_name is None:
-                    continue
-                existing = existing_knowledge.get(kb_name)
-                if existing is not None:
-                    if existing is not kb:
-                        log_warning(
-                            f"Registry: multiple distinct knowledge instances share name '{kb_name}'; "
-                            "keeping the first. Give them distinct names to avoid one shadowing the other."
-                        )
-                    continue
-                self.registry.knowledge.append(kb)
-                existing_knowledge[kb_name] = kb
+        for kb in self.knowledge_instances or []:
+            self.registry.add_knowledge(kb, mirrored=True)
+        for kb in self.knowledge or []:
+            self.registry.add_knowledge(kb, mirrored=True)
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.
@@ -1753,6 +1747,16 @@ class AgentOS:
 
         if self.registry is not None:
             for knowledge_base in self.registry.knowledge or []:
+                # Only user-declared registry knowledge feeds the routes.
+                # Syncs mirror member- and step-owned knowledge into the
+                # registry for name resolution; that is not a grant of
+                # route-level exposure -- and the registry, not this OS, keeps
+                # the provenance, so a mirror by another AgentOS sharing the
+                # registry is excluded here too. Everything not mirrored the
+                # user registered, whether at construction or after (resync
+                # picks it up).
+                if self.registry.knowledge_is_mirrored(knowledge_base):
+                    continue
                 _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
