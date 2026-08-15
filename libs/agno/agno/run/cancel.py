@@ -150,7 +150,11 @@ def register_member_drain_task(team_run_id: str, task: asyncio.Task) -> None:
 
 async def adrain_member_tasks(team_run_id: str, timeout: float = 5.0) -> None:
     """Await all in-flight delegate tasks for a team run, bounded by timeout."""
-    tasks = {t for t in _member_drain_tasks.get(team_run_id, set()) if not t.done()}
+    # The delegate helpers register asyncio.current_task(), which for an async
+    # generator is the team's own run task. Gathering the task that is running
+    # the drain can never complete, so leave it out.
+    current = asyncio.current_task()
+    tasks = {t for t in _member_drain_tasks.get(team_run_id, set()) if not t.done() and t is not current}
     if not tasks:
         return
     try:
