@@ -77,7 +77,6 @@ def _make_run(schedule_id, **overrides):
 # =============================================================================
 
 
-
 def _force_schedule_row(db, schedule_id, **cols):
     """Rig lock/run state directly at the table: update_schedule guards these columns."""
     table = db._get_table(table_type="schedules")

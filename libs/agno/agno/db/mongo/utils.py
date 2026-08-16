@@ -7,10 +7,11 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from pymongo.errors import DuplicateKeyError
+
 from agno.db.mongo.schemas import get_collection_indexes
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_error, log_warning
-from pymongo.errors import DuplicateKeyError
 
 try:
     from pymongo.collection import Collection

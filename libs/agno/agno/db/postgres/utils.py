@@ -6,12 +6,12 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from sqlalchemy import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_debug, log_error, log_warning
-from sqlalchemy.exc import IntegrityError
 
 try:
     from sqlalchemy import Table, func

@@ -30,7 +30,6 @@ def _manual_claim_schedule(schedule_id: str) -> dict:
     }
 
 
-
 def _force_schedule_row(db, schedule_id, **cols):
     """Rig lock/run state directly at the table: update_schedule guards these columns."""
     table = db._get_table(table_type="schedules")
@@ -43,6 +42,7 @@ async def _aforce_schedule_row(db, schedule_id, **cols):
     async with db.async_session_factory() as sess:
         async with sess.begin():
             await sess.execute(table.update().where(table.c.id == schedule_id).values(**cols))
+
 
 def _assert_sync_stale_manual_recovery(db: PostgresDb) -> None:
     schedule = _manual_claim_schedule(f"manual-{uuid.uuid4().hex}")
@@ -516,7 +516,9 @@ async def test_async_postgres_schedule_migration_is_reversible_and_preserves_leg
         assert {f"{table_name}_uq_generic_name", f"{table_name}_uq_studio_owner_name"}.issubset(_indexes())
         with probe.connect() as conn:
             legacy_row = conn.execute(
-                text(f"SELECT managed_by, owner_actor_id, target_type, target_id FROM {qualified_table} WHERE id = 'legacy-1'")
+                text(
+                    f"SELECT managed_by, owner_actor_id, target_type, target_id FROM {qualified_table} WHERE id = 'legacy-1'"
+                )
             ).one()
         assert tuple(legacy_row) == (None, None, None, None)
 
@@ -541,7 +543,9 @@ async def test_async_postgres_schedule_migration_is_reversible_and_preserves_leg
 
         with probe.begin() as conn:
             conn.execute(
-                text(f"UPDATE {qualified_table} SET managed_by = 'studio', owner_actor_id = 'actor-1' WHERE id = 'legacy-2'")
+                text(
+                    f"UPDATE {qualified_table} SET managed_by = 'studio', owner_actor_id = 'actor-1' WHERE id = 'legacy-2'"
+                )
             )
         with pytest.raises(ValueError, match="Cannot remove Studio schedule provenance"):
             await v2_9_0.async_down(db, "schedules", table_name)

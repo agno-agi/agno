@@ -153,8 +153,7 @@ def test_concurrent_claim_due_schedule_grants_each_schedule_exactly_once(db):
 
         claimed = [claimed_id for claimed_id in outcomes if claimed_id is not None]
         assert sorted(claimed) == sorted(schedule_ids), (
-            f"round {round_no}: expected each of {len(schedule_ids)} schedules claimed exactly once, "
-            f"got {outcomes}"
+            f"round {round_no}: expected each of {len(schedule_ids)} schedules claimed exactly once, got {outcomes}"
         )
 
         for schedule_id in schedule_ids:
