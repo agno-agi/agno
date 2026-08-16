@@ -109,3 +109,44 @@ async def test_list_excludes_studio_before_count_and_pagination(async_mongo_db_r
     assert total_count == second_total_count == 2
     assert [schedule["id"] for schedule in page_one] == [ordinary_first["id"]]
     assert [schedule["id"] for schedule in page_two] == [ordinary_second["id"]]
+
+
+@pytest.mark.asyncio
+async def test_name_scope_conditions_compose_conjunctively(async_mongo_db_real):
+    """managed_by and exclude_managed_by must AND, matching the SQL adapters.
+
+    A row cannot be studio and not-studio at once, so the contradictory pair
+    returns None; an unrelated exclusion must not clobber the equality.
+    """
+    db = async_mongo_db_real
+    generic = _make_schedule(name="scoped-name")
+    studio = _make_schedule(
+        name="scoped-name",
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        owner_actor_id="actor-a",
+    )
+    await db.create_schedule(generic)
+    await db.create_schedule(studio)
+
+    contradictory = await db.get_schedule_by_name(
+        "scoped-name",
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+    )
+    assert contradictory is None
+
+    contradictory_scoped = await db.get_schedule_by_name(
+        "scoped-name",
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        owner_actor_id="actor-a",
+        exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+    )
+    assert contradictory_scoped is None
+
+    compatible = await db.get_schedule_by_name(
+        "scoped-name",
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        exclude_managed_by="other-namespace",
+    )
+    assert compatible is not None
+    assert compatible["id"] == studio["id"]

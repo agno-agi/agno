@@ -824,3 +824,43 @@ class TestFullLifecycle:
         # Delete
         assert db.delete_schedule(sched["id"]) is True
         assert db.get_schedule(sched["id"]) is None
+
+
+def test_name_scope_conditions_compose_conjunctively(db):
+    """managed_by and exclude_managed_by must AND, matching the SQL adapters.
+
+    A row cannot be studio and not-studio at once, so the contradictory pair
+    returns None; an unrelated exclusion must not clobber the equality.
+    """
+    db = db
+    generic = _make_schedule(name="scoped-name")
+    studio = _make_schedule(
+        name="scoped-name",
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        owner_actor_id="actor-a",
+    )
+    db.create_schedule(generic)
+    db.create_schedule(studio)
+
+    contradictory = db.get_schedule_by_name(
+        "scoped-name",
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+    )
+    assert contradictory is None
+
+    contradictory_scoped = db.get_schedule_by_name(
+        "scoped-name",
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        owner_actor_id="actor-a",
+        exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+    )
+    assert contradictory_scoped is None
+
+    compatible = db.get_schedule_by_name(
+        "scoped-name",
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        exclude_managed_by="other-namespace",
+    )
+    assert compatible is not None
+    assert compatible["id"] == studio["id"]

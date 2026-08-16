@@ -3164,7 +3164,12 @@ class MongoDb(BaseDb):
             if owner_actor_id is not None:
                 query["owner_actor_id"] = owner_actor_id
             if exclude_managed_by is not None:
-                query["managed_by"] = {"$ne": exclude_managed_by}
+                if "managed_by" in query:
+                    # AND with the managed_by equality instead of overwriting
+                    # it, matching the SQL adapters' conjunctive scope.
+                    query = {"$and": [query, {"managed_by": {"$ne": exclude_managed_by}}]}
+                else:
+                    query["managed_by"] = {"$ne": exclude_managed_by}
             result = collection.find_one(query)
             if result is None:
                 return None
