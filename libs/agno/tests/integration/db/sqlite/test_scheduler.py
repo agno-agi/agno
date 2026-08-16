@@ -77,6 +77,21 @@ def _make_run(schedule_id, **overrides):
 # =============================================================================
 
 
+
+def _force_schedule_row(db, schedule_id, **cols):
+    """Rig lock/run state directly at the table: update_schedule guards these columns."""
+    table = db._get_table(table_type="schedules")
+    with db.Session() as sess, sess.begin():
+        sess.execute(table.update().where(table.c.id == schedule_id).values(**cols))
+
+
+async def _aforce_schedule_row(db, schedule_id, **cols):
+    table = await db._get_table(table_type="schedules")
+    async with db.async_session_factory() as sess:
+        async with sess.begin():
+            await sess.execute(table.update().where(table.c.id == schedule_id).values(**cols))
+
+
 class TestScheduleCRUD:
     def test_create_and_get(self, db):
         sched = _make_schedule()
@@ -371,7 +386,7 @@ class TestClaimAndRelease:
 
         # The worker dies. By the time its lock is stale, the cron occurrence
         # is also due; recovery must finish the manual unit first.
-        db.update_schedule(sched["id"], locked_at=now - 600, next_run_at=now - 1)
+        _force_schedule_row(db, sched["id"], locked_at=now - 600, next_run_at=now - 1)
         recovered = db.claim_due_schedule("recovery-worker")
         assert recovered is not None
         assert recovered["pending_trigger_count"] == 0
@@ -560,7 +575,7 @@ async def test_async_stale_manual_claim_is_recovered_exactly_once(tmp_path):
         abandoned = await db.claim_due_schedule("dead-worker")
         assert abandoned is not None and abandoned["manual_trigger_claimed"] is True
 
-        await db.update_schedule(sched["id"], locked_at=now - 600, next_run_at=now - 1)
+        await _aforce_schedule_row(db, sched["id"], locked_at=now - 600, next_run_at=now - 1)
         recovered = await db.claim_due_schedule("recovery-worker")
         assert recovered is not None
         assert recovered["pending_trigger_count"] == 0

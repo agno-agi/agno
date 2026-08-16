@@ -20,6 +20,47 @@ class ScheduleNameConflictError(ValueError):
         super().__init__(f"Schedule with name '{name}' already exists")
 
 
+# Columns update_schedule may modify: the schedule's own public definition plus its
+# run state (enabled, next_run_at). Everything else is server-owned — provenance
+# (managed_by, owner_actor_id, target/created-by/updated-by fields), durable trigger
+# state (pending_trigger_count, manual_trigger_claimed) and the worker lock pair
+# (locked_by, locked_at) move only through their dedicated primitives. Shared by every
+# DB backend's update_schedule so the guardrail cannot drift between them.
+SCHEDULE_MUTABLE_COLUMNS = frozenset(
+    {
+        "name",
+        "description",
+        "method",
+        "endpoint",
+        "payload",
+        "cron_expr",
+        "timezone",
+        "timeout_seconds",
+        "max_retries",
+        "retry_delay_seconds",
+        "enabled",
+        "next_run_at",
+    }
+)
+
+
+def validate_schedule_update(updates: Dict[str, Any]) -> None:
+    """Reject an update payload that is empty or touches a server-owned column.
+
+    Raises ValueError so misuse fails loudly at the call site instead of reaching the
+    database (or being swallowed by an adapter's catch-all error handling).
+    """
+    if not updates:
+        raise ValueError("update_schedule requires at least one column to update")
+    disallowed = set(updates) - SCHEDULE_MUTABLE_COLUMNS
+    if disallowed:
+        raise ValueError(
+            f"update_schedule cannot modify {sorted(disallowed)}: "
+            f"only {sorted(SCHEDULE_MUTABLE_COLUMNS)} are mutable; "
+            "provenance, trigger and lock state move only through their dedicated APIs"
+        )
+
+
 @dataclass
 class Schedule:
     """Model for a scheduled job."""

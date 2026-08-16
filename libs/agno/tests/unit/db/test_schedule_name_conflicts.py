@@ -81,7 +81,10 @@ def test_sqlite_maps_only_schedule_name_integrity_errors(tmp_path):
     with pytest.raises(ScheduleNameConflictError, match="shared-name"):
         db.update_schedule("second", name="shared-name")
 
-    with pytest.raises(IntegrityError):
+    # id is server-owned: the update guard rejects it before any SQL runs, so a
+    # non-name IntegrityError can no longer be produced through this door at all
+    # (create_schedule above still proves raw IntegrityErrors propagate unmapped).
+    with pytest.raises(ValueError, match="cannot modify"):
         db.update_schedule("second", id="first")
     assert db.get_schedule("second")["name"] == "second-name"
 
@@ -113,7 +116,7 @@ async def test_async_sqlite_maps_only_schedule_name_integrity_errors(tmp_path):
     with pytest.raises(ScheduleNameConflictError, match="shared-name"):
         await db.update_schedule("second", name="shared-name")
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(ValueError, match="cannot modify"):
         await db.update_schedule("second", id="first")
     assert (await db.get_schedule("second"))["name"] == "second-name"
     await db.db_engine.dispose()

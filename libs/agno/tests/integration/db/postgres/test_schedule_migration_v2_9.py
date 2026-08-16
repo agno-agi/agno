@@ -30,6 +30,20 @@ def _manual_claim_schedule(schedule_id: str) -> dict:
     }
 
 
+
+def _force_schedule_row(db, schedule_id, **cols):
+    """Rig lock/run state directly at the table: update_schedule guards these columns."""
+    table = db._get_table(table_type="schedules")
+    with db.Session() as sess, sess.begin():
+        sess.execute(table.update().where(table.c.id == schedule_id).values(**cols))
+
+
+async def _aforce_schedule_row(db, schedule_id, **cols):
+    table = await db._get_table(table_type="schedules")
+    async with db.async_session_factory() as sess:
+        async with sess.begin():
+            await sess.execute(table.update().where(table.c.id == schedule_id).values(**cols))
+
 def _assert_sync_stale_manual_recovery(db: PostgresDb) -> None:
     schedule = _manual_claim_schedule(f"manual-{uuid.uuid4().hex}")
     now = int(time.time())
@@ -41,7 +55,7 @@ def _assert_sync_stale_manual_recovery(db: PostgresDb) -> None:
         assert abandoned is not None and abandoned["manual_trigger_claimed"] is True
 
         stale_fence = now - 600
-        db.update_schedule(schedule["id"], locked_at=stale_fence)
+        _force_schedule_row(db, schedule["id"], locked_at=stale_fence)
         with patch("agno.db.postgres.postgres.time.time", return_value=stale_fence):
             renewed_at = db.renew_schedule_claim(
                 schedule["id"],
@@ -51,7 +65,7 @@ def _assert_sync_stale_manual_recovery(db: PostgresDb) -> None:
         assert renewed_at == stale_fence + 1
         assert not db.release_schedule(schedule["id"], worker_id="dead-worker", locked_at=stale_fence)
 
-        db.update_schedule(schedule["id"], locked_at=now - 600, next_run_at=now - 1)
+        _force_schedule_row(db, schedule["id"], locked_at=now - 600, next_run_at=now - 1)
         recovered = db.claim_due_schedule("recovery-worker")
         assert recovered is not None
         assert recovered["pending_trigger_count"] == 0
@@ -371,7 +385,7 @@ async def test_async_postgres_stale_manual_claim_is_recovered_exactly_once() -> 
         assert abandoned is not None and abandoned["manual_trigger_claimed"] is True
 
         stale_fence = now - 600
-        await db.update_schedule(schedule["id"], locked_at=stale_fence)
+        await _aforce_schedule_row(db, schedule["id"], locked_at=stale_fence)
         with patch("agno.db.postgres.async_postgres.time.time", return_value=stale_fence):
             renewed_at = await db.renew_schedule_claim(
                 schedule["id"],
@@ -381,7 +395,7 @@ async def test_async_postgres_stale_manual_claim_is_recovered_exactly_once() -> 
         assert renewed_at == stale_fence + 1
         assert not await db.release_schedule(schedule["id"], worker_id="dead-worker", locked_at=stale_fence)
 
-        await db.update_schedule(schedule["id"], locked_at=now - 600, next_run_at=now - 1)
+        await _aforce_schedule_row(db, schedule["id"], locked_at=now - 600, next_run_at=now - 1)
         recovered = await db.claim_due_schedule("recovery-worker")
         assert recovered is not None
         assert recovered["pending_trigger_count"] == 0

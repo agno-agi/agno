@@ -39,7 +39,7 @@ from agno.db.schemas.mcp_oauth import (
     MCP_OAUTH_TRANSACTIONS,
 )
 from agno.db.schemas.memory import UserMemory
-from agno.db.schemas.scheduler import ScheduleNameConflictError
+from agno.db.schemas.scheduler import ScheduleNameConflictError, validate_schedule_update
 from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
@@ -6477,6 +6477,7 @@ class SqliteDb(BaseDb):
             raise
 
     def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        validate_schedule_update(kwargs)
         try:
             table = self._get_table(table_type="schedules")
             if table is None:

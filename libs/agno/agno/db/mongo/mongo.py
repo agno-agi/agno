@@ -28,7 +28,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.schemas.scheduler import ScheduleNameConflictError
+from agno.db.schemas.scheduler import ScheduleNameConflictError, validate_schedule_update
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
     build_single_run_row,
@@ -3226,6 +3226,7 @@ class MongoDb(BaseDb):
             raise
 
     def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        validate_schedule_update(kwargs)
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:

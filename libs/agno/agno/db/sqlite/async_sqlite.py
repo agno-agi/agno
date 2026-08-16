@@ -14,7 +14,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.schemas.scheduler import ScheduleNameConflictError
+from agno.db.schemas.scheduler import ScheduleNameConflictError, validate_schedule_update
 from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
@@ -4490,6 +4490,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise
 
     async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        validate_schedule_update(kwargs)
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
