@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.mongo.utils import (
+    _is_schedule_name_conflict,
     apply_pagination,
     apply_sorting,
     bulk_upsert_metrics,
@@ -109,16 +110,6 @@ else:
 _CLIENT_TYPE_MOTOR = "motor"
 _CLIENT_TYPE_PYMONGO_ASYNC = "pymongo_async"
 _CLIENT_TYPE_UNKNOWN = "unknown"
-
-
-def _is_schedule_name_conflict(error: DuplicateKeyError) -> bool:
-    """Match only MongoDB's generic or actor-scoped name indexes."""
-    details = error.details
-    return isinstance(details, dict) and details.get("keyPattern") in (
-        {"name": 1},
-        {"name": 1, "managed_by": 1},
-        {"owner_actor_id": 1, "name": 1},
-    )
 
 
 def _detect_client_type(client: Any) -> str:

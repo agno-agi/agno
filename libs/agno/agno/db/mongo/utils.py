@@ -10,6 +10,7 @@ from uuid import uuid4
 from agno.db.mongo.schemas import get_collection_indexes
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_error, log_warning
+from pymongo.errors import DuplicateKeyError
 
 try:
     from pymongo.collection import Collection
@@ -313,4 +314,14 @@ def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKn
             "agent_id": db_row.get("agent_id"),
             "team_id": db_row.get("team_id"),
         }
+    )
+
+
+def _is_schedule_name_conflict(error: DuplicateKeyError) -> bool:
+    """Match only MongoDB's generic or actor-scoped name indexes."""
+    details = error.details
+    return isinstance(details, dict) and details.get("keyPattern") in (
+        {"name": 1},
+        {"name": 1, "managed_by": 1},
+        {"owner_actor_id": 1, "name": 1},
     )

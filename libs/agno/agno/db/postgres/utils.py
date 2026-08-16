@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_debug, log_error, log_warning
+from sqlalchemy.exc import IntegrityError
 
 try:
     from sqlalchemy import Table, func
@@ -454,4 +455,27 @@ def deserialize_cultural_knowledge(db_row: Dict[str, Any]) -> CulturalKnowledge:
             "agent_id": db_row.get("agent_id"),
             "team_id": db_row.get("team_id"),
         }
+    )
+
+
+def _is_schedule_name_conflict(error: IntegrityError, table_name: str, schema_name: str) -> bool:
+    """Match only the generic or actor-scoped schedule-name indexes."""
+    original = error.orig
+    cause = getattr(original, "__cause__", None)
+    sqlstate = (
+        getattr(original, "sqlstate", None) or getattr(original, "pgcode", None) or getattr(cause, "sqlstate", None)
+    )
+    diagnostic = getattr(original, "diag", None)
+    constraint_name = getattr(diagnostic, "constraint_name", None) or getattr(cause, "constraint_name", None)
+    reported_table = getattr(diagnostic, "table_name", None) or getattr(cause, "table_name", None)
+    reported_schema = getattr(diagnostic, "schema_name", None) or getattr(cause, "schema_name", None)
+    return (
+        sqlstate == "23505"
+        and constraint_name
+        in {
+            f"{table_name}_uq_generic_name",
+            f"{table_name}_uq_studio_owner_name",
+        }
+        and reported_table == table_name
+        and reported_schema == schema_name
     )

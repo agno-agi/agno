@@ -46,6 +46,7 @@ from agno.db.schemas.service_accounts import (
 )
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
+    _is_schedule_name_conflict,
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
@@ -98,14 +99,6 @@ def _shared_table_init_lock(database_key: str) -> RLock:
     """Return one in-process lazy-DDL lock for every physical database."""
     with _TABLE_INIT_LOCKS_GUARD:
         return _TABLE_INIT_LOCKS.setdefault(database_key, RLock())
-
-
-def _is_schedule_name_conflict(error: IntegrityError, table_name: str) -> bool:
-    """Match only the generic or actor-scoped schedule-name indexes."""
-    return str(error.orig) in {
-        f"UNIQUE constraint failed: {table_name}.name",
-        f"UNIQUE constraint failed: {table_name}.owner_actor_id, {table_name}.name",
-    }
 
 
 def _is_in_memory_sqlite_url(db_url: str) -> bool:

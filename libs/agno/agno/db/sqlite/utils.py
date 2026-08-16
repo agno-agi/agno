@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
+from sqlalchemy.exc import IntegrityError
 
 try:
     from sqlalchemy import Table, func
@@ -439,3 +440,11 @@ def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKn
             "team_id": db_row.get("team_id"),
         }
     )
+
+
+def _is_schedule_name_conflict(error: IntegrityError, table_name: str) -> bool:
+    """Match only the generic or actor-scoped schedule-name indexes."""
+    return str(error.orig) in {
+        f"UNIQUE constraint failed: {table_name}.name",
+        f"UNIQUE constraint failed: {table_name}.owner_actor_id, {table_name}.name",
+    }

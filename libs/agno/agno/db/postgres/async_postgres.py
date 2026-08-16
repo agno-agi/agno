@@ -11,6 +11,7 @@ from agno.db.base import AsyncBaseDb, ComponentProjection, ComponentType, Compon
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
+    _is_schedule_name_conflict,
     abulk_upsert_metrics,
     acreate_schema,
     ais_table_available,
@@ -92,29 +93,6 @@ def _db_epoch() -> Any:
     only shift scheduling/reporting by the skew, never ownership.
     """
     return sa_cast(func.floor(func.extract("epoch", func.now())), BigInteger)
-
-
-def _is_schedule_name_conflict(error: IntegrityError, table_name: str, schema_name: str) -> bool:
-    """Match only the generic or actor-scoped schedule-name indexes."""
-    original = error.orig
-    cause = getattr(original, "__cause__", None)
-    sqlstate = (
-        getattr(original, "sqlstate", None) or getattr(original, "pgcode", None) or getattr(cause, "sqlstate", None)
-    )
-    diagnostic = getattr(original, "diag", None)
-    constraint_name = getattr(diagnostic, "constraint_name", None) or getattr(cause, "constraint_name", None)
-    reported_table = getattr(diagnostic, "table_name", None) or getattr(cause, "table_name", None)
-    reported_schema = getattr(diagnostic, "schema_name", None) or getattr(cause, "schema_name", None)
-    return (
-        sqlstate == "23505"
-        and constraint_name
-        in {
-            f"{table_name}_uq_generic_name",
-            f"{table_name}_uq_studio_owner_name",
-        }
-        and reported_table == table_name
-        and reported_schema == schema_name
-    )
 
 
 class AsyncPostgresDb(AsyncBaseDb):

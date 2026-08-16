@@ -21,6 +21,7 @@ from agno.db.schemas.service_accounts import (
 )
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
+    _is_schedule_name_conflict,
     abulk_upsert_metrics,
     ais_table_available,
     ais_valid_table,
@@ -60,14 +61,6 @@ try:
     from sqlalchemy.schema import Index, UniqueConstraint
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
-
-
-def _is_schedule_name_conflict(error: IntegrityError, table_name: str) -> bool:
-    """Match only the generic or actor-scoped schedule-name indexes."""
-    return str(error.orig) in {
-        f"UNIQUE constraint failed: {table_name}.name",
-        f"UNIQUE constraint failed: {table_name}.owner_actor_id, {table_name}.name",
-    }
 
 
 class AsyncSqliteDb(AsyncBaseDb):

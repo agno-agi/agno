@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.mongo.utils import (
+    _is_schedule_name_conflict,
     apply_pagination,
     apply_sorting,
     bulk_upsert_metrics,
@@ -57,16 +58,6 @@ except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
 
 DRIVER_METADATA = DriverInfo(name="Agno", version=metadata.version("agno"))
-
-
-def _is_schedule_name_conflict(error: DuplicateKeyError) -> bool:
-    """Match only MongoDB's generic or actor-scoped name indexes."""
-    details = error.details
-    return isinstance(details, dict) and details.get("keyPattern") in (
-        {"name": 1},
-        {"name": 1, "managed_by": 1},
-        {"owner_actor_id": 1, "name": 1},
-    )
 
 
 class MongoDb(BaseDb):
