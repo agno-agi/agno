@@ -1544,7 +1544,9 @@ def _hydrate_from_graph(
     # graph children overwrite it - and a current version that fails strict
     # resolution would abort the load even though the pinned version is fine.
     member_links = [child["link"] for child in graph.get("children", []) if child.get("link")]
-    team = cls.from_dict(config, db=db, registry=registry, links=member_links, strict=strict, skill_executor=skill_executor)
+    team = cls.from_dict(
+        config, db=db, registry=registry, links=member_links, strict=strict, skill_executor=skill_executor
+    )
     team.id = graph["component"]["component_id"]
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names
@@ -1571,7 +1573,9 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config, db=db, registry=registry, strict=strict, skill_executor=skill_executor)
+            agent = Agent.from_dict(
+                child_config, db=db, registry=registry, strict=strict, skill_executor=skill_executor
+            )
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 if strict:

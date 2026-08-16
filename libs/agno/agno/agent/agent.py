@@ -939,14 +939,17 @@ class Agent:
         cls,
         data: Dict[str, Any],
         registry: Optional[Registry] = None,
-        strict: bool = False,
         *,
         db: Optional["BaseDb"] = None,
+        strict: bool = False,
         skill_executor: Optional[SkillExecutor] = None,
     ) -> "Agent":
-        # registry keeps its pre-existing second positional slot; db is keyword-only
-        # so external Agent.from_dict(config, registry) calls do not mis-bind it.
-        return _storage.from_dict(cls, data=data, db=db, registry=registry, strict=strict, skill_executor=skill_executor)
+        # registry keeps its pre-existing second positional slot; db and strict are
+        # keyword-only so external Agent.from_dict(config, registry) calls do not
+        # silently mis-bind a third positional argument.
+        return _storage.from_dict(
+            cls, data=data, db=db, registry=registry, strict=strict, skill_executor=skill_executor
+        )
 
     def save(
         self,
@@ -971,7 +974,14 @@ class Agent:
         skill_executor: Optional[SkillExecutor] = None,
     ) -> Optional["Agent"]:
         return _storage.load(
-            cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict, skill_executor=skill_executor
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            skill_executor=skill_executor,
         )
 
     def delete(
