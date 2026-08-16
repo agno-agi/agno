@@ -80,8 +80,7 @@ class LegacyConfigUpdate(BaseModel):
 
 def attach_legacy_routes(router: APIRouter, db: BaseDb, registry: Optional[Registry] = None) -> APIRouter:
     """Attach the exact unguarded API supported by catalog-v1 adapters."""
-    # Imported lazily by the v2 module after it has finished initialization,
-    # avoiding a module cycle while reusing its DB-reference resolver.
+    # Reuse the v2 module's DB-reference resolvers rather than duplicating them.
     from agno.os.routers.components.components import _resolve_db_in_config, _resolve_member_links
 
     @router.get(
