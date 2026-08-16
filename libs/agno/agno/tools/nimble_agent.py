@@ -359,6 +359,10 @@ class NimbleAgentTools(Toolkit):
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds must be greater than zero")
         self.poll_interval_seconds: float = float(poll_interval_seconds)
+        if isinstance(max_content_chars, bool) or not isinstance(max_content_chars, int):
+            raise ValueError("max_content_chars must be an integer")
+        if max_content_chars < 0:
+            raise ValueError("max_content_chars must be non-negative")
         self.max_content_chars: int = max_content_chars
 
         self._sync_client: Optional[Nimble] = self._build_sync_client() if self.api_key else None

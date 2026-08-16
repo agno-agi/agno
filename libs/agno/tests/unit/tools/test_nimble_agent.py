@@ -75,6 +75,20 @@ def rate_limit_error():
     return RateLimitError("rate limited", response=resp, body=None)
 
 
+@pytest.mark.parametrize(
+    "max_content_chars",
+    [True, 500.0, float("inf"), float("-inf"), float("nan"), "500", None],
+)
+def test_max_content_chars_rejects_non_integer_values(max_content_chars):
+    with pytest.raises(ValueError, match="integer"):
+        NimbleAgentTools(api_key="test-key-1234567890", max_content_chars=max_content_chars)
+
+
+def test_max_content_chars_rejects_negative_values():
+    with pytest.raises(ValueError, match="non-negative"):
+        NimbleAgentTools(api_key="test-key-1234567890", max_content_chars=-1)
+
+
 def status_error(cls_name, code):
     from nimble_python import AuthenticationError, ConflictError, NotFoundError, PermissionDeniedError
 
