@@ -1160,7 +1160,9 @@ def attach_routes(
         response_model=ComponentConfigResponse,
         response_model_exclude_none=True,
         status_code=200,
-        operation_id="get_config",
+        # "get_config" belongs to the core /config route; a unique id here keeps
+        # the served OpenAPI document valid for client generators.
+        operation_id="get_config_version",
         summary="Get Config Version",
         description="Get a specific config version by number.",
     )
