@@ -133,9 +133,11 @@ SCHEDULES_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {
         # Keep this key pattern distinct from the pre-2.9 global {name: 1}
-        # index. MongoDB cannot build the partial replacement alongside that
-        # legacy index when both use the same key pattern, which would make a
-        # fail-safe create-before-drop migration impossible.
+        # index: same-key-pattern coexistence needs MongoDB >= 5.0 and an
+        # exclusion filter ($or in partialFilterExpression) needs >= 6.0,
+        # while pymongo's server floor is 4.2 — so the fail-safe
+        # create-before-drop migration keeps a distinct compound key and an
+        # equality-only filter.
         "key": [("name", 1), ("managed_by", 1)],
         "name": "uq_generic_name",
         "unique": True,
