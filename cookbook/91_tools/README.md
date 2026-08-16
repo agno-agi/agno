@@ -35,6 +35,10 @@ tools = MCPTools(servers=["npx", "-y", "@anthropic/mcp-server-filesystem"])
 agent = Agent(tools=[tools])
 ```
 
+## Featured Built-in Toolkits
+
+- [`agent_guild_tools.py`](./agent_guild_tools.py) - Vet autonomous agents before delegation and verify portable reputation passports.
+
 ## Folders
 
 - `mcp/` - MCP server examples
