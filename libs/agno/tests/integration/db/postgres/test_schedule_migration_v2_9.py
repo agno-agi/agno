@@ -5,7 +5,7 @@ import uuid
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
 from agno.db.migrations.versions import v2_9_0
@@ -424,3 +424,153 @@ async def test_async_postgres_stale_manual_claim_is_recovered_exactly_once() -> 
         async with db.db_engine.begin() as connection:
             await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_async_postgres_schedule_migration_is_reversible_and_preserves_legacy_rows() -> None:
+    """Live async twin of the sync reversibility test above.
+
+    The unit dispatch test monkeypatches every _migrate_async_*/_revert_async_*
+    seam, so this is the only place the real async migration bodies execute
+    against a real database.
+    """
+    schema = f"test_sched_amig_{uuid.uuid4().hex[:8]}"
+    db = AsyncPostgresDb(
+        db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai",
+        db_schema=schema,
+    )
+    table_name = db.schedules_table_name
+    qualified_table = f'"{schema}"."{table_name}"'
+
+    probe = create_engine("postgresql+psycopg://ai:ai@localhost:5532/ai")
+    try:
+        with probe.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+            conn.execute(
+                text(
+                    f"""
+                    CREATE TABLE {qualified_table} (
+                        id VARCHAR PRIMARY KEY NOT NULL,
+                        name VARCHAR NOT NULL,
+                        description VARCHAR,
+                        method VARCHAR NOT NULL,
+                        endpoint VARCHAR NOT NULL,
+                        payload JSON,
+                        cron_expr VARCHAR NOT NULL,
+                        timezone VARCHAR NOT NULL,
+                        timeout_seconds BIGINT NOT NULL,
+                        max_retries BIGINT NOT NULL,
+                        retry_delay_seconds BIGINT NOT NULL,
+                        enabled BOOLEAN NOT NULL,
+                        next_run_at BIGINT,
+                        locked_by VARCHAR,
+                        locked_at BIGINT,
+                        created_at BIGINT NOT NULL,
+                        updated_at BIGINT
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    f"""
+                    INSERT INTO {qualified_table} (
+                        id, name, method, endpoint, cron_expr, timezone,
+                        timeout_seconds, max_retries, retry_delay_seconds,
+                        enabled, created_at
+                    ) VALUES
+                        ('legacy-1', 'legacy-one', 'POST', '/external', '0 9 * * *', 'UTC', 3600, 0, 60, true, 1),
+                        ('legacy-2', 'legacy-two', 'POST', '/external', '0 10 * * *', 'UTC', 3600, 0, 60, true, 1)
+                    """
+                )
+            )
+
+        assert await v2_9_0.async_up(db, "schedules", table_name) is True
+
+        def _columns():
+            with probe.connect() as conn:
+                return {
+                    row.column_name
+                    for row in conn.execute(
+                        text(
+                            """
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_schema = :schema AND table_name = :table_name
+                            """
+                        ),
+                        {"schema": schema, "table_name": table_name},
+                    )
+                }
+
+        def _indexes():
+            with probe.connect() as conn:
+                return {
+                    row.indexname
+                    for row in conn.execute(
+                        text("SELECT indexname FROM pg_indexes WHERE schemaname = :schema AND tablename = :table_name"),
+                        {"schema": schema, "table_name": table_name},
+                    )
+                }
+
+        assert set(v2_9_0._V2_9_COLUMNS).issubset(_columns())
+        assert {f"{table_name}_uq_generic_name", f"{table_name}_uq_studio_owner_name"}.issubset(_indexes())
+        with probe.connect() as conn:
+            legacy_row = conn.execute(
+                text(f"SELECT managed_by, owner_actor_id, target_type, target_id FROM {qualified_table} WHERE id = 'legacy-1'")
+            ).one()
+        assert tuple(legacy_row) == (None, None, None, None)
+
+        with pytest.raises(ScheduleNameConflictError, match="legacy-one"):
+            await db.create_schedule(
+                {
+                    "id": "dup-generic",
+                    "name": "legacy-one",
+                    "method": "POST",
+                    "endpoint": "/external",
+                    "cron_expr": "0 11 * * *",
+                    "timezone": "UTC",
+                    "timeout_seconds": 3600,
+                    "max_retries": 0,
+                    "retry_delay_seconds": 60,
+                    "enabled": True,
+                    "created_at": 1,
+                }
+            )
+        with pytest.raises(ScheduleNameConflictError, match="legacy-one"):
+            await db.update_schedule("legacy-2", name="legacy-one")
+
+        with probe.begin() as conn:
+            conn.execute(
+                text(f"UPDATE {qualified_table} SET managed_by = 'studio', owner_actor_id = 'actor-1' WHERE id = 'legacy-2'")
+            )
+        with pytest.raises(ValueError, match="Cannot remove Studio schedule provenance"):
+            await v2_9_0.async_down(db, "schedules", table_name)
+        assert set(v2_9_0._V2_9_COLUMNS).issubset(_columns())
+
+        with probe.begin() as conn:
+            conn.execute(
+                text(f"UPDATE {qualified_table} SET managed_by = NULL, owner_actor_id = NULL WHERE id = 'legacy-2'")
+            )
+        assert await v2_9_0.async_down(db, "schedules", table_name) is True
+        assert set(v2_9_0._V2_9_COLUMNS).isdisjoint(_columns())
+        assert f"{table_name}_uq_generic_name" not in _indexes()
+        assert f"{table_name}_uq_studio_owner_name" not in _indexes()
+        with probe.begin() as conn:
+            conn.execute(
+                text(
+                    f"""
+                    INSERT INTO {qualified_table} (
+                        id, name, method, endpoint, cron_expr, timezone,
+                        timeout_seconds, max_retries, retry_delay_seconds,
+                        enabled, created_at
+                    ) VALUES (
+                        'duplicate-after-down', 'legacy-one', 'POST', '/external',
+                        '0 12 * * *', 'UTC', 3600, 0, 60, true, 1
+                    )
+                    """
+                )
+            )
+    finally:
+        with probe.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        probe.dispose()
