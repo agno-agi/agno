@@ -293,10 +293,20 @@ class ValkeyDB(VectorDb):
     def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the
         same content get distinct keys. The shared bucket keeps the legacy id.
+
+        The parts are length-prefixed before they are joined. A bare delimiter
+        is not injective once a part can contain it, and both parts can: base_id
+        is a document id or a content digest, and user_id is only screened for
+        brace and wildcard characters. Joined bare, ("doc_a", "u") and
+        ("doc", "a_u") fold onto one key, and each owner then reads or
+        overwrites the other's document -- defeating the scoping this exists to
+        provide.
         """
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{base_id}_{user_id}")
+        # Length-prefixed so no part can impersonate a boundary.
+        key = "|".join(f"{len(part)}:{part}" for part in (base_id, user_id))
+        return hash_string_sha256(key)
 
     def _parse_hash(self, doc: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a dict serializable into a Valkey HASH structure.

@@ -324,3 +324,37 @@ def test_username_without_password_raises(import_valkeydb, mock_embedder):
 
     with pytest.raises(ValueError, match="password"):
         ValkeyDB(index_name="test_index", username="user", embedder=mock_embedder)
+
+
+def test_scoped_doc_id_separates_pairs_that_a_bare_join_collides(valkey_db):
+    db = valkey_db[0]
+
+    # Both parts can contain the delimiter: base_id is a document id or a
+    # content digest, and user_id is only screened for braces and wildcards.
+    # Joined bare, "doc_a" + "_" + "u" and "doc" + "_" + "a_u" are one string.
+    assert db._scoped_doc_id("doc_a", "u") != db._scoped_doc_id("doc", "a_u")
+
+
+def test_scoped_doc_id_is_deterministic_and_owner_specific(valkey_db):
+    db = valkey_db[0]
+
+    assert db._scoped_doc_id("doc", "alice") == db._scoped_doc_id("doc", "alice")
+    assert db._scoped_doc_id("doc", "alice") != db._scoped_doc_id("doc", "bob")
+    assert db._scoped_doc_id("doc-1", "alice") != db._scoped_doc_id("doc-2", "alice")
+
+
+def test_scoped_doc_id_leaves_the_shared_bucket_on_the_legacy_id(valkey_db):
+    db = valkey_db[0]
+
+    # The unscoped bucket is keyed by the bare id, so it survives this change.
+    assert db._scoped_doc_id("doc-1", None) == "doc-1"
+
+
+def test_parse_hash_scopes_the_stored_id_per_owner(valkey_db):
+    db = valkey_db[0]
+    doc = Document(content="Doc A", name="doc_a", id="doc_a")
+
+    alice = db._parse_hash(doc, user_id="u")["id"]
+    bob = db._parse_hash(Document(content="Doc A", name="doc", id="doc"), user_id="a_u")["id"]
+
+    assert alice != bob
