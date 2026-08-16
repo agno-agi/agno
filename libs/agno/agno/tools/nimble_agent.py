@@ -319,7 +319,7 @@ class NimbleAgentTools(Toolkit):
         poll_interval_seconds (float): Recommended delay between model-driven
             status checks. Defaults to 10 seconds and remains configurable.
             This toolkit does not sleep inside a tool call.
-        max_content_chars (int): Upper bound on characters of result content returned.
+        max_content_chars (int): Non-negative upper bound on characters of result content returned.
         enable_run_lifecycle (bool): Register the ``start_agent_run`` /
             ``get_agent_run_status`` / ``get_agent_run_result`` tools. These are gated
             together because they are one workflow: starting a billable run without a

@@ -89,6 +89,12 @@ def test_max_content_chars_rejects_negative_values():
         NimbleAgentTools(api_key="test-key-1234567890", max_content_chars=-1)
 
 
+def test_max_content_chars_accepts_zero():
+    toolkit = NimbleAgentTools(api_key="test-key-1234567890", max_content_chars=0)
+
+    assert toolkit.max_content_chars == 0
+
+
 def status_error(cls_name, code):
     from nimble_python import AuthenticationError, ConflictError, NotFoundError, PermissionDeniedError
 
