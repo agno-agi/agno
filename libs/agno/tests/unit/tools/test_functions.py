@@ -348,6 +348,23 @@ def test_function_process_schema_for_strict():
     assert "param2" in func.parameters["required"]  # All properties should be required in strict mode
 
 
+def test_process_schema_for_strict_tolerates_a_schema_without_properties():
+    """A tool schema can reach strict processing without a `properties` key.
+
+    An MCP server advertises an argument-free tool as `{"type": "object"}`, and
+    `MCPTools` registers that schema verbatim. Reading the properties map bare used to
+    raise `KeyError: 'properties'` out of every run of the agent, not at registration.
+    """
+    for parameters in ({"type": "object"}, {"type": "object", "properties": None}):
+        func = Function(name="no_args", parameters=dict(parameters))
+
+        func.process_schema_for_strict()
+
+        assert func.parameters["properties"] == {}
+        assert func.parameters["required"] == []
+        assert func.parameters["additionalProperties"] is False
+
+
 def test_function_cache_key_generation():
     """Test generation of cache keys for function calls."""
     func = Function(name="test_func", cache_results=True, cache_dir="/tmp")
