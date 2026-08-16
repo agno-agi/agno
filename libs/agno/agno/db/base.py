@@ -2824,6 +2824,210 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Components (Optional) ---
+    # These methods are optional. Override in subclasses to enable component persistence.
+    # Kept as plain def, mirroring the SQL async adapters' stubs: an async def default
+    # called without await returns an un-awaited coroutine and silently no-ops instead
+    # of raising at the sync call sites.
+
+    def get_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        *,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a component by ID."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def get_components(
+        self,
+        component_ids: Set[str],
+        component_type: Optional[ComponentType] = None,
+        *,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get a bounded set of components by ID."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def upsert_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        current_version: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a component."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def delete_component(
+        self,
+        component_id: str,
+        hard_delete: bool = False,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        require_no_dependents: bool = True,
+        projection: Optional[ComponentProjection] = None,
+        expected_component_type: Optional[ComponentType] = None,
+    ) -> bool:
+        """Delete a component and all its configs/links."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def restore_component(
+        self,
+        component_id: str,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
+    ) -> bool:
+        """Restore a soft-deleted component without replacing its identity or history."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def list_components(
+        self,
+        component_type: Optional[ComponentType] = None,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
+        name: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List components with pagination."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def create_component_with_config(
+        self,
+        component_id: str,
+        component_type: ComponentType,
+        name: Optional[str],
+        config: Dict[str, Any],
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+        stage: str = "draft",
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Create a component with its initial config atomically."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    # --- Component Configs (Optional) ---
+
+    def get_config(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        *,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a config by component ID and version or label."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """Get only the component's current published config."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def get_latest_config(
+        self,
+        component_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Get the latest visible config, regardless of publication stage."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def get_latest_configs(
+        self,
+        component_ids: Set[str],
+        *,
+        include_deleted: bool = False,
+    ) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Get each requested component's latest visible config."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def upsert_config(
+        self,
+        component_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        stage: Optional[str] = None,
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
+        restore_if_deleted: bool = False,
+        expected_component_type: Optional[ComponentType] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a config version for a component."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def delete_config(
+        self,
+        component_id: str,
+        version: int,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
+    ) -> bool:
+        """Logically delete a specific config version."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def list_configs(
+        self,
+        component_id: str,
+        include_config: bool = False,
+        *,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """List all config versions for a component."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def set_current_version(
+        self,
+        component_id: str,
+        version: int,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
+    ) -> bool:
+        """Set a specific published version as current."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    # --- Component Links (Optional) ---
+
+    def get_links(
+        self,
+        component_id: str,
+        version: int,
+        link_kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get links for a config version."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def get_dependents(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        *,
+        active_parents_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Find all components that reference this component."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
+    def load_component_graph(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Load a component with its full resolved graph."""
+        raise NotImplementedError("Component methods not yet supported for async databases")
+
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
 
