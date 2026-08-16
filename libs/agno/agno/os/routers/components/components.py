@@ -43,12 +43,12 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
+from agno.tools.studio import _STUDIO_CONFIG_KEY
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_component_id_from_name
 
 logger = logging.getLogger(__name__)
 
-_STUDIO_CONFIG_KEY = "_agno_studio"
 _STUDIO_WRITE_CONFLICT = "Studio-owned components must be mutated through StudioTools."
 _LEGACY_COMPONENT_METHODS = (
     "get_component",
