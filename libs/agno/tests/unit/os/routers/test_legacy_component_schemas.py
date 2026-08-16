@@ -1,12 +1,12 @@
-"""The legacy component request models must reject unknown fields.
+"""The legacy component request models keep the pre-2.9 tolerance contract.
 
-The v2 models all set extra="forbid"; without it on the legacy models, a v2
-client talking to a v1-served deployment gets its guard silently dropped
-instead of a validation error.
+The legacy router exists to accept exact pre-2.9 call shapes, and the old
+API silently ignored unknown fields — so these models deliberately stay at
+pydantic's default extra behavior. The cost, accepted knowingly: a v2
+client's guard is dropped rather than rejected on the body-parsing routes.
 """
 
 import pytest
-from pydantic import ValidationError
 
 from agno.os.routers.components.legacy import (
     LegacyComponentCreate,
@@ -24,12 +24,12 @@ VALID_PAYLOADS = [
 
 
 @pytest.mark.parametrize("model,payload", VALID_PAYLOADS)
-def test_legacy_models_reject_unknown_fields(model, payload):
-    model(**payload)
-    with pytest.raises(ValidationError):
-        model(**payload, unexpected_field=1)
+def test_legacy_models_tolerate_unknown_fields(model, payload):
+    parsed = model(**payload, unexpected_field=1)
+    assert "unexpected_field" not in parsed.model_dump(exclude_unset=True)
 
 
-def test_legacy_update_rejects_v2_guard_instead_of_dropping_it():
-    with pytest.raises(ValidationError):
-        LegacyComponentUpdate(name="a1", guard={"latest_version": 1, "current_version": 1})
+def test_legacy_update_drops_a_v2_guard_silently():
+    parsed = LegacyComponentUpdate(name="a1", guard={"latest_version": 1, "current_version": 1})
+    assert not hasattr(parsed, "guard")
+    assert "guard" not in parsed.model_dump(exclude_unset=True)

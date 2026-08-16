@@ -11,7 +11,7 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Path, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from agno.db.base import BaseDb
 from agno.db.base import ComponentType as DbComponentType
@@ -30,7 +30,6 @@ from agno.utils.string import generate_component_id_from_name
 class LegacyComponentCreate(BaseModel):
     """Pre-2.9 component plus initial mutable config request."""
 
-    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., description="Display name")
     component_id: Optional[str] = None
@@ -47,7 +46,6 @@ class LegacyComponentCreate(BaseModel):
 class LegacyComponentUpdate(BaseModel):
     """Unguarded catalog-v1 component-row patch."""
 
-    model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -59,7 +57,6 @@ class LegacyComponentUpdate(BaseModel):
 class LegacyConfigCreate(BaseModel):
     """Unguarded catalog-v1 config append."""
 
-    model_config = ConfigDict(extra="forbid")
 
     config: Dict[str, Any] = Field(..., description="The configuration data")
     version: Optional[int] = None
@@ -73,7 +70,6 @@ class LegacyConfigCreate(BaseModel):
 class LegacyConfigUpdate(BaseModel):
     """Mutable catalog-v1 draft config patch."""
 
-    model_config = ConfigDict(extra="forbid")
 
     config: Optional[Dict[str, Any]] = None
     label: Optional[str] = None
