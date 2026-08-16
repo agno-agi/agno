@@ -242,11 +242,6 @@ def _get_disabled_feature_router(prefix: str, tag: str, requires: str) -> APIRou
     return router
 
 
-def _supports_component_routes(db: Union[BaseDb, AsyncBaseDb]) -> bool:
-    """Return whether this DB can safely back the synchronous Components API."""
-    return supports_component_routes(db)
-
-
 class AgentOS:
     def __init__(
         self,
@@ -650,7 +645,7 @@ class AgentOS:
         ]
         # Routes that require a database
         if self.db is not None:
-            if _supports_component_routes(self.db):
+            if supports_component_routes(self.db):
                 updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 updated_routers.append(
@@ -1193,7 +1188,7 @@ class AgentOS:
         ]
         # Routes that require a database
         if self.db is not None:
-            if _supports_component_routes(self.db):
+            if supports_component_routes(self.db):
                 routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 routers.append(

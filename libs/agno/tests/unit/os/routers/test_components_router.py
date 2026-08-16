@@ -261,13 +261,13 @@ class TestComponentPersistenceCapability:
             get_components_router(os_db=unsupported_db, settings=settings)
 
     def test_complete_v1_override_is_detected_without_the_new_capability_flag(self):
-        from agno.os.app import _supports_component_routes
+        from agno.os.routers.components import supports_component_routes
 
         db = _create_legacy_catalog_db()
 
         assert db.supports_component_persistence is False
         assert supports_component_routes(db) is True
-        assert _supports_component_routes(db) is True
+        assert supports_component_routes(db) is True
 
         # A v2 adapter must explicitly opt into its stronger contract; method
         # names alone cannot prove guarded atomic semantics.
