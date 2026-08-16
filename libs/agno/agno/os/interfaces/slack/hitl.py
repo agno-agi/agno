@@ -184,6 +184,20 @@ class HITLHandler:
             log_error(
                 f"[HITL] continuation append failed: run_id={ctx.run_id} slack_error={slack_error_code(exc)!r} | {exc}"
             )
+        # Status-only stream sync (parity with the REST continue doors): a
+        # formerly-queued/streamed run's stream view must stop saying PAUSED
+        # once the continue settles - otherwise every later /resume replays
+        # the stale paused snapshot, and on Redis the pausing replica's TTL
+        # refresher keeps those keys alive indefinitely. only_if_tracked
+        # leaves never-streamed runs alone; a re-paused continue re-parks the
+        # stream as PAUSED. Best-effort: a stream-backend failure must not
+        # eat the Slack response.
+        try:
+            from agno.os.utils import acomplete_continue_stream
+
+            await acomplete_continue_stream(self.entity, ctx.run_id, session_id, only_if_tracked=True)
+        except Exception as exc:
+            log_error(f"[HITL] continue stream sync failed for run={ctx.run_id}: {exc}")
         return state
 
     async def complete_or_repause(
