@@ -16,6 +16,7 @@ from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+from agno.run import RunContext
 
 
 def find_content_in_steps(step_output, search_text):
@@ -646,8 +647,9 @@ def test_selector_with_step_choices_and_session_state():
     step_1 = Step(name="step_1", executor=lambda x: StepOutput(content="Step 1"))
     step_2 = Step(name="step_2", executor=lambda x: StepOutput(content="Step 2"))
 
-    def selector_with_both(step_input: StepInput, session_state: dict, step_choices: list):
+    def selector_with_both(step_input: StepInput, run_context: RunContext, step_choices: list):
         """Selector using both session_state and step_choices."""
+        session_state = run_context.session_state
         step_map = {s.name: s for s in step_choices}
         target_step = session_state.get("target_step", "step_1")
         return [step_map[target_step]]
@@ -660,7 +662,8 @@ def test_selector_with_step_choices_and_session_state():
 
     # Test with session_state selecting step_2
     input_test = StepInput(input="test")
-    result = router.execute(input_test, session_state={"target_step": "step_2"})
+    run_context = RunContext(run_id="test", session_id="test", session_state={"target_step": "step_2"})
+    result = router.execute(input_test, run_context=run_context)
 
     assert result.steps[0].content == "Step 2"
 
