@@ -98,3 +98,57 @@ class TestHonestClose:
         frames = await collect("r-ok")
         assert any("data:" in f for f in frames), "the real events must replay"
         assert not any(f.startswith("event: stream_expired") for f in frames)
+
+
+class TestSettledTicketBoundsTheKeepalives:
+    """A lost terminal write: the producer died between settling the ticket
+    and closing the stream. Nothing would ever end the tail - it used to
+    keepalive silently until the stream state expired (tens of minutes).
+    The idle recheck now probes the ticket and closes truthfully."""
+
+    @pytest.mark.asyncio
+    async def test_terminal_ticket_with_running_stream_closes_honestly(self, monkeypatch):
+        import asyncio
+
+        import agno.os.job_queue as jq
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+        monkeypatch.setattr("agno.os.utils._TAIL_IDLE_RECHECK_SECONDS", 0.05, raising=False)
+
+        # The stream believes the run is still RUNNING (terminal write lost)
+        await stream.register_run("r-lost", RunStatus.pending)
+        await stream.set_run_status("r-lost", RunStatus.running)
+
+        # The ticket settled: the run actually finished
+        store = InMemoryQueueStore()
+        from agno.db.schemas.jobs import QueuedJob
+
+        store._jobs["r-lost"] = QueuedJob(
+            id="r-lost", component_type="agent", component_id="a1", session_id="s1", payload={}, status="completed"
+        ).to_dict()
+        original = jq.get_active_queue_worker()
+        jq.set_active_queue_worker(SimpleNamespace(store=store))
+        try:
+            from agno.os.utils import queued_run_tail_streamer
+
+            frames = []
+
+            async def consume():
+                async for frame in queued_run_tail_streamer("r-lost"):
+                    frames.append(frame)
+                    if len(frames) >= 5:
+                        break
+
+            await asyncio.wait_for(consume(), timeout=5)
+        finally:
+            jq.set_active_queue_worker(original)
+
+        expired = [f for f in frames if f.startswith("event: stream_expired")]
+        assert expired, f"a settled ticket over a running stream must close honestly, got {frames!r}"
+        assert "poll the run" in expired[0]
+        assert frames[-1] == expired[0], "the honest close must END the tail, not keep keepaliving"

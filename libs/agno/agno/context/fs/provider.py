@@ -112,14 +112,14 @@ class FilesystemContextProvider(ContextProvider):
 def _build_file_tools(root: Path, *, exclude_patterns: list[str] | None = None) -> FileTools:
     return FileTools(
         base_dir=root,
-        enable_save_file=False,
-        enable_delete_file=False,
-        enable_replace_file_chunk=False,
-        enable_list_files=True,
-        enable_search_files=True,
-        enable_search_content=True,
-        enable_read_file=True,
-        enable_read_file_chunk=True,
+        save_file=False,
+        delete_file=False,
+        replace_file_chunk=False,
+        list_files=True,
+        search_files=True,
+        search_content=True,
+        read_file=True,
+        read_file_chunk=True,
         exclude_patterns=exclude_patterns,
     )
 

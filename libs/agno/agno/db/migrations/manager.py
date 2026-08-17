@@ -99,8 +99,10 @@ class MigrationManager:
 
                     log_info(f"Applying migration {normalised_version} on {table_name}")
                     migration_executed = await self._up_migration(version, table_type, table_name)
+                    # False means "nothing to migrate" — failures raise and abort
+                    # before stamping, so no-ops still advance the stamp.
+                    latest_version = normalised_version.public
                     if migration_executed:
-                        latest_version = normalised_version.public
                         log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
                     else:
                         log_info(f"Skipping application of migration {normalised_version} on table {table_name}")

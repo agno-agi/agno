@@ -481,6 +481,7 @@ class Workflow:
 
     def __init__(
         self,
+        *,
         id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,

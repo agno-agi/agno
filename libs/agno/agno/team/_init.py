@@ -63,6 +63,7 @@ from agno.utils.string import generate_id_from_name
 def __init__(
     team: "Team",
     members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
+    *,
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
     fallback_config: Optional[FallbackConfig] = None,
