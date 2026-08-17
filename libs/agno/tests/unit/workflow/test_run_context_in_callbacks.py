@@ -82,31 +82,6 @@ class TestRouterSelectorRunContext:
         assert response.status.value == "COMPLETED"
         assert workflow.get_session_state(session_id="s1")["selector_ran"] is True
 
-    def test_selector_with_session_state_still_works(self):
-        target = _make_step("target")
-
-        def selector(step_input: StepInput, session_state: dict) -> Step:
-            session_state["selector_ran"] = True
-            return target
-
-        workflow = _make_workflow([Router(name="router", selector=selector, choices=[target])])
-        response = workflow.run(input="hello", session_id="s1", user_id="u1")
-
-        assert response.status.value == "COMPLETED"
-        assert workflow.get_session_state(session_id="s1")["selector_ran"] is True
-
-    def test_selector_with_run_context_and_session_state(self):
-        target = _make_step("target")
-
-        def selector(step_input: StepInput, run_context: RunContext, session_state: dict) -> Step:
-            assert run_context.session_state is session_state
-            return target
-
-        workflow = _make_workflow([Router(name="router", selector=selector, choices=[target])])
-        response = workflow.run(input="hello", session_id="s1", user_id="u1")
-
-        assert response.status.value == "COMPLETED"
-
     def test_selector_with_run_context_and_step_choices(self):
         seen: Dict[str, Any] = {}
         target = _make_step("target")
@@ -145,47 +120,3 @@ class TestConditionEvaluatorRunContext:
 
         assert response.status.value == "COMPLETED"
         assert workflow.get_session_state(session_id="s1")["evaluator_ran"] is True
-
-    def test_evaluator_with_session_state_still_works(self):
-        def evaluator(step_input: StepInput, session_state: dict) -> bool:
-            session_state["evaluator_ran"] = True
-            return True
-
-        workflow = _make_workflow([Condition(name="condition", evaluator=evaluator, steps=[_make_step("inner")])])
-        response = workflow.run(input="hello", session_id="s1", user_id="u1")
-
-        assert response.status.value == "COMPLETED"
-        assert workflow.get_session_state(session_id="s1")["evaluator_ran"] is True
-
-
-class TestSessionStateParamDeprecation:
-    def test_session_state_param_warns_once(self, caplog):
-        from agno.workflow.types import _session_state_param_deprecation_warned
-
-        _session_state_param_deprecation_warned.clear()
-        target = _make_step("target")
-
-        def deprecated_spelling_selector(step_input: StepInput, session_state: dict) -> Step:
-            return target
-
-        workflow = _make_workflow([Router(name="router", selector=deprecated_spelling_selector, choices=[target])])
-        with caplog.at_level("WARNING", logger="agno"):
-            workflow.run(input="hello", session_id="s1", user_id="u1")
-            workflow.run(input="again", session_id="s1", user_id="u1")
-
-        warnings = [record for record in caplog.records if "session_state" in record.message]
-        assert len(warnings) == 1
-        assert "deprecated" in warnings[0].message
-        assert "run_context.session_state" in warnings[0].message
-
-    def test_run_context_param_does_not_warn(self, caplog):
-        target = _make_step("target")
-
-        def selector(step_input: StepInput, run_context: RunContext) -> Step:
-            return target
-
-        workflow = _make_workflow([Router(name="router", selector=selector, choices=[target])])
-        with caplog.at_level("WARNING", logger="agno"):
-            workflow.run(input="hello", session_id="s1", user_id="u1")
-
-        assert not any("deprecated" in record.message for record in caplog.records)

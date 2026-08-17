@@ -64,7 +64,6 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
-    warn_session_state_param_deprecated,
 )
 
 if TYPE_CHECKING:
@@ -888,9 +887,6 @@ class Step:
         kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
-        if session_state is not None and self._function_has_session_state_param():
-            kwargs["session_state"] = session_state
-            warn_session_state_param_deprecated(func, "custom function steps")
 
         return func(step_input, **kwargs)
 
@@ -906,9 +902,6 @@ class Step:
         kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
-        if session_state is not None and self._function_has_session_state_param():
-            kwargs["session_state"] = session_state
-            warn_session_state_param_deprecated(func, "custom function steps")
 
         if _is_async_generator_function(func):
             return func(step_input, **kwargs)
@@ -1177,17 +1170,6 @@ class Step:
         try:
             sig = inspect.signature(self.active_executor)  # type: ignore
             return "run_context" in sig.parameters
-        except Exception:
-            return False
-
-    def _function_has_session_state_param(self) -> bool:
-        """Check if the custom function has a session_state parameter"""
-        if self._executor_type != "function":
-            return False
-
-        try:
-            sig = inspect.signature(self.active_executor)  # type: ignore
-            return "session_state" in sig.parameters
         except Exception:
             return False
 
