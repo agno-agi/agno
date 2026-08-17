@@ -36,17 +36,28 @@ def get_agentic_or_user_search_filters(
     return search_filters or {}
 
 
-def get_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
+def get_user_id_kwarg(fn: Any, user_id: Optional[str], *, required: bool = False) -> Dict[str, Any]:
     """``{"user_id": ...}`` only when the callee accepts it.
 
-    ``**kwargs`` counts as accepting it: ``KnowledgeProtocol`` retrieval is ``retrieve(self, query, **kwargs)``.
+    ``**kwargs`` counts as accepting it: ``KnowledgeProtocol`` is variadic by design
+    (``retrieve(self, query, **kwargs)``), so a custom Knowledge declaring ``**kwargs``
+    forwards the owner rather than swallowing it. This is the opposite of
+    :func:`strict_user_id_kwarg`, whose callees are ``VectorDb`` methods that all declare
+    ``user_id`` explicitly.
 
     Args:
         fn: The callable the kwarg will be passed to.
         user_id: The owner to scope the call to.
+        required: Refuse rather than drop the owner when the callee cannot take it. Set on
+            writes: dropping it there does not merely widen a read, it stores the caller's
+            content in the shared bucket, where every other user can read it and no
+            owner-scoped delete will ever reach it.
 
     Returns:
         Dict[str, Any]: {"user_id": user_id} when the callee accepts it, empty otherwise.
+
+    Raises:
+        ValueError: If ``required`` and a real owner cannot be passed through.
     """
     import inspect
 
@@ -57,9 +68,14 @@ def get_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
     if "user_id" in parameters or any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
         return {"user_id": user_id}
     if user_id is not None:
-        log_warning(
-            f"{getattr(fn, '__qualname__', fn)} does not accept user_id, so this call is not scoped to a single owner."
-        )
+        name = getattr(fn, "__qualname__", fn)
+        if required:
+            raise ValueError(
+                f"user_id={user_id!r} was passed but {name} does not accept it, so this content would be "
+                "stored in the shared bucket and be readable by every other user. Add a user_id "
+                "parameter to it (or accept **kwargs) to support per-user isolation."
+            )
+        log_warning(f"{name} does not accept user_id, so this call is not scoped to a single owner.")
     return {}
 
 

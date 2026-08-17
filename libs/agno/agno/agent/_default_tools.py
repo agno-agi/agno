@@ -405,13 +405,13 @@ def add_to_knowledge(agent: Agent, query: str, result: str, user_id: Optional[st
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
-    # A custom Knowledge whose insert predates isolation raises on the user_id kwarg
     insert_kwargs: Dict[str, Any] = {
         "name": document_name,
         "text_content": document_content,
         "reader": TextReader(),
     }
-    insert_kwargs.update(get_user_id_kwarg(insert_fn, user_id))
+
+    insert_kwargs.update(get_user_id_kwarg(insert_fn, user_id, required=True))
     insert_fn(**insert_kwargs)
     return "Successfully added to knowledge base"
 

@@ -21,7 +21,6 @@ from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.scopes import AgentOSScope, has_required_scopes
 from agno.utils.log import log_info
 
-
 # Valid DB method names that _db_call can invoke
 _SchedulerDbMethod = Literal[
     "get_schedule",
