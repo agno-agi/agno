@@ -156,9 +156,6 @@ class Steps:
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
         else:
-            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
-
-            drop_legacy_hitl_keys(data, StepType.STEPS)
             human_review = HumanReview()
 
         return cls(

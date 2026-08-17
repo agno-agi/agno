@@ -9,7 +9,7 @@ overhead and validation errors that could break agents mid-run.
 Configurations:
 - LearningMode: How learning is extracted (ALWAYS, AGENTIC, PROPOSE, HITL)
 - UserProfileConfig: Config for user profile learning
-- MemoriesConfig: Config for memories learning
+- UserMemoryConfig: Config for user memory learning
 - SessionContextConfig: Config for session context learning
 - LearnedKnowledgeConfig: Config for learned knowledge
 - EntityMemoryConfig: Config for entity memory
@@ -178,10 +178,6 @@ class UserMemoryConfig:
 
     def __repr__(self) -> str:
         return f"UserMemoryConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
-
-
-# Backwards compatibility alias
-MemoriesConfig = UserMemoryConfig
 
 
 @dataclass

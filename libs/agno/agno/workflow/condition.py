@@ -274,9 +274,6 @@ class Condition:
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
         else:
-            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
-
-            drop_legacy_hitl_keys(data, StepType.CONDITION)
             human_review = HumanReview(on_reject=OnReject.else_branch)
 
         return cls(

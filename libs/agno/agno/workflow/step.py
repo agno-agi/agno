@@ -628,9 +628,6 @@ class Step:
         if config.get("human_review"):
             human_review = HumanReview.from_dict(config["human_review"])
         else:
-            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
-
-            drop_legacy_hitl_keys(config, StepType.STEP)
             human_review = HumanReview()
 
         return cls(
