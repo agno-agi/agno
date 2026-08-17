@@ -1,4 +1,3 @@
-import re
 
 import pytest
 from pydantic import BaseModel, Field
@@ -89,9 +88,10 @@ def test_with_memory(groq_model):
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
     assert response2.content is not None
-    # Models format names with typographic spaces (U+202F narrow no-break space, U+00A0), so
-    # compare on the normalised text rather than failing a correct answer on whitespace.
-    normalised = re.sub(r"\s+", " ", response2.content.replace(" ", " ").replace("\xa0", " "))
+    # Models render names with typographic spaces (U+202F narrow no-break, U+00A0 no-break),
+    # so fold just those two back to a plain space. Anything wider - collapsing \s+ - would
+    # also accept "John\nSmith" and stop the assertion catching format regressions.
+    normalised = response2.content.replace("\u202f", " ").replace("\xa0", " ")
     assert "John Smith" in normalised
 
     # Verify memories were created
