@@ -1014,8 +1014,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          uv pip uninstall truststore || true
-          python -c "import truststore" 2>/dev/null && echo "WARNING: truststore still present" || echo "truststore removed"
+          export SSL_CERT_FILE="$(python -m certifi)"
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
