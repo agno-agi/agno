@@ -655,7 +655,12 @@ class QueueWorker:
                 effective_max = get_background_max_concurrency()
             if effective_max > 0 and len(self._in_flight) >= effective_max:
                 break
-            job = await self.store.claim_job(self.worker_id, self.config.lock_grace_seconds, self.config.deployment_id)
+            job = await self.store.claim_job(
+                self.worker_id,
+                self.config.lock_grace_seconds,
+                self.config.deployment_id,
+                serialize_sessions=self.config.serialize_sessions,
+            )
             if job is None:
                 break
             task = asyncio.create_task(self._execute_claimed(job))
