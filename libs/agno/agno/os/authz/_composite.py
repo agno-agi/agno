@@ -60,6 +60,10 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
         if not providers:
             raise ValueError("CompositeAuthorizationProvider needs at least one provider")
         self.providers = list(providers)
+        # A composite is a scope plane iff ANY plane it wraps is one. Computed from the
+        # children (which set it recursively) so a nested composite resolves correctly --
+        # token_scopes_are_authoritative reads this flag rather than walking one level.
+        self.enforces_token_scopes = any(getattr(p, "enforces_token_scopes", False) for p in self.providers)
 
     def check(self, ctx: AuthorizationContext) -> bool:
         # A non-resource check (no resource_type/action) isn't expressible as a

@@ -72,6 +72,14 @@ class AuthorizationProvider(ABC):
     do something smarter (e.g. a single batch call to an external engine).
     """
 
+    # Does this provider treat the token's ``scopes`` claim as an authorization input?
+    # False here (managed roles, ReBAC, and custom providers by default): such a provider
+    # ignores token scopes, so gates that key off a token's admin scope must NOT honour it
+    # (see :func:`agno.os.auth.token_scopes_are_authoritative`). ``ScopeAuthorizationProvider``
+    # sets this True; a hardening SUBCLASS that means to stop trusting token scopes can set
+    # it False and the gates will consult the subclass instead of blindly honouring a scope.
+    enforces_token_scopes: bool = False
+
     @abstractmethod
     def check(self, ctx: AuthorizationContext) -> bool:
         """Return True if the action in ``ctx`` is allowed."""

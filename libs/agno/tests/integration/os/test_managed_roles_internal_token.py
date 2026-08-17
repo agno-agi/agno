@@ -282,3 +282,47 @@ def test_schedule_endpoint_gate_uses_the_provider_not_token_scopes(tmp_path):
         },
     )
     assert resp.status_code == 403, resp.text
+
+
+def test_admin_pat_can_mint_a_child_under_managed_roles(tmp_path):
+    """Issue-1 regression (service-account carve-out). A PAT's scopes ARE its ACL and are
+    always scope-enforced, so an admin PAT must still mint a child service account under a
+    managed-roles plane -- the subset rule keys off the PAT's own scopes, not the (absent)
+    role of its sa: principal."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.middleware import JWTMiddleware
+
+    db = SqliteDb(db_file=str(tmp_path / "pat_child.db"))
+    agent = Agent(id="research-agent", name="Research Agent", db=db)
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("os-admin", ["agent_os:admin"])
+    store.assign("human-admin", "os-admin")
+
+    agent_os = AgentOS(id=OS_ID, agents=[agent], db=db)
+    app = agent_os.get_app()
+    app.state.authorization_provider = store.provider
+    app.add_middleware(JWTMiddleware, verification_keys=[SECRET], algorithm="HS256", authorization=True)
+    client = TestClient(app)
+
+    admin_jwt = jwt.encode(
+        {"sub": "human-admin", "scopes": ["agent_os:admin"], "exp": datetime.now(UTC) + timedelta(hours=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+    # the human admin mints an admin PAT (its scopes are its ACL)
+    admin_pat = client.post(
+        "/service-accounts",
+        headers={"Authorization": f"Bearer {admin_jwt}"},
+        json={"name": "ci", "scopes": [{"scope": "agent_os:admin"}], "allow_privileged_scopes": True},
+    )
+    assert admin_pat.status_code == 201, admin_pat.text
+    pat_token = admin_pat.json()["token"]
+
+    # that admin PAT must be able to mint a CHILD account -- the sa: carve-out means its
+    # own scopes are authoritative, so the subset rule is satisfied (was 403 before the fix)
+    child = client.post(
+        "/service-accounts",
+        headers={"Authorization": f"Bearer {pat_token}"},
+        json={"name": "ci-child", "scopes": [{"scope": "agents:*:run"}]},
+    )
+    assert child.status_code == 201, child.text

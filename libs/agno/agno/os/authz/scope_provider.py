@@ -20,6 +20,9 @@ from agno.os.scopes import get_accessible_resource_ids, has_required_scopes
 class ScopeAuthorizationProvider(AuthorizationProvider):
     """RBAC via JWT scope strings (``resource:action``, ``resource:<id>:action``)."""
 
+    # This provider IS the scope plane: a token's scopes are its authorization input.
+    enforces_token_scopes: bool = True
+
     def check(self, ctx: AuthorizationContext) -> bool:
         # A non-resource check (no resource_type) can't be expressed as a scope
         # here; treat it as allowed and let route-level scope mappings handle it.

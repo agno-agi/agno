@@ -508,3 +508,70 @@ def test_assign_unknown_role_is_rejected():
     ok = client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "viewer"})
     assert ok.status_code == 200, ok.text
     assert roles.roles_of("bob") == ["viewer"]
+
+
+def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
+    """Issue-3 regression: the WebSocket continue-workflow path must enforce the same
+    admin-approval gate as the REST /continue route. A run initiator holding workflows:run
+    but not approvals:write must NOT be able to self-approve an admin-required pause by
+    continuing over WS."""
+    import json as _json
+
+    from agno.db.sqlite import SqliteDb
+
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("runner", ["workflows:*:run"])  # can run, NOT approvals:write
+    roles.assign("bob", "runner")
+    users = ManagedUserStore(db_url=_db_url())
+    users.upsert("bob", email="bob@co")
+
+    os_db = SqliteDb(db_url=_db_url())
+    agent = Agent(id="research-agent", name="R", db=InMemoryDb())
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        db=os_db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=roles.provider,
+            user_store=users,
+        ),
+    )
+    app = agent_os.get_app()
+
+    # force a pending admin-required approval for the run being continued
+    async def _pending(*args, **kwargs):
+        return ([{"id": "a1", "status": "pending"}], 1)
+
+    monkeypatch.setattr(agent_os.db, "get_approvals", _pending, raising=False)
+
+    client = TestClient(app)
+    with client.websocket_connect("/workflows/ws") as ws:
+        for _ in range(8):
+            if _json.loads(ws.receive_text()).get("event") == "connected":
+                break
+        ws.send_text(_json.dumps({"action": "authenticate", "token": _token("bob", scopes=["workflows:run"])}))
+        for _ in range(8):
+            if _json.loads(ws.receive_text()).get("event") == "authenticated":
+                break
+        ws.send_text(
+            _json.dumps(
+                {
+                    "action": "continue-workflow",
+                    "workflow_id": "research-agent",
+                    "run_id": "r1",
+                    "step_requirements": {},
+                }
+            )
+        )
+        for _ in range(8):
+            frame = _json.loads(ws.receive_text())
+            if frame.get("event") == "error":
+                assert "admin approval" in frame.get("error", ""), frame
+                break
+        else:
+            raise AssertionError("no error frame within 8 messages")

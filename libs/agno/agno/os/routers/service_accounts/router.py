@@ -141,9 +141,9 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=401,
                 detail=("JWT authentication is required to mint a service account."),
             )
-        from agno.os.auth import token_scopes_are_authoritative
+        from agno.os.auth import caller_scopes_are_authoritative
 
-        if not token_scopes_are_authoritative(request):
+        if not caller_scopes_are_authoritative(request):
             # Under a managed-roles / ReBAC / custom plane the token's `scopes` claim is
             # NOT the caller's authority (the provider ignores it), yet a minted PAT is
             # always enforced by scope-math and bypasses that plane. Measuring the subset

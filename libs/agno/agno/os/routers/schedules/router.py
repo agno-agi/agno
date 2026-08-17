@@ -60,7 +60,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         ``schedules:write`` alone must not reach a component the caller cannot run: a POST
         run endpoint needs the matching ``<type>:run`` scope, any other target is admin-only.
         """
-        from agno.os.auth import build_insufficient_permissions_detail, token_scopes_are_authoritative
+        from agno.os.auth import build_insufficient_permissions_detail, caller_scopes_are_authoritative
 
         if not getattr(request.state, "authorization_enabled", False):
             return
@@ -71,7 +71,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
 
         match = RUN_ENDPOINT_RE.match(endpoint) if method.upper() == "POST" else None
 
-        if not token_scopes_are_authoritative(request):
+        if not caller_scopes_are_authoritative(request):
             # The token's scopes are NOT the authority here (a managed-roles/ReBAC/custom
             # plane governs access, and ignores them). Decide the target the same way its
             # own route gate would -- through the configured provider -- so `schedules:write`

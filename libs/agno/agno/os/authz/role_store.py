@@ -293,9 +293,24 @@ class ManagedRoleStore:
     ) -> None:
         """Apply a scope diff: add/flip the ``upsert`` scopes and drop the ``remove``
         scopes, leaving every other scope (and the metadata) intact."""
+        from agno.os.authz._scope_policy import scope_to_resource_action
+
         before = self.get_role_scope_entries(role) if self._audit else None
+        # Stage the upsert deny-wins by policy key, mirroring set_role_scopes: `agents:read`
+        # and `agents:*:read` collapse to one key, so applying add_scope per entry (plain
+        # last-write-wins) would let an allow silently OVERWRITE a deny the same diff also
+        # lists. Deny must survive so PATCH and PUT cannot diverge into a grant.
+        staged: dict = {}  # (resource, action) -> (scope_string, effect)
         for entry in upsert or []:
             scope, effect = _normalize_scope(entry)
+            key = scope_to_resource_action(scope)  # validates + collapses aliasing spellings
+            eff = "deny" if str(effect).lower() == "deny" else "allow"
+            prev = staged.get(key)
+            if prev is not None and (prev[1] == "deny" or eff == "deny"):
+                staged[key] = (scope, "deny") if eff == "deny" else prev
+            else:
+                staged[key] = (scope, eff)
+        for scope, effect in staged.values():
             self._engine.add_scope(role, scope, effect)
         for entry in remove or []:
             scope, _ = _normalize_scope(entry)

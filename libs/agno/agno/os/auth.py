@@ -70,14 +70,37 @@ def token_scopes_are_authoritative(app_or_request: Any) -> bool:
     configured) IS the scope provider, so scope-based deployments are unaffected.
 
     Note: this describes the *instance's* enforcement plane. A service-account PAT is
-    always scope-enforced regardless (see :func:`_provider_for`), so callers that key
-    off a PAT's scopes should OR this with an ``sa:``-principal check.
+    always scope-enforced regardless (see :func:`_provider_for`), so gates that key off a
+    CALLER's token scopes should use :func:`caller_scopes_are_authoritative`, which ORs in
+    the service-account carve-out.
     """
-    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
-
     provider = resolve_authorization_provider(app_or_request)
-    planes = getattr(provider, "providers", None) or [provider]
-    return any(isinstance(plane, ScopeAuthorizationProvider) for plane in planes)
+    # Read the provider's declared flag rather than an isinstance() check: a hardening
+    # SUBCLASS of ScopeAuthorizationProvider can turn it off, and a composite computes it
+    # from ALL of its (possibly nested) planes. Defaults False for any provider that does
+    # not opt in (managed roles, ReBAC, custom).
+    return bool(getattr(provider, "enforces_token_scopes", False))
+
+
+def _caller_is_service_account(request: Any) -> bool:
+    """The authenticated caller is a service-account/PAT (``sa:`` principal)."""
+    from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
+
+    user_id = getattr(getattr(request, "state", None), "user_id", None)
+    return isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+
+
+def caller_scopes_are_authoritative(request: Any) -> bool:
+    """Whether the CALLER's token ``scopes`` claim is their authorization authority.
+
+    :func:`token_scopes_are_authoritative` for the instance, OR the caller is a
+    service-account/PAT -- whose scopes ARE its first-party ACL and are always
+    scope-enforced regardless of the OS provider (see :func:`_provider_for`). Use this at
+    gates that measure the caller by their token scopes (PAT-mint subset rule, schedule
+    endpoint gate, job-queue admin, ...) so a legitimate admin PAT is not denied under a
+    managed-roles/ReBAC plane, while a raw JWT admin scope stays inert there.
+    """
+    return _caller_is_service_account(request) or token_scopes_are_authoritative(request)
 
 
 def _provider_for(request: Any) -> AuthorizationProvider:
@@ -685,11 +708,39 @@ def require_approval_resolved(db: Any) -> Any:
             request.path_params.get("run_id"),
             authorization_enabled=getattr(request.state, "authorization_enabled", False),
             user_scopes=getattr(request.state, "scopes", []),
+            request=request,
         )
         if reason:
             raise HTTPException(status_code=403, detail=reason)
 
     return dependency
+
+
+def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
+    """Does the caller hold approval-admin authority (``approvals:write``)?
+
+    Provider-aware: a token's ``approvals:write`` / admin scope only counts when scopes
+    are the caller's authority (a scope plane, or a service-account/PAT). Under a
+    managed-roles/ReBAC plane, ask the provider instead -- so a raw JWT scope cannot bypass
+    the gate, AND a genuine admin-role holder (whose token carries no scopes claim) is not
+    wrongly blocked from ever resolving an approval.
+    """
+    if request is None or caller_scopes_are_authoritative(request):
+        return has_required_scopes(list(user_scopes or []), ["approvals:write"])
+    from agno.os.authz.provider import AuthorizationContext
+
+    admin_scope_raw = getattr(getattr(request, "state", None), "admin_scope", None)
+    provider = resolve_authorization_provider(request)
+    ctx = AuthorizationContext(
+        principal_id=getattr(request.state, "user_id", None),
+        scopes=list(user_scopes or []),
+        claims=getattr(request.state, "claims", None) or {},
+        resource_type="approvals",
+        resource_id="*",
+        action="write",
+        admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
+    )
+    return provider.check(ctx)
 
 
 async def run_continuation_blocked_reason(
@@ -698,6 +749,7 @@ async def run_continuation_blocked_reason(
     *,
     authorization_enabled: bool,
     user_scopes: List[str],
+    request: Any = None,
 ) -> Optional[str]:
     """Whether a paused run may NOT be continued yet, as a 403 detail string (else None).
 
@@ -714,9 +766,10 @@ async def run_continuation_blocked_reason(
     if not authorization_enabled or db is None or not run_id:
         return None
 
-    # Callers with approvals:write (admins) bypass this gate — they can force-continue a
-    # run for operational or debugging purposes.
-    if has_required_scopes(user_scopes, ["approvals:write"]):
+    # Approval-admins (approvals:write) bypass this gate — they can force-continue a run
+    # for operational or debugging purposes. Decided provider-aware (see helper) so the
+    # bypass can't be spoofed by a raw token scope under a managed-roles plane.
+    if _caller_is_approval_admin(request, user_scopes):
         return None
 
     fn = getattr(db, "get_approvals", None)

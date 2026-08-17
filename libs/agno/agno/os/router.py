@@ -407,6 +407,34 @@ def get_websocket_router(
                 )
                 return fail_closed
 
+        async def _ws_run_continuation_blocked_reason(run_id: Optional[str]) -> Optional[str]:
+            # Approval gate for the WS continue path, mirroring the REST /continue
+            # dependency. A SimpleNamespace shim carries the WS auth context so the shared
+            # decision -- including its provider-aware admin (approvals:write) bypass --
+            # resolves exactly as it does on REST/MCP.
+            from types import SimpleNamespace
+
+            from agno.os.auth import run_continuation_blocked_reason
+
+            scopes = list(websocket_user_context.get("scopes", []) or [])
+            shim = SimpleNamespace(
+                state=SimpleNamespace(
+                    user_id=websocket_user_context.get("user_id"),
+                    scopes=scopes,
+                    claims=websocket_user_context.get("payload") or {},
+                    admin_scope=ws_admin_scope,
+                    authorization_enabled=scope_enforcement_active(),
+                ),
+                app=websocket.app,
+            )
+            return await run_continuation_blocked_reason(
+                getattr(os, "db", None),
+                run_id,
+                authorization_enabled=scope_enforcement_active(),
+                user_scopes=scopes,
+                request=shim,
+            )
+
         try:
             while True:
                 data = await websocket.receive_text()
@@ -707,6 +735,14 @@ def get_websocket_router(
                                     {"event": "error", "error": "Insufficient permissions to continue this workflow"}
                                 )
                             )
+                            continue
+
+                        # Same admin-approval gate the REST /continue route and the MCP
+                        # continue_run tool enforce: a run paused on an admin-required
+                        # approval must not be self-continued by its initiator over WS.
+                        blocked = await _ws_run_continuation_blocked_reason(message.get("run_id"))
+                        if blocked:
+                            await websocket.send_text(json.dumps({"event": "error", "error": blocked}))
                             continue
 
                     # Force user_id from the authenticated identity for non-admin

@@ -295,3 +295,73 @@ def test_workflow_continue_route_carries_the_approval_gate():
         f"workflow continue route is missing the approval gate; deps={cont}"
     )
     assert any("require_resource_access" in name for name in cont), "workflow continue route lost its resource gate"
+
+
+def test_token_scopes_are_authoritative_reads_the_provider_flag():
+    """Issue-5 regression: the helper reads the provider's enforces_token_scopes flag, not
+    isinstance(). A hardening subclass that opts out is honoured, and a NESTED composite
+    resolves correctly (the old one-level .providers walk missed it)."""
+    from types import SimpleNamespace
+
+    from agno.os.auth import token_scopes_are_authoritative
+    from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    class _DenyAll(AuthorizationProvider):  # a custom (non-scope) plane
+        def check(self, ctx: AuthorizationContext) -> bool:
+            return False
+
+        def accessible_resource_ids(self, ctx: AuthorizationContext):
+            return set()
+
+    class _Hardened(ScopeAuthorizationProvider):  # subclass that stops trusting token scopes
+        enforces_token_scopes = False
+
+    def _app_with(provider):
+        return SimpleNamespace(state=SimpleNamespace(authorization_provider=provider))
+
+    assert token_scopes_are_authoritative(_app_with(ScopeAuthorizationProvider())) is True
+    assert token_scopes_are_authoritative(_app_with(_DenyAll())) is False
+    assert token_scopes_are_authoritative(_app_with(_Hardened())) is False
+
+    inner = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), _DenyAll()])
+    outer = CompositeAuthorizationProvider([inner, _DenyAll()])
+    assert token_scopes_are_authoritative(_app_with(outer)) is True
+    assert token_scopes_are_authoritative(_app_with(CompositeAuthorizationProvider([_DenyAll()]))) is False
+
+
+def test_job_queue_admin_gate_is_provider_aware():
+    """Issue (job-queue) regression: the /queue admin gate must not trust a raw token
+    admin scope under a managed-roles plane. A token carrying agent_os:admin with no admin
+    role is refused; an admin-role subject (empty scopes) is allowed."""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from agno.os.routers.job_queue.router import _require_queue_admin
+
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("admin", ["agent_os:admin"])
+    store.assign("real-admin", "admin")
+
+    def _req(user_id, scopes):
+        return SimpleNamespace(
+            state=SimpleNamespace(user_id=user_id, scopes=scopes, admin_scope=None, claims={}),
+            app=SimpleNamespace(state=SimpleNamespace(authorization_provider=store.provider)),
+        )
+
+    import asyncio
+
+    # raw token admin scope, no admin role -> refused (the plane ignores token scopes)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_require_queue_admin(_req("mallory", ["agent_os:admin"])))
+    assert exc.value.status_code == 403
+    # genuine admin role, empty scopes -> allowed via the provider
+    asyncio.run(_require_queue_admin(_req("real-admin", [])))  # must not raise
+
+    # under the default scope plane, the admin scope IS the authority
+    scope_req = SimpleNamespace(
+        state=SimpleNamespace(user_id="op", scopes=["agent_os:admin"], admin_scope=None, claims={}),
+        app=SimpleNamespace(state=SimpleNamespace(authorization_provider=None)),
+    )
+    asyncio.run(_require_queue_admin(scope_req))  # must not raise

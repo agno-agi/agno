@@ -406,6 +406,7 @@ async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
         run_id,
         authorization_enabled=bool(getattr(state, "authorization_enabled", False)),
         user_scopes=list(getattr(state, "scopes", None) or []),
+        request=request,
     )
     if reason:
         raise Exception(reason)

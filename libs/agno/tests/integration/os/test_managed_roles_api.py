@@ -381,3 +381,31 @@ def test_no_authz_routes_without_a_role_store():
 
     app = AgentOS(id="plain-os", agents=[Agent(id="a1", name="A", db=InMemoryDb())]).get_app()
     assert not any(getattr(route, "path", "").startswith("/authz") for route in app.router.routes)
+
+
+def test_patch_role_scopes_deny_wins_on_a_spelling_collision():
+    """Issue-2 regression: PATCH upsert must be deny-wins like PUT. `agents:read` and
+    `agents:*:read` collapse to one policy key, so upserting an allow must not overwrite a
+    deny listed in the same diff -- else PATCH silently converts a denial into a grant."""
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("r", ["agents:public:read"])
+    store.patch_role_scopes(
+        "r",
+        upsert=[
+            {"scope": "agents:*:read", "effect": "deny"},
+            {"scope": "agents:read", "effect": "allow"},
+        ],
+    )
+    entries = store.get_role_scope_entries("r")
+    assert {"scope": "agents:read", "effect": "deny"} in entries, entries
+    assert {"scope": "agents:read", "effect": "allow"} not in entries
+    # and reverse order (allow first) still keeps deny
+    store.set_role_scopes("r2", [])
+    store.patch_role_scopes(
+        "r2",
+        upsert=[
+            {"scope": "agents:read", "effect": "allow"},
+            {"scope": "agents:*:read", "effect": "deny"},
+        ],
+    )
+    assert {"scope": "agents:read", "effect": "deny"} in store.get_role_scope_entries("r2")
