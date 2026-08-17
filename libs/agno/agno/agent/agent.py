@@ -1736,7 +1736,7 @@ def get_agent_by_id(
         id: Agent entity_id.
         label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
-        user_id: If set, only resolve the agent when owned by this user.
+        user_id: If set, only resolve the agent when owned by this user or shared.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
 
@@ -1750,7 +1750,7 @@ def get_agent_by_id(
     from agno.utils.log import log_error
 
     try:
-        # Only resolve the agent if owned by this user.
+        # Only resolve the agent if owned by this user or shared.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 
@@ -1798,7 +1798,7 @@ def get_agents(
         db: Database to load agents from
         registry: Optional registry for rehydrating tools
         exclude_component_ids: Component IDs to exclude from results.
-        user_id: If set, only load agents owned by this user.
+        user_id: If set, only load agents owned by this user or shared.
     """
     from agno.utils.log import log_error
 

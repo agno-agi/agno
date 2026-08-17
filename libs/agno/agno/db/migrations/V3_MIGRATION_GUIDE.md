@@ -256,6 +256,28 @@ asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="evals"
 SQLite reverts need SQLite 3.35+ for `ALTER TABLE ... DROP COLUMN`; on older builds
 the revert logs and skips, matching `v2.5.6`'s behaviour.
 
+## Components: unowned rows are shared
+
+Components scope by `user_id` the same way, with one difference in what `NULL` means.
+An eval run is a private record, so an unowned one is invisible to scoped callers; a
+component is a building block other components reference, so an unowned one is
+**shared** — `get_component` returns it to every scoped caller, the way unowned
+knowledge content is readable by everyone. Without this, enabling `user_isolation` on
+an existing deployment would 404 every pre-isolation component for every non-admin,
+and team/workflow rehydration would silently drop shared members.
+
+Writes stay strict: a scoped `upsert_component` or `delete_component` never touches a
+row it does not own, and a scoped knowledge upsert whose content id collides with
+another user's row (or a shared one) fails rather than replacing it and taking
+ownership.
+
+The consequence, deliberate and shared with knowledge, learnings and service accounts:
+once `user_isolation` is on, a pre-isolation component or knowledge row (which has no
+owner) is **read-only to every non-admin** — readable and runnable, but only an admin
+(an unscoped caller) can edit or delete it. There is no backfill or claim step; a scoped
+write to an unowned row is refused (`403` for knowledge, learnings and service accounts).
+If those rows should belong to a user, stamp their `user_id` before enabling isolation.
+
 ## Breaking changes
 
 1. **Direct SQL against `agno_sessions.runs`** stops being a complete view of session

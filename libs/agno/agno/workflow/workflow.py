@@ -11248,7 +11248,7 @@ def get_workflow_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
-        user_id: If set, only resolve the workflow when owned by this user.
+        user_id: If set, only resolve the workflow when owned by this user or shared.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the workflow was not found.
 
@@ -11263,7 +11263,7 @@ def get_workflow_by_id(
     try:
         from agno.utils.component_scope import component_owner_scope
 
-        # Only resolve the workflow if owned by this user.
+        # Only resolve the workflow if owned by this user or shared.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 
@@ -11321,7 +11321,7 @@ def get_workflows(
     Args:
         db: Database to load workflows from
         registry: Optional registry for rehydrating tools
-        user_id: If set, only load workflows owned by this user.
+        user_id: If set, only load workflows owned by this user or shared.
     """
     workflows: List[Workflow] = []
     try:

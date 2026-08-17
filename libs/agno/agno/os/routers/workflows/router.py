@@ -1470,9 +1470,11 @@ def get_workflow_router(
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -2216,9 +2218,11 @@ def get_workflow_router(
                 user_id=get_scoped_user_id(request),
                 strict=False,
             )  # type: ignore[assignment]
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -2389,9 +2393,11 @@ def get_workflow_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if workflow is None:
                 raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):

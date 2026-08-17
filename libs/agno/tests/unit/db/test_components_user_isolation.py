@@ -6,9 +6,11 @@ needs no external services.
 """
 
 import pytest
+from fastapi import HTTPException
 
 from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
+from agno.os.routers.components.components import _validate_referenced_component_ownership
 
 
 @pytest.fixture
@@ -45,6 +47,16 @@ class TestScopedReads:
         assert {r["component_id"] for r in rows} == {"c_alice", "c_bob"}
         assert total == 2
 
+    def test_list_scoped_includes_shared(self, db):
+        """A shared component lists for every scoped caller, matching read-by-id."""
+        _make(db, "c_alice", "alice")
+        _make(db, "c_bob", "bob")
+        _make(db, "c_shared", None)
+
+        rows, total = db.list_components(user_id="alice")
+        assert {r["component_id"] for r in rows} == {"c_alice", "c_shared"}
+        assert total == 2
+
     def test_get_component_ownership(self, db):
         _make(db, "c_alice", "alice")
 
@@ -56,6 +68,13 @@ class TestScopedReads:
         _make(db, "c_alice", "alice")
 
         assert db.get_component("c_alice")["user_id"] == "alice"
+
+    def test_unowned_component_is_shared(self, db):
+        """A component with no owner predates isolation: every scoped caller can read it."""
+        _make(db, "c_shared", None)
+
+        assert db.get_component("c_shared", user_id="alice") is not None
+        assert db.get_component("c_shared") is not None
 
 
 class TestScopedWrites:
@@ -69,6 +88,14 @@ class TestScopedWrites:
         assert db.delete_component("c_alice", user_id="alice") is True
         assert db.get_component("c_alice") is None
         assert db.get_component("c_bob") is not None
+
+    def test_scoped_delete_spares_shared_component(self, db):
+        """A shared component is readable under scope, but only an unscoped caller removes it."""
+        _make(db, "c_shared", None)
+
+        assert db.delete_component("c_shared", user_id="alice") is False
+        assert db.get_component("c_shared") is not None
+        assert db.delete_component("c_shared") is True
 
     def test_upsert_scoped(self, db):
         _make(db, "c_alice", "alice")
@@ -139,6 +166,37 @@ class TestNestedRehydrationScope:
 
         team = get_team_by_id(db=db, id="bob_team", user_id=None)
         assert "alice_agent" in [getattr(m, "id", None) for m in (team.members or [])]
+
+
+class TestReferencedComponentOwnershipHelper:
+    """Referencing own or shared components is allowed; another user's id is refused. An
+    unresolvable id is allowed -- it may be a code-defined component."""
+
+    def _cfg(self, ref):
+        return {"steps": [{"name": "s", "agent_id": ref}]}
+
+    def test_own_reference_allowed(self, db):
+        _make(db, "c_alice", "alice")
+        _validate_referenced_component_ownership(db, self._cfg("c_alice"), None, "alice")
+
+    def test_shared_reference_allowed(self, db):
+        _make(db, "c_shared", None)
+        _validate_referenced_component_ownership(db, self._cfg("c_shared"), None, "alice")
+
+    def test_unscoped_skips_check(self, db):
+        _make(db, "c_bob", "bob")
+        # An admin (unscoped) caller may reference any component.
+        _validate_referenced_component_ownership(db, self._cfg("c_bob"), None, None)
+
+    def test_missing_reference_allowed(self, db):
+        # An id in no db row may be a code-defined component, so it is not refused.
+        _validate_referenced_component_ownership(db, self._cfg("ghost"), None, "alice")
+
+    def test_foreign_reference_refused(self, db):
+        _make(db, "c_bob", "bob")
+        with pytest.raises(HTTPException) as exc:
+            _validate_referenced_component_ownership(db, self._cfg("c_bob"), None, "alice")
+        assert exc.value.status_code == 404
 
 
 class TestNoCrossLeak:

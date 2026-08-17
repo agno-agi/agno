@@ -4096,7 +4096,7 @@ class SqliteDb(BaseDb):
         Args:
             component_id: The component ID.
             component_type: Optional type filter (agent|team|workflow).
-            user_id: If set, only return the component if owned by this user.
+            user_id: If set, return the component only if owned by this user or shared.
 
         Returns:
             Component dictionary or None if not found.
@@ -4114,7 +4114,8 @@ class SqliteDb(BaseDb):
                 if component_type is not None:
                     stmt = stmt.where(table.c.component_type == component_type.value)
                 if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
+                    # Unowned components are shared: visible to every scoped caller
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
@@ -4261,8 +4262,11 @@ class SqliteDb(BaseDb):
                 return False
 
             # Scope to owner: a non-owner must not delete the component or its configs/links.
-            if user_id is not None and self.get_component(component_id, user_id=user_id) is None:
-                return False
+            if user_id is not None:
+                # Reads treat unowned as shared, but delete stays strict: only the owner (or admin) removes it
+                component = self.get_component(component_id, user_id=user_id)
+                if component is None or component.get("user_id") != user_id:
+                    return False
 
             with self.Session() as sess, sess.begin():
                 if hard_delete:
@@ -4310,7 +4314,7 @@ class SqliteDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
-            user_id: If set, only list components owned by this user.
+            user_id: If set, list components owned by this user plus shared ones.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 
@@ -4328,7 +4332,8 @@ class SqliteDb(BaseDb):
                 if component_type is not None:
                     where_clauses.append(table.c.component_type == component_type.value)
                 if user_id is not None:
-                    where_clauses.append(table.c.user_id == user_id)
+                    # Unowned components are shared: they list for every scoped caller
+                    where_clauses.append(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:

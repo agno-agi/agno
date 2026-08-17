@@ -299,6 +299,8 @@ def attach_routes(
                     search_time_ms=round(time.time() * 1000 - start_time_ms, 2),
                 ),
             )
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error listing components: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -427,6 +429,9 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not modify them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
 
             update_kwargs: Dict[str, Any] = {"component_id": component_id}
             if body.name is not None:
@@ -462,7 +467,14 @@ def attach_routes(
         component_id: str = Path(description="Component ID"),
     ) -> None:
         try:
-            deleted = db.delete_component(component_id, user_id=get_scoped_user_id(request))
+            scoped_user_id = get_scoped_user_id(request)
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not delete them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot delete shared component")
+            deleted = db.delete_component(component_id, user_id=scoped_user_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
         except HTTPException:
@@ -512,14 +524,22 @@ def attach_routes(
     ) -> ComponentConfigResponse:
         try:
             scoped_user_id = get_scoped_user_id(request)
-            if db.get_component(component_id, user_id=scoped_user_id) is None:
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not modify them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
             # Resolve db from config if present
             config_data = body.config or {}
             config_data = _resolve_db_in_config(config_data, db, registry)
 
             _validate_referenced_component_ownership(
-                db, config_data, links=body.links, scoped_user_id=scoped_user_id, own_component_id=component_id
+                db,
+                config_data,
+                links=body.links,
+                scoped_user_id=scoped_user_id,
+                own_component_id=component_id,
             )
 
             config = db.upsert_config(
@@ -557,15 +577,23 @@ def attach_routes(
     ) -> ComponentConfigResponse:
         try:
             scoped_user_id = get_scoped_user_id(request)
-            if db.get_component(component_id, user_id=scoped_user_id) is None:
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not modify them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
             # Resolve db from config if present
             config_data = body.config
             if config_data is not None:
                 config_data = _resolve_db_in_config(config_data, db, registry)
 
             _validate_referenced_component_ownership(
-                db, config_data, links=body.links, scoped_user_id=scoped_user_id, own_component_id=component_id
+                db,
+                config_data,
+                links=body.links,
+                scoped_user_id=scoped_user_id,
+                own_component_id=component_id,
             )
 
             config = db.upsert_config(
@@ -653,8 +681,13 @@ def attach_routes(
         version: int = Path(description="Version number"),
     ) -> None:
         try:
-            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+            scoped_user_id = get_scoped_user_id(request)
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not delete them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot delete shared component")
             # Resolve version number
             deleted = db.delete_config(component_id, version=version)
             if not deleted:
@@ -683,8 +716,12 @@ def attach_routes(
     ) -> ComponentResponse:
         try:
             scoped_user_id = get_scoped_user_id(request)
-            if db.get_component(component_id, user_id=scoped_user_id) is None:
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not modify them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
             success = db.set_current_version(component_id, version=version)
             if not success:
                 raise HTTPException(

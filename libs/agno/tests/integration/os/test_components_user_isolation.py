@@ -20,6 +20,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from agno.db.base import ComponentType
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 
@@ -103,6 +104,23 @@ def alice_agent(client):
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["component_id"]
+
+
+@pytest.fixture
+def shared_component(shared_db):
+    """A component with no owner (predates isolation): readable under any scope, writable by none but admin.
+
+    Seeded straight into the DB because the create route always stamps the caller as owner.
+    """
+    shared_db.create_component_with_config(
+        component_id="shared_component",
+        component_type=ComponentType.AGENT,
+        name="Shared Component",
+        config={"name": "Shared Component"},
+        stage="published",
+        user_id=None,
+    )
+    return "shared_component"
 
 
 # --- Component isolation ---
@@ -201,6 +219,56 @@ class TestComponentIsolation:
         assert resp_a.status_code == 201
         assert resp_b.status_code == 201
         assert resp_a.json()["component_id"] != resp_b.json()["component_id"]
+
+
+# --- Shared (unowned) component writes ---
+
+
+class TestSharedComponentWrites:
+    """A shared component is readable under scope but not writable: 403, not 404.
+
+    A 404 would be pointless here -- the caller can already GET the component and see it
+    in the listing -- and diverges from the 403 every sibling domain returns for shared content.
+    """
+
+    def test_scoped_user_can_read_shared_component(self, client, shared_component):
+        resp = client.get(f"/components/{shared_component}", headers=auth_header(create_token("user-a")))
+        assert resp.status_code == 200
+
+    def test_scoped_user_cannot_patch_shared_component(self, client, shared_component):
+        resp = client.patch(
+            f"/components/{shared_component}", json={"name": "x"}, headers=auth_header(create_token("user-a"))
+        )
+        assert resp.status_code == 403
+        assert "shared" in resp.json()["detail"].lower()
+
+    def test_scoped_user_cannot_delete_shared_component(self, client, shared_component):
+        resp = client.delete(f"/components/{shared_component}", headers=auth_header(create_token("user-a")))
+        assert resp.status_code == 403
+
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("POST", "/components/{cid}/configs"),
+            ("PATCH", "/components/{cid}/configs/1"),
+            ("DELETE", "/components/{cid}/configs/1"),
+            ("POST", "/components/{cid}/configs/1/set-current"),
+        ],
+    )
+    def test_scoped_user_cannot_write_shared_component_configs(self, client, shared_component, method, path):
+        """Every config write route refuses a shared component before touching its configs."""
+        resp = client.request(
+            method, path.format(cid=shared_component), json={"config": {}}, headers=auth_header(create_token("user-a"))
+        )
+        assert resp.status_code == 403
+
+    def test_admin_can_modify_shared_component(self, client, shared_component):
+        """Admin (unscoped) writes are unchanged: no 403."""
+        resp = client.patch(
+            f"/components/{shared_component}", json={"name": "renamed"}, headers=auth_header(create_admin_token())
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "renamed"
 
 
 # --- Component resolution on the run routes ---
@@ -453,6 +521,42 @@ class TestReferencedComponentOwnership:
             {"name": "Alice Team", "members": [{"type": "agent", "agent_id": alice_agent}]},
         )
         assert resp.status_code == 201
+
+    def test_can_reference_shared_component(self, client, shared_component):
+        """Referencing a shared (unowned) component must still succeed."""
+        resp = create_component(
+            client,
+            create_token("user-b"),
+            "Bob Uses Shared",
+            "workflow",
+            {"name": "Bob Uses Shared", "steps": [{"name": "s", "agent_id": shared_component}]},
+        )
+        assert resp.status_code == 201
+
+    def test_foreign_reference_refused_unresolvable_reference_allowed(self, client, alice_agent):
+        """Another user's component can't be referenced (404). An id that resolves to no DB row
+        is allowed -- it may be a shared, code-defined component."""
+        token = create_token("user-b")
+        missing = client.post(
+            "/components",
+            json={
+                "name": "Bob Missing Ref",
+                "component_type": "workflow",
+                "config": {"name": "Bob Missing Ref", "steps": [{"name": "s", "agent_id": "no-such-agent"}]},
+            },
+            headers=auth_header(token),
+        )
+        foreign = client.post(
+            "/components",
+            json={
+                "name": "Bob Foreign Ref",
+                "component_type": "workflow",
+                "config": {"name": "Bob Foreign Ref", "steps": [{"name": "s", "agent_id": alice_agent}]},
+            },
+            headers=auth_header(token),
+        )
+        assert missing.status_code == 201  # unresolvable id may be code-defined -> allowed
+        assert foreign.status_code == 404  # another user's component -> refused
 
 
 # --- Isolation disabled ---
