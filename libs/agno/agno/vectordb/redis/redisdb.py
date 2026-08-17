@@ -490,7 +490,9 @@ class RedisDB(VectorDb):
         """Async version of insert method."""
         self._validate_user_id(user_id)
         # See ``insert`` for why a scoped write on a pre-v3 index raises
-        self._require_owner_field(user_id)
+        # Inspects the live schema over the sync client, so it goes to a worker thread
+        # rather than stalling the event loop on a cold cache.
+        await asyncio.to_thread(self._require_owner_field, user_id)
         try:
             async_index = await self._get_async_index()
             parsed_documents = []
@@ -567,7 +569,9 @@ class RedisDB(VectorDb):
         bucket, then insert new docs.
         """
         self._validate_user_id(user_id)
-        scope_to_owner = self._require_owner_field(user_id)
+        # Inspects the live schema over the sync client, so it goes to a worker thread
+        # rather than stalling the event loop on a cold cache.
+        scope_to_owner = await asyncio.to_thread(self._require_owner_field, user_id)
         try:
             async_index = await self._get_async_index()
 

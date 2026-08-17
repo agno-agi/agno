@@ -182,3 +182,62 @@ class TestWhereClauseHelper:
         clause = lance_db._user_scope_where_clause("o'reilly")
         # Doubled single-quote — standard SQL escaping.
         assert "user_id = 'o''reilly'" in clause
+
+
+class TestAsyncIsolation:
+    """The async path must scope exactly as the sync one does.
+
+    ``async_insert``/``async_upsert``/``async_search`` are separate implementations rather
+    than thin wrappers, so a scoping bug can live in one and not the other.
+    """
+
+    @pytest.fixture
+    def async_corpus(self, lance_db):
+        lance_db.insert(content_hash="alice-doc", documents=_alice_docs(), user_id="alice")
+        lance_db.insert(content_hash="bob-doc", documents=_bob_docs(), user_id="bob")
+        lance_db.insert(content_hash="shared-doc", documents=_shared_docs(), user_id=None)
+        return lance_db
+
+    @pytest.mark.asyncio
+    async def test_async_search_returns_own_and_shared_never_another_owner(self, async_corpus):
+        names = {d.name for d in await async_corpus.async_search(query="salary", limit=10, user_id="alice")}
+
+        assert "alice-salary" in names
+        assert "bob-salary" not in names
+
+    @pytest.mark.asyncio
+    async def test_async_search_sees_the_shared_bucket(self, async_corpus):
+        names = {d.name for d in await async_corpus.async_search(query="anything", limit=10, user_id="alice")}
+
+        assert "company-holidays" in names
+
+    @pytest.mark.asyncio
+    async def test_async_unscoped_search_spans_every_owner(self, async_corpus):
+        names = {d.name for d in await async_corpus.async_search(query="salary", limit=10, user_id=None)}
+
+        assert {"alice-salary", "bob-salary"} <= names
+
+    @pytest.mark.asyncio
+    async def test_async_insert_stamps_the_owner(self, lance_db):
+        await lance_db.async_insert(content_hash="alice-doc", documents=_alice_docs(), user_id="alice")
+        await lance_db.async_insert(content_hash="bob-doc", documents=_bob_docs(), user_id="bob")
+
+        names = {d.name for d in lance_db.search(query="salary", limit=10, user_id="alice")}
+        assert "alice-salary" in names
+        assert "bob-salary" not in names
+
+    @pytest.mark.asyncio
+    async def test_async_insert_with_no_owner_is_shared(self, lance_db):
+        await lance_db.async_insert(content_hash="shared-doc", documents=_shared_docs(), user_id=None)
+
+        names = {d.name for d in lance_db.search(query="anything", limit=10, user_id="alice")}
+        assert "company-holidays" in names
+
+    @pytest.mark.asyncio
+    async def test_async_upsert_does_not_disturb_another_owner(self, lance_db):
+        await lance_db.async_upsert(content_hash="h1", documents=_alice_docs(), user_id="alice")
+        await lance_db.async_upsert(content_hash="h1", documents=_bob_docs(), user_id="bob")
+        # Re-upserting alice's hash must leave bob's row alone
+        await lance_db.async_upsert(content_hash="h1", documents=_alice_docs(), user_id="alice")
+
+        assert {d.name for d in lance_db.search(query="salary", limit=10, user_id="bob")} >= {"bob-salary"}

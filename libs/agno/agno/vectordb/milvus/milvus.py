@@ -783,8 +783,9 @@ class Milvus(VectorDb):
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
         # See the matching comment in ``upsert``.
-        if self.content_hash_exists(content_hash, user_id=user_id):
-            self._delete_by_content_hash(content_hash, user_id=user_id)
+        # Both hit the sync client; off the loop so a slow server cannot stall it.
+        if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported

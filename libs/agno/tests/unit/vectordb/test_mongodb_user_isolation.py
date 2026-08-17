@@ -21,15 +21,33 @@ USER_ID_FIELD = "user_id"
 
 
 def _match(doc: Dict[str, Any], query: Dict[str, Any]) -> bool:
-    """Minimal MongoDB query matcher: top-level equality plus ``$or``."""
+    """Minimal MongoDB query matcher: top-level equality plus ``$or``/``$and``/``$regex``."""
+    import re as _re
+
     for key, cond in query.items():
         if key == "$or":
             if not any(_match(doc, sub) for sub in cond):
                 return False
             continue
+        if key == "$and":
+            if not all(_match(doc, sub) for sub in cond):
+                return False
+            continue
+        if isinstance(cond, dict) and "$regex" in cond:
+            flags = _re.I if "i" in cond.get("$options", "") else 0
+            if not _re.search(cond["$regex"], str(doc.get(key, "")), flags):
+                return False
+            continue
         if doc.get(key) != cond:
             return False
     return True
+
+
+class _FakeCursor(list):
+    """A list that also answers ``.limit()``, the one cursor method the adapter chains."""
+
+    def limit(self, n):
+        return _FakeCursor(self[:n])
 
 
 def _set_dotted(doc: Dict[str, Any], dotted_key: str, value: Any) -> None:
@@ -81,7 +99,9 @@ class _FakeCollection:
 
     def find(self, flt=None, projection=None):
         flt = flt or {}
-        return [dict(d) for d in self.docs if _match(d, flt)]
+        matched = [dict(d) for d in self.docs if _match(d, flt)]
+        # pymongo returns a cursor: iterable, and .limit() chains off it
+        return _FakeCursor(matched)
 
     def find_one(self, flt=None, projection=None):
         flt = flt or {}
@@ -337,6 +357,47 @@ class TestSearchScope:
         sent_filter = _vector_search_filter(search_corpus._get_collection().last_pipeline)
         assert sent_filter == "NO_FILTER_KEY"
         assert {"alice-salary", "bob-salary", "company-holidays"} <= names
+
+
+class TestKeywordSearchScope:
+    """``keyword_search`` is public, so it carries the owner scope itself.
+
+    A caller reaching it directly rather than through ``search()`` would otherwise read every
+    owner's chunks — the method took no user_id at all.
+    """
+
+    @pytest.fixture
+    def search_corpus(self, mongo_db):
+        mongo_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
+        mongo_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
+        mongo_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
+        return mongo_db
+
+    def test_keyword_search_accepts_a_user_id(self):
+        import inspect
+
+        assert "user_id" in inspect.signature(MongoVectorDb.keyword_search).parameters
+
+    def test_scoped_keyword_search_never_returns_another_owner(self, search_corpus):
+        names = {d.name for d in search_corpus.keyword_search("salary", limit=10, user_id="alice")}
+
+        assert "alice-salary" in names
+        assert "bob-salary" not in names
+
+    def test_scoped_keyword_search_still_sees_shared(self, search_corpus):
+        names = {d.name for d in search_corpus.keyword_search("office", limit=10, user_id="alice")}
+
+        assert "company-holidays" in names
+
+    def test_unscoped_keyword_search_sees_every_owner(self, search_corpus):
+        names = {d.name for d in search_corpus.keyword_search("salary", limit=10, user_id=None)}
+
+        assert {"alice-salary", "bob-salary"} <= names
+
+    def test_vector_search_accepts_a_user_id(self):
+        import inspect
+
+        assert "user_id" in inspect.signature(MongoVectorDb.vector_search).parameters
 
 
 class TestUpsertDedupScope:
