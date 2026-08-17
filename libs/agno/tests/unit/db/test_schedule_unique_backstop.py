@@ -315,4 +315,61 @@ class TestRouterMapsRaceTo409:
         ):
             resp = self._client(mock_db).patch(f"/schedules/{existing['id']}", json={"name": "taken-name"})
         assert resp.status_code == 409
+
+
+class TestUpdateScheduleReRaisesOnlyUniqueViolations:
+    """update_schedule swallows most DB errors to None (callers rely on that), but
+    must RE-RAISE a unique violation so the router's rename mapping is reachable.
+    Without this the router except is dead code and a rename collision returns 500."""
+
+    def test_adapter_reraises_unique_violation(self, db):
+        db.create_schedule(_schedule_dict("taken", user_id="alice"))
+        s = db.create_schedule(_schedule_dict("mine", user_id="alice"))
+        with pytest.raises(Exception, match="(?i)unique"):
+            db.update_schedule(s["id"], user_id="alice", name="taken")
+
+    def test_adapter_swallows_other_errors_to_none(self, db, monkeypatch):
+        s = db.create_schedule(_schedule_dict("mine", user_id="alice"))
+
+        # A non-integrity failure inside the write must still return None, not raise,
+        # so resilient callers (the executor's enabled=False) are unaffected.
+        def _boom(*a, **k):
+            raise RuntimeError("transient db blip")
+
+        monkeypatch.setattr(db, "get_schedule", _boom)
+        assert db.update_schedule(s["id"], user_id="alice", enabled=False) is None
+
+
+class TestRenameCollisionEndToEnd:
+    """Real adapter (not a mock) proves the full path the reported bug broke:
+    update_schedule used to swallow the IntegrityError to None, so the router
+    fell through to 500. It must now return 409."""
+
+    def _client(self, db):
+        app = FastAPI()
+        app.include_router(get_schedule_router(os_db=db, settings=AgnoAPISettings()))
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_rename_onto_taken_name_returns_409_not_500(self, db):
+        # Two unowned schedules (isolation off): the router pre-check scopes to None but
+        # a rename onto the other's name still hits the DB unique index.
+        db.create_schedule(_schedule_dict("taken"))
+        mine = db.create_schedule(_schedule_dict("mine"))
+
+        with (
+            patch("agno.scheduler.cron._require_pytz"),
+            patch("agno.scheduler.cron._require_croniter"),
+        ):
+            resp = self._client(db).patch(f"/schedules/{mine['id']}", json={"name": "taken"})
+        assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
+
+    def test_normal_rename_still_succeeds(self, db):
+        mine = db.create_schedule(_schedule_dict("mine"))
+        with (
+            patch("agno.scheduler.cron._require_pytz"),
+            patch("agno.scheduler.cron._require_croniter"),
+        ):
+            resp = self._client(db).patch(f"/schedules/{mine['id']}", json={"name": "renamed"})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "renamed"
