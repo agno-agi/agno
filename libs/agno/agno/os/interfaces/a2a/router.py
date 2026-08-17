@@ -313,8 +313,12 @@ def attach_routes(
             )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
-        # in cancel-before-start scenarios), so we always return success.
-        await agent.acancel_run(run_id=task_id)
+        # in cancel-before-start scenarios), so we always return success. The shared
+        # service also tombstones a still-queued durable ticket first (parity with the
+        # REST cancel routes) - intent alone does not stop a job no task is executing yet.
+        from agno.os.services.runs import cancel_component_run
+
+        await cancel_component_run(agent, task_id)
 
         context_id = params.get("contextId", str(uuid4()))
         canceled_task = Task(
@@ -616,8 +620,12 @@ def attach_routes(
             )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
-        # in cancel-before-start scenarios), so we always return success.
-        await team.acancel_run(run_id=task_id)
+        # in cancel-before-start scenarios), so we always return success. The shared
+        # service also tombstones a still-queued durable ticket first (parity with the
+        # REST cancel routes) - intent alone does not stop a job no task is executing yet.
+        from agno.os.services.runs import cancel_component_run
+
+        await cancel_component_run(team, task_id)
 
         context_id = params.get("contextId", str(uuid4()))
         canceled_task = Task(

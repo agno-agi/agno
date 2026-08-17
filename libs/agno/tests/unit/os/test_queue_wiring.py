@@ -5,6 +5,7 @@ import pytest
 fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
 
 import agno.os.event_streams as event_streams_module  # noqa: E402
+import agno.run.cancel as cancel_module  # noqa: E402
 from agno.job_queue.config import QueueConfig, RedisCoordination  # noqa: E402
 from agno.os.event_streams import (  # noqa: E402
     InMemoryEventStream,
@@ -23,15 +24,31 @@ from agno.run.concurrency import get_background_max_concurrency, set_background_
 
 @pytest.fixture(autouse=True)
 def reset_globals():
-    original_manager = get_cancellation_manager()
+    """Reset transports to pristine process defaults between tests.
+
+    Deliberately writes the module globals instead of calling the public
+    setters: the setters mark the backend explicitly-set, and these tests
+    exercise exactly the explicit-vs-default distinction.
+    """
+    original_manager = cancel_module._cancellation_manager
     original_stream = event_streams_module._event_stream
-    set_cancellation_manager(InMemoryRunCancellationManager())
+    # getattr with defaults: keeps this fixture importable against source
+    # trees where the explicit-set flags do not exist (module attribute
+    # assignment below is harmless there), so the tests fail behaviorally
+    # rather than erroring at setup.
+    original_manager_explicit = getattr(cancel_module, "_cancellation_manager_explicitly_set", False)
+    original_stream_explicit = getattr(event_streams_module, "_event_stream_explicitly_set", False)
+    cancel_module._cancellation_manager = InMemoryRunCancellationManager()
+    cancel_module._cancellation_manager_explicitly_set = False
     event_streams_module._event_stream = None
+    event_streams_module._event_stream_explicitly_set = False
     try:
         yield
     finally:
-        set_cancellation_manager(original_manager)
+        cancel_module._cancellation_manager = original_manager
+        cancel_module._cancellation_manager_explicitly_set = original_manager_explicit
         event_streams_module._event_stream = original_stream
+        event_streams_module._event_stream_explicitly_set = original_stream_explicit
         set_background_max_concurrency(None)
 
 
@@ -94,6 +111,33 @@ class TestApplyQueueConfig:
         apply_queue_config(QueueConfig(redis=make_coordination()))
         assert get_event_stream() is custom
 
+    def test_explicit_in_memory_stream_not_clobbered(self):
+        """An explicitly set in-memory stream (or subclass, e.g. a test
+        double) is indistinguishable by TYPE from the process default - only
+        the explicit-set flag can protect it from queue.redis wiring."""
+
+        class RecordingStream(InMemoryEventStream):
+            pass
+
+        explicit = RecordingStream()
+        set_event_stream(explicit)
+        apply_queue_config(QueueConfig(redis=make_coordination()))
+        assert get_event_stream() is explicit
+
+    def test_explicit_in_memory_cancellation_manager_not_clobbered(self):
+        explicit = InMemoryRunCancellationManager()
+        set_cancellation_manager(explicit)
+        apply_queue_config(QueueConfig(redis=make_coordination()))
+        assert get_cancellation_manager() is explicit
+
+    def test_lazy_default_stream_is_still_replaced(self):
+        """Touching the stream via get_event_stream() before wiring must not
+        count as explicit configuration - the lazily created default is still
+        the default."""
+        assert isinstance(get_event_stream(), InMemoryEventStream)
+        apply_queue_config(QueueConfig(redis=make_coordination()))
+        assert isinstance(get_event_stream(), RedisEventStream)
+
 
 class TestSyncStoreAdapter:
     @pytest.mark.asyncio
@@ -133,7 +177,7 @@ class TestSyncStoreAdapter:
             def acquire_sweep(self, job_id, worker_id, lock_grace_seconds=60):
                 return False
 
-            def fail_swept_job(self, job_id, worker_id, error="worker lost"):
+            def settle_swept_job(self, job_id, worker_id, status, error=None):
                 return True
 
             def get_job(self, job_id):
@@ -214,7 +258,7 @@ class TestRedisClusterRejected:
             def settle_paused_job(self, job_id, status, error=None): ...
             def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20): ...
             def acquire_sweep(self, job_id, worker_id, lock_grace_seconds=60): ...
-            def fail_swept_job(self, job_id, worker_id, error="worker lost"): ...
+            def settle_swept_job(self, job_id, worker_id, status, error=None): ...
             def get_job(self, job_id): ...
             def count_queued_jobs(self): ...
 

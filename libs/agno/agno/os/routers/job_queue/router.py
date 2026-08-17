@@ -57,7 +57,12 @@ async def _require_queue_admin(request: Request) -> None:
 def _get_store(request: Request):
     worker = getattr(request.app.state, "queue_worker", None)
     if worker is None:
-        raise HTTPException(status_code=404, detail="Durable job queue is not enabled")
+        # 503, not 404: "no active queue worker" is a service-availability
+        # condition (queue not configured, or the worker not running on this
+        # replica), not a missing resource - and the requeue path already
+        # answered 503 for the same condition, so one operational state got
+        # two different statuses depending on the endpoint.
+        raise HTTPException(status_code=503, detail="Durable job queue is not enabled on this replica")
     return worker.store
 
 
@@ -71,6 +76,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
             401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
             404: {"description": "Not Found", "model": NotFoundResponse},
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+            503: {"description": "Durable job queue not enabled on this replica"},
         },
     )
 

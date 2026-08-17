@@ -172,7 +172,7 @@ class TestRetryAndSweep:
 
         store._jobs["r1"]["locked_at"] -= 1000
         assert await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
-        assert await store.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert await store.settle_swept_job("r1", "sweeper", "failed", "worker lost")
         job = await store.get_job("r1")
         assert job["status"] == "failed"
         assert job["error"] == "worker lost"
@@ -195,14 +195,16 @@ class TestRetryAndSweep:
         await store.claim_job("w1")
         store._jobs["r1"]["locked_at"] -= 1000
         assert await store.acquire_sweep("r1", "sweeper-a", lock_grace_seconds=60)
-        assert not await store.fail_swept_job("r1", "sweeper-b"), "foreign sweeper must not fail an owned job"
+        assert not await store.settle_swept_job("r1", "sweeper-b", "failed"), (
+            "foreign sweeper must not fail an owned job"
+        )
         # Freshly acquired: not re-sweepable until the sweep lock goes stale
         assert await store.sweep_exhausted_jobs(lock_grace_seconds=60) == []
         store._jobs["r1"]["locked_at"] -= 1000  # sweeper-a crashed mid-protocol
         swept = await store.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"], "interrupted sweep must be resumable"
         assert await store.acquire_sweep("r1", "sweeper-b", lock_grace_seconds=60)
-        assert await store.fail_swept_job("r1", "sweeper-b")
+        assert await store.settle_swept_job("r1", "sweeper-b", "failed")
 
 
 class TestCancelAndCounts:
@@ -401,7 +403,7 @@ class TestContinueJob:
         swept = await store.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
         assert await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
-        assert await store.fail_swept_job("r1", "sweeper")
+        assert await store.settle_swept_job("r1", "sweeper", "failed")
         assert await store.requeue_job("r1")
         redriven = await store.claim_job("w2")
         assert redriven["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"

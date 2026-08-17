@@ -4232,12 +4232,7 @@ class PostgresDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(
-                    select(table).where(
-                        table.c.component_id == component_id,
-                        table.c.deleted_at.is_(None),
-                    )
-                ).fetchone()
+                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
                 if existing is None:
                     # Create new component
                     if component_type is None:
@@ -4373,6 +4368,7 @@ class PostgresDb(BaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -4382,6 +4378,8 @@ class PostgresDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            name: Exact-match filter on the component name; the returned total
+                counts the filtered set.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -4400,6 +4398,8 @@ class PostgresDb(BaseDb):
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:
                     where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
+                if name is not None:
+                    where_clauses.append(table.c.name == name)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(table)
@@ -6355,7 +6355,7 @@ class PostgresDb(BaseDb):
 
         These are NOT claimable (attempt >= max_attempts): the worker persists
         a terminal error on the run row first, then calls
-        fail_swept_job — ordering + idempotence instead of cross-store
+        settle_swept_job — ordering + idempotence instead of cross-store
         atomicity."""
         try:
             table = self._get_table(table_type="jobs")
@@ -6406,11 +6406,12 @@ class PostgresDb(BaseDb):
             log_error(f"Job queue store: sweep-lock acquisition failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
-    def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Replaces the old staleness
-        recheck - after acquire_sweep refreshed locked_at, staleness can no
-        longer serve as the fence."""
+    def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the sweeper - see the in-memory store's
+        docstring: the sweep reconciles the ticket with what the run row
+        says (completed/cancelled/paused/failed), never blind-fails it."""
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
@@ -6425,7 +6426,7 @@ class PostgresDb(BaseDb):
                         table.c.locked_by == worker_id,
                     )
                     .values(
-                        status="failed",
+                        status=status,
                         error=error,
                         locked_by=None,
                         locked_at=None,
@@ -6435,10 +6436,19 @@ class PostgresDb(BaseDb):
                 )
                 return (result.rowcount or 0) > 0
         except Exception as e:
-            log_error(f"Job queue store: swept-job terminalization failed for job {job_id} (worker={worker_id}): {e}")
+            log_error(f"Job queue store: swept-job settle failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
-    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket - sync twin of the async adapter's get_job; see
+        that docstring for the strict/lenient contract."""
+        if strict:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+                return dict(row._mapping) if row is not None else None
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
@@ -6562,8 +6572,19 @@ class PostgresDb(BaseDb):
                 "completed_at": None,
                 "updated_at": now,
             }
-            sess.execute(update(table).where(table.c.id == job_id).values(**values))
+            # RETURNING resolves the DB-clock stamps to concrete ints: the
+            # timestamp values are SQL expressions (_db_epoch), and copying
+            # them into the returned dict verbatim would hand callers
+            # unserializable Cast objects where Redis/InMemory return ints.
+            stamped = sess.execute(
+                update(table)
+                .where(table.c.id == job_id)
+                .values(**values)
+                .returning(table.c.available_at, table.c.updated_at)
+            ).fetchone()
             job.update(values)
+            if stamped is not None:
+                job["available_at"], job["updated_at"] = stamped[0], stamped[1]
             return {"outcome": "queued", "job": job}
 
     def queue_stats(self) -> Dict[str, Any]:

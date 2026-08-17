@@ -168,8 +168,8 @@ class TestPostgresQueueContract:
         await make_stale(db, "r1")
         assert await db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
         assert (await db.get_job("r1"))["locked_by"] == "sweeper"
-        assert not await db.fail_swept_job("r1", "someone-else"), "fail is ownership-keyed"
-        assert await db.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert not await db.settle_swept_job("r1", "someone-else", "failed"), "fail is ownership-keyed"
+        assert await db.settle_swept_job("r1", "sweeper", "failed", "worker lost")
         assert (await db.get_job("r1"))["status"] == "failed"
 
     @pytest.mark.asyncio
@@ -207,7 +207,7 @@ class TestPostgresQueueContract:
         swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
         assert await db.acquire_sweep("r1", "sweeper-b", lock_grace_seconds=60)
-        assert await db.fail_swept_job("r1", "sweeper-b")
+        assert await db.settle_swept_job("r1", "sweeper-b", "failed")
         assert (await db.get_job("r1"))["status"] == "failed"
 
     @pytest.mark.asyncio
@@ -305,7 +305,7 @@ class TestContinuationCAS:
         swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
         assert await db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
-        assert await db.fail_swept_job("r1", "sweeper")
+        assert await db.settle_swept_job("r1", "sweeper", "failed")
 
         assert await db.requeue_job("r1")
         redriven = await db.claim_job("w2")

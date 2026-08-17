@@ -23,7 +23,13 @@ from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -38,10 +44,11 @@ from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
-    asettle_paused_ticket,
     aticket_poll_fallback,
+    ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    ticket_status_to_api,
     validate_seam_input,
 )
 from agno.os.middleware.user_scope import (
@@ -62,7 +69,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
-    acomplete_continue_stream,
+    afinalize_continue_stream,
     amark_continue_stream_running,
     classify_upload_file,
     find_factory_by_id,
@@ -76,6 +83,7 @@ from agno.os.utils import (
     queued_run_tail_streamer,
     replayed_payload_to_sse,
     resolve_agent,
+    sse_error_frame,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
@@ -186,6 +194,7 @@ async def agent_resumable_response_streamer(
         kwargs["auth_token"] = auth_token
 
     try:
+        warned_not_resumable = False
         async for sse_data in agent.arun(
             input=message,
             session_id=session_id,
@@ -199,7 +208,19 @@ async def agent_resumable_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            if isinstance(sse_data, str):
+                yield sse_data
+            else:
+                # Agents without background support (e.g. external adapters)
+                # ignore background=True and yield raw events: format them so
+                # the stream works, though the run is not resumable.
+                if not warned_not_resumable:
+                    warned_not_resumable = True
+                    log_debug(
+                        f"Agent '{getattr(agent, 'id', None)}' does not support background execution; "
+                        "streaming inline (run is not resumable)."
+                    )
+                yield format_sse_event(sse_data)
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -284,13 +305,26 @@ async def agent_continue_response_streamer(
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
             if _sync_stream:
-                _final = await acomplete_continue_stream(agent, run_id, session_id)
-                # Inline continue of a DURABLE paused run: terminalize the
-                # queue ticket too (paused tickets are retention-exempt and
-                # would otherwise say paused forever). CAS no-op for runs
-                # that never rode the queue or whose continuation is owned
-                # by a worker.
-                await asettle_paused_ticket(queue_worker, run_id, _final)
+                # Stream close + paused-ticket settle as one cancellation-
+                # proof unit: a client disconnect cancels this generator,
+                # and an interrupted finalizer abandoned the stream view as
+                # RUNNING with no producer and left the ticket paused.
+                # Under cancellation the final status is KNOWN (the core
+                # cancels the inline run and persists cancelled from its own
+                # detached task) - passing it avoids racing that persist
+                # with a fresh session read, which could stamp a stale
+                # paused/running row's status onto the stream and ticket.
+                import sys
+
+                _exc = sys.exc_info()[0]
+                _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+                await afinalize_continue_stream(
+                    agent,
+                    run_id,
+                    session_id,
+                    queue_worker=queue_worker,
+                    final_status=RunStatus.cancelled if _cancelled else None,
+                )
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -411,7 +445,7 @@ async def _resume_stream_generator(
         # the only honest signal is an SSE error frame (never a silent close,
         # and never a quiet fall-through to the DB path)
         log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
-        yield f'event: error\ndata: {{"event": "error", "error": "event stream unavailable: {str(e)[:200]}"}}\n\n'
+        yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
     if buffer_status is None:
@@ -522,9 +556,7 @@ async def _resume_stream_generator(
             # error frame so the client can distinguish and reconnect
             log_error(f"Resume tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
@@ -619,7 +651,10 @@ def get_agent_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
-        version: Optional[str] = Form(None, description="Agent version to use for this run"),
+        # int like teams/workflows: component versions are integers, and the
+        # old str declaration's bare int(version) cast 500ed on non-numeric
+        # input where the siblings answer a clean 422
+        version: Optional[int] = Form(None, description="Agent version to use for this run"),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
@@ -664,7 +699,7 @@ def get_agent_router(
             os.agents,
             os.db,
             registry,
-            version=int(version) if version else None,
+            version=version,
             request=request,
             user_id=user_id,
             session_id=session_id,
@@ -733,6 +768,15 @@ def get_agent_router(
         if background:
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
+            # The db requirement gates BOTH shapes here: the non-stream
+            # branch always 400ed, while the stream branch used to enter the
+            # detached streamer and let arun(background=True) raise - the
+            # same misconfiguration answered 200 + SSE error frame,
+            # indistinguishable from a runtime failure.
+            if not getattr(agent, "db", None):
+                raise HTTPException(
+                    status_code=400, detail="Background execution requires a database to be configured on the agent"
+                )
 
             if stream:
                 # Durable queued streaming: the queue row is the acceptance,
@@ -746,7 +790,6 @@ def get_agent_router(
                     queue_worker is not None
                     and getattr(agent, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
-                    and not isinstance(agent, RemoteAgent)
                     and version is None
                     and not (base64_images or base64_audios or base64_videos or input_files)
                     and any(
@@ -755,14 +798,14 @@ def get_agent_router(
                     )
                 )
                 if stream_queueable:
-                    # 202/stream-accept must honor input_schema like the inline path
+                    # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(agent, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.os.event_streams import get_event_stream as _ges
                     from agno.run.base import RunStatus as _RS
 
                     queued_run_id = str(uuid4())
-                    queued_session_id = session_id or str(uuid4())
+                    queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="agent",
@@ -786,6 +829,7 @@ def get_agent_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
+                        ensure_duplicate_matches_component(existing, "agent", job["component_id"])
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -849,12 +893,9 @@ def get_agent_router(
                     media_type="text/event-stream",
                 )
 
-            # background=True, stream=False: return 202 immediately with run metadata
-            if not getattr(agent, "db", None):
-                raise HTTPException(
-                    status_code=400, detail="Background execution requires a database to be configured on the agent"
-                )
-
+            # background=True, stream=False: return 202 immediately with run
+            # metadata (the db requirement was enforced at the top of the
+            # background branch, for both shapes)
             # Durable queue path: acceptance is a committed row; whichever
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
@@ -870,7 +911,6 @@ def get_agent_router(
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
-                and not isinstance(agent, RemoteAgent)
                 and agent_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
@@ -879,10 +919,10 @@ def get_agent_router(
                 # than 400ing a submission that worked before durable mode
                 and not (base64_images or base64_audios or base64_videos or input_files)
             ):
-                # 202 must honor input_schema exactly like the inline path 422s
+                # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(agent, message)
                 queued_run_id = str(uuid4())
-                queued_session_id = session_id or str(uuid4())
+                queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="agent",
@@ -905,14 +945,16 @@ def get_agent_router(
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
+                    ensure_duplicate_matches_component(existing, "agent", job["component_id"])
                     return JSONResponse(
                         status_code=202,
                         content={
                             "run_id": existing["id"],
                             "session_id": existing["session_id"],
-                            "status": "PENDING"
-                            if existing["status"] in ("queued", "running")
-                            else existing["status"].upper(),
+                            # Same vocabulary as the run poll: a duplicate of a
+                            # failed run says ERROR (not an invented "FAILED"),
+                            # and a running one says RUNNING (not PENDING).
+                            "status": ticket_status_to_api(existing["status"]) or existing["status"].upper(),
                         },
                     )
                 if enqueue_result["reason"] == "duplicate":
@@ -932,37 +974,57 @@ def get_agent_router(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
                 )
-            elif queue_worker is not None and (
-                not payload_is_queueable(queued_payload)
-                or base64_images
-                or base64_audios
-                or base64_videos
-                or input_files
-            ):
-                # Media-only bypasses were silent: the payload is JSON-clean
-                # but uploads cannot ride the queue yet, and the run silently
-                # lost durability. Same warning either way.
-                log_warning(
-                    "Background run bypasses the durable queue: the submission carries media "
-                    "uploads or values plain JSON cannot store (e.g. output_schema classes). "
-                    "Executing on the accepting replica instead - bounded and observable, but NOT durable."
-                )
+            elif queue_worker is not None:
+                # EVERY bypass reason warns - a client gets its 202 either way
+                # and must never silently believe acceptance was durable.
+                if (
+                    not payload_is_queueable(queued_payload)
+                    or base64_images
+                    or base64_audios
+                    or base64_videos
+                    or input_files
+                ):
+                    log_warning(
+                        "Background run bypasses the durable queue: the submission carries media "
+                        "uploads or values plain JSON cannot store (e.g. output_schema classes). "
+                        "Executing on the accepting replica instead - bounded and observable, but NOT durable."
+                    )
+                else:
+                    # Off-registry, factory-backed, or version-pinned: the
+                    # worker resolves from the registry, so these cannot ride
+                    # the queue - previously this dropped to the non-durable
+                    # path with no log line at all.
+                    log_warning(
+                        "Background run bypasses the durable queue: the agent is not a plain "
+                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
+                        "resolution differs from the worker's registry instance). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
 
-            run_response = cast(
-                RunOutput,
-                await agent.arun(  # type: ignore[misc]
-                    input=message,
-                    session_id=session_id,
-                    user_id=user_id,
-                    images=base64_images if base64_images else None,
-                    audio=base64_audios if base64_audios else None,
-                    videos=base64_videos if base64_videos else None,
-                    files=input_files if input_files else None,
-                    stream=False,
-                    background=True,
-                    **kwargs,
-                ),
-            )
+            # Same input-error contract as the inline path: schema violations
+            # are refused up front (the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500), and guardrail
+            # refusals from the dispatch answer 400.
+            validate_seam_input(agent, message)
+            try:
+                run_response = cast(
+                    RunOutput,
+                    await agent.arun(  # type: ignore[misc]
+                        input=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=input_files if input_files else None,
+                        stream=False,
+                        background=True,
+                        **kwargs,
+                    ),
+                )
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
                 content={
@@ -994,6 +1056,13 @@ def get_agent_router(
             if auth_token and isinstance(agent, RemoteAgent):
                 kwargs["auth_token"] = auth_token
 
+            # Schema violations are refused up front with the seams' shared
+            # check: the dispatch's own schema ValueError is
+            # indistinguishable from an internal one (e.g. storage code), so
+            # catching ValueError here would misclassify server failures as
+            # client errors and echo their internals - internal failures
+            # keep their generic 500 instead.
+            validate_seam_input(agent, message)
             try:
                 run_response = cast(
                     RunOutput,
@@ -1074,7 +1143,7 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
             )  # type: ignore[assignment]
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1141,6 +1210,14 @@ def get_agent_router(
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Agent not found", "model": NotFoundResponse},
+            409: {
+                "description": (
+                    "Continuation conflict: a durable queue ticket owns this run's continuation "
+                    "(continue it with background=true), or a continuation is already queued or "
+                    "executing. Runs in any state can be continued - a COMPLETED run forks into "
+                    "a follow-up; RUNNING/ERROR runs resume."
+                ),
+            },
         },
         dependencies=[
             Depends(require_resource_access("agents", "run", "agent_id")),
@@ -1249,6 +1326,8 @@ def get_agent_router(
                 agent = get_agent_by_id(
                     agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError as rehydration_error:
+                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1279,36 +1358,12 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
-        # Fetch existing run once for validation and potential approval resolution
-        existing_run = None
-        if session_id and not isinstance(agent, RemoteAgent):
-            if hasattr(agent, "aget_run_output"):
-                existing_run = await agent.aget_run_output(
-                    run_id=run_id,
-                    session_id=session_id,
-                    user_id=scoped_user_id or user_id,
-                )
-
-        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
-        if existing_run is not None:
-            is_paused = getattr(existing_run, "is_paused", False)
-            if not is_paused:
-                status = getattr(existing_run, "status", None)
-                _status_to_detail = {
-                    RunStatus.running: "run is already running",
-                    RunStatus.completed: "run is already continued",
-                    RunStatus.error: "run is already errored",
-                    RunStatus.cancelled: "run is already cancelled",
-                    RunStatus.pending: "run is already pending",
-                }
-                detail = _status_to_detail.get(
-                    status,  # type: ignore[arg-type]
-                    f"run is not paused (status={getattr(status, 'value', status)})",
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=detail,
-                )
+        # No router-level status gate, deliberately: the continue dispatch
+        # handles EVERY run state itself - COMPLETED forks as a follow-up,
+        # RUNNING/ERROR resume, unresolved HITL raises its own precise
+        # error - so a paused-only check here can only block requests the
+        # core supports. Teams are equally ungated; workflows still refuse
+        # non-paused continues because their core requires PAUSED.
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None
@@ -1495,9 +1550,13 @@ def get_agent_router(
                 # finishes. That is not real background semantics - it does
                 # not survive client disconnect - hence the warning; a
                 # durable queue (QueueConfig(durable=True)) is the real
-                # background door. Workflows differ deliberately: their
-                # continue endpoint never had the param, so the durable door
-                # is its only contract there and refuses instead.
+                # background door. Workflows differ deliberately: their HTTP
+                # continue endpoint's background param arrived with the
+                # durable queue (no pre-queue clients to protect), so it
+                # refuses without a ticket instead of falling through; only
+                # their WebSocket continue door falls back, to detached
+                # execution, because the socket is itself the live event
+                # channel that machinery streams into.
                 log_warning(
                     f"background=true continue for run {run_id} has no durable ticket: executing "
                     "INLINE-BLOCKING on this replica (legacy behavior; does not survive client "
@@ -1536,20 +1595,15 @@ def get_agent_router(
                 # runs alone. Skipped for remote agents and fork/regenerate
                 # (they mint a NEW run_id).
                 if not isinstance(agent, RemoteAgent) and not fork and not regenerate:
-                    await acomplete_continue_stream(
+                    # Stream close + paused-ticket settle as one
+                    # cancellation-proof unit (see the streaming twin)
+                    await afinalize_continue_stream(
                         agent,
                         run_id,
                         session_id,
+                        queue_worker=getattr(request.app.state, "queue_worker", None),
                         only_if_tracked=True,
                         final_status=getattr(run_response_obj, "status", None),
-                    )
-                    # Inline continue of a DURABLE paused run: terminalize
-                    # the queue ticket too (paused is retention-exempt; the
-                    # CAS no-ops for never-queued or worker-owned runs)
-                    await asettle_paused_ticket(
-                        getattr(request.app.state, "queue_worker", None),
-                        run_id,
-                        getattr(run_response_obj, "status", None),
                     )
                 return run_response_obj.to_dict()
 
@@ -1591,7 +1645,7 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
             )
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1768,6 +1822,8 @@ def get_agent_router(
             agent = get_agent_by_id(
                 agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
             )  # type: ignore[assignment]
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1820,7 +1876,7 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1844,7 +1900,13 @@ def get_agent_router(
                 # inside that beat reports an accepted run as nonexistent -
                 # answer from the ticket instead, tenant-checked, fail-closed.
                 ticket_view = await aticket_poll_fallback(
-                    getattr(request.app.state, "queue_worker", None), run_id, session_id, "agent", agent_id, user_id
+                    getattr(request.app.state, "queue_worker", None),
+                    run_id,
+                    session_id,
+                    "agent",
+                    agent_id,
+                    user_id,
+                    user_scoped=user_id is not None,
                 )
                 if ticket_view is not None:
                     return ticket_view
@@ -1854,7 +1916,13 @@ def get_agent_router(
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
             ticket_view = await aticket_poll_fallback(
-                getattr(request.app.state, "queue_worker", None), run_id, session_id, "agent", agent_id, user_id
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                session_id,
+                "agent",
+                agent_id,
+                user_id,
+                user_scoped=user_id is not None,
             )
             if ticket_view is not None:
                 return ticket_view
@@ -1902,7 +1970,7 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1963,7 +2031,7 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -2056,7 +2124,9 @@ def get_agent_router(
                 detail="Stream resumption is not supported for factory agents",
             )
 
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        agent = get_agent_by_id(
+            agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
+        )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
@@ -2113,7 +2183,7 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")

@@ -360,24 +360,27 @@ class ValkeyDb(BaseDb):
             log_error(f"Error getting all records for {table_type}: {str(e)}")
             return []
 
-    def get_latest_schema_version(self, table_name: str = ""):
-        """Get the latest version of the database schema.
+    def _schema_version_key(self, table_name: str) -> str:
+        """Key holding the schema version stamp for the given table."""
+        return f"{self.db_prefix}:{self.versions_table_name}:{table_name}"
 
-        Args:
-            table_name: The table name (accepted for BaseDb interface compatibility,
-                but unused since Valkey is schemaless).
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
+
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        pass
+        value = self.valkey_client.get(self._schema_version_key(table_name))
+        if value is None:
+            return "2.0.0"
+        return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version into the database.
+        """Record the schema version stamp for the given table.
 
-        Args:
-            table_name: The table name (accepted for BaseDb interface compatibility,
-                but unused since Valkey is schemaless).
-            version: The schema version string.
+        No TTL: the stamp must outlive ``self.expire``.
         """
-        pass
+        self.valkey_client.set(self._schema_version_key(table_name), version)
 
     # -- Run methods --
 
