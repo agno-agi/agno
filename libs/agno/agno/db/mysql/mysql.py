@@ -2334,6 +2334,12 @@ class MySQLDb(BaseDb):
                 return None
 
             with self.Session() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id)).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -2392,7 +2398,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {str(e)}")
-            return None
+            raise e
 
     # -- Eval methods --
 

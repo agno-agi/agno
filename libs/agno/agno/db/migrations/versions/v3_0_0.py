@@ -58,6 +58,13 @@ METRICS_LEGACY_UNIQUE_COLUMNS = ("date", "aggregation_period")
 MAX_MYSQL_IDENTIFIER_LENGTH = 64
 
 
+class ScheduleDuplicateNamesError(RuntimeError):
+    """Raised when the per-owner unique schedule-name backstop cannot be built because
+    duplicate names already exist. Must propagate so the migration is NOT stamped as
+    applied — otherwise the version advances and the index can never be created on a
+    later run (a re-run would skip an already-stamped version)."""
+
+
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     """
     Apply the following changes to the database:
@@ -1365,8 +1372,17 @@ def _migrate_mongo_schedules(db: BaseDb, table_name: str) -> bool:
             )
             collection.drop_index(index_name)
 
-    # Build the v3 index set (non-unique name, user_id, and the compound claim/list indexes)
+    # Build the v3 index set (non-unique name, user_id, compound claim/list, and the
+    # unique (user_id, name) backstop). create_collection_indexes tolerates a per-index
+    # failure (needed for the legacy name conflict), so confirm the backstop landed —
+    # if duplicate names blocked it, fail the migration so it is not stamped as done and
+    # a re-run can finish once the duplicates are resolved.
     create_collection_indexes(collection, "schedules")
+    if "uq_user_name" not in collection.index_information():
+        raise ScheduleDuplicateNamesError(
+            f"Cannot create the unique (user_id, name) backstop on {table_name}: duplicate schedule "
+            "names exist within one owner bucket. Resolve the duplicates, then re-run the migration."
+        )
     log_info(f"-- Ensured v3 indexes on schedules collection {table_name}")
     return True
 
@@ -1496,6 +1512,11 @@ async def _migrate_async_mongo_schedules(db: AsyncBaseDb, table_name: str) -> bo
             await collection.drop_index(index_name)
 
     await create_collection_indexes_async(collection, "schedules")
+    if "uq_user_name" not in await collection.index_information():
+        raise ScheduleDuplicateNamesError(
+            f"Cannot create the unique (user_id, name) backstop on {table_name}: duplicate schedule "
+            "names exist within one owner bucket. Resolve the duplicates, then re-run the migration."
+        )
     log_info(f"-- Ensured v3 indexes on schedules collection {table_name}")
     return True
 
@@ -2805,6 +2826,130 @@ async def _swap_async_mysql_metrics_unique(sess, db, db_schema: str, table_name:
     return applied
 
 
+def _schedule_unique_backstop_ddls(db_type: str, full_table: str, table_name: str) -> List[tuple]:
+    """(index_name, DDL) pairs backing per-owner schedule-name uniqueness.
+
+    Index names match what the adapters' table builders create on fresh tables,
+    so the existence checks are shared. Unique INDEXes rather than constraints
+    because SQLite cannot ``ALTER TABLE ADD CONSTRAINT``; enforcement is
+    identical. NULLs are distinct in unique indexes, so the unowned bucket
+    gets its own partial index.
+    """
+    uq_user = f"{table_name}_uq_user_name"
+    uq_unowned = f"{table_name}_uq_unowned_name"
+    return [
+        (
+            uq_user,
+            f"CREATE UNIQUE INDEX {quote_db_identifier(db_type, uq_user)} "
+            f"ON {full_table} (user_id, name) WHERE user_id IS NOT NULL",
+        ),
+        (
+            uq_unowned,
+            f"CREATE UNIQUE INDEX {quote_db_identifier(db_type, uq_unowned)} "
+            f"ON {full_table} (name) WHERE user_id IS NULL",
+        ),
+    ]
+
+
+def _is_duplicate_key_error(exc: Exception) -> bool:
+    """Whether a CREATE UNIQUE INDEX failed because duplicate rows already exist
+    (vs a transient/connection error). Checked by SQLSTATE/type, not message text."""
+    try:
+        from sqlalchemy.exc import IntegrityError
+
+        if isinstance(exc, IntegrityError):
+            return True
+    except ImportError:
+        pass
+    # SQLite surfaces this as OperationalError; Postgres as a wrapped UniqueViolation.
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate == "23505":  # unique_violation
+        return True
+    return "unique" in str(getattr(exc, "orig", exc)).lower()
+
+
+def _raise_or_return_dup(idx_name: str, table_name: str, exc: Exception) -> None:
+    """Turn a duplicate-key failure into an actionable, MIGRATION-FAILING error; re-raise
+    anything else. Never swallow: a stamped-but-unindexed table can never self-heal."""
+    if _is_duplicate_key_error(exc):
+        raise ScheduleDuplicateNamesError(
+            f"Cannot create unique index {idx_name} on {table_name}: duplicate schedule names exist "
+            "within one owner bucket. Resolve the duplicates (the router enforces per-owner uniqueness "
+            "on create, so these predate it), then re-run the migration."
+        ) from exc
+    raise exc
+
+
+def _postgres_schedule_unique_backstop(db: Any, db_schema: str, table_name: str, full_table: str, db_type: str) -> bool:
+    """Each index runs in its own transaction. A duplicate-name failure raises
+    (failing the migration, unstamped) so a later re-run can finish the job."""
+    applied = False
+    for idx_name, ddl in _schedule_unique_backstop_ddls(db_type, full_table, table_name):
+        try:
+            with db.Session() as sess, sess.begin():
+                if _index_exists(sess, db_schema, table_name, idx_name, db_type):
+                    continue
+                log_info(f"-- Adding unique index {idx_name} on {table_name} (schedule names are unique per owner)")
+                sess.execute(text(ddl))
+                applied = True
+        except Exception as e:
+            _raise_or_return_dup(idx_name, table_name, e)
+    return applied
+
+
+async def _async_postgres_schedule_unique_backstop(
+    db: Any, db_schema: str, table_name: str, full_table: str, db_type: str
+) -> bool:
+    """Async variant of :func:`_postgres_schedule_unique_backstop`."""
+    applied = False
+    for idx_name, ddl in _schedule_unique_backstop_ddls(db_type, full_table, table_name):
+        try:
+            async with db.async_session_factory() as sess, sess.begin():
+                if await _async_index_exists(sess, db_schema, table_name, idx_name, db_type):
+                    continue
+                log_info(f"-- Adding unique index {idx_name} on {table_name} (schedule names are unique per owner)")
+                await sess.execute(text(ddl))
+                applied = True
+        except Exception as e:
+            _raise_or_return_dup(idx_name, table_name, e)
+    return applied
+
+
+def _sqlite_schedule_unique_backstop(db: Any, table_name: str, quoted_table: str, db_type: str) -> bool:
+    """SQLite variant of :func:`_postgres_schedule_unique_backstop`."""
+    applied = False
+    for idx_name, ddl in _schedule_unique_backstop_ddls(db_type, quoted_table, table_name):
+        try:
+            with db.Session() as sess, sess.begin():
+                existing = {idx[1] for idx in sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()}
+                if idx_name in existing:
+                    continue
+                log_info(f"-- Adding unique index {idx_name} on {table_name} (schedule names are unique per owner)")
+                sess.execute(text(ddl))
+                applied = True
+        except Exception as e:
+            _raise_or_return_dup(idx_name, table_name, e)
+    return applied
+
+
+async def _async_sqlite_schedule_unique_backstop(db: Any, table_name: str, quoted_table: str, db_type: str) -> bool:
+    """Async SQLite variant of :func:`_postgres_schedule_unique_backstop`."""
+    applied = False
+    for idx_name, ddl in _schedule_unique_backstop_ddls(db_type, quoted_table, table_name):
+        try:
+            async with db.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(text(f"PRAGMA index_list({quoted_table})"))
+                if idx_name in {idx[1] for idx in result.fetchall()}:
+                    continue
+                log_info(f"-- Adding unique index {idx_name} on {table_name} (schedule names are unique per owner)")
+                await sess.execute(text(ddl))
+                applied = True
+        except Exception as e:
+            _raise_or_return_dup(idx_name, table_name, e)
+    return applied
+
+
 def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Add the user_id column to the given table for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
@@ -2880,7 +3025,10 @@ def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> b
                 )
                 applied = True
 
-        return applied
+    # Outside the main transaction: a duplicate-name failure only skips the backstop.
+    if table_type == "schedules":
+        applied = _postgres_schedule_unique_backstop(db, db_schema, table_name, full_table, db_type) or applied
+    return applied
 
 
 async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
@@ -2963,7 +3111,12 @@ async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, tabl
                 )
                 applied = True
 
-        return applied
+    # Outside the main transaction: a duplicate-name failure only skips the backstop.
+    if table_type == "schedules":
+        applied = (
+            await _async_postgres_schedule_unique_backstop(db, db_schema, table_name, full_table, db_type) or applied
+        )
+    return applied
 
 
 def _metrics_user_id_has_default(sess, db_schema: str, table_name: str) -> bool:
@@ -3413,7 +3566,10 @@ def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> boo
                 )
                 applied = True
 
-        return applied
+    # Outside the main transaction: a duplicate-name failure only skips the backstop.
+    if table_type == "schedules":
+        applied = _sqlite_schedule_unique_backstop(db, table_name, quoted_table, db_type) or applied
+    return applied
 
 
 async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
@@ -3466,7 +3622,10 @@ async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_
                 )
                 applied = True
 
-        return applied
+    # Outside the main transaction: a duplicate-name failure only skips the backstop.
+    if table_type == "schedules":
+        applied = await _async_sqlite_schedule_unique_backstop(db, table_name, quoted_table, db_type) or applied
+    return applied
 
 
 def _metrics_revert_is_blocked(sess, table_name: str, full_table: str) -> bool:
@@ -4042,6 +4201,13 @@ def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool
                 log_info(f"-- Dropping index {comp_name} from {table_name}")
                 sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, comp_name)}"))
                 applied = True
+        # The unique name backstops also cover user_id (v3-only; v2 had no DB-level uniqueness).
+        if table_type == "schedules":
+            for uq_name in (f"{table_name}_uq_user_name", f"{table_name}_uq_unowned_name"):
+                if uq_name in existing_indexes:
+                    log_info(f"-- Dropping unique index {uq_name} from {table_name}")
+                    sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, uq_name)}"))
+                    applied = True
         if index_name in existing_indexes:
             log_info(f"-- Dropping index {index_name} from {table_name}")
             sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index_name)}"))
@@ -4098,6 +4264,13 @@ async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_n
                 log_info(f"-- Dropping index {comp_name} from {table_name}")
                 await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, comp_name)}"))
                 applied = True
+        # The unique name backstops also cover user_id (v3-only; v2 had no DB-level uniqueness).
+        if table_type == "schedules":
+            for uq_name in (f"{table_name}_uq_user_name", f"{table_name}_uq_unowned_name"):
+                if uq_name in existing_indexes:
+                    log_info(f"-- Dropping unique index {uq_name} from {table_name}")
+                    await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, uq_name)}"))
+                    applied = True
         if index_name in existing_indexes:
             log_info(f"-- Dropping index {index_name} from {table_name}")
             await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index_name)}"))

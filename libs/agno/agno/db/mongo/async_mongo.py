@@ -2437,6 +2437,12 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
+            # A scoped write must not overwrite a doc it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = await collection.find_one({"id": knowledge_row.id}, {"user_id": 1})
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             update_doc = knowledge_row.model_dump()
             await collection.replace_one({"id": knowledge_row.id}, update_doc, upsert=True)
 
@@ -3402,6 +3408,12 @@ class AsyncMongoDb(AsyncBaseDb):
                 return None
             return await self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 

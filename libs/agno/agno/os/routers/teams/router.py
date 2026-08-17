@@ -1113,9 +1113,11 @@ def get_team_router(
                 user_id=get_scoped_user_id(request),
                 strict=False,
             )  # type: ignore[assignment]
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1343,9 +1345,11 @@ def get_team_router(
                 )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1639,9 +1643,11 @@ def get_team_router(
                 user_id=get_scoped_user_id(request),
                 strict=False,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1899,9 +1905,11 @@ def get_team_router(
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1951,9 +1959,11 @@ def get_team_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -2048,9 +2058,11 @@ def get_team_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -2115,9 +2127,11 @@ def get_team_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -2182,9 +2196,11 @@ def get_team_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):

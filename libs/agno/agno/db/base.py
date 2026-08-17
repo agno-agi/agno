@@ -800,7 +800,7 @@ class BaseDb(ABC):
         Args:
             component_id: The component ID.
             component_type: Optional filter by type (agent|team|workflow).
-            user_id: If set, only return the component if owned by this user.
+            user_id: If set, only return the component if owned by this user or shared.
 
         Returns:
             Component dictionary or None if not found.
@@ -872,7 +872,7 @@ class BaseDb(ABC):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
-            user_id: If set, only list components owned by this user.
+            user_id: If set, only list components owned by this user or shared.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 

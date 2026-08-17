@@ -2527,6 +2527,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return None
             async with self.async_session_factory() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = (
+                        await sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id))
+                    ).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -2600,7 +2608,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {str(e)}")
-            return None
+            raise e
 
     # -- Eval methods --
     async def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
@@ -4408,6 +4416,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(stmt.values(**kwargs))
             return await self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
@@ -5198,21 +5212,35 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_warning(f"Job queue store: queued-count failed: {e}")
             return 0
 
-    async def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    async def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
-                return []
+                return [], 0
             stmt = select(table)
             if status is not None:
-                stmt = stmt.where(table.c.status == status)
-            stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+                statuses = [status] if isinstance(status, str) else list(status)
+                stmt = stmt.where(table.c.status.in_(statuses))
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            stmt = apply_sorting(stmt, table, sort_by, sort_order)
+            # Deterministic tiebreaker: timestamps are epoch seconds, so ties
+            # are common and would let rows move between pages otherwise
+            stmt = stmt.order_by(table.c.id)
+            stmt = stmt.limit(limit).offset(max(page - 1, 0) * limit)
             async with self.async_session_factory() as sess:
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
                 result = await sess.execute(stmt)
-                return [dict(row._mapping) for row in result.fetchall()]
+                return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
             log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
-            return []
+            return [], 0
 
     async def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants

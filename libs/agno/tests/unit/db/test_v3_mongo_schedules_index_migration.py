@@ -18,10 +18,14 @@ from agno.db.migrations.versions.v3_0_0 import _migrate_async_mongo, _migrate_mo
 from agno.db.mongo.schemas import get_collection_indexes  # noqa: E402
 from agno.db.mongo.utils import create_collection_indexes, create_collection_indexes_async  # noqa: E402
 
+# create_collection_indexes is mocked in these tests, so the fixtures already
+# include the unique (user_id, name) backstop the real rebuild would add — the
+# migration's post-check confirms it is present.
 LEGACY_INDEXES = {
     "_id_": {"key": [("_id", 1)]},
     "id_1": {"key": [("id", 1)], "unique": True},
     "name_1": {"key": [("name", 1)], "unique": True},
+    "uq_user_name": {"key": [("user_id", 1), ("name", 1)], "unique": True},
 }
 
 V3_INDEXES = {
@@ -29,6 +33,7 @@ V3_INDEXES = {
     "id_1": {"key": [("id", 1)], "unique": True},
     "name_1": {"key": [("name", 1)]},
     "user_id_1": {"key": [("user_id", 1)]},
+    "uq_user_name": {"key": [("user_id", 1), ("name", 1)], "unique": True},
 }
 
 
@@ -112,6 +117,21 @@ class TestMigrateSchedulesIndexes:
         assert _migrate_mongo(_mock_db(collection, collection_names=()), "schedules", "agno_schedules") is False
 
         collection.index_information.assert_not_called()
+
+    def test_raises_when_backstop_cannot_be_built_over_duplicates(self):
+        # create_collection_indexes tolerates a per-index DuplicateKey failure, so if the
+        # backstop is absent afterward the migration must RAISE (not stamp) — otherwise the
+        # version advances and the index can never be created on a re-run.
+        from agno.db.migrations.versions.v3_0_0 import ScheduleDuplicateNamesError
+
+        collection = MagicMock()
+        # Post-rebuild state is missing uq_user_name (blocked by duplicates).
+        collection.index_information.return_value = {
+            "_id_": {"key": [("_id", 1)]},
+            "name_1": {"key": [("name", 1)]},
+        }
+        with pytest.raises(ScheduleDuplicateNamesError, match="[Rr]esolve the duplicates"):
+            _migrate_mongo(_mock_db(collection), "schedules", "agno_schedules")
 
     def test_unique_id_index_is_not_touched(self):
         collection = MagicMock()

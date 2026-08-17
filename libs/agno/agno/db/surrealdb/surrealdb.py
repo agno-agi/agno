@@ -1700,6 +1700,13 @@ class SurrealDb(BaseDb):
         """
         knowledge_table_name = self._get_table("knowledge")
         record = RecordID(knowledge_table_name, knowledge_row.id)
+
+        # A scoped write must not overwrite a record it does not own
+        if knowledge_row.user_id is not None:
+            stored = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+            if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
         query = "UPSERT ONLY $record CONTENT $content"
         result = self._query_one(
             query, {"record": record, "content": serialize_knowledge_row(knowledge_row, knowledge_table_name)}, dict

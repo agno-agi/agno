@@ -512,13 +512,14 @@ class TestAddToKnowledgeScopesTheWrite:
         assert kb.stored == [{"name": "salary", "user_id": ALICE}]
         assert warnings == []
 
-    def test_write_to_an_insert_predating_isolation_is_tolerated(self, monkeypatch):
-        """The kwarg is dropped rather than raised, and the widened write is reported."""
-        from agno.agent import _default_tools as agent_tools
-        from agno.utils import knowledge as knowledge_utils
+    def test_a_scoped_write_to_an_insert_predating_isolation_is_refused(self):
+        """Dropping the owner here would store the caller's content in the shared bucket.
 
-        warnings: List[str] = []
-        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+        Unlike a read, where a dropped scope only over-fetches, a write lands the row where
+        every other user can read it and no owner-scoped delete can reach it. The write is
+        refused rather than silently widened.
+        """
+        from agno.agent import _default_tools as agent_tools
 
         class LegacyInsertKnowledge:
             def __init__(self) -> None:
@@ -528,11 +529,45 @@ class TestAddToKnowledgeScopesTheWrite:
                 self.stored.append({"name": name})
 
         kb = LegacyInsertKnowledge()
-        agent_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=ALICE)  # type: ignore[arg-type]
+
+        with pytest.raises(ValueError, match="shared bucket"):
+            agent_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=ALICE)  # type: ignore[arg-type]
+
+        assert kb.stored == []
+
+    def test_the_team_write_is_refused_the_same_way(self):
+        """Agent and team share the contract; a gap in either is the same leak."""
+        from agno.team import _default_tools as team_tools
+
+        class LegacyInsertKnowledge:
+            def __init__(self) -> None:
+                self.stored: List[Dict[str, Any]] = []
+
+            def insert(self, name=None, text_content=None, reader=None) -> None:
+                self.stored.append({"name": name})
+
+        kb = LegacyInsertKnowledge()
+
+        with pytest.raises(ValueError, match="shared bucket"):
+            team_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=ALICE)  # type: ignore[arg-type]
+
+        assert kb.stored == []
+
+    def test_an_unscoped_write_to_an_insert_predating_isolation_still_works(self):
+        """v2 parity: with no owner to lose, a legacy Knowledge keeps working untouched."""
+        from agno.agent import _default_tools as agent_tools
+
+        class LegacyInsertKnowledge:
+            def __init__(self) -> None:
+                self.stored: List[Dict[str, Any]] = []
+
+            def insert(self, name=None, text_content=None, reader=None) -> None:
+                self.stored.append({"name": name})
+
+        kb = LegacyInsertKnowledge()
+        agent_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=None)  # type: ignore[arg-type]
 
         assert kb.stored == [{"name": "salary"}]
-        assert len(warnings) == 1
-        assert "LegacyInsertKnowledge.insert" in warnings[0]
 
     def test_unscoped_write_does_not_warn(self, monkeypatch):
         """No owner to lose, so a variadic insert is not worth reporting."""

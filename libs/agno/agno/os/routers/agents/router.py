@@ -195,6 +195,7 @@ async def agent_resumable_response_streamer(
         kwargs["auth_token"] = auth_token
 
     try:
+        warned_not_resumable = False
         async for sse_data in agent.arun(
             input=message,
             session_id=session_id,
@@ -208,7 +209,19 @@ async def agent_resumable_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            if isinstance(sse_data, str):
+                yield sse_data
+            else:
+                # Agents without background support (e.g. external adapters)
+                # ignore background=True and yield raw events: format them so
+                # the stream works, though the run is not resumable.
+                if not warned_not_resumable:
+                    warned_not_resumable = True
+                    log_debug(
+                        f"Agent '{getattr(agent, 'id', None)}' does not support background execution; "
+                        "streaming inline (run is not resumable)."
+                    )
+                yield format_sse_event(sse_data)
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -1144,9 +1157,11 @@ def get_agent_router(
                 user_id=get_scoped_user_id(request),
                 strict=False,
             )  # type: ignore[assignment]
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1332,9 +1347,11 @@ def get_agent_router(
                 )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1657,9 +1674,11 @@ def get_agent_router(
                 user_id=get_scoped_user_id(request),
                 strict=False,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1844,9 +1863,11 @@ def get_agent_router(
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1904,9 +1925,11 @@ def get_agent_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if isinstance(agent, RemoteAgent):
@@ -2004,9 +2027,11 @@ def get_agent_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if isinstance(agent, RemoteAgent):
@@ -2071,9 +2096,11 @@ def get_agent_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if isinstance(agent, RemoteAgent):
@@ -2235,9 +2262,11 @@ def get_agent_router(
                     user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if isinstance(agent, RemoteAgent):

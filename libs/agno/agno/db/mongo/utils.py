@@ -53,14 +53,16 @@ def create_collection_indexes(collection: Collection, collection_type: str) -> N
     for index_spec in indexes:
         key = index_spec["key"]
         unique = index_spec.get("unique", False)
+        extra = {"name": index_spec["name"]} if "name" in index_spec else {}
 
         try:
             if isinstance(key, list):
-                collection.create_index(key, unique=unique)
+                collection.create_index(key, unique=unique, **extra)
             else:
-                collection.create_index([(key, 1)], unique=unique)
+                collection.create_index([(key, 1)], unique=unique, **extra)
         except OperationFailure as e:
-            # e.g. IndexOptionsConflict on a legacy collection: skip this index, try the rest
+            # e.g. IndexOptionsConflict on a legacy collection, or a DuplicateKey when a
+            # unique index cannot be built over pre-existing duplicates: skip it, try the rest
             log_warning(f"Error creating index {key!r} for {collection_type} collection: {str(e)}")
         except Exception as e:
             # Connection-level failure: the remaining creates would all fail too
@@ -95,14 +97,16 @@ async def create_collection_indexes_async(collection: Any, collection_type: str)
     for index_spec in indexes:
         key = index_spec["key"]
         unique = index_spec.get("unique", False)
+        extra = {"name": index_spec["name"]} if "name" in index_spec else {}
 
         try:
             if isinstance(key, list):
-                await collection.create_index(key, unique=unique)
+                await collection.create_index(key, unique=unique, **extra)
             else:
-                await collection.create_index([(key, 1)], unique=unique)
+                await collection.create_index([(key, 1)], unique=unique, **extra)
         except OperationFailure as e:
-            # e.g. IndexOptionsConflict on a legacy collection: skip this index, try the rest
+            # e.g. IndexOptionsConflict on a legacy collection, or a DuplicateKey when a
+            # unique index cannot be built over pre-existing duplicates: skip it, try the rest
             log_warning(f"Error creating index {key!r} for {collection_type} collection: {str(e)}")
         except Exception as e:
             # Connection-level failure: the remaining creates would all fail too

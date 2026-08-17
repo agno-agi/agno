@@ -299,6 +299,14 @@ SCHEDULE_TABLE_SCHEMA = {
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
         {"name": "user_enabled_next_run_at", "columns": ["user_id", "enabled", "next_run_at"]},
     ],
+    # Names are unique per owner. The router's check-then-insert races under
+    # concurrent creates, so the DB backs it with two partial unique indexes
+    # (NULLs are distinct in a plain unique constraint, and SQLite cannot drop
+    # a table-level constraint, so named partial indexes cover both buckets).
+    "_partial_unique_indexes": [
+        {"name": "uq_user_name", "columns": ["user_id", "name"], "where": "user_id IS NOT NULL"},
+        {"name": "uq_unowned_name", "columns": ["name"], "where": "user_id IS NULL"},
+    ],
 }
 
 
