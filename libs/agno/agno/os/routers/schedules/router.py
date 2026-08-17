@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
+from agno.db.utils import is_unique_violation
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.schedules.schema import (
     ScheduleCreate,
@@ -19,32 +20,6 @@ from agno.os.routers.schedules.schema import (
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.scopes import AgentOSScope, has_required_scopes
 from agno.utils.log import log_info
-
-
-def _is_unique_name_violation(exc: Exception) -> bool:
-    """Whether ``exc`` is a DB unique-constraint violation on the schedule name.
-
-    Matches on exception TYPE, not message text: SQLAlchemy folds the statement and
-    its bound parameters into ``str(exc)``, so a substring check on "unique" would
-    misfire on caller-supplied text (e.g. a description containing the word) and
-    turn an unrelated CheckViolation into a false 409. Covers the SQL backend
-    (SQLAlchemy ``IntegrityError``) and Mongo (``pymongo`` ``DuplicateKeyError``).
-    """
-    try:
-        from sqlalchemy.exc import IntegrityError
-
-        if isinstance(exc, IntegrityError):
-            return True
-    except ImportError:
-        pass
-    try:
-        from pymongo.errors import DuplicateKeyError
-
-        if isinstance(exc, DuplicateKeyError):
-            return True
-    except ImportError:
-        pass
-    return False
 
 
 # Valid DB method names that _db_call can invoke
@@ -225,7 +200,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             # The name check above races under concurrent creates; the DB's unique
             # (user_id, name) backstop turns the loser into an integrity error,
             # which maps to the same 409 the check itself produces.
-            if _is_unique_name_violation(e):
+            if is_unique_violation(e):
                 raise HTTPException(status_code=409, detail=f"Schedule with name '{body.name}' already exists")
             raise
         if result is None:
@@ -297,7 +272,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         try:
             result = await _db_call("update_schedule", schedule_id, user_id=scoped_user_id, **updates)
         except Exception as e:
-            if renaming and _is_unique_name_violation(e):
+            if renaming and is_unique_violation(e):
                 raise HTTPException(status_code=409, detail=f"Schedule with name '{updates['name']}' already exists")
             raise
         if result is None:
