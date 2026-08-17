@@ -35,6 +35,7 @@ from agno.db.utils import (
     filter_context_runs,
     json_serializer,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     run_index_lock_name,
     validate_pagination,
 )
@@ -2236,16 +2237,22 @@ class AsyncMySQLDb(AsyncBaseDb):
             Optional[date]: The starting date for which metrics calculation is needed.
         """
         async with self.async_session_factory() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = await sess.execute(stmt)
-            row = result.fetchone()
+            # resume at the earliest incomplete day after the latest completed one, otherwise the
+            # day after that one: a day holding a completed row was rebuilt after it ended, so an
+            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
+            # be rebuilt
+            latest_completed = (
+                await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
+            ).scalar()
 
-            # 1. Return the date of the first day without a complete metrics record.
-            if row is not None:
-                if row.completed:
-                    return row._mapping["date"] + timedelta(days=1)
-                else:
-                    return row._mapping["date"]
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = (await sess.execute(incomplete_stmt)).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2312,9 +2319,8 @@ class AsyncMySQLDb(AsyncBaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                metrics_records.append(metrics_record)
+                # One record per user_id, plus the empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 async with self.async_session_factory() as sess, sess.begin():
@@ -2326,16 +2332,20 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception refreshing metrics: {str(e)}")
-            return None
+            raise e
 
     async def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): If set, only return that user's bucket. ``None`` returns all buckets.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2352,6 +2362,8 @@ class AsyncMySQLDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 records = result.fetchall()
                 if not records:
@@ -2359,37 +2371,50 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 # Get the latest updated_at
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_result = await sess.execute(latest_stmt)
                 latest_updated_at = latest_result.scalar()
 
-            return [dict(row._mapping) for row in records], latest_updated_at
+            # Map the empty-string sentinel back to None
+            rows: List[dict] = []
+            for row in records:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_warning(f"Exception getting metrics: {str(e)}")
             return [], None
 
     # -- Knowledge methods --
-    async def delete_knowledge_content(self, id: str):
+    async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): If set, only delete rows owned by this user. Unowned rows are not deleted.
         """
         table = await self._get_table(table_type="knowledge")
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {str(e)}")
 
-    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    async def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned (NULL).
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2399,6 +2424,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = await sess.execute(stmt)
                 row = result.fetchone()
                 if row is None:
@@ -2417,6 +2444,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2426,6 +2454,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): If set, only return rows owned by this user plus shared (NULL) rows.
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2443,6 +2472,10 @@ class AsyncMySQLDb(AsyncBaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply owner scoping: rows owned by this user, plus shared (NULL) rows
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 if sort_by is not None:
@@ -2476,8 +2509,16 @@ class AsyncMySQLDb(AsyncBaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = await self._get_table(table_type="knowledge")
+            table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
             async with self.async_session_factory() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = (
+                        await sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id))
+                    ).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -2500,6 +2541,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",
+                    "user_id": "user_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
@@ -2537,7 +2579,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {str(e)}")
-            return None
+            raise e
 
     # -- Eval methods --
     async def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:

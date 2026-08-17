@@ -53,6 +53,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
+from agno.db.utils import aggregate_metrics_by_date
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_exception, log_warning
 
@@ -693,6 +694,9 @@ def _epoch_to_iso(value: Optional[int]) -> Optional[str]:
 
 
 def _format_platform_metrics(rows: List[Any], days: int, start_date: date, end_date: date) -> str:
+    # Stored metrics are one row per owner, and this reports a day: without collapsing them a
+    # day with three users arrives as three unlabelled entries carrying one user count each.
+    rows = aggregate_metrics_by_date(rows)
     daily = []
     totals = {
         "agent_runs": 0,

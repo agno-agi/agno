@@ -26,7 +26,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.tools.function import Function
-from agno.utils.knowledge import get_agentic_or_user_search_filters
+from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -380,12 +380,13 @@ def make_update_session_state_entrypoint(agent: Agent) -> Callable:
     return _entrypoint
 
 
-def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
+def add_to_knowledge(agent: Agent, query: str, result: str, user_id: Optional[str] = None) -> str:
     """Use this function to add information to the knowledge base for future use.
 
     Args:
         query (str): The query or topic to add.
         result (str): The actual content or information to store.
+        user_id (Optional[str]): The owner to store the document under. None writes to the shared bucket.
     Returns:
         str: A string indicating the status of the addition.
     """
@@ -404,8 +405,39 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
-    insert_fn(name=document_name, text_content=document_content, reader=TextReader())
+    insert_kwargs: Dict[str, Any] = {
+        "name": document_name,
+        "text_content": document_content,
+        "reader": TextReader(),
+    }
+
+    insert_kwargs.update(get_user_id_kwarg(insert_fn, user_id, required=True))
+    insert_fn(**insert_kwargs)
     return "Successfully added to knowledge base"
+
+
+def create_add_to_knowledge_tool(agent: Agent, run_context: Optional[RunContext] = None) -> Function:
+    """Create a closure that binds the run's owner to the add_to_knowledge tool."""
+
+    def add_to_knowledge_base(query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
+
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        try:
+            return add_to_knowledge(
+                agent, query=query, result=result, user_id=run_context.user_id if run_context else agent.user_id
+            )
+        except Exception as e:
+            log_warning(f"Adding to knowledge base failed: {str(e)}")
+            return f"Error adding to knowledge base: {type(e).__name__}"
+
+    return Function.from_callable(add_to_knowledge_base, name="add_to_knowledge")
 
 
 def _get_message_text(msg: Message) -> Optional[str]:

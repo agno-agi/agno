@@ -222,7 +222,6 @@ class GoogleMapsTools(Toolkit):
             return json.dumps({"error": str(e)})
 
 
-# Backwards compat for old name
 class GoogleMapTools(GoogleMapsTools):
     """Deprecated: Use GoogleMapsTools instead."""
 

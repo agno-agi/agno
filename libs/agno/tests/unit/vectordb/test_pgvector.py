@@ -320,19 +320,19 @@ def test_search(mock_pgvector):
     with patch.object(mock_pgvector, "vector_search") as mock_vector_search:
         mock_pgvector.search_type = SearchType.vector
         mock_pgvector.search("test query")
-        mock_vector_search.assert_called_with(query="test query", limit=5, filters=None)
+        mock_vector_search.assert_called_with(query="test query", limit=5, filters=None, user_id=None)
 
     # Test keyword search
     with patch.object(mock_pgvector, "keyword_search") as mock_keyword_search:
         mock_pgvector.search_type = SearchType.keyword
         mock_pgvector.search("test query")
-        mock_keyword_search.assert_called_with(query="test query", limit=5, filters=None)
+        mock_keyword_search.assert_called_with(query="test query", limit=5, filters=None, user_id=None)
 
     # Test hybrid search
     with patch.object(mock_pgvector, "hybrid_search") as mock_hybrid_search:
         mock_pgvector.search_type = SearchType.hybrid
         mock_pgvector.search("test query")
-        mock_hybrid_search.assert_called_with(query="test query", limit=5, filters=None)
+        mock_hybrid_search.assert_called_with(query="test query", limit=5, filters=None, user_id=None)
 
 
 def test_vector_search(mock_pgvector, mock_embedder):
@@ -536,7 +536,7 @@ async def test_async_search(mock_pgvector):
 
         # Check results and that search was called via to_thread
         assert results == expected_results
-        mock_to_thread.assert_called_once_with(mock_pgvector.search, "test query", 5, None)
+        mock_to_thread.assert_called_once_with(mock_pgvector.search, "test query", 5, None, None)
 
 
 @pytest.mark.asyncio

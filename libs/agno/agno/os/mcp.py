@@ -774,21 +774,27 @@ def build_mcp_server(
             from agno.workflow.workflow import get_workflows
 
             registry = os.registry
+            # Owner scope for the DB-backed components, matching the REST list routes.
+            scoped_user_id = _scoped_caller_user_id()
             agent_exclude = (registry.get_agent_ids() if registry else None) or None
             for a in _accessible(
-                get_agents(db=os.db, registry=registry, exclude_component_ids=agent_exclude), "agents"
+                get_agents(db=os.db, registry=registry, exclude_component_ids=agent_exclude, user_id=scoped_user_id),
+                "agents",
             ):
                 try:
                     agents_out.append(AgentSummaryResponse.from_agent(a).model_dump())
                 except Exception:
                     logger.exception("Error summarizing DB agent for get_agentos_config")
             team_exclude = (registry.get_team_ids() if registry else None) or None
-            for t in _accessible(get_teams(db=os.db, registry=registry, exclude_component_ids=team_exclude), "teams"):
+            for t in _accessible(
+                get_teams(db=os.db, registry=registry, exclude_component_ids=team_exclude, user_id=scoped_user_id),
+                "teams",
+            ):
                 try:
                     teams_out.append(TeamSummaryResponse.from_team(t).model_dump())
                 except Exception:
                     logger.exception("Error summarizing DB team for get_agentos_config")
-            for w in _accessible(get_workflows(db=os.db, registry=registry), "workflows"):
+            for w in _accessible(get_workflows(db=os.db, registry=registry, user_id=scoped_user_id), "workflows"):
                 try:
                     workflows_out.append(WorkflowSummaryResponse.from_workflow(w, is_component=True).model_dump())
                 except Exception:

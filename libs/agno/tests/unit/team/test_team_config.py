@@ -525,7 +525,9 @@ class TestTeamFromDict:
 
             team = Team.from_dict(config, db=mock_db, strict=True)
 
-            mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, version=None, registry=None, strict=True)
+            mock_get_agent.assert_called_once_with(
+                id="agent-1", db=mock_db, version=None, registry=None, user_id=None, strict=True
+            )
             assert team.members == [mock_agent]
 
     def test_from_dict_falls_back_to_registry_for_member_agent(self, mock_db, member_agent):
@@ -886,7 +888,7 @@ class TestTeamLoad:
         registry = Registry(agents=[member_agent])
 
         # DB lookup only resolves the graph-backed member; registry resolves the other
-        def fake_get_agent(id, db, version=None, registry=None, strict=True):  # noqa: A002
+        def fake_get_agent(id, db, version=None, registry=None, user_id=None, strict=True):  # noqa: A002
             if id == "db-agent":
                 agent = Agent(id="db-agent", name="DB Agent")
                 return agent
@@ -1231,7 +1233,9 @@ class TestGetTeams:
 
         get_teams(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.TEAM, exclude_component_ids=None)
+        mock_db.list_components.assert_called_once_with(
+            component_type=ComponentType.TEAM, exclude_component_ids=None, user_id=None
+        )
 
     def test_get_teams_with_registry(self, mock_db):
         """Test get_teams passes registry to from_dict."""

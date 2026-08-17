@@ -97,6 +97,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status": {"type": lambda: String(50), "nullable": True},
     "status_message": {"type": Text, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -112,13 +113,15 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSON, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": lambda: String(20), "nullable": False},
+    # Empty string, not NULL, for "no owner": MySQL treats NULLs as distinct in a unique index.
+    "user_id": {"type": lambda: String(128), "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
-            "name": "uq_metrics_date_period",
-            "columns": ["date", "aggregation_period"],
+            "name": "uq_metrics_user_date_period",
+            "columns": ["user_id", "date", "aggregation_period"],
         }
     ],
 }

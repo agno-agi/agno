@@ -7,7 +7,7 @@ __all__ = [
     "GoogleDriveTools",
     "GmailTools",
     "GoogleMapsTools",
-    "GoogleMapTools",  # deprecated alias
+    "GoogleMapTools",  # Deprecated alias
     "GooglePlacesTools",
     "GoogleSheetsTools",
 ]

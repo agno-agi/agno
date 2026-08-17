@@ -1144,7 +1144,7 @@ class Agent:
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _default_tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result, user_id=self.user_id)
 
     # ---------------------------------------------------------------
     # _cli module delegates
@@ -1721,6 +1721,7 @@ def get_agent_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
     strict: bool = False,
 ) -> Optional["Agent"]:
     """
@@ -1735,6 +1736,7 @@ def get_agent_by_id(
         id: Agent entity_id.
         label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the agent when owned by this user or shared.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
 
@@ -1748,6 +1750,10 @@ def get_agent_by_id(
     from agno.utils.log import log_error
 
     try:
+        # Only resolve the agent if owned by this user or shared.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
         row = db.get_config(component_id=id, label=label, version=version)
         if row is None:
             return None
@@ -1781,18 +1787,25 @@ def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     exclude_component_ids: Optional[Set[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List["Agent"]:
     """
     Get all agents from the database.
 
     Sets _version and _stage on each agent from the component metadata.
+
+    Args:
+        db: Database to load agents from
+        registry: Optional registry for rehydrating tools
+        exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load agents owned by this user or shared.
     """
     from agno.utils.log import log_error
 
     agents: List[Agent] = []
     try:
         components, _ = db.list_components(
-            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
+            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids, user_id=user_id
         )
         for component in components:
             try:
