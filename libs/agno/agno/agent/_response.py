@@ -263,10 +263,12 @@ def reason(
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
+    reasoning_model: Optional[Model] = agent.reasoning_model
+
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
-            reasoning_model=agent.reasoning_model,
+            reasoning_model=reasoning_model,
             reasoning_agent=agent.reasoning_agent,
             telemetry=agent.telemetry,
             debug_mode=agent.debug_mode,
@@ -298,10 +300,12 @@ async def areason(
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
+    reasoning_model: Optional[Model] = agent.reasoning_model
+
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
-            reasoning_model=agent.reasoning_model,
+            reasoning_model=reasoning_model,
             reasoning_agent=agent.reasoning_agent,
             telemetry=agent.telemetry,
             debug_mode=agent.debug_mode,
