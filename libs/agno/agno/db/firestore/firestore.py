@@ -2108,10 +2108,14 @@ class FirestoreDb(BaseDb):
 
             # Find existing document or create new one
             docs = collection_ref.where(filter=FieldFilter("id", "==", knowledge_row.id)).stream()
-            doc_ref = next((doc.reference for doc in docs), None)
+            existing = next((doc for doc in docs), None)
 
-            if doc_ref is None:
-                doc_ref = collection_ref.document()
+            # A scoped write must not overwrite a doc it does not own
+            if existing is not None and knowledge_row.user_id is not None:
+                if (existing.to_dict() or {}).get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
+            doc_ref = existing.reference if existing is not None else collection_ref.document()
 
             doc_ref.set(update_doc, merge=True)
 

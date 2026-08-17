@@ -2215,6 +2215,14 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("knowledge", create_table_if_not_found=True)
+
+            # A scoped write must not overwrite an item it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                response = self.client.get_item(TableName=table_name, Key={"id": {"S": knowledge_row.id}})
+                stored = response.get("Item")
+                if stored is not None and stored.get("user_id", {}).get("S") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             item = serialize_knowledge_row(knowledge_row)
 
             self.client.put_item(TableName=table_name, Item=item)

@@ -1142,6 +1142,9 @@ class InMemoryDb(BaseDb):
             item_updated = False
             for i, existing_item in enumerate(self._knowledge):
                 if existing_item.get("id") == knowledge_row.id:
+                    # A scoped write must not overwrite an item it does not own
+                    if knowledge_row.user_id is not None and existing_item.get("user_id") != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
                     self._knowledge[i] = knowledge_dict
                     item_updated = True
                     break

@@ -2225,6 +2225,12 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
+            # A scoped write must not overwrite a doc it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = collection.find_one({"id": knowledge_row.id}, {"user_id": 1})
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             update_doc = knowledge_row.model_dump()
             collection.replace_one({"id": knowledge_row.id}, update_doc, upsert=True)
 

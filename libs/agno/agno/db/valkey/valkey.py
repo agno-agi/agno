@@ -2075,6 +2075,12 @@ class ValkeyDb(BaseDb):
             Exception: If any error occurs while upserting the knowledge content.
         """
         try:
+            # A scoped write must not overwrite a record it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = self._get_record("knowledge", knowledge_row.id)
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             data = knowledge_row.model_dump()
             success = self._store_record("knowledge", knowledge_row.id, data)  # type: ignore
 
