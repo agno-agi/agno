@@ -2,7 +2,8 @@
 
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import jwt
@@ -15,6 +16,7 @@ from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
+from agno.os.routers.workflows.router import handle_workflow_via_websocket
 from agno.workflow.factory import WorkflowFactory
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -365,6 +367,53 @@ def test_websocket_workflow_factory_rejects_missing_scope(
         assert "permission" in error_frame["error"].lower()
 
     assert factory_calls == [], "Factory must not be invoked when RBAC rejects the call"
+
+
+@pytest.mark.asyncio
+async def test_websocket_workflow_start_forwards_version_to_resolver():
+    """A Studio WebSocket start action must resolve the requested workflow version."""
+    websocket = AsyncMock()
+    workflow = Mock(session_id=None)
+    workflow.arun = AsyncMock()
+    agent_os = SimpleNamespace(workflows=None, db=Mock(), registry=None)
+
+    with patch(
+        "agno.os.routers.workflows.router.get_workflow_by_id",
+        return_value=workflow,
+    ) as get_workflow_by_id:
+        await handle_workflow_via_websocket(
+            websocket,
+            {"workflow_id": "versioned-wf", "message": "go", "version": 1},
+            agent_os,
+        )
+
+    assert get_workflow_by_id.call_args.kwargs["version"] == 1
+    workflow.arun.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_websocket_factory_workflow_start_forwards_version_to_resolver():
+    """WebSocket factory resolution must preserve a requested workflow version."""
+    websocket = AsyncMock()
+    workflow = Mock(session_id=None)
+    workflow.arun = AsyncMock()
+    db = Mock()
+    factory = WorkflowFactory(id="versioned-factory-wf", db=db, factory=lambda _: workflow)
+    agent_os = SimpleNamespace(workflows=[factory], db=db, registry=None)
+
+    with patch(
+        "agno.os.routers.workflows.router.get_workflow_by_id_async",
+        new_callable=AsyncMock,
+        return_value=workflow,
+    ) as get_workflow_by_id_async:
+        await handle_workflow_via_websocket(
+            websocket,
+            {"workflow_id": "versioned-factory-wf", "message": "go", "version": 1},
+            agent_os,
+        )
+
+    assert get_workflow_by_id_async.await_args.kwargs["version"] == 1
+    workflow.arun.assert_awaited_once()
 
 
 # =============================================================================

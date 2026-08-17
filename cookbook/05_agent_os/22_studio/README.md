@@ -1,9 +1,10 @@
 # Studio
 
 `StudioTools` lets an Agent compose persisted Agents, Teams, and Workflows from
-the live objects in an AgentOS `Registry`. This lesson separates four concerns:
-standalone composition, composition served by AgentOS, human-in-the-loop
-control, and the Registry/Components HTTP contracts.
+the live objects in an AgentOS `Registry`, and `StudioRunnerTools` dispatches
+what was built. This lesson separates five concerns: standalone composition,
+composition served by AgentOS, human-in-the-loop control, dispatch, and the
+Registry/Components HTTP contracts.
 
 ## Files
 
@@ -14,6 +15,8 @@ control, and the Registry/Components HTTP contracts.
 | `studio_hitl_agent.py` | Resolve structured feedback, free-text input, and confirmation pauses in a console process. |
 | `studio_hitl_agent_os.py` | Resolve the same pauses through AgentOS run and continuation endpoints. |
 | `registry_and_components.py` | Read `GET /registry` and complete a persisted component CRUD lifecycle. |
+| `studio_runner_dispatcher.py` | Dispatch Studio-built components from a runner-only Agent with `StudioRunnerTools`. |
+| `studio_runner_direct.py` | Call the runner's list/run tools directly and observe the registry guard's refusal. |
 
 ## Prerequisites
 
@@ -65,6 +68,34 @@ Passing `agents_list` to `StudioTools` makes those code-defined Agents available
 to Team and Workflow composition and auto-enables their operations. A
 Studio-created component is persisted in the database; it is not appended to
 the code-defined Agent list.
+
+## Run the dispatcher
+
+`StudioRunnerTools` is the dispatch half of the Studio: it lists the components
+in the platform database and runs one by id, with no create/edit/delete
+surface. Mount it on a router or team lead that should hand work to built
+components without holding the Studio's mutation tools. Runs execute as the
+current user, keep one session per component per conversation, pin
+`stream=False`, and relay PAUSED results with their requirements.
+
+Mount it instead of `StudioTools`, not alongside it. The two share `list_agents`,
+`list_teams`, `list_workflows` and `run_agent`, plus `run_team` and
+`run_workflow` once teams or workflows are enabled (passing an `agents_list`
+enables both), and the tool namespace is flat, so the toolkit listed first wins
+those names and the other is skipped with a warning.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/22_studio/studio_runner_dispatcher.py
+```
+
+The direct example calls the same tools as plain methods and shows the
+registry guard: a runner constructed without the registry refuses components
+whose stored configs reference registry-backed resources (tools, knowledge,
+code-defined members), because the rebuild would silently drop them.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/22_studio/studio_runner_direct.py
+```
 
 ## Console versus AgentOS HITL
 
