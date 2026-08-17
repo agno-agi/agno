@@ -113,8 +113,16 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     admin_scope_raw = getattr(request.state, "admin_scope", None)
     # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
     admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    is_admin = _has_admin_scope(scopes, admin_scope=admin_scope)
     is_service_account = isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+    # A token's admin scope only drops isolation (reads across users) when the scope
+    # is authoritative: a scope-based plane, OR a service-account/PAT, which is always
+    # scope-enforced regardless of the OS provider. Under a managed-roles/ReBAC plane a
+    # raw JWT admin scope carries no weight, so it must NOT grant cross-user reads.
+    from agno.os.auth import token_scopes_are_authoritative
+
+    is_admin = _has_admin_scope(scopes, admin_scope=admin_scope) and (
+        is_service_account or token_scopes_are_authoritative(request)
+    )
 
     # Admin reads across users, so it is never scoped — checked first so it works
     # regardless of the user_isolation flag (an admin service account must not

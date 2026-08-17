@@ -248,16 +248,12 @@ def _token_scopes_enforced(request: Request) -> bool:
     gate. A managed-role (or ReBAC) provider used on its own never reads token scopes
     (see :mod:`agno.os.authz.provider`), so honouring them here would let any
     validly-signed token carrying ``agent_os:admin`` administer roles while being
-    denied every actual resource. Resolve the provider AgentOS is enforcing with and
-    require a ``ScopeAuthorizationProvider`` to be part of it (standalone or composed);
-    a custom provider that wants token-scope admins should compose one into its planes.
+    denied every actual resource. Shared with the other token-scope gates via
+    :func:`agno.os.auth.token_scopes_are_authoritative`.
     """
-    from agno.os.auth import resolve_authorization_provider
-    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+    from agno.os.auth import token_scopes_are_authoritative
 
-    provider = resolve_authorization_provider(request)
-    planes = getattr(provider, "providers", None) or [provider]
-    return any(isinstance(plane, ScopeAuthorizationProvider) for plane in planes)
+    return token_scopes_are_authoritative(request)
 
 
 def get_roles_router(

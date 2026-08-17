@@ -149,6 +149,49 @@ def test_admin_gate_accepts_admin_from_token_scope():
     )
 
 
+def test_custom_provider_does_not_fail_open_on_non_resource_routes():
+    """Seam regression. A custom provider that implements only check() (deferring
+    non-resource contexts per the documented contract) must NOT allow non-resource
+    routes. Before the fix the ABC's authorize_route deferred to check(), which
+    returns True for a context with no resource_type/action, so a zero-permission
+    token reached /sessions, /config and /databases/all/migrate. The ABC now fails
+    closed there; a provider must override authorize_route to authorize such routes."""
+    from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+
+    class ResourceOnlyProvider(AuthorizationProvider):
+        def check(self, ctx: AuthorizationContext) -> bool:
+            # Documented contract: defer a non-resource context to the route gate.
+            if not ctx.resource_type or not ctx.action:
+                return True
+            return False  # grant nothing on any resource
+
+        def accessible_resource_ids(self, ctx: AuthorizationContext):
+            return set()
+
+    agent = Agent(id="research-agent", name="R", db=InMemoryDb())
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=ResourceOnlyProvider(),
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+    hdr = {"Authorization": f"Bearer {_token('nobody', [])}"}
+
+    # per-resource gate still works (the provider grants nothing)
+    assert client.get("/agents/research-agent", headers=hdr).status_code == 403
+    # non-resource routes must NOT fail open
+    assert client.get("/sessions", headers=hdr).status_code == 403
+    assert client.get("/config", headers=hdr).status_code == 403
+    assert client.post("/databases/all/migrate", headers=hdr).status_code == 403
+
+
 def test_authorization_provider_rejects_a_string():
     """A list of providers is supported; a string is a mistake. The typed
     AuthorizationConfig field rejects it at construction (pydantic ValidationError,

@@ -118,10 +118,14 @@ class FGAAuthorizationProvider(AuthorizationProvider):
         user = self._user(ctx)
         if not user:
             return False
-        # List endpoint (no specific id): allow, and let accessible_resource_ids
-        # narrow the response — mirrors how the middleware filters collections.
+        # A per-resource question with no object cannot be answered affirmatively --
+        # deny. Collection VISIBILITY (a GET list) is handled by accessible_resource_ids,
+        # NOT here: authorize_route routes list GETs through the listing path, and a
+        # non-GET/non-listing route that reaches check() with no resource_id (e.g. the
+        # WebSocket workflow gate given no workflow_id) must fail closed, not fall
+        # through to an unconditional allow.
         if not ctx.resource_id:
-            return True
+            return False
         relation = self._relation(ctx.action)
         obj = f"{ctx.resource_type}:{ctx.resource_id}"
         # Memoized for this request: the route gate and the per-resource gate ask the

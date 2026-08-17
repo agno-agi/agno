@@ -17,12 +17,16 @@ An AuthorizationProvider answers two questions (the ABC's two abstract methods):
   - accessible_resource_ids(ctx)-> for list endpoints: which ids may they see?
                                    ({"*"} means "all of them".)
 
-Two more methods have sensible defaults you can override:
+Two more methods you can override:
 
   - authorize_route(ctx, required_scopes)  the route-level gate the JWT middleware
-                                   runs BEFORE the request reaches a handler. The
-                                   default defers to check(); override it to gate a
-                                   route without understanding scope strings.
+                                   runs BEFORE the request reaches a handler. It
+                                   governs EVERY mapped route, including the ones with
+                                   no resource_type (/sessions, /config, /metrics,
+                                   /databases/all/migrate, ...). The ABC default fails
+                                   those closed (it cannot express a non-resource
+                                   question), so a provider that means to authorize
+                                   them MUST override this -- see below.
   - require / filter_accessible    built on check / accessible_resource_ids.
 
 The example below uses a deliberately tiny, NON-scope decision model to make the
@@ -101,9 +105,21 @@ class TierAuthorizationProvider(AuthorizationProvider):
             return {"*"}
         return set()
 
-    # authorize_route() / require() / filter_accessible() use the ABC defaults,
-    # which are built on check() / accessible_resource_ids() above. Override
-    # authorize_route() if you want route gating that doesn't go through check().
+    def authorize_route(self, ctx: AuthorizationContext, required_scopes: list) -> bool:
+        # The route gate covers BOTH resource routes AND non-resource routes
+        # (/sessions, /config, /metrics, /databases/all/migrate, ...). Our tier model
+        # is resource-agnostic, so we decide from the actions the route requires --
+        # the trailing segment of each required scope ("sessions:read" -> "read").
+        # This is what keeps non-resource routes gated: the ABC default fails them
+        # closed precisely so a provider cannot leave them open by accident. A route
+        # with no required scopes is public.
+        if not required_scopes:
+            return True
+        allowed = self._allowed_actions(ctx)
+        return all(scope.rsplit(":", 1)[-1] in allowed for scope in required_scopes)
+
+    # require() / filter_accessible() use the ABC defaults, built on check() /
+    # accessible_resource_ids() above.
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,31 @@ def resolve_authorization_provider(app_or_request: Any) -> AuthorizationProvider
     return _default_authorization_provider()
 
 
+def token_scopes_are_authoritative(app_or_request: Any) -> bool:
+    """True when a scope plane actually enforces on this AgentOS -- i.e. the token's
+    ``scopes`` claim carries authorization weight for access decisions.
+
+    Only then may a gate treat a scope in the token (e.g. ``agent_os:admin``) as the
+    caller's authority. Under a managed-roles or ReBAC deployment the enforcement
+    provider ignores token scopes entirely (see :mod:`agno.os.authz.provider`), so a
+    gate that trusts them -- the PAT-mint subset rule, the schedule endpoint gate, the
+    WebSocket admin bypass, the user-isolation admin drop -- would let any
+    validly-signed token escalate. Resolve the provider AgentOS enforces with and
+    require a :class:`~agno.os.authz.scope_provider.ScopeAuthorizationProvider` to be
+    part of it (standalone or composed in a list). The default (no provider
+    configured) IS the scope provider, so scope-based deployments are unaffected.
+
+    Note: this describes the *instance's* enforcement plane. A service-account PAT is
+    always scope-enforced regardless (see :func:`_provider_for`), so callers that key
+    off a PAT's scopes should OR this with an ``sa:``-principal check.
+    """
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    provider = resolve_authorization_provider(app_or_request)
+    planes = getattr(provider, "providers", None) or [provider]
+    return any(isinstance(plane, ScopeAuthorizationProvider) for plane in planes)
+
+
 def _provider_for(request: Any) -> AuthorizationProvider:
     """The provider that decides for *this caller*.
 
@@ -499,7 +524,11 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
     # membership test (e.g. deny-overrides for managed roles). _provider_for keeps a
     # service-account PAT on scope math here too -- see get_accessible_resources.
     provider = _provider_for(request)
-    ctx = _authorization_context(request, resource_type=resource_type)
+    # action="read": listing is a read, and the deny-aware filter must only apply
+    # read denies. With action=None every deny row matches regardless of action, so a
+    # "can read all, run none" role (allow agents:*:read + deny agents:*:run) would be
+    # handed an empty list -- the run-deny wrongly hiding read visibility.
+    ctx = _authorization_context(request, resource_type=resource_type, action="read")
     return provider.filter_accessible(ctx, resources)
 
 

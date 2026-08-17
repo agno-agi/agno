@@ -70,11 +70,19 @@ def test_accessible_ids_maps_to_list_objects():
     assert prov.accessible_resource_ids(_ctx("nobody", "agents", None, "read")) == set()
 
 
-def test_list_endpoint_defers_to_accessible_ids():
-    # No resource_id => a listing: check() allows so the handler runs, and
-    # accessible_resource_ids narrows the result.
+def test_check_denies_a_resource_question_with_no_object():
+    # No resource_id is a per-resource question with no object -- it must fail closed,
+    # NOT allow. Collection visibility is answered by accessible_resource_ids (below),
+    # and the route gate routes a GET list through that path, so denying here does not
+    # break listing -- it stops a non-list route (e.g. the WS workflow gate given no
+    # workflow_id) from turning a missing id into an unconditional allow.
     prov = FGAAuthorizationProvider(InMemoryFGA(set()))
-    assert prov.check(_ctx("alice", "agents", None, "read")) is True
+    assert prov.check(_ctx("alice", "agents", None, "read")) is False
+    # a listing still resolves the accessible set independently of check()
+    prov2 = FGAAuthorizationProvider(InMemoryFGA({("user:alice", "read", "agents:a1")}))
+    assert prov2.accessible_resource_ids(_ctx("alice", "agents", None, "read")) == {"a1"}
+    # authorize_route on a no-object resource route also denies (no fail-open)
+    assert prov.authorize_route(_ctx("alice", "workflows", None, "run"), ["workflows:run"]) is False
 
 
 def test_custom_user_type_and_relation_map():

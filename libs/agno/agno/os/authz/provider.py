@@ -94,11 +94,27 @@ class AuthorizationProvider(ABC):
         provider uses it directly; a provider with a different model (ReBAC/ABAC)
         ignores it and decides from :meth:`check` instead.
 
-        Default implementation defers to :meth:`check`, so a custom provider
-        gets full control of the route gate without having to understand scope
+        Default implementation gives a custom provider full control of the
+        per-resource gate through :meth:`check`, without having to understand scope
         strings. :class:`~agno.os.authz.scope_provider.ScopeAuthorizationProvider`
         overrides this to preserve the original scope-matching behaviour.
+
+        SECURITY -- fail closed on non-resource routes. Only ``/agents``, ``/teams``,
+        ``/workflows`` and ``/a2a`` carry a ``resource_type``; every other mapped
+        route (``/sessions``, ``/memories``, ``/config``, ``/databases/all/migrate``,
+        ``/service-accounts``, ...) reaches here with ``resource_type``/``action``
+        unset. By contract :meth:`check` DEFERS such a context (returns ``True``,
+        leaving it to the route gate), so deferring to it here would ALLOW every
+        non-resource route for any authenticated caller -- a full authorization
+        bypass for a provider that only implements :meth:`check`. Such routes are not
+        expressible as a per-resource question, so a provider that means to authorize
+        them MUST override this method (deciding from ``required_scopes`` or its own
+        model). A route with no required scopes is public and still allowed.
         """
+        if not required_scopes:
+            return True
+        if not ctx.resource_type or not ctx.action:
+            return False
         return self.check(ctx)
 
     def require(self, ctx: AuthorizationContext) -> None:

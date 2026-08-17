@@ -370,6 +370,25 @@ def get_websocket_router(
             # attaches no scopes and retains full access.
             return jwt_auth_enabled or "scopes" in websocket_user_context
 
+        from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
+        from agno.os.auth import token_scopes_are_authoritative
+
+        # Resolved once per connection: does a token's `scopes` claim carry authorization
+        # weight on this OS? (See agno.os.auth.token_scopes_are_authoritative.)
+        ws_token_scopes_authoritative = token_scopes_are_authoritative(websocket.app)
+
+        def ws_is_admin() -> bool:
+            # A token's admin scope confers WS admin only when scopes are authoritative
+            # (a scope plane), or for a service-account/PAT (always scope-enforced). Under
+            # a managed-roles/ReBAC plane a raw JWT admin scope is ignored elsewhere, so it
+            # must NOT skip the per-action provider gate or drop run-ownership here either.
+            scopes = websocket_user_context.get("scopes", []) or []
+            if ws_admin_scope not in scopes:
+                return False
+            uid = websocket_user_context.get("user_id")
+            is_sa = isinstance(uid, str) and uid.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+            return is_sa or ws_token_scopes_authoritative
+
         try:
             while True:
                 data = await websocket.receive_text()
@@ -576,7 +595,7 @@ def get_websocket_router(
                     # client cannot attribute a run to another user by spoofing
                     # the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    is_admin = ws_is_admin()
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
@@ -600,7 +619,7 @@ def get_websocket_router(
                     # so reconnecting cannot read another user's run events by
                     # swapping user_id.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    is_admin = ws_is_admin()
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
@@ -667,7 +686,7 @@ def get_websocket_router(
                     # callers so the client cannot continue another user's paused
                     # run by spoofing the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    is_admin = ws_is_admin()
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)

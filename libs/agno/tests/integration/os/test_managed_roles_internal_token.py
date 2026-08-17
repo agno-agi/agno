@@ -194,3 +194,91 @@ def test_service_account_pat_sees_collections_under_managed_roles(tmp_path):
     listing = client.get("/agents", headers=headers)
     assert listing.status_code == 200, listing.text
     assert [a["id"] for a in listing.json()] == ["research-agent"], "PAT saw an empty or filtered listing"
+
+
+def test_pat_mint_subset_rule_uses_the_provider_not_token_scopes(tmp_path):
+    """Escalation regression (PAT-1). Under managed roles the token's `scopes` claim is
+    not the caller's authority, so the PAT-mint subset rule must measure the caller
+    through the provider (their role), not the claim. A caller whose role grants only
+    `service_accounts:write`, but whose token carries an (ignored) `agent_os:admin`,
+    must NOT be able to mint a privileged PAT."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.middleware import JWTMiddleware
+
+    db = SqliteDb(db_file=str(tmp_path / "pat_subset.db"))
+    agent = Agent(id="research-agent", name="Research Agent", db=db)
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("minter", ["service_accounts:write"])  # may create accounts, nothing else
+    store.assign("eve", "minter")
+
+    agent_os = AgentOS(id=OS_ID, agents=[agent], db=db)
+    app = agent_os.get_app()
+    app.state.authorization_provider = store.provider
+    app.add_middleware(JWTMiddleware, verification_keys=[SECRET], algorithm="HS256", authorization=True)
+    client = TestClient(app)
+
+    # eve's token carries agent_os:admin -- which the managed plane ignores everywhere.
+    eve_jwt = jwt.encode(
+        {"sub": "eve", "scopes": ["agent_os:admin"], "exp": datetime.now(UTC) + timedelta(hours=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+    # she may reach the mint endpoint (her role grants service_accounts:write) ...
+    admin_pat = client.post(
+        "/service-accounts",
+        headers={"Authorization": f"Bearer {eve_jwt}"},
+        json={"name": "pwn", "scopes": [{"scope": "agent_os:admin"}], "allow_privileged_scopes": True},
+    )
+    # ... but the subset rule (measured via the provider) refuses scopes she doesn't hold.
+    assert admin_pat.status_code == 403, admin_pat.text
+    run_pat = client.post(
+        "/service-accounts",
+        headers={"Authorization": f"Bearer {eve_jwt}"},
+        json={"name": "pwn2", "scopes": [{"scope": "agents:*:run"}]},
+    )
+    assert run_pat.status_code == 403, run_pat.text
+
+
+def test_schedule_endpoint_gate_uses_the_provider_not_token_scopes(tmp_path):
+    """Confused-deputy regression (PAT-2). The schedule endpoint gate stops
+    `schedules:write` from scheduling a run the caller cannot perform (the executor
+    fires it with the full-scope internal token). Under managed roles it must decide
+    via the provider: a caller with a `schedules:write` role and an ignored
+    `agents:*:run` token scope cannot schedule an agent run they are not granted."""
+    import pytest as _pytest
+
+    _pytest.importorskip("croniter")
+    _pytest.importorskip("pytz")
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.middleware import JWTMiddleware
+
+    db = SqliteDb(db_file=str(tmp_path / "sched.db"))
+    agent = Agent(id="research-agent", name="Research Agent", db=db)
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("scheduler", ["schedules:read", "schedules:write"])  # no agents:run
+    store.assign("dave", "scheduler")
+
+    agent_os = AgentOS(id=OS_ID, agents=[agent], db=db)
+    app = agent_os.get_app()
+    app.state.authorization_provider = store.provider
+    app.add_middleware(JWTMiddleware, verification_keys=[SECRET], algorithm="HS256", authorization=True)
+    client = TestClient(app)
+
+    dave_jwt = jwt.encode(
+        {"sub": "dave", "scopes": ["agents:*:run"], "exp": datetime.now(UTC) + timedelta(hours=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+    resp = client.post(
+        "/schedules",
+        headers={"Authorization": f"Bearer {dave_jwt}"},
+        json={
+            "name": "sneaky",
+            "endpoint": "/agents/research-agent/runs",
+            "method": "POST",
+            "cron_expr": "0 0 * * *",
+            "payload": {"message": "hi"},
+        },
+    )
+    assert resp.status_code == 403, resp.text

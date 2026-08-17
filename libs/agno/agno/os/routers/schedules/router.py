@@ -60,7 +60,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         ``schedules:write`` alone must not reach a component the caller cannot run: a POST
         run endpoint needs the matching ``<type>:run`` scope, any other target is admin-only.
         """
-        from agno.os.auth import build_insufficient_permissions_detail
+        from agno.os.auth import build_insufficient_permissions_detail, token_scopes_are_authoritative
 
         if not getattr(request.state, "authorization_enabled", False):
             return
@@ -70,6 +70,41 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
 
         match = RUN_ENDPOINT_RE.match(endpoint) if method.upper() == "POST" else None
+
+        if not token_scopes_are_authoritative(request):
+            # The token's scopes are NOT the authority here (a managed-roles/ReBAC/custom
+            # plane governs access, and ignores them). Decide the target the same way its
+            # own route gate would -- through the configured provider -- so `schedules:write`
+            # cannot schedule a run of a component the caller may not run themselves (the
+            # executor fires it with the full-scope internal token).
+            from agno.os.auth import resolve_authorization_provider
+            from agno.os.authz.provider import AuthorizationContext
+
+            if match is None:
+                # A non-run target is admin-only; a managed/ReBAC plane exposes no generic
+                # "is admin" question to pose here, so fail closed. Schedule non-run
+                # endpoints on a scope-based deployment or via the admin plane directly.
+                raise HTTPException(
+                    status_code=403,
+                    detail="Scheduling a non-run endpoint requires a scope-based authorization plane",
+                )
+            resource_type, resource_id = match.group(1), match.group(2)
+            provider = resolve_authorization_provider(request)
+            ctx = AuthorizationContext(
+                principal_id=getattr(request.state, "user_id", None),
+                scopes=list(caller_scopes),
+                claims=getattr(request.state, "claims", None) or {},
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action="run",
+                admin_scope=admin_scope,
+            )
+            if not provider.check(ctx):
+                raise HTTPException(
+                    status_code=403, detail=build_insufficient_permissions_detail([f"{resource_type}:run"])
+                )
+            return
+
         if match is None:
             admin = admin_scope or AgentOSScope.ADMIN.value
             if not has_required_scopes(list(caller_scopes), [admin], admin_scope=admin_scope):
