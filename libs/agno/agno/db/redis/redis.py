@@ -2735,7 +2735,11 @@ class RedisDb(BaseDb):
         raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
 
     def claim_job(
-        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 60,
+        deployment_id: Optional[str] = None,
+        serialize_sessions: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job (queued, or stale-running
         within the attempt budget). WATCH/MULTI CAS; a raced claim moves on.
@@ -2747,12 +2751,27 @@ class RedisDb(BaseDb):
         head of foreign-deployment jobs starve matching jobs sitting behind
         them indefinitely (foreign entries stay queued at the front). Each
         page is pre-filtered with one pipelined MGET; the CAS inside
-        _q_try_claim remains the only authority."""
+        _q_try_claim remains the only authority.
+
+        serialize_sessions restricts claims to each session's HEAD - the
+        oldest non-terminal (queued/running/paused) job by (created_at, id) -
+        computed once per call from the ``all`` zset. The snapshot is an
+        ADVISORY pre-filter like the affinity MGET (the CAS stays the claim
+        authority); a head that terminalizes mid-call only defers its
+        successor to the next poll tick, and Postgres carries the same
+        one-snapshot semantics inside its claim transaction."""
         now = self._q_server_now()
         stale = now - lock_grace_seconds
+        session_heads = self._q_session_heads() if serialize_sessions else None
 
         job = self._q_scan_claim(
-            self._q_key("queued"), now, worker_id, now, expect_status="queued", deployment_id=deployment_id
+            self._q_key("queued"),
+            now,
+            worker_id,
+            now,
+            expect_status="queued",
+            deployment_id=deployment_id,
+            session_heads=session_heads,
         )
         if job is not None:
             return job
@@ -2764,7 +2783,37 @@ class RedisDb(BaseDb):
             expect_status="running",
             stale_before=stale,
             deployment_id=deployment_id,
+            session_heads=session_heads,
         )
+
+    def _q_session_heads(self) -> Dict[str, str]:
+        """session_id -> id of the session's oldest non-terminal job (its
+        line's head), from one scan of the ``all`` zset. Paused jobs live in
+        no status zset but do live in ``all``, which is exactly why the
+        snapshot reads it: a paused head must block the line."""
+        raw_ids = self.redis_client.zrange(self._q_key("all"), 0, -1)
+        if not raw_ids:
+            return {}
+        job_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
+        raw_jobs = self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids])
+        heads: Dict[str, tuple] = {}
+        for job_id, raw in zip(job_ids, raw_jobs):
+            if raw is None:
+                continue
+            try:
+                doc = json.loads(raw if isinstance(raw, str) else raw.decode())
+            except (ValueError, AttributeError):
+                continue
+            if doc.get("status") not in ("queued", "running", "paused"):
+                continue
+            session_id = doc.get("session_id")
+            if session_id is None:
+                continue
+            rank = (doc.get("created_at") or 0, job_id)
+            current = heads.get(session_id)
+            if current is None or rank < current:
+                heads[session_id] = rank
+        return {session_id: rank[1] for session_id, rank in heads.items()}
 
     def _q_scan_claim(
         self,
@@ -2775,6 +2824,7 @@ class RedisDb(BaseDb):
         expect_status: str,
         stale_before: Optional[int] = None,
         deployment_id: Optional[str] = None,
+        session_heads: Optional[Dict[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Page through ready jobs oldest-first, cheaply pre-filter each page
         by deployment affinity (MGET, advisory only), and CAS-claim the first
@@ -2802,6 +2852,12 @@ class RedisDb(BaseDb):
                 except (ValueError, AttributeError):
                     continue
                 if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
+                    continue
+                if (
+                    session_heads is not None
+                    and candidate.get("session_id") is not None
+                    and session_heads.get(candidate["session_id"]) != job_id
+                ):
                     continue
                 job = self._q_try_claim(
                     job_id,

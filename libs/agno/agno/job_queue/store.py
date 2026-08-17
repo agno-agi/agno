@@ -52,19 +52,43 @@ class InMemoryQueueStore:
             return {"accepted": True, "reason": None, "job": dict(job)}
 
     async def claim_job(
-        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 60,
+        deployment_id: Optional[str] = None,
+        serialize_sessions: bool = False,
     ) -> Optional[Dict[str, Any]]:
         # Affinity filters BOTH branches - fresh claims and stale reclaims -
         # because a reclaim executes too. deployment_id=None degenerates to
         # claiming only unstamped jobs (mixed fleets safe by construction).
+        # serialize_sessions restricts claims to each session's HEAD: the
+        # oldest non-terminal (queued/running/paused) job, ordered by
+        # (created_at, id). Only the head is ever eligible, so one session
+        # never has two live executions and submissions run FIFO.
         async with self._lock:
             now = int(time.time())
             stale = now - lock_grace_seconds
+            session_heads: Dict[str, str] = {}
+            if serialize_sessions:
+                for j in self._jobs.values():
+                    if j["status"] not in ("queued", "running", "paused"):
+                        continue
+                    session_id = j.get("session_id")
+                    if session_id is None:
+                        continue
+                    head = session_heads.get(session_id)
+                    if head is None or (j["created_at"], j["id"]) < (self._jobs[head]["created_at"], head):
+                        session_heads[session_id] = j["id"]
             candidates = [
                 j
                 for j in self._jobs.values()
                 if j["available_at"] <= now
                 and (j.get("deployment_id") is None or j.get("deployment_id") == deployment_id)
+                and (
+                    not serialize_sessions
+                    or j.get("session_id") is None
+                    or session_heads.get(j["session_id"]) == j["id"]
+                )
                 and (
                     j["status"] == "queued"
                     or (

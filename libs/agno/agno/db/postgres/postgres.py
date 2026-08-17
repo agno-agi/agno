@@ -6128,7 +6128,11 @@ class PostgresDb(BaseDb):
             raise
 
     def claim_job(
-        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 60,
+        deployment_id: Optional[str] = None,
+        serialize_sessions: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job for this worker.
 
@@ -6138,6 +6142,14 @@ class PostgresDb(BaseDb):
         BOTH branches (a reclaim executes too): NULL rides anywhere, stamped
         jobs only on matching workers; deployment_id=None degenerates to
         claiming only unstamped jobs.
+
+        serialize_sessions restricts claims to each session's HEAD - the
+        oldest non-terminal (queued/running/paused) job by (created_at, id).
+        Eligibility is unique per session (exactly one head), so two workers
+        racing one session always contend on the SAME row and SKIP LOCKED
+        arbitrates; no advisory locks or schema changes are needed. A head
+        that is itself stale-running is reclaimed, not bypassed - FIFO holds
+        across crash recovery too.
         """
         try:
             table = self._get_table(table_type="jobs")
@@ -6145,21 +6157,38 @@ class PostgresDb(BaseDb):
                 return None
             now = _db_epoch()
             stale = now - lock_grace_seconds
+            conditions = [
+                table.c.available_at <= now,
+                or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
+                or_(
+                    table.c.status == "queued",
+                    and_(
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt < table.c.max_attempts,
+                    ),
+                ),
+            ]
+            if serialize_sessions:
+                sibling = table.alias("session_sibling")
+                conditions.append(
+                    ~(
+                        select(sibling.c.id)
+                        .where(
+                            sibling.c.session_id == table.c.session_id,
+                            sibling.c.status.in_(("queued", "running", "paused")),
+                            or_(
+                                sibling.c.created_at < table.c.created_at,
+                                and_(sibling.c.created_at == table.c.created_at, sibling.c.id < table.c.id),
+                            ),
+                        )
+                        .exists()
+                    )
+                )
             with self.Session() as sess, sess.begin():
                 subq = (
                     select(table.c.id)
-                    .where(
-                        table.c.available_at <= now,
-                        or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
-                        or_(
-                            table.c.status == "queued",
-                            and_(
-                                table.c.status == "running",
-                                table.c.locked_at <= stale,
-                                table.c.attempt < table.c.max_attempts,
-                            ),
-                        ),
-                    )
+                    .where(*conditions)
                     .order_by(table.c.created_at.asc())
                     .limit(1)
                     .with_for_update(skip_locked=True)
