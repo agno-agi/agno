@@ -194,7 +194,7 @@ class ManagedUserStore:
                 "updated_at": now,
                 "metadata": None,
             }
-            self._write(row, insert=True)
+            self._persist_disabled(id, disabled, tombstone=row)
             self._emit("user.disabled" if disabled else "user.enabled", id, None, [self._summary(row)], actor)
             return row
 
@@ -204,11 +204,26 @@ class ManagedUserStore:
         row = dict(existing)
         row["disabled"] = bool(disabled)
         row["updated_at"] = _now()
-        self._write(row, insert=False)
+        self._persist_disabled(id, disabled)
         self._emit(
             "user.disabled" if disabled else "user.enabled", id, [self._summary(existing)], [self._summary(row)], actor
         )
         return row
+
+    def _persist_disabled(self, id: str, disabled: bool, tombstone: Optional[dict] = None) -> None:
+        """Write ONLY the ``disabled`` flag, atomically. Never a read-modify-write of the
+        whole row, so a concurrent profile edit / JIT provision cannot revert it (the lost
+        update that would silently un-revoke a user). ``tombstone`` is the full row to seed
+        an unknown subject in the in-memory store."""
+        if self._mem is not None:
+            row = self._mem.get(id)
+            if row is not None:
+                row["disabled"] = bool(disabled)
+                row["updated_at"] = _now()
+            elif tombstone is not None:
+                self._mem[id] = dict(tombstone)
+            return
+        self._db.set_authz_user_disabled(id, bool(disabled))
 
     def remove(self, id: str, actor: Optional[str] = None) -> bool:
         """Delete a user from the directory. Does NOT remove role assignments —

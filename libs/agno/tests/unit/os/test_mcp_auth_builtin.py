@@ -1009,9 +1009,10 @@ def test_loopback_redirect_matching():
 async def test_identity_bridge_denies_disabled_user_over_mcp_auth(tmp_path):
     """mcp_auth exempts /mcp from the parent AuthMiddleware, so the disabled-user
     kill-switch that lives there does not run for OAuth'd MCP traffic. The identity
-    bridge must re-apply it: a disabled user's valid token is NOT bridged (leaving
-    request.state.authenticated unset), so the fail-closed tool gate denies. An enabled
-    user is bridged normally. Locks the revocation-over-OAuth'd-MCP fix in."""
+    bridge must re-apply it: a disabled user's valid token gets a TERMINAL 403 (the
+    request never reaches a tool -- custom MCP tools carry no scope gate, so a
+    pass-through would run them with user_id=None). An enabled user is bridged normally.
+    Locks the revocation-over-OAuth'd-MCP fix in."""
     from types import SimpleNamespace
 
     from agno.db.sqlite import SqliteDb
@@ -1034,13 +1035,23 @@ async def test_identity_bridge_denies_disabled_user_over_mcp_auth(tmp_path):
         token = SimpleNamespace(claims={"sub": sub}, scopes=["agents:*:run"], client_id=sub)
         return {"type": "http", "user": SimpleNamespace(access_token=token), "state": {}}
 
-    # enabled user -> identity bridged
-    await bridge(make_scope("alice"), None, None)
+    async def _noop_receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    def _make_send(sink: list):
+        async def _send(message):
+            sink.append(message)
+
+        return _send
+
+    # enabled user -> identity bridged, request reaches the tool
+    await bridge(make_scope("alice"), _noop_receive, _make_send([]))
     assert captured["state"].get("authenticated") is True
     assert captured["state"].get("user_id") == "alice"
 
-    # disabled user -> identity NOT bridged; tool gate then fails closed
+    # disabled user -> terminal 403; inner (the tool app) never runs
     captured.clear()
-    await bridge(make_scope("bob"), None, None)
-    assert captured["state"].get("authenticated") is not True
-    assert "user_id" not in captured["state"]
+    sent: list = []
+    await bridge(make_scope("bob"), _noop_receive, _make_send(sent))
+    assert captured == {}, "disabled user's request must not reach the tool app"
+    assert sent and sent[0]["type"] == "http.response.start" and sent[0]["status"] == 403

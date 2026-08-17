@@ -7326,6 +7326,10 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         authz_store.upsert_user(self.db_engine, table, user_id, values)
 
+    def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        authz_store.set_user_disabled(self.db_engine, table, user_id, disabled)
+
     def delete_authz_user(self, user_id: str) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         authz_store.delete_user(self.db_engine, table, user_id)

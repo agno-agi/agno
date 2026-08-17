@@ -23,10 +23,28 @@ agno adds two things on top of the provider:
   outside authentication where no verified token exists yet.
 """
 
+import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agno.os.middleware.jwt import is_reserved_principal as _is_reserved_principal
 from agno.utils.log import log_warning
+
+
+async def _send_http_forbidden(send: Any, detail: str) -> None:
+    """Send a terminal 403 ASGI response. Used when the bridge must DENY a request
+    outright (a disabled user), rather than pass it through unauthenticated and rely on
+    a downstream tool gate -- custom MCP tools carry no scope gate, so a pass-through
+    would run them with user_id=None instead of denying."""
+    body = json.dumps({"detail": detail}).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 403,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
 
 try:
     from fastmcp.server.auth import AccessToken, AuthProvider, MultiAuth, TokenVerifier
@@ -231,8 +249,11 @@ class MCPIdentityBridgeMiddleware:
                             f"(failing {'closed' if self.user_directory_fail_closed else 'open'})"
                         )
                     if disabled:
+                        # Terminal 403 -- do NOT pass through. A disabled user is revoked;
+                        # passing the request on (unauthenticated) would still reach a custom
+                        # MCP tool, which carries no scope gate, and run it with user_id=None.
                         log_warning(f"Disabled user denied on MCP endpoint: {user_id!r}")
-                        await self.app(scope, receive, send)
+                        await _send_http_forbidden(send, "User is disabled")
                         return
                 # request.state is backed by scope["state"]; the mounted sub-app and the
                 # parent share it, so the tools read these exactly as they do under the

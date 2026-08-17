@@ -417,3 +417,51 @@ def test_user_store_without_a_persistable_db_fails_fast():
                 user_store=ManagedUserStore(),  # bare: nothing to persist into
             ),
         ).get_app()
+
+
+def test_deleting_a_user_revokes_their_roles_no_access_reversal():
+    """Revocation-reversal regression (ADM-1). Deleting a user must NOT restore access:
+    the directory row is the kill-switch tombstone (absence reads as 'not disabled'), so
+    deleting a disabled user while their role assignment survives would re-grant their
+    still-valid token. Delete now cascades the role revocation, leaving them access-less."""
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.assign("alice", "admin")
+    users = ManagedUserStore(db_url=_db_url())
+
+    app = _os(roles, users).get_app()
+    app.include_router(get_roles_router(roles, user_store=users))
+    client = TestClient(app)
+
+    client.post("/authz/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
+    roles.assign("bob", "viewer")
+    # bob can read while enabled and assigned
+    assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
+    # revoke via disable
+    client.patch("/authz/users/bob", headers=_auth("alice"), json={"disabled": True})
+    assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 403
+    # delete the disabled user -> role revoked in the same op, tombstone gone
+    assert client.delete("/authz/users/bob", headers=_auth("alice")).status_code == 200
+    assert roles.roles_of("bob") == [], "delete must revoke the user's role assignments"
+    # bob's still-valid token must NOT regain access (would be 200 before the fix)
+    assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 403
+
+
+def test_profile_upsert_does_not_clobber_the_disabled_flag():
+    """Lost-update regression (ADM-3). A profile edit (or JIT provision) must never write
+    `disabled`: it is set only by the explicit, atomic set_disabled. Otherwise a profile
+    edit carrying a stale snapshot would silently un-revoke a disabled user."""
+    users = ManagedUserStore(db_url=_db_url())
+    users.upsert("bob", email="bob@co")
+    users.set_disabled("bob", True)
+    assert users.is_disabled("bob") is True
+
+    # a profile edit (email/name) must leave `disabled` untouched
+    users.upsert("bob", name="Bob R.")
+    assert users.is_disabled("bob") is True, "upsert reverted the revocation"
+    assert users.get("bob")["name"] == "Bob R."
+
+    # re-enable is still explicit and works
+    users.set_disabled("bob", False)
+    assert users.is_disabled("bob") is False

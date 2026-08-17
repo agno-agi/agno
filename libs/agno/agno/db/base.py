@@ -1697,7 +1697,14 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
-        """Create or update a directory row verbatim (including ``disabled``)."""
+        """Create or update a directory row's profile fields. Never overwrites
+        ``disabled`` on an existing row -- that is the revocation tombstone, changed only
+        via :meth:`set_authz_user_disabled` (so a profile edit cannot revert a revocation)."""
+        raise NotImplementedError
+
+    def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        """Atomically set/clear the revocation tombstone (single-column write, no
+        read-modify-write, so it can't be lost to a concurrent profile edit/provision)."""
         raise NotImplementedError
 
     def delete_authz_user(self, user_id: str) -> None:

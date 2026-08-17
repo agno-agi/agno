@@ -534,6 +534,15 @@ def get_roles_router(
 
         @router.delete("/users/{user_id}")
         def delete_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
+            # Delete is a COMPLETE removal: revoke the user's role assignments in the same
+            # operation. Otherwise deleting a (disabled) user would REVERSE their
+            # revocation -- the directory row is the kill-switch tombstone (absence reads
+            # as "not disabled", by design, so auto-provision works), while their role
+            # assignment survives in the role store, so their still-valid token regains its
+            # old access. Revoking the roles first makes a deleted user access-less
+            # regardless of the tombstone.
+            for role in store.roles_of(user_id):
+                store.unassign(user_id, role, actor=actor)
             deleted = user_store.remove(user_id, actor=actor)
             return {"id": user_id, "deleted": deleted}
 

@@ -286,14 +286,45 @@ def count_users(engine: Engine, table: Any, include_disabled: bool = True, searc
 
 
 def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]) -> None:
-    """Write a directory row verbatim -- including ``disabled``, so a revoked user stays
-    revoked when a store adopts a database mid-flight."""
+    """Write a directory row (email/name/metadata/timestamps).
+
+    ``disabled`` is kept in the INSERT -- a brand-new row, or a store adopting a database
+    mid-flight, needs its initial value -- but NEVER in the ON CONFLICT update set: a
+    profile edit or JIT auto-provision must not overwrite the revocation tombstone. Doing
+    so let a provision/edit racing a :func:`set_user_disabled` silently un-revoke a user
+    (a lost update). Disabling is done atomically through :func:`set_user_disabled`.
+    """
     payload = dict(values)
     metadata = payload.pop("metadata", None)
     if metadata is not None:
         payload["user_metadata"] = json.dumps(metadata)
+    update_cols = [c for c in payload if c != "disabled"]
     with engine.begin() as conn:
-        _upsert(conn, table, {"id": user_id, **payload}, ["id"], list(payload))
+        _upsert(conn, table, {"id": user_id, **payload}, ["id"], update_cols)
+
+
+def set_user_disabled(engine: Engine, table: Any, user_id: str, disabled: bool) -> None:
+    """Atomically set (or clear) a user's ``disabled`` flag in a single statement.
+
+    One INSERT ... ON CONFLICT DO UPDATE SET disabled -- no read-modify-write -- so a
+    concurrent profile edit or JIT provision cannot revert it (the lost update that would
+    silently un-revoke a user). For an unknown subject it writes a durable tombstone in the
+    target state, since the app may mint tokens for a ``sub`` the directory has not seen.
+    """
+    import time
+
+    now = int(time.time())
+    row = {
+        "id": user_id,
+        "email": None,
+        "name": None,
+        "disabled": bool(disabled),
+        "created_at": now,
+        "updated_at": now,
+        "user_metadata": None,
+    }
+    with engine.begin() as conn:
+        _upsert(conn, table, row, ["id"], ["disabled", "updated_at"])
 
 
 def delete_user(engine: Engine, table: Any, user_id: str) -> None:
