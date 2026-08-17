@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections import deque
+from collections.abc import Iterator as AbcIterator
 from time import time as unix_time
 from typing import (
     TYPE_CHECKING,
@@ -123,6 +125,68 @@ from agno.utils.log import (
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
+
+# In-process exclusive claim for an in-place continue of one (session_id, run_id).
+# threading.Lock cannot be held across awaits: two asyncio tasks share a thread
+# and a blocking acquire deadlocks the event loop. The map is mutated only while
+# this lock is held for the lookup. Nested acquires with the same token succeed
+# so the AgentOS background SSE wrapper can hold the claim until its producer
+# finishes while _acontinue_run_stream participates without releasing early.
+_paused_continue_claims: Dict[Tuple[str, str], str] = {}
+_paused_continue_claims_lock = threading.Lock()
+
+
+class _PausedContinueClaim:
+    """Exactly one in-process continue may own an in-place resume.
+
+    A second overlapping continue raises RunNotContinuableError without applying
+    the payload. Crash recovery of a leftover RUNNING run in a fresh process
+    still succeeds because the map is empty after process restart.
+    """
+
+    def __init__(self, session_id: str, run_id: str) -> None:
+        self.session_id = session_id
+        self.run_id = run_id
+        self.token = uuid4().hex
+        self._held = False
+
+    @property
+    def _key(self) -> Tuple[str, str]:
+        return (self.session_id, self.run_id)
+
+    def acquire_or_refuse(self) -> None:
+        with _paused_continue_claims_lock:
+            owner = _paused_continue_claims.get(self._key)
+            if owner is None:
+                _paused_continue_claims[self._key] = self.token
+                self._held = True
+                return
+            if owner == self.token:
+                self._held = True
+                return
+        raise RunNotContinuableError(
+            f"Cannot continue run {self.run_id}: another continue already claimed this paused run. "
+            "The stored run is unchanged."
+        )
+
+    def release(self) -> None:
+        if not self._held:
+            return
+        with _paused_continue_claims_lock:
+            if _paused_continue_claims.get(self._key) == self.token:
+                del _paused_continue_claims[self._key]
+        self._held = False
+
+
+def _release_paused_continue_after_iter(claim: _PausedContinueClaim, result: AbcIterator) -> Iterator[Any]:
+    def _gen() -> Iterator[Any]:
+        try:
+            yield from result
+        finally:
+            claim.release()
+
+    return _gen()
+
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
 # member's own cancel handler can yield them to the stream. RunError is excluded —
@@ -6965,416 +7029,466 @@ def continue_run_dispatch(
     if not fork and run_response.status == RunStatus.completed:
         fork = True
 
-    # Apply modifiers BEFORE the requirements machinery. If we forked, the
-    # rest of the dispatch operates on the new run with cloned members.
-    _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
-    run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
-    if regenerate and original_run_id_for_lineage:
-        run_response.regenerated_from = original_run_id_for_lineage
-        if replace_original is not False and run_response.forked_from_run_id:
-            # Mark the original run REGENERATED so history builders skip it.
-            for r in team_session.runs or []:
-                if r.run_id == original_run_id_for_lineage:
-                    r.status = RunStatus.regenerated
-                    break
+    # Exactly one in-place continue may claim (session_id, run_id). Fork and
+    # regenerate mint a new run_id and must not contend with a paused resume.
+    # Hold the claim for the whole continue, including returned stream iterators.
+    paused_claim: Optional[_PausedContinueClaim] = None
+    paused_claim_handed_off = False
+    if not fork and not regenerate:
+        paused_claim = _PausedContinueClaim(session_id, run_response.run_id)
+        paused_claim.acquire_or_refuse()
 
-    # Append the new user-message (from input / additional_instructions) so
-    # the model loop picks it up.
-    if input:
-        _maybe_append_input_message_team(run_response, input, team)
+    def _finish_continue(
+        result: Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]],
+    ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
+        nonlocal paused_claim_handed_off
+        if paused_claim is None:
+            return result
+        if isinstance(result, AbcIterator) and not isinstance(result, (str, bytes)):
+            paused_claim_handed_off = True
+            return _release_paused_continue_after_iter(paused_claim, result)
+        return result
 
-    # A freshly-forked run has no PAUSED requirements contract — skip the
-    # HITL machinery and route straight to the model loop. Member-level
-    # tool resolution for HITL is a property of the SOURCE run; the fork
-    # is a new attempt and its tools/messages are seeded from the
-    # snapshot.
-    if _did_snapshot_dispatch:
-        # Reset run state for a fresh model loop on the forked run.
-        run_response.status = RunStatus.running
-        run_response.content = None
+    try:
+        # Apply modifiers BEFORE the requirements machinery. If we forked, the
+        # rest of the dispatch operates on the new run with cloned members.
+        _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
+        run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
+        if regenerate and original_run_id_for_lineage:
+            run_response.regenerated_from = original_run_id_for_lineage
+            if replace_original is not False and run_response.forked_from_run_id:
+                # Mark the original run REGENERATED so history builders skip it.
+                for r in team_session.runs or []:
+                    if r.run_id == original_run_id_for_lineage:
+                        r.status = RunStatus.regenerated
+                        break
 
-        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
-        team.model = cast(Model, team.model)
+        # Append the new user-message (from input / additional_instructions) so
+        # the model loop picks it up.
+        if input:
+            _maybe_append_input_message_team(run_response, input, team)
 
-        team_run_context_local: Dict[str, Any] = {}
-        _tools_fork = _determine_tools_for_model(
-            team,
-            model=team.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context_local,
-            session=team_session,
-            user_id=user_id,
-            async_mode=False,
-            stream=opts.stream or False,
-            stream_events=opts.stream_events or False,
-        )
+        # A freshly-forked run has no PAUSED requirements contract — skip the
+        # HITL machinery and route straight to the model loop. Member-level
+        # tool resolution for HITL is a property of the SOURCE run; the fork
+        # is a new attempt and its tools/messages are seeded from the
+        # snapshot.
+        if _did_snapshot_dispatch:
+            # Reset run state for a fresh model loop on the forked run.
+            run_response.status = RunStatus.running
+            run_response.content = None
 
-        input_messages = run_response.messages or []
-        run_messages = _get_continue_run_messages(
-            team,
-            input=input_messages,
-            session=team_session,
-            add_history_to_context=team.add_history_to_context,
-            run_context=run_context,
-        )
+            response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+            team.model = cast(Model, team.model)
 
-        log_debug(f"Team Continue Run (forked): {run_response.run_id}", center=True)
-
-        if opts.stream:
-            return _continue_run_stream(
+            team_run_context_local: Dict[str, Any] = {}
+            _tools_fork = _determine_tools_for_model(
                 team,
+                model=team.model,
                 run_response=run_response,
-                run_messages=run_messages,
                 run_context=run_context,
-                tools=_tools_fork,
+                team_run_context=team_run_context_local,
                 session=team_session,
                 user_id=user_id,
-                response_format=response_format,
-                stream_events=opts.stream_events,
-                yield_run_output=opts.yield_run_output,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
+                async_mode=False,
+                stream=opts.stream or False,
+                stream_events=opts.stream_events or False,
             )
-        else:
-            return _continue_run(
+
+            input_messages = run_response.messages or []
+            run_messages = _get_continue_run_messages(
                 team,
-                run_response=run_response,
-                run_messages=run_messages,
-                run_context=run_context,
-                tools=_tools_fork,
+                input=input_messages,
                 session=team_session,
-                user_id=user_id,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
+                add_history_to_context=team.add_history_to_context,
+                run_context=run_context,
             )
-    # --- End snapshot dispatch ----------------------------------------------
 
-    # Normalize and apply requirements
-    if requirements:
-        old_requirements, old_tools, decisions = _apply_requirements_payload(run_response, requirements)
+            log_debug(f"Team Continue Run (forked): {run_response.run_id}", center=True)
 
-        # Also apply any resolved approval
-        if run_response.tools:
+            if opts.stream:
+                return _finish_continue(
+                    _continue_run_stream(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        tools=_tools_fork,
+                        session=team_session,
+                        user_id=user_id,
+                        response_format=response_format,
+                        stream_events=opts.stream_events,
+                        yield_run_output=opts.yield_run_output,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                )
+            else:
+                return _finish_continue(
+                    _continue_run(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        tools=_tools_fork,
+                        session=team_session,
+                        user_id=user_id,
+                        response_format=response_format,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                )
+        # --- End snapshot dispatch ----------------------------------------------
+
+        # Normalize and apply requirements
+        if requirements:
+            old_requirements, old_tools, decisions = _apply_requirements_payload(run_response, requirements)
+
+            # Also apply any resolved approval
+            if run_response.tools:
+                from agno.run.approval import check_and_apply_approval_resolution
+
+                try:
+                    check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
+                except RuntimeError as e:
+                    run_response.requirements = old_requirements
+                    run_response.tools = old_tools
+                    _restore_requirement_decisions(decisions)
+                    # The payload was supplied; the approval gate is what refused.
+                    # Surface its reason instead of asking for a payload again.
+                    raise ValueError(str(e))
+        elif run_response.tools:
             from agno.run.approval import check_and_apply_approval_resolution
 
             try:
                 check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
-            except RuntimeError as e:
-                run_response.requirements = old_requirements
-                run_response.tools = old_tools
-                _restore_requirement_decisions(decisions)
-                # The payload was supplied; the approval gate is what refused.
-                # Surface its reason instead of asking for a payload again.
-                raise ValueError(str(e))
-    elif run_response.tools:
-        from agno.run.approval import check_and_apply_approval_resolution
-
-        try:
-            check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
-        except RuntimeError:
-            # No resolved approval found — fall through to bare-resume.
-            pass
-        # A RUNNING/ERROR run with already-executed tools (e.g. crash recovery
-        # after a delegation, or an ERROR retry) is NOT a HITL pause: resume via
-        # the team-leader model regardless of whether an approval was applied.
-        # Without this, such a run falls through to terminal cleanup with no
-        # final turn (content=None). Unresolved requirements are re-paused
-        # downstream, so this does not bypass HITL.
-        #
-        # Guard: a PAUSED run with requirements is a real HITL pause (the user
-        # called continue_run(response) after mutating req.confirm() in place).
-        # Don't bypass — fall through to member-routing / team-level resolution
-        # below. The team-leader bypass is only for non-HITL crash recovery.
-        if run_response.status != RunStatus.paused or not run_response.requirements:
-            _did_snapshot_dispatch = True  # route to team-leader model call
-    else:
-        # No requirements AND no tools — this is a bare resume of a mid-flight
-        # run (RUNNING / ERROR / CANCELLED that crashed before any tool batch).
-        # Don't raise; let the team-leader model loop run with whatever
-        # messages survived in run_response.
-        _did_snapshot_dispatch = True
-
-    # Determine what kind of pause we're continuing from
-    run_response.requirements = _reclaim_own_requirements(team, run_response.requirements, run_response.run_id)
-    has_member = _has_member_requirements(run_response.requirements or [])
-    has_team_level = _has_team_level_requirements(run_response.requirements or [])
-
-    # Guard: a member requirement the client left unresolved has to re-pause,
-    # not dispatch. Routing hands it to the member's continue_run, which reads
-    # the pause as settled and runs the gated tool with whatever the schema
-    # holds -- for a requested field left untouched, with None. The team-level
-    # lane already re-pauses on its own unresolved requirements; a requirement
-    # addressed to a member is no less unresolved for being addressed to one.
-    unresolved_member = [
-        r
-        for r in (run_response.requirements or [])
-        if getattr(r, "member_agent_id", None) is not None and not r.is_resolved()
-    ]
-    if unresolved_member:
-        from agno.team import _hooks
-
-        if opts.stream:
-
-            def _member_paused_stream_with_final() -> Iterator[
-                Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]
-            ]:
-                yield from _hooks.handle_team_run_paused_stream(
-                    team, run_response=run_response, session=team_session, run_context=run_context
-                )
-                if opts.yield_run_output:
-                    yield run_response
-
-            return _member_paused_stream_with_final()
+            except RuntimeError:
+                # No resolved approval found — fall through to bare-resume.
+                pass
+            # A RUNNING/ERROR run with already-executed tools (e.g. crash recovery
+            # after a delegation, or an ERROR retry) is NOT a HITL pause: resume via
+            # the team-leader model regardless of whether an approval was applied.
+            # Without this, such a run falls through to terminal cleanup with no
+            # final turn (content=None). Unresolved requirements are re-paused
+            # downstream, so this does not bypass HITL.
+            #
+            # Guard: a PAUSED run with requirements is a real HITL pause (the user
+            # called continue_run(response) after mutating req.confirm() in place).
+            # Don't bypass — fall through to member-routing / team-level resolution
+            # below. The team-leader bypass is only for non-HITL crash recovery.
+            if run_response.status != RunStatus.paused or not run_response.requirements:
+                _did_snapshot_dispatch = True  # route to team-leader model call
         else:
-            return _hooks.handle_team_run_paused(
-                team, run_response=run_response, session=team_session, run_context=run_context
-            )
+            # No requirements AND no tools — this is a bare resume of a mid-flight
+            # run (RUNNING / ERROR / CANCELLED that crashed before any tool batch).
+            # Don't raise; let the team-leader model loop run with whatever
+            # messages survived in run_response.
+            _did_snapshot_dispatch = True
 
-    # Route member requirements to member agents
-    member_results: List[str] = []
-    if has_member:
-        member_reqs = [r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None]
-        team_level_reqs = [r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is None]
-        # Set only member reqs for routing; _route_requirements_to_members
-        # may append newly propagated reqs via _propagate_member_pause (chained HITL).
-        original_member_req_ids = {id(r) for r in member_reqs}
-        run_response.requirements = member_reqs
+        # Determine what kind of pause we're continuing from
+        run_response.requirements = _reclaim_own_requirements(team, run_response.requirements, run_response.run_id)
+        has_member = _has_member_requirements(run_response.requirements or [])
+        has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
-        if opts.stream:
-            # Streaming: use the generator variant that yields member events.
-            # We collect member_results via a mutable list and chain with the
-            # team continuation stream below.
-            member_event_stream = _route_requirements_to_members_stream(
-                team,
-                run_response=run_response,
-                session=team_session,
-                member_results=member_results,
-                run_context=run_context,
-                stream_events=opts.stream_events or False,
-            )
-        else:
-            member_event_stream = None
-            try:
-                member_results = _route_requirements_to_members(
-                    team,
-                    run_response=run_response,
-                    session=team_session,
-                    run_context=run_context,
-                )
-            except Exception:
-                # Routing failed mid-flight; put the team-level requirements
-                # back so the caller's run object stays complete for a retry.
-                run_response.requirements = team_level_reqs + (run_response.requirements or [])
-                raise
-
-        # For non-streaming, member routing is done eagerly above.
-        # For streaming, we must consume member events lazily inside a returned generator.
-        # But first we need to check for chained pauses AFTER member routing completes.
-        # So for streaming, we defer everything to a wrapper generator.
-        if opts.stream and member_event_stream is not None:
-            return _continue_run_dispatch_stream_with_member_events(
-                team=team,
-                run_response=run_response,
-                member_event_stream=member_event_stream,
-                member_results=member_results,
-                original_member_req_ids=original_member_req_ids,
-                team_level_reqs=team_level_reqs,
-                has_team_level=has_team_level,
-                team_session=team_session,
-                run_context=run_context,
-                opts=opts,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
-
-        # Non-streaming: merge and check for chained pauses
-        newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
-        run_response.requirements = team_level_reqs + newly_propagated
-
-        # Check if any members are still paused
-        if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-            from agno.team import _hooks
-
-            return _hooks.handle_team_run_paused(
-                team, run_response=run_response, session=team_session, run_context=run_context
-            )
-
-    # Handle team-level tool resolution
-    if has_team_level or _did_snapshot_dispatch:
-        # Includes _did_snapshot_dispatch: bare-resume of a crashed run (no
-        # requirements, no tools) still needs the team-leader model call to
-        # produce a response. Without this, those runs would fall through
-        # with no model invocation.
-        # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
-        unresolved_team = [
+        # Guard: a member requirement the client left unresolved has to re-pause,
+        # not dispatch. Routing hands it to the member's continue_run, which reads
+        # the pause as settled and runs the gated tool with whatever the schema
+        # holds -- for a requested field left untouched, with None. The team-level
+        # lane already re-pauses on its own unresolved requirements; a requirement
+        # addressed to a member is no less unresolved for being addressed to one.
+        unresolved_member = [
             r
             for r in (run_response.requirements or [])
-            if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+            if getattr(r, "member_agent_id", None) is not None and not r.is_resolved()
         ]
-        if unresolved_team:
+        if unresolved_member:
             from agno.team import _hooks
 
             if opts.stream:
 
-                def _paused_stream_with_final() -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+                def _member_paused_stream_with_final() -> Iterator[
+                    Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]
+                ]:
                     yield from _hooks.handle_team_run_paused_stream(
                         team, run_response=run_response, session=team_session, run_context=run_context
                     )
                     if opts.yield_run_output:
                         yield run_response
 
-                return _paused_stream_with_final()
+                return _finish_continue(_member_paused_stream_with_final())
             else:
-                return _hooks.handle_team_run_paused(
-                    team, run_response=run_response, session=team_session, run_context=run_context
+                return _finish_continue(
+                    _hooks.handle_team_run_paused(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    )
                 )
 
-        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
-        team.model = cast(Model, team.model)
+        # Route member requirements to member agents
+        member_results: List[str] = []
+        if has_member:
+            member_reqs = [
+                r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
+            ]
+            team_level_reqs = [
+                r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is None
+            ]
+            # Set only member reqs for routing; _route_requirements_to_members
+            # may append newly propagated reqs via _propagate_member_pause (chained HITL).
+            original_member_req_ids = {id(r) for r in member_reqs}
+            run_response.requirements = member_reqs
 
-        # Prepare tools
-        team_run_context: Dict[str, Any] = {}
-        _tools = _determine_tools_for_model(
-            team,
-            model=team.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context,
-            session=team_session,
-            user_id=user_id,
-            async_mode=False,
-            stream=opts.stream or False,
-            stream_events=opts.stream_events or False,
-        )
+            if opts.stream:
+                # Streaming: use the generator variant that yields member events.
+                # We collect member_results via a mutable list and chain with the
+                # team continuation stream below.
+                member_event_stream = _route_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=team_session,
+                    member_results=member_results,
+                    run_context=run_context,
+                    stream_events=opts.stream_events or False,
+                )
+            else:
+                member_event_stream = None
+                try:
+                    member_results = _route_requirements_to_members(
+                        team,
+                        run_response=run_response,
+                        session=team_session,
+                        run_context=run_context,
+                    )
+                except Exception:
+                    # Routing failed mid-flight; put the team-level requirements
+                    # back so the caller's run object stays complete for a retry.
+                    run_response.requirements = team_level_reqs + (run_response.requirements or [])
+                    raise
 
-        # Get continue run messages from existing conversation
-        input_messages = run_response.messages or []
-        run_messages = _get_continue_run_messages(
-            team,
-            input=input_messages,
-            session=team_session,
-            add_history_to_context=team.add_history_to_context,
-            run_context=run_context,
-        )
+            # For non-streaming, member routing is done eagerly above.
+            # For streaming, we must consume member events lazily inside a returned generator.
+            # But first we need to check for chained pauses AFTER member routing completes.
+            # So for streaming, we defer everything to a wrapper generator.
+            if opts.stream and member_event_stream is not None:
+                return _finish_continue(
+                    _continue_run_dispatch_stream_with_member_events(
+                        team=team,
+                        run_response=run_response,
+                        member_event_stream=member_event_stream,
+                        member_results=member_results,
+                        original_member_req_ids=original_member_req_ids,
+                        team_level_reqs=team_level_reqs,
+                        has_team_level=has_team_level,
+                        team_session=team_session,
+                        run_context=run_context,
+                        opts=opts,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                )
 
-        # Handle tool call updates (execute confirmed tools, etc.)
-        _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
+            # Non-streaming: merge and check for chained pauses
+            newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
+            run_response.requirements = team_level_reqs + newly_propagated
 
-        # Reset run state for continuation
-        run_response.status = RunStatus.running
-        # Reset content before re-running the model; _update_run_response appends
-        # to existing content, so stale content from the paused run must be cleared.
-        run_response.content = None
+            # Check if any members are still paused
+            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                from agno.team import _hooks
 
-        log_debug(f"Team Continue Run Start: {run_response.run_id}", center=True)
+                return _finish_continue(
+                    _hooks.handle_team_run_paused(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    )
+                )
 
-        if opts.stream:
-            return _continue_run_stream(
+        # Handle team-level tool resolution
+        if has_team_level or _did_snapshot_dispatch:
+            # Includes _did_snapshot_dispatch: bare-resume of a crashed run (no
+            # requirements, no tools) still needs the team-leader model call to
+            # produce a response. Without this, those runs would fall through
+            # with no model invocation.
+            # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
+            unresolved_team = [
+                r
+                for r in (run_response.requirements or [])
+                if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+            ]
+            if unresolved_team:
+                from agno.team import _hooks
+
+                if opts.stream:
+
+                    def _paused_stream_with_final() -> Iterator[
+                        Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]
+                    ]:
+                        yield from _hooks.handle_team_run_paused_stream(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        )
+                        if opts.yield_run_output:
+                            yield run_response
+
+                    return _finish_continue(_paused_stream_with_final())
+                else:
+                    return _finish_continue(
+                        _hooks.handle_team_run_paused(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        )
+                    )
+
+            response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+            team.model = cast(Model, team.model)
+
+            # Prepare tools
+            team_run_context: Dict[str, Any] = {}
+            _tools = _determine_tools_for_model(
                 team,
+                model=team.model,
                 run_response=run_response,
-                run_messages=run_messages,
                 run_context=run_context,
-                tools=_tools,
+                team_run_context=team_run_context,
                 session=team_session,
                 user_id=user_id,
-                response_format=response_format,
-                stream_events=opts.stream_events,
-                yield_run_output=opts.yield_run_output,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
+                async_mode=False,
+                stream=opts.stream or False,
+                stream_events=opts.stream_events or False,
             )
-        else:
-            return _continue_run(
+
+            # Get continue run messages from existing conversation
+            input_messages = run_response.messages or []
+            run_messages = _get_continue_run_messages(
                 team,
-                run_response=run_response,
-                run_messages=run_messages,
+                input=input_messages,
+                session=team_session,
+                add_history_to_context=team.add_history_to_context,
                 run_context=run_context,
-                tools=_tools,
+            )
+
+            # Handle tool call updates (execute confirmed tools, etc.)
+            _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
+
+            # Reset run state for continuation
+            run_response.status = RunStatus.running
+            # Reset content before re-running the model; _update_run_response appends
+            # to existing content, so stale content from the paused run must be cleared.
+            run_response.content = None
+
+            log_debug(f"Team Continue Run Start: {run_response.run_id}", center=True)
+
+            if opts.stream:
+                return _finish_continue(
+                    _continue_run_stream(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        tools=_tools,
+                        session=team_session,
+                        user_id=user_id,
+                        response_format=response_format,
+                        stream_events=opts.stream_events,
+                        yield_run_output=opts.yield_run_output,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                )
+            else:
+                return _finish_continue(
+                    _continue_run(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        tools=_tools,
+                        session=team_session,
+                        user_id=user_id,
+                        response_format=response_format,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                )
+
+        # Member-only case: continue the same run with member results
+        if member_results and not has_team_level:
+            response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+            team.model = cast(Model, team.model)
+
+            # Prepare tools for the continuation
+            team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
+            _tools = _determine_tools_for_model(
+                team,
+                model=team.model,
+                run_response=run_response,
+                run_context=run_context,
+                team_run_context=team_run_context,
                 session=team_session,
                 user_id=user_id,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
+                async_mode=False,
+                stream=opts.stream or False,
+                stream_events=opts.stream_events or False,
             )
 
-    # Member-only case: continue the same run with member results
-    if member_results and not has_team_level:
-        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
-        team.model = cast(Model, team.model)
-
-        # Prepare tools for the continuation
-        team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
-        _tools = _determine_tools_for_model(
-            team,
-            model=team.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context,
-            session=team_session,
-            user_id=user_id,
-            async_mode=False,
-            stream=opts.stream or False,
-            stream_events=opts.stream_events or False,
-        )
-
-        # Get existing messages
-        input_messages = run_response.messages or []
-        run_messages = _get_continue_run_messages(
-            team,
-            input=input_messages,
-            session=team_session,
-            add_history_to_context=team.add_history_to_context,
-            run_context=run_context,
-        )
-
-        # Prepare for member HITL continuation
-        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
-
-        log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
-
-        if opts.stream:
-            return _continue_run_stream(
+            # Get existing messages
+            input_messages = run_response.messages or []
+            run_messages = _get_continue_run_messages(
                 team,
-                run_response=run_response,
-                run_messages=run_messages,
-                run_context=run_context,
-                tools=_tools,
+                input=input_messages,
                 session=team_session,
-                user_id=user_id,
-                response_format=response_format,
-                stream_events=opts.stream_events,
-                yield_run_output=opts.yield_run_output,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
-        else:
-            return _continue_run(
-                team,
-                run_response=run_response,
-                run_messages=run_messages,
+                add_history_to_context=team.add_history_to_context,
                 run_context=run_context,
-                tools=_tools,
-                session=team_session,
-                user_id=user_id,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
             )
 
-    # Fallback: nothing to do
-    run_response.status = RunStatus.completed
-    _cleanup_and_store(team, run_response=run_response, session=team_session)
-    return run_response
+            # Prepare for member HITL continuation
+            _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+            log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
+
+            if opts.stream:
+                return _finish_continue(
+                    _continue_run_stream(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        tools=_tools,
+                        session=team_session,
+                        user_id=user_id,
+                        response_format=response_format,
+                        stream_events=opts.stream_events,
+                        yield_run_output=opts.yield_run_output,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                )
+            else:
+                return _finish_continue(
+                    _continue_run(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        tools=_tools,
+                        session=team_session,
+                        user_id=user_id,
+                        response_format=response_format,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                )
+
+        # Fallback: nothing to do
+        run_response.status = RunStatus.completed
+        _cleanup_and_store(team, run_response=run_response, session=team_session)
+        return _finish_continue(run_response)
+    finally:
+        if paused_claim is not None and not paused_claim_handed_off:
+            paused_claim.release()
 
 
 def _continue_run_dispatch_stream_with_member_events(
@@ -8140,12 +8254,28 @@ async def _acontinue_run_background_stream(
                 "and cannot be continued in place. Use acontinue_run(run_id=..., fork=True) to branch off a "
                 "finished run. The stored run is unchanged."
             )
+
+    # Claim before the RUNNING write is visible to a sibling continue. The
+    # producer releases after the in-place resume finishes — not when this
+    # SSE generator returns — so a foreground continue cannot overlap it.
+    paused_continue_claim: Optional[_PausedContinueClaim] = None
+    if not (fork or regenerate) and _as_run_status(status_before_takeover) not in (
+        RunStatus.completed,
+        RunStatus.cancelled,
+    ):
+        paused_continue_claim = _PausedContinueClaim(session_id, _run_id)
+        paused_continue_claim.acquire_or_refuse()
+    try:
         # A fork or regenerate executes under a NEW run id; writing RUNNING
         # under the original id would strand the original run at RUNNING.
-        if not (fork or regenerate):
+        if run_response is not None and not (fork or regenerate):
             run_response.status = RunStatus.running
             team_session.upsert_run(run_response=run_response)
-    await asave_session(team, session=team_session)
+        await asave_session(team, session=team_session)
+    except BaseException:
+        if paused_continue_claim is not None:
+            paused_continue_claim.release()
+        raise
 
     log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
 
@@ -8205,6 +8335,7 @@ async def _acontinue_run_background_stream(
                 yield_run_output=True,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
+                paused_continue_claim=paused_continue_claim,
                 **kwargs,
             ):
                 if isinstance(event, TeamRunOutput):
@@ -8379,6 +8510,9 @@ async def _acontinue_run_background_stream(
                 await asyncio.shield(sse_subscriber_manager.complete(_run_id))
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to signal SSE subscribers for continue-run {_run_id} completion")
+
+            if paused_continue_claim is not None:
+                paused_continue_claim.release()
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)
@@ -8603,6 +8737,8 @@ async def _acontinue_run(
     # skipped and the run would complete without the leader ever being called.
     routed_member_results: List[str] = []
 
+    paused_claim: Optional[_PausedContinueClaim] = None
+
     try:
         num_attempts = team.retries + 1
         for attempt in range(num_attempts):
@@ -8652,6 +8788,12 @@ async def _acontinue_run(
                 # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
                 if not fork and run_response.status == RunStatus.completed:
                     fork = True
+
+                if paused_claim is None and not fork and not regenerate:
+                    paused_claim = _PausedContinueClaim(session_id, run_response.run_id)
+                    paused_claim.acquire_or_refuse()
+                elif paused_claim is not None and not fork and not regenerate:
+                    paused_claim.acquire_or_refuse()
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
                 run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
@@ -9021,6 +9163,8 @@ async def _acontinue_run(
                 return run_response
 
     finally:
+        if paused_claim is not None:
+            paused_claim.release()
         _disconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)  # type: ignore
         if run_response and run_response.run_id:
@@ -9048,6 +9192,7 @@ async def _acontinue_run_stream(
     yield_run_output: bool = False,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    paused_continue_claim: Optional[_PausedContinueClaim] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Continue a paused team run (async, streaming)."""
@@ -9071,6 +9216,8 @@ async def _acontinue_run_stream(
     # run that skipped it.
     requirements_applied = False
     routed_member_results: List[str] = []
+    inherited_claim = paused_continue_claim
+    paused_claim: Optional[_PausedContinueClaim] = inherited_claim
 
     try:
         num_attempts = team.retries + 1
@@ -9121,6 +9268,12 @@ async def _acontinue_run_stream(
                 # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
                 if not fork and run_response.status == RunStatus.completed:
                     fork = True
+
+                if paused_claim is None and not fork and not regenerate:
+                    paused_claim = _PausedContinueClaim(session_id, run_response.run_id)
+                    paused_claim.acquire_or_refuse()
+                elif paused_claim is not None and not fork and not regenerate:
+                    paused_claim.acquire_or_refuse()
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
                 run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
@@ -9722,6 +9875,8 @@ async def _acontinue_run_stream(
                     yield run_response
 
     finally:
+        if paused_claim is not None and paused_claim is not inherited_claim:
+            paused_claim.release()
         _disconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)  # type: ignore
         if run_response and run_response.run_id:
