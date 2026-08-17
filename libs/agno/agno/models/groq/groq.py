@@ -34,7 +34,7 @@ class Groq(Model):
     For more information, see: https://console.groq.com/docs/libraries
     """
 
-    id: str = "llama-3.3-70b-versatile"
+    id: str = "openai/gpt-oss-120b"
     name: str = "Groq"
     provider: str = "Groq"
 
