@@ -32,6 +32,7 @@ from agno.db.utils import (
     filter_context_runs,
     json_serializer,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     run_index_lock_name,
     validate_pagination,
 )
@@ -2027,15 +2028,20 @@ class MySQLDb(BaseDb):
             Optional[date]: The starting date for which metrics calculation is needed.
         """
         with self.Session() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = sess.execute(stmt).fetchone()
+            # resume at the earliest incomplete day after the latest completed one, otherwise the
+            # day after that one: a day holding a completed row was rebuilt after it ended, so an
+            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
+            # be rebuilt
+            latest_completed = sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True))).scalar()
 
-            # 1. Return the date of the first day without a complete metrics record.
-            if result is not None:
-                if result.completed:
-                    return result._mapping["date"] + timedelta(days=1)
-                else:
-                    return result._mapping["date"]
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = sess.execute(incomplete_stmt).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2104,8 +2110,8 @@ class MySQLDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 with self.Session() as sess, sess.begin():
@@ -2115,18 +2121,20 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception refreshing metrics: {str(e)}")
-            return None
+            raise e
 
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): If set, only return metrics owned by this user.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2145,15 +2153,26 @@ class MySQLDb(BaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchall()
                 if not result:
                     return [], None
 
                 # Get the latest updated_at
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_updated_at = sess.execute(latest_stmt).scalar()
 
-            return [row._mapping for row in result], latest_updated_at
+            # Map the sentinel empty-string user_id back to None
+            rows: List[dict] = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
@@ -2161,11 +2180,12 @@ class MySQLDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): If set, only delete the row if owned by this user.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2177,16 +2197,19 @@ class MySQLDb(BaseDb):
         try:
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {str(e)}")
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): If set, only return the row if owned by this user or shared (NULL owner).
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2201,6 +2224,8 @@ class MySQLDb(BaseDb):
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2217,6 +2242,7 @@ class MySQLDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2226,6 +2252,7 @@ class MySQLDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): If set, only return rows owned by this user or shared (NULL owner).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2245,6 +2272,10 @@ class MySQLDb(BaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply owner scoping: this user's rows plus shared rows (NULL owner)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 if sort_by is not None:
@@ -2288,6 +2319,12 @@ class MySQLDb(BaseDb):
                 return None
 
             with self.Session() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id)).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -2310,6 +2347,7 @@ class MySQLDb(BaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",
+                    "user_id": "user_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
@@ -2345,7 +2383,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {str(e)}")
-            return None
+            raise e
 
     # -- Eval methods --
 

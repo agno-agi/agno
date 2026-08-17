@@ -19,6 +19,7 @@ from agno.db.dynamo.utils import (
     create_table_if_not_exists,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
+    deserialize_metrics_date,
     deserialize_session_result,
     execute_query_with_pagination,
     fetch_all_sessions_data,
@@ -37,8 +38,10 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1650,9 +1653,13 @@ class DynamoDb(BaseDb):
                 return None
 
             # Get timestamp range for session data
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             # Get all sessions for the date range
@@ -1683,8 +1690,8 @@ class DynamoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per user_id, plus the empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             # Store metrics in DynamoDB
             if metrics_records:
@@ -1732,26 +1739,11 @@ class DynamoDb(BaseDb):
                 metrics_items.extend(response.get("Items", []))
 
             if metrics_items:
-                # Find the latest date with metrics
-                latest_complete_date = None
-                incomplete_dates = []
-
-                for item in metrics_items:
-                    metrics_data = deserialize_from_dynamodb_item(item)
-                    record_date = datetime.fromisoformat(metrics_data["date"]).date()
-                    is_completed = metrics_data.get("completed", False)
-
-                    if is_completed:
-                        if latest_complete_date is None or record_date > latest_complete_date:
-                            latest_complete_date = record_date
-                    else:
-                        incomplete_dates.append(record_date)
-
-                # Return the earliest incomplete date, or the day after the latest complete date
-                if incomplete_dates:
-                    return min(incomplete_dates)
-                elif latest_complete_date:
-                    return latest_complete_date + timedelta(days=1)
+                resume_date = metrics_starting_date_from_records(
+                    [deserialize_from_dynamodb_item(item) for item in metrics_items]
+                )
+                if resume_date is not None:
+                    return resume_date
 
             # 2. No metrics records. Return the date of the first recorded session.
             sessions_table_name = self._get_table("sessions")
@@ -1882,7 +1874,10 @@ class DynamoDb(BaseDb):
             raise e
 
     def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Upsert a single metrics record, checking for existing records with the same date.
+        """Upsert a single metrics record.
+
+        Do not dedupe via the ``date-aggregation_period-index`` GSI: it lacks ``user_id``,
+        so a Query collapses every per-user record for a date into one.
 
         Args:
             table_name: The DynamoDB table name
@@ -1892,116 +1887,22 @@ class DynamoDb(BaseDb):
             Optional[Dict[str, Any]]: The upserted record or None if failed
         """
         try:
-            date_str = record.get("date")
-            if not date_str:
-                log_error("Metrics record missing date field")
+            if not record.get("id"):
+                log_error("Metrics record missing id field")
                 return None
 
-            # Convert date object to string if needed
-            if hasattr(date_str, "isoformat"):
-                date_str = date_str.isoformat()
+            record["updated_at"] = int(time.time())
 
-            # Check if a record already exists for this date
-            existing_record = self._get_existing_metrics_record(table_name, date_str)
-
-            if existing_record:
-                return self._update_existing_metrics_record(table_name, existing_record, record)
-            else:
-                return self._create_new_metrics_record(table_name, record)
-
-        except Exception as e:
-            log_error(f"Failed to upsert single metrics record: {str(e)}")
-            raise e
-
-    def _get_existing_metrics_record(self, table_name: str, date_str: str) -> Optional[Dict[str, Any]]:
-        """Get existing metrics record for a given date.
-
-        Args:
-            table_name: The DynamoDB table name
-            date_str: The date string to search for
-
-        Returns:
-            Optional[Dict[str, Any]]: The existing record or None if not found
-        """
-        try:
-            # Query using the date-aggregation_period-index
-            response = self.client.query(
-                TableName=table_name,
-                IndexName="date-aggregation_period-index",
-                KeyConditionExpression="#date = :date AND aggregation_period = :period",
-                ExpressionAttributeNames={"#date": "date"},
-                ExpressionAttributeValues={
-                    ":date": {"S": date_str},
-                    ":period": {"S": "daily"},
-                },
-                Limit=1,
-            )
-
-            items = response.get("Items", [])
-            if items:
-                return deserialize_from_dynamodb_item(items[0])
-            return None
-
-        except Exception as e:
-            log_error(f"Failed to get existing metrics record for date {date_str}: {str(e)}")
-            raise e
-
-    def _update_existing_metrics_record(
-        self,
-        table_name: str,
-        existing_record: Dict[str, Any],
-        new_record: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """Update an existing metrics record.
-
-        Args:
-            table_name: The DynamoDB table name
-            existing_record: The existing record
-            new_record: The new record data
-
-        Returns:
-            Optional[Dict[str, Any]]: The updated record or None if failed
-        """
-        try:
-            # Use the existing record's ID
-            new_record["id"] = existing_record["id"]
-            new_record["updated_at"] = int(time.time())
-
-            # Prepare and serialize the record
-            prepared_record = self._prepare_metrics_record_for_dynamo(new_record)
-            item = self._serialize_metrics_to_dynamo_item(prepared_record)
-
-            # Update the record
-            self.client.put_item(TableName=table_name, Item=item)
-
-            return new_record
-
-        except Exception as e:
-            log_error(f"Failed to update existing metrics record: {str(e)}")
-            raise e
-
-    def _create_new_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create a new metrics record.
-
-        Args:
-            table_name: The DynamoDB table name
-            record: The record to create
-
-        Returns:
-            Optional[Dict[str, Any]]: The created record or None if failed
-        """
-        try:
-            # Prepare and serialize the record
             prepared_record = self._prepare_metrics_record_for_dynamo(record)
             item = self._serialize_metrics_to_dynamo_item(prepared_record)
 
-            # Create the record
+            # The id is deterministic per (date, user_id, period), so put_item is itself the upsert
             self.client.put_item(TableName=table_name, Item=item)
 
             return record
 
         except Exception as e:
-            log_error(f"Failed to create new metrics record: {str(e)}")
+            log_error(f"Failed to upsert single metrics record: {str(e)}")
             raise e
 
     def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -2065,6 +1966,7 @@ class DynamoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Any], Optional[int]]:
         """
         Get metrics from the database.
@@ -2072,6 +1974,8 @@ class DynamoDb(BaseDb):
         Args:
             starting_date: The starting date to filter metrics by.
             ending_date: The ending date to filter metrics by.
+            user_id: When set, returns only that user's bucket. ``None`` returns every bucket,
+                including the unowned one.
 
         Returns:
             Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the total count.
@@ -2115,13 +2019,30 @@ class DynamoDb(BaseDb):
                 items.extend(response.get("Items", []))
 
             # Convert to metrics data
-            metrics_data = []
-            for item in items:
-                metric_data = deserialize_from_dynamodb_item(item)
-                if metric_data:
-                    metrics_data.append(metric_data)
+            records = [record for record in (deserialize_from_dynamodb_item(item) for item in items) if record]
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                records = drop_legacy_metrics(records)
 
-            return metrics_data, len(metrics_data)
+            metrics_data = []
+            for metric_data in records:
+                # Filter by user_id in-memory (user_id is not a key attribute)
+                if user_id is not None and metric_data.get("user_id") != user_id:
+                    continue
+                # The empty-string bucket holds unowned sessions
+                if metric_data.get("user_id") == "":
+                    metric_data["user_id"] = None
+                # Stored as an ISO string, and a string renders timezone-naive at the API layer
+                metric_data["date"] = deserialize_metrics_date(metric_data.get("date"))
+                metrics_data.append(metric_data)
+
+            # Latest updated_at across the returned rows, like every other adapter
+            latest_updated_at = None
+            if metrics_data:
+                latest_updated_at = max(metric.get("updated_at") or 0 for metric in metrics_data)
+
+            return metrics_data, latest_updated_at
 
         except Exception as e:
             log_error(f"Failed to get metrics: {str(e)}")
@@ -2129,11 +2050,21 @@ class DynamoDb(BaseDb):
 
     # --- Knowledge methods ---
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        """Unscoped callers see every row. Scoped callers see their own rows and unowned ones."""
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only rows owned by this user are deleted. Unowned
+                rows are shared content and are left alone.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2141,19 +2072,27 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("knowledge")
 
-            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+            kwargs: Dict[str, Any] = {"TableName": table_name, "Key": {"id": {"S": id}}}
+            if user_id is not None:
+                kwargs["ConditionExpression"] = "user_id = :user_id"
+                kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
+            self.client.delete_item(**kwargs)
 
             log_debug(f"Deleted knowledge content {id}")
+
+        except self.client.exceptions.ConditionalCheckFailedException:
+            log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
 
         except Exception as e:
             log_error(f"Failed to delete knowledge content {id}: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, the row is only returned if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2163,10 +2102,13 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
 
             item = response.get("Item")
-            if item:
-                return deserialize_knowledge_row(item)
+            if not item:
+                return None
 
-            return None
+            row = deserialize_knowledge_row(item)
+            if not self._knowledge_row_is_visible(row, user_id):
+                return None
+            return row
 
         except Exception as e:
             log_error(f"Failed to get knowledge content {id}: {str(e)}")
@@ -2179,6 +2121,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2188,6 +2131,7 @@ class DynamoDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, only rows owned by this user or unowned rows are returned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2219,6 +2163,10 @@ class DynamoDb(BaseDb):
                     knowledge_rows.append(knowledge_row)
                 except Exception as e:
                     log_error(f"Failed to deserialize knowledge row: {str(e)}")
+
+            # Filter by user_id if provided
+            if user_id is not None:
+                knowledge_rows = [row for row in knowledge_rows if self._knowledge_row_is_visible(row, user_id)]
 
             # Apply linked_to filter if provided
             if linked_to is not None:
@@ -2260,6 +2208,14 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("knowledge", create_table_if_not_found=True)
+
+            # A scoped write must not overwrite an item it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                response = self.client.get_item(TableName=table_name, Key={"id": {"S": knowledge_row.id}})
+                stored = response.get("Item")
+                if stored is not None and stored.get("user_id", {}).get("S") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             item = serialize_knowledge_row(knowledge_row)
 
             self.client.put_item(TableName=table_name, Item=item)
@@ -2323,8 +2279,6 @@ class DynamoDb(BaseDb):
                     delete_requests.append({"DeleteRequest": {"Key": {"run_id": {"S": eval_run_id}}}})
 
                 batch_write_with_retry(self.client, {self.eval_table_name: delete_requests})
-                if delete_requests:
-                    self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete eval runs: {str(e)}")

@@ -32,6 +32,7 @@ from agno.db.utils import (
     filter_context_runs,
     json_serializer,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -321,15 +322,16 @@ class SingleStoreDb(BaseDb):
 
                         # Add primary key and shard key. The runs table is sharded by
                         # session_id (not run_id) so that all runs for a session live on
-                        # the same partition — keeps session reads cheap.
+                        # the same partition — keeps session reads cheap. Unique keys must
+                        # contain the shard key, so the runs primary key includes session_id.
                         if table_type == "sessions":
-                            pk_col, shard_col = "session_id", "session_id"
+                            pk_cols, shard_col = "session_id", "session_id"
                         else:
-                            pk_col, shard_col = "run_id", "session_id"
+                            pk_cols, shard_col = "run_id, session_id", "session_id"
 
                         table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
                             {columns_def},
-                            PRIMARY KEY ({pk_col}),
+                            PRIMARY KEY ({pk_cols}),
                             SHARD KEY ({shard_col})
                         )"""
 
@@ -2045,15 +2047,20 @@ class SingleStoreDb(BaseDb):
             Optional[date]: The starting date for which metrics calculation is needed.
         """
         with self.Session() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = sess.execute(stmt).fetchone()
+            # resume at the earliest incomplete day after the latest completed one, otherwise the
+            # day after that one: a day holding a completed row was rebuilt after it ended, so an
+            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
+            # be rebuilt
+            latest_completed = sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True))).scalar()
 
-            # 1. Return the date of the first day without a complete metrics record.
-            if result is not None:
-                if result.completed:
-                    return result._mapping["date"] + timedelta(days=1)
-                else:
-                    return result._mapping["date"]
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = sess.execute(incomplete_stmt).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
         sessions_result, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2092,9 +2099,13 @@ class SingleStoreDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -2107,7 +2118,9 @@ class SingleStoreDb(BaseDb):
                 log_info("No new session data found. Won't calculate metrics.")
                 return None
 
+            results = []
             metrics_records = []
+
             for date_to_process in dates_to_process:
                 date_key = date_to_process.isoformat()
                 sessions_for_date = all_sessions_data.get(date_key, {})
@@ -2116,16 +2129,16 @@ class SingleStoreDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One metrics record per user_id, plus an empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 with self.Session() as sess, sess.begin():
-                    bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+                    results = bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
 
             log_debug("Updated metrics calculations")
 
-            return metrics_records
+            return results
 
         except Exception as e:
             log_error(f"Error calculating metrics: {str(e)}")
@@ -2135,12 +2148,14 @@ class SingleStoreDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When set, returns only this user's metrics. ``None`` returns all rows.
 
         Returns:
             Tuple[List[dict], int]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2159,15 +2174,26 @@ class SingleStoreDb(BaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchall()
                 if not result:
                     return [], None
 
                 # Get the latest updated_at
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_updated_at = sess.execute(latest_stmt).scalar()
 
-            return [row._mapping for row in result], latest_updated_at
+            # Map the empty-string user_id sentinel back to None
+            rows: List[dict] = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
@@ -2175,11 +2201,12 @@ class SingleStoreDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only deletes the row if it is owned by this user.
         """
         try:
             table = self._get_table(table_type="knowledge")
@@ -2188,6 +2215,8 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
             log_debug(f"Deleted knowledge content with id '{id}'")
@@ -2195,11 +2224,13 @@ class SingleStoreDb(BaseDb):
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, only returns the row if it is owned by this user or
+                shared (``user_id IS NULL``).
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2211,6 +2242,8 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2226,6 +2259,7 @@ class SingleStoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2235,6 +2269,8 @@ class SingleStoreDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, returns rows owned by this user plus shared
+                (``user_id IS NULL``) rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2254,6 +2290,10 @@ class SingleStoreDb(BaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply owner scoping: this user's rows plus shared (NULL) rows
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 if sort_by is not None:
@@ -2294,6 +2334,12 @@ class SingleStoreDb(BaseDb):
                 return None
 
             with self.Session() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id)).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 # Only include fields that are not None in the update
                 update_fields = {
                     k: v
@@ -2310,6 +2356,7 @@ class SingleStoreDb(BaseDb):
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,
+                        "user_id": knowledge_row.user_id,
                     }.items()
                     if v is not None
                 }

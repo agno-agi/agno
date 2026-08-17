@@ -157,10 +157,16 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "date"},
     {"key": "aggregation_period"},
+    # Rows with no owner use the empty-string sentinel so they fit the compound unique key below
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
     # Composite index for metrics uniqueness (same as MongoDB)
-    {"key": [("date", "ASCENDING"), ("aggregation_period", "ASCENDING")], "collection_group": False, "unique": True},
+    {
+        "key": [("user_id", "ASCENDING"), ("date", "ASCENDING"), ("aggregation_period", "ASCENDING")],
+        "collection_group": False,
+        "unique": True,
+    },
 ]
 
 TRACE_COLLECTION_SCHEMA = [

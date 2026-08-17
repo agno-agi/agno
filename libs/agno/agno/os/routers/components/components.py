@@ -1,13 +1,14 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.base import ComponentType as DbComponentType
 from agno.db.utils import DB_TABLE_NAME_KEYS
 from agno.os.auth import get_authentication_dependency
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.schema import (
     BadRequestResponse,
     ComponentConfigResponse,
@@ -27,7 +28,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
-from agno.utils.string import generate_id_from_name
+from agno.utils.string import generate_id_from_name, hash_string_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,76 @@ def _resolve_db_in_config(
         config.pop("db", None)
 
     return config
+
+
+def _collect_referenced_component_ids(
+    config: Optional[Dict[str, Any]],
+    links: Optional[List[Dict[str, Any]]] = None,
+) -> Set[str]:
+    """
+    Collect every component ID a config or links list references.
+
+    Args:
+        config: The component config to walk for agent_id/team_id/workflow_id references
+        links: Optional explicit links whose child_component_id is included
+
+    Returns:
+        The set of referenced component IDs
+    """
+    referenced_ids: Set[str] = set()
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key in ("agent_id", "team_id", "workflow_id"):
+                value = node.get(key)
+                if isinstance(value, str):
+                    referenced_ids.add(value)
+            for value in node.values():
+                _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    if config:
+        _walk(config)
+    for link in links or []:
+        child_component_id = link.get("child_component_id")
+        if isinstance(child_component_id, str):
+            referenced_ids.add(child_component_id)
+
+    return referenced_ids
+
+
+def _validate_referenced_component_ownership(
+    db: BaseDb,
+    config: Optional[Dict[str, Any]],
+    links: Optional[List[Dict[str, Any]]],
+    scoped_user_id: Optional[str],
+    own_component_id: Optional[str] = None,
+) -> None:
+    """
+    Reject configs/links that reference components the caller does not own.
+
+    Unresolvable IDs are allowed: they may be shared registry/code-defined components.
+    A cross-user hit raises 404, not 403, so the error can't confirm the component exists.
+
+    Args:
+        db: Database to look up component ownership in
+        config: The component config to validate references for
+        links: Optional explicit links to validate
+        scoped_user_id: The caller's owner id; None (unscoped) skips the check
+        own_component_id: The component being written, excluded from checks
+    """
+    if scoped_user_id is None:
+        return
+
+    for referenced_id in _collect_referenced_component_ids(config, links):
+        if referenced_id == own_component_id:
+            continue
+        if db.get_component(referenced_id) is None:
+            continue
+        if db.get_component(referenced_id, user_id=scoped_user_id) is None:
+            raise HTTPException(status_code=404, detail=f"Component {referenced_id} not found")
 
 
 def _resolve_member_links(
@@ -196,6 +267,7 @@ def attach_routes(
         description="Retrieve a paginated list of components with optional filtering by type.",
     )
     async def list_components(
+        request: Request,
         component_type: Optional[ComponentType] = Query(None, description="Filter by type: agent, team, workflow"),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -212,6 +284,7 @@ def attach_routes(
                 limit=limit,
                 offset=offset,
                 exclude_component_ids=exclude_ids or None,
+                user_id=get_scoped_user_id(request),
             )
 
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
@@ -226,6 +299,8 @@ def attach_routes(
                     search_time_ms=round(time.time() * 1000 - start_time_ms, 2),
                 ),
             )
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error listing components: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -240,12 +315,17 @@ def attach_routes(
         description="Create a new component (agent, team, or workflow) with initial config.",
     )
     async def create_component(
+        request: Request,
         body: ComponentCreate,
     ) -> ComponentResponse:
         try:
+            scoped_user_id = get_scoped_user_id(request)
             component_id = body.component_id
             if component_id is None:
                 component_id = generate_id_from_name(body.name)
+                # Owner-derived suffix so two users creating the same name get distinct component_ids.
+                if scoped_user_id:
+                    component_id = f"{component_id}-{hash_string_sha256(scoped_user_id)[:8]}"
 
             # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}
@@ -276,6 +356,13 @@ def attach_routes(
                         )
                     links = member_links or None
 
+            # Falls back to the unscoped JWT sub so admin-created components still carry an owner.
+            creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
+
+            _validate_referenced_component_ownership(
+                db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
+            )
+
             component, _config = db.create_component_with_config(
                 component_id=component_id,
                 component_type=DbComponentType(body.component_type.value),
@@ -287,6 +374,7 @@ def attach_routes(
                 stage=body.stage or "draft",
                 notes=body.notes,
                 links=links,
+                user_id=creator_user_id,
             )
 
             return ComponentResponse(**component)
@@ -308,10 +396,11 @@ def attach_routes(
         description="Retrieve a component by ID.",
     )
     async def get_component(
+        request: Request,
         component_id: str = Path(description="Component ID"),
     ) -> ComponentResponse:
         try:
-            component = db.get_component(component_id)
+            component = db.get_component(component_id, user_id=get_scoped_user_id(request))
             if component is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             return ComponentResponse(**component)
@@ -331,13 +420,18 @@ def attach_routes(
         description="Partially update a component by ID.",
     )
     async def update_component(
+        request: Request,
         component_id: str = Path(description="Component ID"),
         body: ComponentUpdate = Body(description="Component fields to update"),
     ) -> ComponentResponse:
         try:
-            existing = db.get_component(component_id)
+            scoped_user_id = get_scoped_user_id(request)
+            existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not modify them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
 
             update_kwargs: Dict[str, Any] = {"component_id": component_id}
             if body.name is not None:
@@ -351,7 +445,7 @@ def attach_routes(
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
 
-            component = db.upsert_component(**update_kwargs)
+            component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
             return ComponentResponse(**component)
         except HTTPException:
             raise
@@ -369,10 +463,18 @@ def attach_routes(
         description="Delete a component by ID.",
     )
     async def delete_component(
+        request: Request,
         component_id: str = Path(description="Component ID"),
     ) -> None:
         try:
-            deleted = db.delete_component(component_id)
+            scoped_user_id = get_scoped_user_id(request)
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not delete them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot delete shared component")
+            deleted = db.delete_component(component_id, user_id=scoped_user_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
         except HTTPException:
@@ -391,12 +493,17 @@ def attach_routes(
         description="List all configs for a component.",
     )
     async def list_configs(
+        request: Request,
         component_id: str = Path(description="Component ID"),
         include_config: bool = Query(True, description="Include full config blob"),
     ) -> List[ComponentConfigResponse]:
         try:
+            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             configs = db.list_configs(component_id, include_config=include_config)
             return [ComponentConfigResponse(**c) for c in configs]
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error listing configs: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -411,13 +518,29 @@ def attach_routes(
         description="Create a new config version for a component.",
     )
     async def create_config(
+        request: Request,
         component_id: str = Path(description="Component ID"),
         body: ConfigCreate = Body(description="Config data"),
     ) -> ComponentConfigResponse:
         try:
+            scoped_user_id = get_scoped_user_id(request)
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not modify them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
             # Resolve db from config if present
             config_data = body.config or {}
             config_data = _resolve_db_in_config(config_data, db, registry)
+
+            _validate_referenced_component_ownership(
+                db,
+                config_data,
+                links=body.links,
+                scoped_user_id=scoped_user_id,
+                own_component_id=component_id,
+            )
 
             config = db.upsert_config(
                 component_id=component_id,
@@ -429,6 +552,8 @@ def attach_routes(
                 links=body.links,
             )
             return ComponentConfigResponse(**config)
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -445,15 +570,31 @@ def attach_routes(
         description="Update an existing draft config. Cannot update published configs.",
     )
     async def update_config(
+        request: Request,
         component_id: str = Path(description="Component ID"),
         version: int = Path(description="Version number"),
         body: ConfigUpdate = Body(description="Config fields to update"),
     ) -> ComponentConfigResponse:
         try:
+            scoped_user_id = get_scoped_user_id(request)
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not modify them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
             # Resolve db from config if present
             config_data = body.config
             if config_data is not None:
                 config_data = _resolve_db_in_config(config_data, db, registry)
+
+            _validate_referenced_component_ownership(
+                db,
+                config_data,
+                links=body.links,
+                scoped_user_id=scoped_user_id,
+                own_component_id=component_id,
+            )
 
             config = db.upsert_config(
                 component_id=component_id,
@@ -465,6 +606,8 @@ def attach_routes(
                 links=body.links,
             )
             return ComponentConfigResponse(**config)
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -481,9 +624,12 @@ def attach_routes(
         description="Get the current config version for a component.",
     )
     async def get_current_config(
+        request: Request,
         component_id: str = Path(description="Component ID"),
     ) -> ComponentConfigResponse:
         try:
+            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id)
             if config is None:
                 raise HTTPException(status_code=404, detail=f"No current config for {component_id}")
@@ -504,10 +650,13 @@ def attach_routes(
         description="Get a specific config version by number.",
     )
     async def get_config_version(
+        request: Request,
         component_id: str = Path(description="Component ID"),
         version: int = Path(description="Version number"),
     ) -> ComponentConfigResponse:
         try:
+            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id, version=version)
 
             if config is None:
@@ -527,10 +676,18 @@ def attach_routes(
         description="Delete a specific draft config version. Cannot delete published or current configs.",
     )
     async def delete_config_version(
+        request: Request,
         component_id: str = Path(description="Component ID"),
         version: int = Path(description="Version number"),
     ) -> None:
         try:
+            scoped_user_id = get_scoped_user_id(request)
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not delete them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot delete shared component")
             # Resolve version number
             deleted = db.delete_config(component_id, version=version)
             if not deleted:
@@ -553,10 +710,18 @@ def attach_routes(
         description="Set a published config version as current (for rollback).",
     )
     async def set_current_config(
+        request: Request,
         component_id: str = Path(description="Component ID"),
         version: int = Path(description="Version number"),
     ) -> ComponentResponse:
         try:
+            scoped_user_id = get_scoped_user_id(request)
+            existing = db.get_component(component_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            # Non-admins can read shared (unowned) components but not modify them.
+            if scoped_user_id is not None and existing.get("user_id") is None:
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
             success = db.set_current_version(component_id, version=version)
             if not success:
                 raise HTTPException(
@@ -564,7 +729,7 @@ def attach_routes(
                 )
 
             # Fetch and return updated component
-            component = db.get_component(component_id)
+            component = db.get_component(component_id, user_id=scoped_user_id)
             if component is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
 

@@ -437,6 +437,7 @@ class Team:
     def __init__(
         self,
         members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
+        *,
         id: Optional[str] = None,
         model: Optional[Union[Model, str]] = None,
         fallback_config: Optional[FallbackConfig] = None,
@@ -1740,7 +1741,7 @@ class Team:
     ###########################################################################
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _default_tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result, user_id=self.user_id)
 
     def get_relevant_docs_from_knowledge(
         self,
@@ -1780,6 +1781,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
     strict: bool = False,
 ) -> Optional["Team"]:
     """
@@ -1796,6 +1798,7 @@ def get_team_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the team when owned by this user or shared.
         strict: If True, unresolvable members and registry references
             raise ComponentRehydrationError; None strictly means the team was not found.
 
@@ -1808,6 +1811,12 @@ def get_team_by_id(
     from agno.exceptions import ComponentRehydrationError
 
     try:
+        from agno.utils.component_scope import component_owner_scope
+
+        # Only resolve the team if owned by this user or shared.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
         row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
@@ -1825,7 +1834,9 @@ def get_team_by_id(
         except NotImplementedError:
             links = []
 
-        team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
+        # Resolve DB-backed members under the same owner scope as the team.
+        with component_owner_scope(user_id):
+            team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
         # Ensure team.id is set to the component_id
         team.id = id
         # Only fall back to the caller-provided db if the config didn't
@@ -1851,6 +1862,7 @@ def get_teams(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     exclude_component_ids: Optional[Set[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List["Team"]:
     """
     Get all teams from the database.
@@ -1859,14 +1871,17 @@ def get_teams(
         db: Database to load teams from
         registry: Optional registry for rehydrating tools
         exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load teams owned by this user or shared.
 
     Returns:
         List of Team instances loaded from the database
     """
     teams: List[Team] = []
     try:
+        from agno.utils.component_scope import component_owner_scope
+
         components, _ = db.list_components(
-            component_type=ComponentType.TEAM, exclude_component_ids=exclude_component_ids
+            component_type=ComponentType.TEAM, exclude_component_ids=exclude_component_ids, user_id=user_id
         )
         for component in components:
             component_id = component["component_id"]
@@ -1881,7 +1896,9 @@ def get_teams(
                         # components so they stay visible and fixable. Listings
                         # also show members at their current version; the
                         # per-version pin links are a detail-read concern.
-                        team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
+                        # Resolve DB-backed members under the same owner scope as the team.
+                        with component_owner_scope(user_id):
+                            team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
                         team.id = component_id
                         team._version = component.get("current_version")
                         team._stage = config.get("stage")
