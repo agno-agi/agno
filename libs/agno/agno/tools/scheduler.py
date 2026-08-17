@@ -22,6 +22,7 @@ import json
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from agno.run import RunContext
 from agno.scheduler.manager import ScheduleManager
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
@@ -43,6 +44,10 @@ class SchedulerTools(Toolkit):
         default_timezone: Default timezone for schedules (default: ``UTC``).
         default_payload: Default payload to send with each scheduled run.
             The agent can override or extend this per-schedule.
+        user_id: Fixed owner for every schedule operation. When unset, the
+            owner is taken from the run's ``user_id`` (injected via
+            ``run_context``), so each user's agent only sees and edits that
+            user's schedules.
     """
 
     def __init__(
@@ -52,9 +57,11 @@ class SchedulerTools(Toolkit):
         default_method: str = "POST",
         default_timezone: str = "UTC",
         default_payload: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
         **kwargs: Any,
     ):
         self.manager = ScheduleManager(db=db)
+        self.user_id = user_id
         self.default_endpoint = default_endpoint
         self.default_method = default_method
         self.default_timezone = default_timezone
@@ -103,6 +110,12 @@ class SchedulerTools(Toolkit):
         """Check if the endpoint targets an agent/team/workflow run route."""
         return method.upper() == "POST" and endpoint.rstrip("/").endswith("/runs")
 
+    def _owner(self, run_context: Optional[RunContext]) -> Optional[str]:
+        """Resolve the acting owner: a fixed toolkit user_id wins, else the run's user."""
+        if self.user_id is not None:
+            return self.user_id
+        return run_context.user_id if run_context is not None else None
+
     # ------------------------------------------------------------------
     # Sync tools
     # ------------------------------------------------------------------
@@ -116,6 +129,7 @@ class SchedulerTools(Toolkit):
         method: Optional[str] = None,
         payload: Optional[str] = None,
         timezone: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
     ) -> str:
         """Create a new recurring schedule that runs on a cron expression.
 
@@ -163,6 +177,7 @@ class SchedulerTools(Toolkit):
                 payload=resolved_payload,
                 timezone=timezone or self.default_timezone,
                 if_exists="update",
+                user_id=self._owner(run_context),
             )
             log_debug(f"Schedule created: {schedule.name} ({schedule.cron_expr})")
             return json.dumps(
@@ -181,7 +196,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
-    def list_schedules(self, enabled_only: bool = False) -> str:
+    def list_schedules(self, enabled_only: bool = False, run_context: Optional[RunContext] = None) -> str:
         """List all existing schedules.
 
         Args:
@@ -192,7 +207,7 @@ class SchedulerTools(Toolkit):
         """
         try:
             enabled_filter = True if enabled_only else None
-            schedules = self.manager.list(enabled=enabled_filter)
+            schedules = self.manager.list(enabled=enabled_filter, user_id=self._owner(run_context))
             result = [
                 {
                     "id": s.id,
@@ -210,7 +225,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
-    def get_schedule(self, schedule_id: str) -> str:
+    def get_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Get details of a specific schedule by its ID.
 
         Args:
@@ -220,7 +235,7 @@ class SchedulerTools(Toolkit):
             str: JSON string with the schedule details.
         """
         try:
-            schedule = self.manager.get(schedule_id)
+            schedule = self.manager.get(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
             return json.dumps(
@@ -240,7 +255,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
-    def delete_schedule(self, schedule_id: str) -> str:
+    def delete_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Delete a schedule by its ID. This permanently removes the schedule.
 
         Args:
@@ -250,7 +265,7 @@ class SchedulerTools(Toolkit):
             str: JSON string confirming deletion.
         """
         try:
-            deleted = self.manager.delete(schedule_id)
+            deleted = self.manager.delete(schedule_id, user_id=self._owner(run_context))
             if deleted:
                 return json.dumps({"status": "deleted", "id": schedule_id})
             return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
@@ -258,7 +273,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
-    def enable_schedule(self, schedule_id: str) -> str:
+    def enable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Enable a disabled schedule so it starts running again.
 
         Args:
@@ -268,7 +283,7 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
-            schedule = self.manager.enable(schedule_id)
+            schedule = self.manager.enable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
             return json.dumps(
@@ -283,7 +298,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
-    def disable_schedule(self, schedule_id: str) -> str:
+    def disable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Disable a schedule so it stops running. Can be re-enabled later.
 
         Args:
@@ -293,7 +308,7 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
-            schedule = self.manager.disable(schedule_id)
+            schedule = self.manager.disable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
             return json.dumps(
@@ -308,7 +323,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
-    def trigger_schedule(self, schedule_id: str) -> str:
+    def trigger_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Queue an enabled schedule to run now.
 
         Sets the schedule's next run time to now; the scheduler poller claims and
@@ -322,14 +337,15 @@ class SchedulerTools(Toolkit):
             str: JSON string confirming the trigger.
         """
         try:
-            schedule = self.manager.get(schedule_id)
+            owner = self._owner(run_context)
+            schedule = self.manager.get(schedule_id, user_id=owner)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
             if not schedule.enabled:
                 return json.dumps(
                     {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
                 )
-            self.manager.update(schedule_id, next_run_at=int(time.time()))
+            self.manager.update(schedule_id, user_id=owner, next_run_at=int(time.time()))
             return json.dumps(
                 {
                     "status": "triggered",
@@ -341,7 +357,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to trigger schedule")
             return json.dumps({"error": str(e)})
 
-    def get_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
+    def get_schedule_runs(self, schedule_id: str, limit: int = 10, run_context: Optional[RunContext] = None) -> str:
         """Get the run history for a schedule.
 
         Args:
@@ -352,7 +368,7 @@ class SchedulerTools(Toolkit):
             str: JSON string with the list of runs.
         """
         try:
-            runs = self.manager.get_runs(schedule_id, limit=limit)
+            runs = self.manager.get_runs(schedule_id, limit=limit, user_id=self._owner(run_context))
             result = [
                 {
                     "id": r.id,
@@ -381,6 +397,7 @@ class SchedulerTools(Toolkit):
         method: Optional[str] = None,
         payload: Optional[str] = None,
         timezone: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
     ) -> str:
         """Create a new recurring schedule that runs on a cron expression.
 
@@ -428,6 +445,7 @@ class SchedulerTools(Toolkit):
                 payload=resolved_payload,
                 timezone=timezone or self.default_timezone,
                 if_exists="update",
+                user_id=self._owner(run_context),
             )
             log_debug(f"Schedule created: {schedule.name} ({schedule.cron_expr})")
             return json.dumps(
@@ -446,7 +464,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
-    async def alist_schedules(self, enabled_only: bool = False) -> str:
+    async def alist_schedules(self, enabled_only: bool = False, run_context: Optional[RunContext] = None) -> str:
         """List all existing schedules.
 
         Args:
@@ -457,7 +475,7 @@ class SchedulerTools(Toolkit):
         """
         try:
             enabled_filter = True if enabled_only else None
-            schedules = await self.manager.alist(enabled=enabled_filter)
+            schedules = await self.manager.alist(enabled=enabled_filter, user_id=self._owner(run_context))
             result = [
                 {
                     "id": s.id,
@@ -475,7 +493,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
-    async def aget_schedule(self, schedule_id: str) -> str:
+    async def aget_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Get details of a specific schedule by its ID.
 
         Args:
@@ -485,7 +503,7 @@ class SchedulerTools(Toolkit):
             str: JSON string with the schedule details.
         """
         try:
-            schedule = await self.manager.aget(schedule_id)
+            schedule = await self.manager.aget(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
             return json.dumps(
@@ -505,7 +523,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
-    async def adelete_schedule(self, schedule_id: str) -> str:
+    async def adelete_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Delete a schedule by its ID. This permanently removes the schedule.
 
         Args:
@@ -515,7 +533,7 @@ class SchedulerTools(Toolkit):
             str: JSON string confirming deletion.
         """
         try:
-            deleted = await self.manager.adelete(schedule_id)
+            deleted = await self.manager.adelete(schedule_id, user_id=self._owner(run_context))
             if deleted:
                 return json.dumps({"status": "deleted", "id": schedule_id})
             return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
@@ -523,7 +541,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
-    async def aenable_schedule(self, schedule_id: str) -> str:
+    async def aenable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Enable a disabled schedule so it starts running again.
 
         Args:
@@ -533,7 +551,7 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
-            schedule = await self.manager.aenable(schedule_id)
+            schedule = await self.manager.aenable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
             return json.dumps(
@@ -548,7 +566,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
-    async def adisable_schedule(self, schedule_id: str) -> str:
+    async def adisable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Disable a schedule so it stops running. Can be re-enabled later.
 
         Args:
@@ -558,7 +576,7 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
-            schedule = await self.manager.adisable(schedule_id)
+            schedule = await self.manager.adisable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
             return json.dumps(
@@ -573,7 +591,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
-    async def atrigger_schedule(self, schedule_id: str) -> str:
+    async def atrigger_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Queue an enabled schedule to run now.
 
         Sets the schedule's next run time to now; the scheduler poller claims and
@@ -587,14 +605,15 @@ class SchedulerTools(Toolkit):
             str: JSON string confirming the trigger.
         """
         try:
-            schedule = await self.manager.aget(schedule_id)
+            owner = self._owner(run_context)
+            schedule = await self.manager.aget(schedule_id, user_id=owner)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
             if not schedule.enabled:
                 return json.dumps(
                     {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
                 )
-            await self.manager.aupdate(schedule_id, next_run_at=int(time.time()))
+            await self.manager.aupdate(schedule_id, user_id=owner, next_run_at=int(time.time()))
             return json.dumps(
                 {
                     "status": "triggered",
@@ -606,7 +625,9 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to trigger schedule")
             return json.dumps({"error": str(e)})
 
-    async def aget_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
+    async def aget_schedule_runs(
+        self, schedule_id: str, limit: int = 10, run_context: Optional[RunContext] = None
+    ) -> str:
         """Get the run history for a schedule.
 
         Args:
@@ -617,7 +638,7 @@ class SchedulerTools(Toolkit):
             str: JSON string with the list of runs.
         """
         try:
-            runs = await self.manager.aget_runs(schedule_id, limit=limit)
+            runs = await self.manager.aget_runs(schedule_id, limit=limit, user_id=self._owner(run_context))
             result = [
                 {
                     "id": r.id,

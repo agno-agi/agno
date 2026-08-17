@@ -7,6 +7,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+      - "feat/extending-user-isolation"
       - "feat/v3.0"
   workflow_dispatch: # Allows manual triggering
     inputs:
@@ -1013,6 +1014,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
+          export SSL_CERT_FILE="$(python -m certifi)"
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \

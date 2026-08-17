@@ -1393,6 +1393,7 @@ def run_dispatch(
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
+        user_id=user_id,
     )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
@@ -2897,6 +2898,7 @@ def arun_dispatch(  # type: ignore
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
+        user_id=user_id,
     )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
@@ -3195,6 +3197,20 @@ def _resolve_continue_from(
     raise ValueError("`continue_from` must be an integer message index, 'end', or 'last_user'.")
 
 
+def _resolve_continue_owner(
+    run_response: Optional[RunOutput],
+    *,
+    run_id: Optional[str],
+    session: Optional[AgentSession],
+) -> Optional[str]:
+    """Owner stored on the run being continued."""
+    if run_response is not None:
+        return run_response.user_id
+    if session is not None:
+        return next((run.user_id for run in session.runs or [] if run.run_id == run_id), None)
+    return None
+
+
 def _normalize_regenerate_params(
     run_response: Optional[RunOutput],
     *,
@@ -3366,6 +3382,10 @@ def continue_run_dispatch(
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
 
+    # Fall back to the owner the run paused with, so the resume retrieves under the same scope
+    if user_id is None:
+        user_id = _resolve_continue_owner(run_response, run_id=run_id, session=agent_session)
+
     # Initialize session state. Get it from DB if relevant.
     session_state = load_session_state(agent, session=agent_session, session_state={})
 
@@ -3396,6 +3416,7 @@ def continue_run_dispatch(
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
+        user_id=user_id,
     )
 
     # Resolve dependencies
@@ -4215,12 +4236,18 @@ def acontinue_run_dispatch(  # type: ignore
     from agno.agent._init import has_async_db
 
     _session_state: Dict[str, Any] = {}
+    _pre_session: Optional[AgentSession] = None
     if not has_async_db(agent):
         from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
 
         _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
         update_metadata(agent, session=_pre_session)
         _session_state = load_session_state(agent, session=_pre_session, session_state={})
+
+    # Fall back to the owner the run paused with, so the resume retrieves under the same scope.
+    # With an async DB no session is read here, so a run_id-only resume has nothing to fall back to.
+    if user_id is None:
+        user_id = _resolve_continue_owner(run_response, run_id=run_id, session=_pre_session)
 
     # Resolve all run options centrally
     opts = resolve_run_options(
@@ -4252,6 +4279,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
+        user_id=user_id,
     )
 
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -4372,6 +4400,14 @@ async def _acontinue_run_background_stream(
     # 1. Persist PENDING status so the run is visible in the DB immediately.
     # Execution (and the RUNNING transition) waits for a concurrency slot.
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+
+    # Fall back to the owner the run paused with, so the resume retrieves under
+    # the same scope.
+    if user_id is None:
+        user_id = _resolve_continue_owner(run_response, run_id=_run_id, session=agent_session)
+        if user_id is not None:
+            run_context.user_id = user_id
+
     update_metadata(agent, session=agent_session)
 
     # HITL continues may arrive with run_response=None (router passes only
@@ -4647,6 +4683,13 @@ async def _acontinue_run(
 
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+
+                # Fall back to the owner the run paused with, so the resume retrieves under
+                # the same scope.
+                if user_id is None:
+                    user_id = _resolve_continue_owner(run_response, run_id=run_id, session=agent_session)
+                    if user_id is not None:
+                        run_context.user_id = user_id
 
                 # 2. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -5125,6 +5168,13 @@ async def _acontinue_run_stream(
                 run_messages: Optional[RunMessages] = None
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+
+                # Fall back to the owner the run paused with, so the resume retrieves under
+                # the same scope.
+                if user_id is None:
+                    user_id = _resolve_continue_owner(run_response, run_id=run_id, session=agent_session)
+                    if user_id is not None:
+                        run_context.user_id = user_id
 
                 # 2. Update session state and metadata
                 update_metadata(agent, session=agent_session)

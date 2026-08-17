@@ -1,7 +1,25 @@
+"""Schemas and shared constants for the scheduler.
+
+The constants live here rather than in ``agno.os`` because ``agno[scheduler]`` does not depend on fastapi.
+"""
+
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
+
+# Header the executor stamps with the schedule's owner, so routes scope the call to the owner
+# instead of the caller. Only honoured once the internal service token has authenticated the caller.
+SCHEDULE_OWNER_HEADER: str = "X-Schedule-Owner"
+
+# The user_id the internal scheduler token authenticates as. Reserved: a JWT may never claim it
+# (see ``is_reserved_principal``) and it may not own a schedule.
+INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
+
+# Matches a run endpoint and captures resource type + ID. ``\Z`` rather than ``$`` so a trailing
+# newline can't slip past the run-endpoint check.
+RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
 
 
 @dataclass
@@ -23,6 +41,9 @@ class Schedule:
     next_run_at: Optional[int] = None
     locked_by: Optional[str] = None
     locked_at: Optional[int] = None
+    # Owner of this schedule, from the JWT sub when ``user_isolation`` is on. ``None`` for
+    # system-created ones. Routes scope on this column; the executor poller fires across all users.
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
@@ -53,6 +74,7 @@ class Schedule:
             "next_run_at": self.next_run_at,
             "locked_by": self.locked_by,
             "locked_at": self.locked_at,
+            "user_id": self.user_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -76,6 +98,7 @@ class Schedule:
             "next_run_at",
             "locked_by",
             "locked_at",
+            "user_id",
             "created_at",
             "updated_at",
         }
@@ -100,6 +123,9 @@ class ScheduleRun:
     input: Optional[Dict[str, Any]] = None
     output: Optional[Dict[str, Any]] = None
     requirements: Optional[List[Dict[str, Any]]] = None
+    # Denormalised from the parent ``Schedule.user_id`` so the runs router can scope by owner
+    # without a JOIN. Populated by the executor when it creates the run.
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
 
     def __post_init__(self) -> None:
@@ -125,6 +151,7 @@ class ScheduleRun:
             "input": self.input,
             "output": self.output,
             "requirements": self.requirements,
+            "user_id": self.user_id,
             "created_at": self.created_at,
         }
 
@@ -145,6 +172,7 @@ class ScheduleRun:
             "input",
             "output",
             "requirements",
+            "user_id",
             "created_at",
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}

@@ -24,8 +24,10 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1122,9 +1124,13 @@ class JsonDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(start_timestamp, end_timestamp)
@@ -1145,24 +1151,24 @@ class JsonDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                # Upsert one metrics record per user_id
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                    existing_record_idx = None
+                    for i, existing_metric in enumerate(metrics):
+                        if (
+                            existing_metric.get("user_id") == metrics_record["user_id"]
+                            and existing_metric.get("date") == str(date_to_process)
+                            and existing_metric.get("aggregation_period") == "daily"
+                        ):
+                            existing_record_idx = i
+                            break
 
-                # Upsert metrics record
-                existing_record_idx = None
-                for i, existing_metric in enumerate(metrics):
-                    if (
-                        existing_metric.get("date") == str(date_to_process)
-                        and existing_metric.get("aggregation_period") == "daily"
-                    ):
-                        existing_record_idx = i
-                        break
+                    if existing_record_idx is not None:
+                        metrics[existing_record_idx] = metrics_record
+                    else:
+                        metrics.append(metrics_record)
 
-                if existing_record_idx is not None:
-                    metrics[existing_record_idx] = metrics_record
-                else:
-                    metrics.append(metrics_record)
-
-                results.append(metrics_record)
+                    results.append(metrics_record)
 
             if results:
                 self._write_json_file(self.metrics_table_name, metrics)
@@ -1177,16 +1183,9 @@ class JsonDb(BaseDb):
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
-        if metrics:
-            # Sort by date in descending order
-            sorted_metrics = sorted(metrics, key=lambda x: x.get("date", ""), reverse=True)
-            latest_metric = sorted_metrics[0]
-
-            if latest_metric.get("completed", False):
-                latest_date = datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
-                return latest_date + timedelta(days=1)
-            else:
-                return datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
+        resume_date = metrics_starting_date_from_records(metrics)
+        if resume_date is not None:
+            return resume_date
 
         # No metrics records. Return the date of the first recorded session.
         # We need to get sessions of all types, so we'll read directly from the file
@@ -1249,10 +1248,21 @@ class JsonDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): The ID of the user to filter by. ``None`` returns metrics for all users.
+        """
         try:
             metrics = self._read_json_file(self.metrics_table_name)
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                metrics = drop_legacy_metrics(metrics)
 
             filtered_metrics = []
             latest_updated_at = None
@@ -1264,8 +1274,14 @@ class JsonDb(BaseDb):
                     continue
                 if ending_date and metric_date > ending_date:
                     continue
+                if user_id is not None and metric.get("user_id") != user_id:
+                    continue
 
-                filtered_metrics.append(metric)
+                row = dict(metric)
+                # Map the sentinel empty-string user_id back to None.
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                filtered_metrics.append(row)
 
                 updated_at = metric.get("updated_at")
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
@@ -1279,29 +1295,42 @@ class JsonDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = item.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only deletes rows owned by this user; unowned rows are kept.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
-            knowledge_items = [item for item in knowledge_items if item.get("id") != id]
+            knowledge_items = [
+                item
+                for item in knowledge_items
+                if not (item.get("id") == id and (user_id is None or item.get("user_id") == user_id))
+            ]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Filter to rows owned by this user or unowned (shared) rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1313,7 +1342,7 @@ class JsonDb(BaseDb):
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
             for item in knowledge_items:
-                if item.get("id") == id:
+                if item.get("id") == id and self._knowledge_item_is_visible(item, user_id):
                     return KnowledgeRow.model_validate(item)
 
             return None
@@ -1329,6 +1358,7 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1338,6 +1368,7 @@ class JsonDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Filter to rows owned by this user or unowned (shared) rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1351,6 +1382,10 @@ class JsonDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
+
+            # Apply owner scoping filter if provided
+            if user_id is not None:
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -1390,6 +1425,9 @@ class JsonDb(BaseDb):
             item_updated = False
             for i, existing_item in enumerate(knowledge_items):
                 if existing_item.get("id") == knowledge_row.id:
+                    # A scoped write must not overwrite an item it does not own
+                    if knowledge_row.user_id is not None and existing_item.get("user_id") != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
                     knowledge_items[i] = knowledge_dict
                     item_updated = True
                     break

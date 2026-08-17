@@ -101,6 +101,8 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
+    # Owner of the row. ``NULL`` means shared: visible to every user.
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -116,9 +118,14 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSON, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": lambda: String(20), "nullable": False, "index": True},
+    # Owner of this metric bucket. ``""`` instead of ``NULL`` for "no owner", so lookup keys stay comparable.
+    # ``get_metrics`` maps ``""`` back to ``None``.
+    "user_id": {"type": lambda: String(128), "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
+    # No ``UNIQUE(user_id, date, aggregation_period)``: SingleStore rejects a second multi-column UNIQUE
+    # alongside the ``id`` primary key (error 1706). ``bulk_upsert_metrics`` enforces the triple instead.
 }
 
 VERSIONS_TABLE_SCHEMA = {

@@ -205,7 +205,7 @@ def get_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -335,7 +335,7 @@ async def aget_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:

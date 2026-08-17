@@ -790,7 +790,7 @@ class SortOrder(str, Enum):
 
 
 class PaginationInfo(BaseModel):
-    page: int = Field(0, description="Current page number (0-indexed)", ge=0)
+    page: int = Field(0, description="Current page number (1-indexed)", ge=0)
     limit: int = Field(20, description="Number of items per page", ge=1)
     total_pages: int = Field(0, description="Total number of pages", ge=0)
     total_count: int = Field(0, description="Total count of items", ge=0)
@@ -830,6 +830,7 @@ class ComponentResponse(BaseModel):
     component_id: str
     component_type: ComponentType
     name: Optional[str] = None
+    user_id: Optional[str] = None
     description: Optional[str] = None
     current_version: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None

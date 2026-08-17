@@ -2,7 +2,6 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Union
-from uuid import uuid4
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalRunRecord
@@ -87,10 +86,14 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
     data = {}
     for key, value in item.items():
         if "S" in value:
+            # Only dicts and lists are JSON-encoded on write; decoding anything else turns "42" into int 42.
+            raw = value["S"]
             try:
-                data[key] = json.loads(value["S"])
+                decoded = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
-                data[key] = value["S"]
+                data[key] = raw
+            else:
+                data[key] = decoded if isinstance(decoded, (dict, list)) else raw
         elif "N" in value:
             data[key] = float(value["N"]) if "." in value["N"] else int(value["N"])
         elif "BOOL" in value:
@@ -120,6 +123,7 @@ def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
             "size": getattr(knowledge, "size", None),
             "linked_to": getattr(knowledge, "linked_to", None),
             "access_count": getattr(knowledge, "access_count", None),
+            "user_id": getattr(knowledge, "user_id", None),
             "created_at": int(knowledge.created_at) if knowledge.created_at else None,
             "updated_at": int(knowledge.updated_at) if knowledge.updated_at else None,
         }
@@ -140,6 +144,7 @@ def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
         access_count=data.get("access_count"),
         status=data.get("status"),
         status_message=data.get("status_message"),
+        user_id=data.get("user_id"),
         created_at=data.get("created_at"),
         updated_at=data.get("updated_at"),
     )
@@ -345,75 +350,105 @@ def deserialize_session_result(
 # -- Metrics utils --
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given single date.
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+    """Calculate metrics for the given single date, bucketed per ``user_id``.
+
+    Sessions without a ``user_id`` aggregate under the sentinel empty-string bucket.
+
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
+
     Returns:
-        dict: The calculated metrics.
+        List[dict]: One metrics record per user, with a deterministic id so re-runs update the same row.
     """
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+        }
+
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
-    all_user_ids = set()
+
+    per_user: Dict[str, Dict[str, Any]] = {}
+
     for session_type, sessions_count_key, runs_count_key in session_types:
         sessions = sessions_data.get(session_type, []) or []
-        metrics[sessions_count_key] = len(sessions)
+
         for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
-            metrics[runs_count_key] += len(session.get("runs", []))
-            if runs := session.get("runs", []):
-                for run in runs:
-                    if model_id := run.get("model"):
-                        model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.rsplit(":", 1)
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-    metrics["users_count"] = len(all_user_ids)
+            bucket_key = session.get("user_id") or ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            bucket[sessions_count_key] += 1
+
+            runs = session.get("runs", []) or []
+            bucket[runs_count_key] += len(runs)
+            for run in runs:
+                if model_id := run.get("model"):
+                    model_provider = run.get("model_provider", "")
+                    key = f"{model_id}:{model_provider}"
+                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
+
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
+
     current_time = int(time.time())
-    return {
-        "id": str(uuid4()),
-        "date": date_to_process,
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
-    }
+    completed = date_to_process < datetime.now(timezone.utc).date()
+
+    records: List[dict] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+
+        users_count = 0 if user_id == "" else 1
+        metric_id = f"{date_to_process.isoformat()}_{user_id}_daily"
+
+        records.append(
+            {
+                "id": metric_id,
+                "date": date_to_process,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records
 
 
 def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
@@ -542,6 +577,22 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
 
     except Exception as e:
         log_error(f"Failed to bulk upsert metrics: {str(e)}")
+
+
+def deserialize_metrics_date(value: Any) -> Any:
+    """Return a metrics record's stored day as a ``date``, the shape every other adapter returns.
+
+    DynamoDB has no date type, so the day is written as the ISO string "2026-08-11". Readers
+    render that day as a timestamp, and a string parses back without a timezone: the day then
+    reads as local midnight and shifts for anyone outside UTC. A value that is not a day is
+    handed back untouched, so records callers already skip keep behaving as they did.
+    """
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            return value
+    return value
 
 
 # -- Query utils --

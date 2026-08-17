@@ -26,8 +26,10 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1544,7 +1546,7 @@ class FirestoreDb(BaseDb):
         """Get all sessions of all types for metrics calculation."""
         try:
             collection_ref = self._get_collection(table_type="sessions")
-            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=True)
 
             query = collection_ref
             if start_timestamp is not None:
@@ -1603,16 +1605,13 @@ class FirestoreDb(BaseDb):
     def _get_metrics_calculation_starting_date(self, collection_ref) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
         try:
-            query = collection_ref.order_by("date", direction="DESCENDING").limit(1)
-            docs = query.stream()
+            # Only the two fields the rule reads, and no filter on completed: pairing it with
+            # date would need a composite index that may not be built yet
+            docs = collection_ref.select(["date", "completed"]).stream()
 
-            for doc in docs:
-                data = doc.to_dict()
-                result_date = datetime.strptime(data["date"], "%Y-%m-%d").date()
-                if data.get("completed"):
-                    return result_date + timedelta(days=1)
-                else:
-                    return result_date
+            resume_date = metrics_starting_date_from_records([doc.to_dict() for doc in docs])
+            if resume_date is not None:
+                return resume_date
 
             # No metrics records. Return the date of the first recorded session.
             first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1647,9 +1646,13 @@ class FirestoreDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1673,8 +1676,8 @@ class FirestoreDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per distinct user_id, plus the empty-string bucket for unowned sessions.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 results = bulk_upsert_metrics(collection_ref, metrics_records)
@@ -1691,8 +1694,15 @@ class FirestoreDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): If set, only return that user's bucket. ``None`` returns every bucket.
+        """
         try:
             collection_ref = self._get_collection(table_type="metrics")
             if collection_ref is None:
@@ -1703,13 +1713,22 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
             if ending_date:
                 query = query.where(filter=FieldFilter("date", "<=", ending_date.isoformat()))
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
 
-            docs = query.stream()
+            docs = [doc.to_dict() for doc in query.stream()]
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                docs = drop_legacy_metrics(docs)
+
             records = []
             latest_updated_at = 0
 
-            for doc in docs:
-                data = doc.to_dict()
+            for data in docs:
+                # Map the sentinel empty-string user_id back to None.
+                if data.get("user_id") == "":
+                    data["user_id"] = None
                 records.append(data)
                 updated_at = data.get("updated_at", 0)
                 if updated_at > latest_updated_at:
@@ -1726,31 +1745,45 @@ class FirestoreDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    # Firestore has no OR predicate, so ``user_id == X OR user_id IS NULL`` is post-filtered in Python.
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): If set, only delete rows owned by this user; unowned rows are shared.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
-            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
+            docs = list(collection_ref.where(filter=FieldFilter("id", "==", id)).stream())
 
             for doc in docs:
+                if user_id is not None:
+                    data = doc.to_dict() or {}
+                    if data.get("user_id") != user_id:
+                        continue
                 doc.reference.delete()
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1764,7 +1797,10 @@ class FirestoreDb(BaseDb):
 
             for doc in docs:
                 data = doc.to_dict()
-                return KnowledgeRow.model_validate(data)
+                row = KnowledgeRow.model_validate(data)
+                if not self._knowledge_row_is_visible(row, user_id):
+                    return None
+                return row
 
             return None
 
@@ -1779,6 +1815,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1788,6 +1825,7 @@ class FirestoreDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): If set, only return rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1809,8 +1847,9 @@ class FirestoreDb(BaseDb):
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
 
-            # Apply pagination
-            query = apply_pagination(query, limit, page)
+            # Owner scoping is post-filtered in memory, so defer pagination or it slices the unfiltered set.
+            if user_id is None:
+                query = apply_pagination(query, limit, page)
 
             docs = query.stream()
             records = []
@@ -1818,7 +1857,14 @@ class FirestoreDb(BaseDb):
                 records.append(doc.to_dict())
 
             knowledge_rows = [KnowledgeRow.model_validate(record) for record in records]
-            total_count = len(knowledge_rows)  # Simplified count
+            if user_id is not None:
+                knowledge_rows = [r for r in knowledge_rows if self._knowledge_row_is_visible(r, user_id)]
+                total_count = len(knowledge_rows)
+                if limit:
+                    start = (page - 1) * limit if (page and page > 1) else 0
+                    knowledge_rows = knowledge_rows[start : start + limit]
+            else:
+                total_count = len(knowledge_rows)
 
             return knowledge_rows, total_count
 
@@ -1844,10 +1890,14 @@ class FirestoreDb(BaseDb):
 
             # Find existing document or create new one
             docs = collection_ref.where(filter=FieldFilter("id", "==", knowledge_row.id)).stream()
-            doc_ref = next((doc.reference for doc in docs), None)
+            existing = next((doc for doc in docs), None)
 
-            if doc_ref is None:
-                doc_ref = collection_ref.document()
+            # A scoped write must not overwrite a doc it does not own
+            if existing is not None and knowledge_row.user_id is not None:
+                if (existing.to_dict() or {}).get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
+            doc_ref = existing.reference if existing is not None else collection_ref.document()
 
             doc_ref.set(update_doc, merge=True)
 

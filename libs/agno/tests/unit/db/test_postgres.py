@@ -195,10 +195,10 @@ def test_create_table_with_indexes(postgres_db, mock_session):
             with patch("agno.db.postgres.postgres.create_schema"):
                 table = postgres_db._create_table("test_metrics", "metrics")
 
-    # Verify table has indexes on date and created_at columns
-    for index in table.indexes:
-        column = index.columns[0]
-        assert column.name == "date"
+    # Verify indexed columns
+    indexed_cols = {index.columns[0].name for index in table.indexes}
+    assert "date" in indexed_cols
+    assert "user_id" in indexed_cols
 
 
 def test_create_table_with_unique_constraints(postgres_db, mock_session):
@@ -211,12 +211,13 @@ def test_create_table_with_unique_constraints(postgres_db, mock_session):
 
     # Verify unique constraint was added
     constraint_names = [c.name for c in table.constraints if isinstance(c, UniqueConstraint)]
-    assert "test_metrics_uq_metrics_date_period" in constraint_names
+    assert "test_metrics_uq_metrics_user_date_period" in constraint_names
 
     # Verify the constraint has the correct columns
     for constraint in table.constraints:
-        if isinstance(constraint, UniqueConstraint) and constraint.name == "test_metrics_uq_metrics_date_period":
+        if isinstance(constraint, UniqueConstraint) and constraint.name == "test_metrics_uq_metrics_user_date_period":
             col_names = [col.name for col in constraint.columns]
+            assert "user_id" in col_names
             assert "date" in col_names
             assert "aggregation_period" in col_names
 
