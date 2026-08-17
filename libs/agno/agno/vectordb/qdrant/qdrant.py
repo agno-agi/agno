@@ -1,3 +1,4 @@
+import asyncio
 from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
@@ -595,8 +596,9 @@ class Qdrant(VectorDb):
         """Upsert documents asynchronously."""
         log_debug("Redirecting the async request to async_insert")
         # Same dedup pair as the sync path: without it a re-upsert into fewer chunks strands the surplus points
-        if self.content_hash_exists(content_hash, user_id=user_id):
-            self._delete_by_content_hash(content_hash, user_id=user_id)
+        # Both hit the sync client; off the loop so a slow server cannot stall it.
+        if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def search(

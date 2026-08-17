@@ -773,17 +773,31 @@ class MongoDb(VectorDb):
                 logger.exception("Error during search")
                 raise
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
-        """Perform a vector-based search."""
-        log_debug("Performing vector search.")
-        return self.search(query, limit=limit)
+    def vector_search(self, query: str, limit: int = 5, user_id: Optional[str] = None) -> List[Document]:
+        """Perform a vector-based search.
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
-        """Perform a keyword-based search."""
+        Args:
+            user_id: Restrict results to this owner's chunks plus shared ones; ``None`` sees all.
+        """
+        log_debug("Performing vector search.")
+        return self.search(query, limit=limit, user_id=user_id)
+
+    def keyword_search(self, query: str, limit: int = 5, user_id: Optional[str] = None) -> List[Document]:
+        """Perform a keyword-based search.
+
+        Args:
+            user_id: Restrict results to this owner's chunks plus shared ones; ``None`` sees all.
+        """
         try:
             collection = self._get_collection()
+            # Public entry point, so it carries the owner scope itself — a caller reaching it
+            # directly rather than through search() would otherwise read every owner's chunks.
+            query_filter: Dict[str, Any] = {"content": {"$regex": query, "$options": "i"}}
+            scope_filter = self._user_scope_filter(user_id)
+            if scope_filter is not None:
+                query_filter = {"$and": [query_filter, scope_filter]}
             cursor = collection.find(
-                {"content": {"$regex": query, "$options": "i"}},
+                query_filter,
                 {"_id": 1, "name": 1, "content": 1, "meta_data": 1, "content_id": 1},
             ).limit(limit)
             results = [
@@ -1212,8 +1226,9 @@ class MongoDb(VectorDb):
         collection = await self._get_async_collection()
 
         # See the matching comment in ``upsert``.
-        if self.content_hash_exists(content_hash, user_id=user_id):
-            self._delete_by_content_hash(content_hash, user_id=user_id)
+        # Both hit the sync client; off the loop so a slow server cannot stall it.
+        if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
