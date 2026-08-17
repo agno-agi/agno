@@ -50,6 +50,32 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
 )
 
 
+def is_unique_violation(exc: Exception) -> bool:
+    """Whether ``exc`` is a DB unique-constraint / duplicate-key violation.
+
+    Matched by exception TYPE (SQLAlchemy ``IntegrityError`` for pg/sqlite, pymongo
+    ``DuplicateKeyError`` for Mongo), never by message text — SQLAlchemy folds bound
+    parameters into ``str(exc)``, so a substring check could misfire on caller data.
+    Used by ``update_schedule`` to let a rename-onto-taken-name propagate (so the
+    router can map it to 409) while all other DB errors keep swallowing to None.
+    """
+    try:
+        from sqlalchemy.exc import IntegrityError
+
+        if isinstance(exc, IntegrityError):
+            return True
+    except ImportError:
+        pass
+    try:
+        from pymongo.errors import DuplicateKeyError
+
+        if isinstance(exc, DuplicateKeyError):
+            return True
+    except ImportError:
+        pass
+    return False
+
+
 def detect_session_type(record: Dict[str, Any]) -> str:
     """Detect session type from a raw session dict, inferring from component IDs if needed.
 

@@ -356,7 +356,17 @@ def _strip_user_id(db_file: str, table: str, indexes: list[str]) -> None:
 def test_schedules_migration_restores_column_and_composite_index():
     """Both schedule tables gain user_id, and schedules gets its composite index back."""
     db, db_file = _new_db_with(["schedules", "schedule_runs"])
-    _strip_user_id(db_file, SCHEDULES_TABLE, [f"idx_{SCHEDULES_TABLE}_user_id", SCHEDULES_COMPOSITE_INDEX])
+    _strip_user_id(
+        db_file,
+        SCHEDULES_TABLE,
+        [
+            f"idx_{SCHEDULES_TABLE}_user_id",
+            SCHEDULES_COMPOSITE_INDEX,
+            # v3-only unique name backstops also cover user_id
+            f"{SCHEDULES_TABLE}_uq_user_name",
+            f"{SCHEDULES_TABLE}_uq_unowned_name",
+        ],
+    )
     _strip_user_id(db_file, SCHEDULE_RUNS_TABLE, [f"idx_{SCHEDULE_RUNS_TABLE}_user_id"])
     assert "user_id" not in _table_columns(db_file, SCHEDULES_TABLE)
     assert "user_id" not in _table_columns(db_file, SCHEDULE_RUNS_TABLE)
@@ -414,7 +424,17 @@ def test_knowledge_migration_adds_user_id():
 
 def test_schedules_migration_is_idempotent():
     db, db_file = _new_db_with(["schedules"])
-    _strip_user_id(db_file, SCHEDULES_TABLE, [f"idx_{SCHEDULES_TABLE}_user_id", SCHEDULES_COMPOSITE_INDEX])
+    _strip_user_id(
+        db_file,
+        SCHEDULES_TABLE,
+        [
+            f"idx_{SCHEDULES_TABLE}_user_id",
+            SCHEDULES_COMPOSITE_INDEX,
+            # v3-only unique name backstops also cover user_id
+            f"{SCHEDULES_TABLE}_uq_user_name",
+            f"{SCHEDULES_TABLE}_uq_unowned_name",
+        ],
+    )
 
     asyncio.run(MigrationManager(db).up(table_type="schedules"))
     before_cols = _table_columns(db_file, SCHEDULES_TABLE)

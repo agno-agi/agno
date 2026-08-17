@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
+from agno.db.utils import is_unique_violation
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.schedules.schema import (
     ScheduleCreate,
@@ -19,6 +20,7 @@ from agno.os.routers.schedules.schema import (
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.scopes import AgentOSScope, has_required_scopes
 from agno.utils.log import log_info
+
 
 # Valid DB method names that _db_call can invoke
 _SchedulerDbMethod = Literal[
@@ -192,7 +194,15 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             "updated_at": None,
         }
 
-        result = await _db_call("create_schedule", schedule_dict)
+        try:
+            result = await _db_call("create_schedule", schedule_dict)
+        except Exception as e:
+            # The name check above races under concurrent creates; the DB's unique
+            # (user_id, name) backstop turns the loser into an integrity error,
+            # which maps to the same 409 the check itself produces.
+            if is_unique_violation(e):
+                raise HTTPException(status_code=409, detail=f"Schedule with name '{body.name}' already exists")
+            raise
         if result is None:
             raise HTTPException(status_code=500, detail="Failed to create schedule")
         return result
@@ -248,13 +258,23 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             if existing.get("enabled", True):
                 updates["next_run_at"] = compute_next_run(new_cron, new_tz)
 
-        # Validate name uniqueness within the caller's scope if name is changing
-        if "name" in updates and updates["name"] != existing["name"]:
+        # Validate name uniqueness within the caller's scope if name is changing.
+        # The pre-check scopes to the caller, but the row was stamped with the
+        # creator's id, so with isolation off (scoped_user_id=None) it can miss a
+        # collision the DB's unique index still enforces. Map that integrity error
+        # to the same 409 rather than letting it surface as a 500.
+        renaming = "name" in updates and updates["name"] != existing["name"]
+        if renaming:
             dup = await _db_call("get_schedule_by_name", updates["name"], user_id=scoped_user_id)
             if dup is not None:
                 raise HTTPException(status_code=409, detail=f"Schedule with name '{updates['name']}' already exists")
 
-        result = await _db_call("update_schedule", schedule_id, user_id=scoped_user_id, **updates)
+        try:
+            result = await _db_call("update_schedule", schedule_id, user_id=scoped_user_id, **updates)
+        except Exception as e:
+            if renaming and is_unique_violation(e):
+                raise HTTPException(status_code=409, detail=f"Schedule with name '{updates['name']}' already exists")
+            raise
         if result is None:
             raise HTTPException(status_code=500, detail="Failed to update schedule")
         return result

@@ -4409,6 +4409,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(stmt.values(**kwargs))
             return await self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
