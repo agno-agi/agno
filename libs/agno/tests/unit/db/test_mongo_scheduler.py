@@ -488,11 +488,7 @@ def test_schedule_index_migration_uses_distinct_key_before_dropping_legacy_autho
     collection.list_indexes.return_value = [{"name": "name_1", "key": {"name": 1}, "unique": True}]
     created_names = []
 
-    def create_index(keys, **options):
-        # Real upgraded MongoDB collections reject a replacement index that
-        # reuses the legacy key pattern with different partial options.
-        if keys == [("name", 1)] and options.get("name") == "uq_generic_name":
-            raise RuntimeError("cannot coexist with legacy same-key index")
+    def create_index(_keys, **options):
         created_names.append(options.get("name"))
 
     def drop_index(index_name):
@@ -505,6 +501,9 @@ def test_schedule_index_migration_uses_distinct_key_before_dropping_legacy_autho
 
     create_collection_indexes(collection, "schedules")
 
+    # Pin the exact compound key: pre-5.0 servers reject a second index that
+    # reuses the legacy {name: 1} key pattern, so create-before-drop is only
+    # safe because the replacement's key and name differ from the legacy one's.
     generic_call = next(
         call for call in collection.create_index.call_args_list if call.kwargs.get("name") == "uq_generic_name"
     )
@@ -533,9 +532,7 @@ async def test_async_schedule_index_migration_uses_distinct_key_before_dropping_
     )
     created_names = []
 
-    async def create_index(keys, **options):
-        if keys == [("name", 1)] and options.get("name") == "uq_generic_name":
-            raise RuntimeError("cannot coexist with legacy same-key index")
+    async def create_index(_keys, **options):
         created_names.append(options.get("name"))
 
     async def drop_index(index_name):
