@@ -31,8 +31,6 @@ reasoning_agent = Agent(
     model=OpenAIResponses(id="gpt-5.6"),
     db=db,
     reasoning_model=OpenAIResponses(id="o3-mini"),
-    reasoning_min_steps=2,
-    reasoning_max_steps=4,
     instructions="Solve the problem carefully, then give a concise final answer.",
 )
 
