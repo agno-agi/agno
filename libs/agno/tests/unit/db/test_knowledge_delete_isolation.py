@@ -103,6 +103,32 @@ class TestReadsStayInclusive:
         assert total == 2
 
 
+class TestScopedUpsertIsStrict:
+    """A scoped upsert must not overwrite a row it does not own: an upsert keys on ``id``
+    alone, so a caller whose content id collides with another owner's row would otherwise
+    replace it and take ownership."""
+
+    def test_cannot_take_over_another_users_row(self, db):
+        _make(db, ALICE, "alice")
+        with pytest.raises(ValueError):
+            _make(db, ALICE, "bob")
+        assert db.get_knowledge_content(ALICE).user_id == "alice"
+
+    def test_cannot_take_over_a_shared_row(self, db):
+        _make(db, SHARED, None)
+        with pytest.raises(ValueError):
+            _make(db, SHARED, "alice")
+        assert db.get_knowledge_content(SHARED).user_id is None
+
+    def test_owner_and_admin_can_still_write(self, db):
+        _make(db, ALICE, "alice")
+        _make(db, ALICE, "alice")  # the owner updating their own row is allowed
+        _make(db, SHARED, None)
+        _make(db, SHARED, None)  # an unscoped (admin) write to a shared row is allowed
+        assert db.get_knowledge_content(ALICE).user_id == "alice"
+        assert db.get_knowledge_content(SHARED).user_id is None
+
+
 # -- Postgres: SQLAlchemy statement predicate --
 
 
