@@ -260,6 +260,20 @@ class TestOpsSurface:
         assert len(jobs) == 5
 
     @pytest.mark.asyncio
+    async def test_sort_updated_at_falls_back_to_created_at(self, store):
+        # Jobs with a NULL updated_at must sort by created_at instead of
+        # grouping together, matching the DB adapters' COALESCE behaviour.
+        store._jobs["a"] = make_job("a", created_at=100)  # updated_at None -> effective 100
+        store._jobs["b"] = make_job("b", created_at=200, updated_at=150)
+        store._jobs["c"] = make_job("c", created_at=50, updated_at=300)
+
+        desc, _ = await store.list_jobs(limit=5, page=1, sort_by="updated_at", sort_order="desc")
+        assert [j["id"] for j in desc] == ["c", "b", "a"]
+
+        asc, _ = await store.list_jobs(limit=5, page=1, sort_by="updated_at", sort_order="asc")
+        assert [j["id"] for j in asc] == ["a", "b", "c"]
+
+    @pytest.mark.asyncio
     async def test_requeue_grants_one_more_attempt(self, store):
         await store.enqueue_job(make_job("r1"))
         claimed = await store.claim_job("w1")

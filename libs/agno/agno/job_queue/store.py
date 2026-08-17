@@ -238,14 +238,22 @@ class InMemoryQueueStore:
 
         status accepts one value or a list (match any). An unknown sort_by is
         silently ignored (the list-API convention); None-valued sort fields
-        group together rather than erroring."""
+        group together rather than erroring. Sorting by updated_at falls back
+        to created_at when updated_at is None, matching the DB adapters."""
         statuses = [status] if isinstance(status, str) else status
         async with self._lock:
             jobs = [dict(j) for j in self._jobs.values() if statuses is None or j["status"] in statuses]
         total_count = len(jobs)
         if sort_by and jobs and sort_by in jobs[0]:
+
+            def sort_value(job: Dict[str, Any]) -> Any:
+                value = job.get(sort_by)
+                if value is None and sort_by == "updated_at":
+                    value = job.get("created_at")
+                return value
+
             jobs.sort(
-                key=lambda j: (j.get(sort_by) is None, j.get(sort_by)),
+                key=lambda j: (sort_value(j) is None, sort_value(j)),
                 reverse=(sort_order != "asc"),
             )
         start = max(page - 1, 0) * limit
