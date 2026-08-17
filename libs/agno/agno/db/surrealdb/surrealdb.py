@@ -18,6 +18,7 @@ from agno.db.surrealdb import utils
 from agno.db.surrealdb.metrics import (
     bulk_upsert_metrics,
     calculate_date_metrics,
+    desurrealize_metric,
     fetch_all_sessions_data,
     get_all_sessions_for_metrics_calculation,
     get_metrics_calculation_starting_date,
@@ -50,6 +51,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
@@ -1485,6 +1487,10 @@ class SurrealDb(BaseDb):
         """)
 
         results = self._query(query, where_vars, dict)
+        # Records written before ownership existed hold a whole day, and only an
+        # unscoped read sees them: an owner filter excludes them already
+        if user_id is None:
+            results = drop_legacy_metrics(results)
 
         # Get the latest updated_at from all results
         latest_update = None
@@ -1492,32 +1498,7 @@ class SurrealDb(BaseDb):
             # Find the maximum updated_at timestamp
             latest_update = max(int(r["updated_at"].timestamp()) for r in results)
 
-            # Transform results to match expected format
-            transformed_results = []
-            for r in results:
-                transformed = dict(r)
-
-                # Convert RecordID to string
-                if hasattr(transformed.get("id"), "id"):
-                    transformed["id"] = transformed["id"].id
-                elif isinstance(transformed.get("id"), RecordID):
-                    transformed["id"] = str(transformed["id"].id)
-
-                # Convert datetime objects to Unix timestamps
-                if isinstance(transformed.get("created_at"), datetime):
-                    transformed["created_at"] = int(transformed["created_at"].timestamp())
-                if isinstance(transformed.get("updated_at"), datetime):
-                    transformed["updated_at"] = int(transformed["updated_at"].timestamp())
-                if isinstance(transformed.get("date"), datetime):
-                    transformed["date"] = int(transformed["date"].timestamp())
-
-                # Unowned rows are stored with an empty-string user_id
-                if transformed.get("user_id") == "":
-                    transformed["user_id"] = None
-
-                transformed_results.append(transformed)
-
-            return transformed_results, latest_update
+            return [desurrealize_metric(r) for r in results], latest_update
 
         return [], latest_update
 
@@ -1589,7 +1570,7 @@ class SurrealDb(BaseDb):
 
             results = []  # Initialize before the if block
             if metrics_records:
-                results = bulk_upsert_metrics(self.client, table, metrics_records)
+                results = [desurrealize_metric(r) for r in bulk_upsert_metrics(self.client, table, metrics_records)]
 
             log_debug("Updated metrics calculations")
             return results

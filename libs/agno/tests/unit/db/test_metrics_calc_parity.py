@@ -54,11 +54,16 @@ TARGET_DATE = date(2026, 1, 1)
 
 
 def _calc(module_path: str):
-    """Some adapters have optional native drivers; skip cleanly if absent."""
+    """Some adapters have optional native drivers; skip cleanly if absent.
+
+    Only a missing driver is skippable. A backend that imports but no longer has the
+    function has dropped out of parity, which is the whole point of this file.
+    """
     try:
-        return importlib.import_module(module_path).calculate_date_metrics
-    except Exception as e:
+        module = importlib.import_module(module_path)
+    except ImportError as e:
         pytest.skip(f"{module_path}: driver unavailable ({type(e).__name__}: {e})")
+    return module.calculate_date_metrics
 
 
 def _session(uid, runs=1, tokens=0, total=None, models=(("gpt-5", "openai"),)):

@@ -456,7 +456,7 @@ class SurrealDb(VectorDb):
             if filters:
                 data["meta_data"].update(filters)
             if doc.id:
-                # type::record accepts a reader-assigned UUID; the fold keeps two owners' ids apart
+                # ``type::record`` accepts a reader-assigned UUID; the fold keeps two owners' ids apart
                 data["table"] = self.collection
                 data["record_id"] = self._fold_record_id(doc.id, user_id)
                 self.client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
@@ -832,7 +832,7 @@ class SurrealDb(VectorDb):
                 data["meta_data"].update(filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
             if doc.id:
-                # type::record accepts a reader-assigned UUID; the fold keeps two owners' ids apart
+                # ``type::record`` accepts a reader-assigned UUID; the fold keeps two owners' ids apart
                 data["table"] = self.collection
                 data["record_id"] = self._fold_record_id(doc.id, user_id)
                 await self.async_client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]

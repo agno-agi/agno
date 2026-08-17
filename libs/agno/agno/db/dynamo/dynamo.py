@@ -20,6 +20,7 @@ from agno.db.dynamo.utils import (
     deserialize_cultural_knowledge_from_db,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
+    deserialize_metrics_date,
     deserialize_session_result,
     execute_query_with_pagination,
     fetch_all_sessions_data,
@@ -40,8 +41,10 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1659,9 +1662,13 @@ class DynamoDb(BaseDb):
                 return None
 
             # Get timestamp range for session data
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             # Get all sessions for the date range
@@ -1741,26 +1748,11 @@ class DynamoDb(BaseDb):
                 metrics_items.extend(response.get("Items", []))
 
             if metrics_items:
-                # Find the latest date with metrics
-                latest_complete_date = None
-                incomplete_dates = []
-
-                for item in metrics_items:
-                    metrics_data = deserialize_from_dynamodb_item(item)
-                    record_date = datetime.fromisoformat(metrics_data["date"]).date()
-                    is_completed = metrics_data.get("completed", False)
-
-                    if is_completed:
-                        if latest_complete_date is None or record_date > latest_complete_date:
-                            latest_complete_date = record_date
-                    else:
-                        incomplete_dates.append(record_date)
-
-                # Return the earliest incomplete date, or the day after the latest complete date
-                if incomplete_dates:
-                    return min(incomplete_dates)
-                elif latest_complete_date:
-                    return latest_complete_date + timedelta(days=1)
+                resume_date = metrics_starting_date_from_records(
+                    [deserialize_from_dynamodb_item(item) for item in metrics_items]
+                )
+                if resume_date is not None:
+                    return resume_date
 
             # 2. No metrics records. Return the date of the first recorded session.
             sessions_table_name = self._get_table("sessions")
@@ -2036,20 +2028,30 @@ class DynamoDb(BaseDb):
                 items.extend(response.get("Items", []))
 
             # Convert to metrics data
+            records = [record for record in (deserialize_from_dynamodb_item(item) for item in items) if record]
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                records = drop_legacy_metrics(records)
+
             metrics_data = []
-            for item in items:
-                metric_data = deserialize_from_dynamodb_item(item)
-                if not metric_data:
-                    continue
+            for metric_data in records:
                 # Filter by user_id in-memory (user_id is not a key attribute)
                 if user_id is not None and metric_data.get("user_id") != user_id:
                     continue
                 # The empty-string bucket holds unowned sessions
                 if metric_data.get("user_id") == "":
                     metric_data["user_id"] = None
+                # Stored as an ISO string, and a string renders timezone-naive at the API layer
+                metric_data["date"] = deserialize_metrics_date(metric_data.get("date"))
                 metrics_data.append(metric_data)
 
-            return metrics_data, len(metrics_data)
+            # Latest updated_at across the returned rows, like every other adapter
+            latest_updated_at = None
+            if metrics_data:
+                latest_updated_at = max(metric.get("updated_at") or 0 for metric in metrics_data)
+
+            return metrics_data, latest_updated_at
 
         except Exception as e:
             log_error(f"Failed to get metrics: {str(e)}")
@@ -2286,8 +2288,6 @@ class DynamoDb(BaseDb):
                     delete_requests.append({"DeleteRequest": {"Key": {"run_id": {"S": eval_run_id}}}})
 
                 batch_write_with_retry(self.client, {self.eval_table_name: delete_requests})
-                if delete_requests:
-                    self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete eval runs: {str(e)}")

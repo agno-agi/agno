@@ -17,7 +17,13 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions, filter_context_runs
+from agno.db.utils import (
+    deserialize_session,
+    deserialize_sessions,
+    drop_legacy_metrics,
+    filter_context_runs,
+    metrics_starting_date_from_records,
+)
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -868,9 +874,13 @@ class InMemoryDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(start_timestamp, end_timestamp)
@@ -920,16 +930,9 @@ class InMemoryDb(BaseDb):
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
-        if metrics:
-            # Sort by date in descending order
-            sorted_metrics = sorted(metrics, key=lambda x: x.get("date", ""), reverse=True)
-            latest_metric = sorted_metrics[0]
-
-            if latest_metric.get("completed", False):
-                latest_date = datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
-                return latest_date + timedelta(days=1)
-            else:
-                return datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
+        resume_date = metrics_starting_date_from_records(metrics)
+        if resume_date is not None:
+            return resume_date
 
         # No metrics records. Return the date of the first recorded session.
         if self._sessions:
@@ -983,10 +986,12 @@ class InMemoryDb(BaseDb):
             user_id (Optional[str]): The ID of the user. If provided, only returns that user's records.
         """
         try:
+            metrics = drop_legacy_metrics(self._metrics) if user_id is None else self._metrics
+
             filtered_metrics = []
             latest_updated_at = None
 
-            for metric in self._metrics:
+            for metric in metrics:
                 metric_date = datetime.strptime(metric.get("date", ""), "%Y-%m-%d").date()
 
                 if starting_date and metric_date < starting_date:

@@ -1,4 +1,4 @@
-"""Tests for the v3.0.0 evals user_id migration: column add, idempotency, revert."""
+"""Tests for the v3.0.0 user_id migration: column add, idempotency, revert."""
 
 from __future__ import annotations
 
@@ -6,8 +6,12 @@ import asyncio
 import os
 import sqlite3
 import tempfile
+from datetime import date
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import Column, Index, MetaData, Table, UniqueConstraint
+from sqlalchemy.schema import CreateIndex, CreateTable
 
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalRunRecord, EvalType
@@ -114,12 +118,14 @@ def test_migrated_column_type_matches_fresh_schema():
 
 
 def test_up_is_idempotent():
+    from agno.db.migrations.versions import v3_0_0
+
     db, db_file = _new_db()
     _make_legacy(db_file)
 
     asyncio.run(MigrationManager(db).up(table_type="evals"))
-    # force=True runs the migration again even though the version is already current
-    asyncio.run(MigrationManager(db).up(table_type="evals", force=True))
+    # the manager stops at the stamp, so the migration is called directly to run it twice
+    v3_0_0.up(db, "evals", EVAL_TABLE)
 
     assert "user_id" in _columns(db_file)
     assert len([i for i in _indexes(db_file) if i == EVAL_INDEX]) == 1
@@ -175,7 +181,7 @@ def test_other_table_types_are_untouched():
     from agno.db.migrations.versions import v3_0_0
 
     db, _ = _new_db()
-    for table_type in ("memories", "metrics", "culture", "approvals"):
+    for table_type in ("memories", "culture", "approvals"):
         assert v3_0_0.up(db, table_type, EVAL_TABLE) is False
         assert v3_0_0.down(db, table_type, EVAL_TABLE) is False
 
@@ -423,6 +429,8 @@ def test_knowledge_migration_adds_user_id():
 
 
 def test_schedules_migration_is_idempotent():
+    from agno.db.migrations.versions import v3_0_0
+
     db, db_file = _new_db_with(["schedules"])
     _strip_user_id(
         db_file,
@@ -439,7 +447,459 @@ def test_schedules_migration_is_idempotent():
     asyncio.run(MigrationManager(db).up(table_type="schedules"))
     before_cols = _table_columns(db_file, SCHEDULES_TABLE)
     before_idx = _table_indexes(db_file, SCHEDULES_TABLE)
-    asyncio.run(MigrationManager(db).up(table_type="schedules", force=True))
+    v3_0_0.up(db, "schedules", SCHEDULES_TABLE)
 
     assert _table_columns(db_file, SCHEDULES_TABLE) == before_cols
     assert _table_indexes(db_file, SCHEDULES_TABLE) == before_idx
+
+
+# ---------------------------------------------------------------------------
+# metrics
+# ---------------------------------------------------------------------------
+
+METRICS_TABLE = "agno_metrics"
+METRICS_LEGACY_UNIQUE = f"{METRICS_TABLE}_uq_metrics_date_period"
+METRICS_UNIQUE = f"{METRICS_TABLE}_uq_metrics_user_date_period"
+METRICS_DATE_INDEX = f"idx_{METRICS_TABLE}_date"
+METRICS_PERIOD_INDEX = f"idx_{METRICS_TABLE}_aggregation_period"
+METRICS_USER_INDEX = f"idx_{METRICS_TABLE}_user_id"
+METRICS_BACKUP_TABLE = f"{METRICS_TABLE}_pre_v3_0_0"
+LOOKALIKE_TABLE = "billing_rollup"
+
+# A day that was over before the upgrade, and the day the upgrade lands on.
+FINISHED_DAY = date(2026, 3, 1)
+UNFINISHED_DAY = date(2026, 3, 2)
+
+
+def _legacy_metrics_ddl(db, schemas, table: str) -> list[str]:
+    """A metrics table exactly as v2.5.6 created it: no user_id, unique on (date, period)."""
+    columns, indexed = [], []
+    for name, spec in schemas.METRICS_TABLE_SCHEMA.items():
+        if name.startswith("_") or name == "user_id":
+            continue
+        columns.append(
+            Column(
+                name,
+                spec["type"](),
+                primary_key=spec.get("primary_key", False),
+                nullable=spec.get("nullable", True),
+            )
+        )
+        if spec.get("index"):
+            indexed.append(name)
+
+    legacy = Table(
+        table,
+        MetaData(schema=getattr(db, "db_schema", None)),
+        *columns,
+        UniqueConstraint("date", "aggregation_period", name=f"{table}_uq_metrics_date_period"),
+    )
+    dialect = db.db_engine.dialect
+    return [str(CreateTable(legacy).compile(dialect=dialect))] + [
+        str(CreateIndex(Index(f"idx_{table}_{name}", legacy.c[name])).compile(dialect=dialect)) for name in indexed
+    ]
+
+
+def _legacy_metrics_insert(table: str) -> str:
+    """The INSERT a pre-v3 install ran: no user_id to fill, and a uuid for an id."""
+    return (
+        f"INSERT INTO {table} (id, agent_runs_count, team_runs_count, workflow_runs_count, agent_sessions_count, "
+        "team_sessions_count, workflow_sessions_count, users_count, token_metrics, model_metrics, date, "
+        "aggregation_period, created_at, updated_at, completed) "
+        "VALUES (:id,7,0,0,4,0,0,2,'{}','{}',:date,'daily',1700000000,NULL,:completed)"
+    )
+
+
+def _metrics_record(user_id: str, day: date = UNFINISHED_DAY) -> dict:
+    """One per-user metrics bucket, shaped the way calculate_date_metrics emits one."""
+    return {
+        "id": str(uuid4()),
+        "date": day,
+        "aggregation_period": "daily",
+        "user_id": user_id,
+        "users_count": 1,
+        "agent_runs_count": 1,
+        "team_runs_count": 0,
+        "workflow_runs_count": 0,
+        "agent_sessions_count": 1,
+        "team_sessions_count": 0,
+        "workflow_sessions_count": 0,
+        "token_metrics": {},
+        "model_metrics": [],
+        "created_at": 1700000002,
+        "updated_at": 1700000002,
+        "completed": False,
+    }
+
+
+def _upsert_metrics(db, records: list[dict]) -> None:
+    """Write metrics the way ``calculate_metrics`` does: the upsert names
+    (user_id, date, aggregation_period) as its conflict target, so it only lands
+    against the v3.0 unique key where a raw INSERT would pass either way."""
+    from agno.db.sqlite.utils import bulk_upsert_metrics
+
+    table = db._get_table(table_type="metrics", create_table_if_not_found=True)
+    with db.Session() as sess, sess.begin():
+        bulk_upsert_metrics(session=sess, table=table, metrics_records=records)
+
+
+async def _async_upsert_metrics(db, records: list[dict]) -> None:
+    """Async version of ``_upsert_metrics``."""
+    from agno.db.sqlite.utils import abulk_upsert_metrics
+
+    table = await db._get_table(table_type="metrics", create_table_if_not_found=True)
+    async with db.async_session_factory() as sess, sess.begin():
+        await abulk_upsert_metrics(session=sess, table=table, metrics_records=records)
+
+
+def _new_legacy_metrics_db():
+    """A v2.5.6 metrics table with one finished day in it."""
+    from agno.db.sqlite import schemas
+
+    db_file = os.path.join(tempfile.mkdtemp(), "test.db")
+    db = SqliteDb(db_file=db_file)
+    db._get_table(table_type="versions", create_table_if_not_found=True)
+
+    conn = sqlite3.connect(db_file)
+    try:
+        for statement in _legacy_metrics_ddl(db, schemas, METRICS_TABLE):
+            conn.execute(statement)
+        conn.execute(
+            "INSERT INTO agno_schema_versions (table_name, version, created_at) VALUES (?, '2.5.6', '1700000000')",
+            (METRICS_TABLE,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    _insert_legacy_metrics_row(db_file, FINISHED_DAY)
+    return db, db_file
+
+
+def _new_lookalike_metrics_db():
+    """An operator's own table, wired up as the metrics table by mistake."""
+    db_file = os.path.join(tempfile.mkdtemp(), "test.db")
+    db = SqliteDb(db_file=db_file, metrics_table=LOOKALIKE_TABLE)
+    db._get_table(table_type="versions", create_table_if_not_found=True)
+
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.execute(
+            f"CREATE TABLE {LOOKALIKE_TABLE} (id VARCHAR NOT NULL PRIMARY KEY, date DATE NOT NULL, "
+            "aggregation_period VARCHAR NOT NULL, amount_cents BIGINT NOT NULL)"
+        )
+        conn.execute(f"INSERT INTO {LOOKALIKE_TABLE} VALUES ('invoice-1', '2026-03-01', 'daily', 4200)")
+        conn.execute(
+            "INSERT INTO agno_schema_versions (table_name, version, created_at) VALUES (?, '2.5.6', '1700000000')",
+            (LOOKALIKE_TABLE,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return db, db_file
+
+
+def _new_hand_patched_metrics_db():
+    """A v3.0 metrics table whose user_id an operator added themselves: it takes NULL."""
+    _, fresh_file = _new_db_with(["metrics"])
+    nullable_ddl = _table_ddl(fresh_file, METRICS_TABLE).replace("user_id VARCHAR NOT NULL", "user_id VARCHAR")
+    assert "user_id VARCHAR NOT NULL" not in nullable_ddl
+
+    db_file = os.path.join(tempfile.mkdtemp(), "test.db")
+    db = SqliteDb(db_file=db_file)
+    db._get_table(table_type="versions", create_table_if_not_found=True)
+
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.execute(nullable_ddl)
+        conn.execute(
+            "INSERT INTO agno_schema_versions (table_name, version, created_at) VALUES (?, '3.0.0', '1700000000')",
+            (METRICS_TABLE,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    _insert_legacy_metrics_row(db_file, FINISHED_DAY)
+    return db, db_file
+
+
+def _insert_legacy_metrics_row(db_file: str, day: date, completed: bool = True) -> None:
+    """Insert a metrics row the way a pre-v3 install would: no user_id to fill."""
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.execute(
+            _legacy_metrics_insert(METRICS_TABLE),
+            {"id": str(uuid4()), "date": day.isoformat(), "completed": completed},
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _table_ddl(db_file: str, table: str) -> str:
+    conn = sqlite3.connect(db_file)
+    try:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+        return row[0] if row else ""
+    finally:
+        conn.close()
+
+
+def _table_names(db_file: str) -> set[str]:
+    conn = sqlite3.connect(db_file)
+    try:
+        return {t[0] for t in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    finally:
+        conn.close()
+
+
+def _metrics_rows(db_file: str) -> list:
+    """Every metrics row as (date, agent_runs_count)."""
+    conn = sqlite3.connect(db_file)
+    try:
+        return conn.execute(f"SELECT date, agent_runs_count FROM {METRICS_TABLE} ORDER BY date").fetchall()
+    finally:
+        conn.close()
+
+
+def _metrics_owners(db_file: str) -> list:
+    """Every metrics row's user_id, in order."""
+    conn = sqlite3.connect(db_file)
+    try:
+        return [r[0] for r in conn.execute(f"SELECT user_id FROM {METRICS_TABLE} ORDER BY user_id, date").fetchall()]
+    finally:
+        conn.close()
+
+
+def _run_sqlite(db_file: str, *statements: str) -> None:
+    """Run statements straight against the database, the way an operator would."""
+    conn = sqlite3.connect(db_file)
+    try:
+        for statement in statements:
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_metrics_migration_swaps_the_unique_key():
+    db, db_file = _new_legacy_metrics_db()
+    assert METRICS_LEGACY_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
+
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    assert "user_id" in _table_columns(db_file, METRICS_TABLE)
+    assert METRICS_USER_INDEX in _table_indexes(db_file, METRICS_TABLE)
+    assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
+    assert METRICS_LEGACY_UNIQUE not in _table_ddl(db_file, METRICS_TABLE)
+    assert db.get_latest_schema_version(METRICS_TABLE) == "3.0.0"
+
+
+def test_metrics_migration_keeps_rows_and_other_indexes():
+    db, db_file = _new_legacy_metrics_db()
+
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
+    # both of the indexes v2.5.6 declared come back with the rebuilt table
+    assert {METRICS_DATE_INDEX, METRICS_PERIOD_INDEX} <= _table_indexes(db_file, METRICS_TABLE)
+    assert METRICS_BACKUP_TABLE not in _table_names(db_file)
+
+
+def test_metrics_migrated_rows_land_in_the_unowned_bucket():
+    """Rows written before ownership existed get "", not NULL: a unique key containing
+    user_id would treat every NULL as distinct."""
+    db, db_file = _new_legacy_metrics_db()
+
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    assert _metrics_owners(db_file) == [""]
+    # "" is an implementation detail: the adapter hands back None
+    assert db.get_metrics()[0][0]["user_id"] is None
+
+
+def test_metrics_migration_drops_unfinished_days_and_keeps_finished_ones():
+    """The day the upgrade lands on holds every user's traffic in one row, so stamped
+    unowned it would be counted twice. Finished days are frozen and stay as they are."""
+    from agno.db.migrations.versions import v3_0_0
+
+    db, db_file = _new_legacy_metrics_db()
+    _insert_legacy_metrics_row(db_file, UNFINISHED_DAY, completed=False)
+
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
+
+    # only the run that adds the column may delete, so a live per-user bucket survives
+    _upsert_metrics(db, [_metrics_record("alice")])
+    v3_0_0.up(db, "metrics", METRICS_TABLE)
+
+    assert _metrics_owners(db_file) == ["", "alice"]
+
+
+def test_metrics_two_owners_can_share_a_date_after_the_migration():
+    """The whole point of the swap: the legacy key allowed one row per date."""
+    _, legacy_file = _new_legacy_metrics_db()
+    # the legacy key allows exactly one row per (date, period), whoever owns it
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_legacy_metrics_row(legacy_file, FINISHED_DAY)
+
+    db, db_file = _new_legacy_metrics_db()
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    _upsert_metrics(db, [_metrics_record("alice"), _metrics_record("bob")])
+
+    assert _metrics_owners(db_file) == ["", "alice", "bob"]
+    assert [r["user_id"] for r in db.get_metrics(user_id="alice")[0]] == ["alice"]
+
+
+def test_metrics_migration_is_idempotent():
+    from agno.db.migrations.versions import v3_0_0
+
+    db, db_file = _new_legacy_metrics_db()
+
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    before_ddl = _table_ddl(db_file, METRICS_TABLE)
+    before_idx = _table_indexes(db_file, METRICS_TABLE)
+    v3_0_0.up(db, "metrics", METRICS_TABLE)
+
+    assert _table_ddl(db_file, METRICS_TABLE) == before_ddl
+    assert _table_indexes(db_file, METRICS_TABLE) == before_idx
+    assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
+
+
+def test_metrics_rebuild_refuses_a_table_with_operator_columns():
+    """The rebuild recreates the table from the schema, so a column it does not declare would go
+    with it. The table is left alone instead."""
+    db, db_file = _new_legacy_metrics_db()
+    _run_sqlite(
+        db_file,
+        f"ALTER TABLE {METRICS_TABLE} ADD COLUMN cost_centre TEXT",
+        f"UPDATE {METRICS_TABLE} SET cost_centre = 'eu-west'",
+    )
+    before_ddl = _table_ddl(db_file, METRICS_TABLE)
+
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    assert _table_ddl(db_file, METRICS_TABLE) == before_ddl
+    assert "user_id" not in _table_columns(db_file, METRICS_TABLE)
+    conn = sqlite3.connect(db_file)
+    try:
+        assert conn.execute(f"SELECT cost_centre FROM {METRICS_TABLE}").fetchall() == [("eu-west",)]
+    finally:
+        conn.close()
+
+
+def test_metrics_interrupted_rebuild_leaves_the_table_untouched():
+    """The rebuild is one transaction: a statement failing part way through leaves the
+    table as it was, and a second run once the obstacle is gone migrates cleanly."""
+    db, db_file = _new_legacy_metrics_db()
+    before_ddl = _table_ddl(db_file, METRICS_TABLE)
+    before_indexes = _table_indexes(db_file, METRICS_TABLE)
+    # index names are database-wide in SQLite, so one squatting on a name the
+    # rebuild needs fails it after the table has been renamed aside
+    _run_sqlite(
+        db_file,
+        "CREATE TABLE leftover (user_id VARCHAR)",
+        f"CREATE INDEX {METRICS_USER_INDEX} ON leftover (user_id)",
+    )
+
+    with pytest.raises(Exception):
+        asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    assert _table_ddl(db_file, METRICS_TABLE) == before_ddl
+    assert _table_indexes(db_file, METRICS_TABLE) == before_indexes
+    assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
+    assert METRICS_BACKUP_TABLE not in _table_names(db_file)
+    assert db.get_latest_schema_version(METRICS_TABLE) == "2.5.6"
+
+    _run_sqlite(db_file, f"DROP INDEX {METRICS_USER_INDEX}")
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
+    assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
+
+
+def test_metrics_rebuild_refuses_a_lookalike_table():
+    """The rebuild replaces the table, so a metrics_table pointing elsewhere is refused."""
+    db, db_file = _new_lookalike_metrics_db()
+    before_ddl = _table_ddl(db_file, LOOKALIKE_TABLE)
+
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    assert _table_ddl(db_file, LOOKALIKE_TABLE) == before_ddl
+    assert "user_id" not in _table_columns(db_file, LOOKALIKE_TABLE)
+    conn = sqlite3.connect(db_file)
+    try:
+        assert conn.execute(f"SELECT amount_cents FROM {LOOKALIKE_TABLE}").fetchall() == [(4200,)]
+    finally:
+        conn.close()
+
+
+def test_metrics_revert_refuses_while_rows_are_owned():
+    """Dropping user_id would merge alice's and bob's buckets for a date."""
+    db, db_file = _new_legacy_metrics_db()
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    _upsert_metrics(db, [_metrics_record("alice"), _metrics_record("bob")])
+
+    asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="metrics"))
+
+    assert "user_id" in _table_columns(db_file, METRICS_TABLE)
+    assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
+    assert db.get_latest_schema_version(METRICS_TABLE) == "3.0.0"
+
+
+def test_metrics_revert_refuses_when_an_owner_is_null():
+    """The column is NOT NULL, so a NULL owner is not the unowned bucket."""
+    db, db_file = _new_hand_patched_metrics_db()
+
+    asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="metrics"))
+
+    assert "user_id" in _table_columns(db_file, METRICS_TABLE)
+    assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
+    assert db.get_latest_schema_version(METRICS_TABLE) == "3.0.0"
+
+
+def test_metrics_revert_restores_the_legacy_unique_key():
+    db, db_file = _new_legacy_metrics_db()
+    before_ddl = _table_ddl(db_file, METRICS_TABLE)
+    before_indexes = _table_indexes(db_file, METRICS_TABLE)
+    assert {METRICS_DATE_INDEX, METRICS_PERIOD_INDEX} <= before_indexes
+    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+
+    asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="metrics"))
+
+    # back to the v2.5.6 table statement for statement, and to its indexes
+    assert _table_ddl(db_file, METRICS_TABLE) == before_ddl
+    assert _table_indexes(db_file, METRICS_TABLE) == before_indexes
+    assert "user_id" not in _table_columns(db_file, METRICS_TABLE)
+    assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
+    assert db.get_latest_schema_version(METRICS_TABLE) == "2.5.6"
+
+
+@pytest.mark.asyncio
+async def test_async_metrics_up_and_down():
+    _, db_file = _new_legacy_metrics_db()
+    db = AsyncSqliteDb(db_file=db_file)
+
+    await MigrationManager(db).up(table_type="metrics")
+    assert "user_id" in _table_columns(db_file, METRICS_TABLE)
+    assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
+    assert {METRICS_DATE_INDEX, METRICS_PERIOD_INDEX, METRICS_USER_INDEX} <= _table_indexes(db_file, METRICS_TABLE)
+
+    await _async_upsert_metrics(db, [_metrics_record("alice"), _metrics_record("bob")])
+    assert _metrics_owners(db_file) == ["", "alice", "bob"]
+    assert [r["user_id"] for r in (await db.get_metrics(user_id="alice"))[0]] == ["alice"]
+
+    # the owned rows block the revert here exactly as they do on the sync adapter
+    await MigrationManager(db).down(target_version="2.5.6", table_type="metrics")
+    assert "user_id" in _table_columns(db_file, METRICS_TABLE)
+
+    _run_sqlite(db_file, f"DELETE FROM {METRICS_TABLE} WHERE user_id <> ''")
+    await MigrationManager(db).down(target_version="2.5.6", table_type="metrics")
+
+    assert "user_id" not in _table_columns(db_file, METRICS_TABLE)
+    assert METRICS_LEGACY_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
+    assert {METRICS_DATE_INDEX, METRICS_PERIOD_INDEX} <= _table_indexes(db_file, METRICS_TABLE)
+    assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]

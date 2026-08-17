@@ -40,6 +40,7 @@ from agno.db.utils import (
     json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -2227,16 +2228,22 @@ class AsyncPostgresDb(AsyncBaseDb):
             Optional[date]: The starting date for which metrics calculation is needed.
         """
         async with self.async_session_factory() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = await sess.execute(stmt)
-            row = result.fetchone()
+            # resume at the earliest incomplete day after the latest completed one, otherwise the
+            # day after that one: a day holding a completed row was rebuilt after it ended, so an
+            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
+            # be rebuilt
+            latest_completed = (
+                await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
+            ).scalar()
 
-            # 1. Return the date of the first day without a complete metrics record.
-            if row is not None:
-                if row.completed:
-                    return row._mapping["date"] + timedelta(days=1)
-                else:
-                    return row._mapping["date"]
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = (await sess.execute(incomplete_stmt)).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2321,7 +2328,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception refreshing metrics: {str(e)}")
-            return None
+            raise e
 
     async def get_metrics(
         self,

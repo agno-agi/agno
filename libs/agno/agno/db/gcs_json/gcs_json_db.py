@@ -25,8 +25,10 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1112,9 +1114,13 @@ class GcsJsonDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(start_timestamp, end_timestamp)
@@ -1165,16 +1171,9 @@ class GcsJsonDb(BaseDb):
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
-        if metrics:
-            # Sort by date in descending order
-            sorted_metrics = sorted(metrics, key=lambda x: x.get("date", ""), reverse=True)
-            latest_metric = sorted_metrics[0]
-
-            if latest_metric.get("completed", False):
-                latest_date = datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
-                return latest_date + timedelta(days=1)
-            else:
-                return datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
+        resume_date = metrics_starting_date_from_records(metrics)
+        if resume_date is not None:
+            return resume_date
 
         # No metrics records. Return the date of the first recorded session.
         # We need to get sessions of all types, so we'll read directly from the file
@@ -1248,6 +1247,10 @@ class GcsJsonDb(BaseDb):
         """
         try:
             metrics = self._read_json_file(self.metrics_table_name)
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                metrics = drop_legacy_metrics(metrics)
 
             filtered_metrics = []
             latest_updated_at = None

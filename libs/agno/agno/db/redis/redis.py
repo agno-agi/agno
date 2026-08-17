@@ -34,9 +34,11 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     metric_record_day,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1426,21 +1428,9 @@ class RedisDb(BaseDb):
         try:
             all_metrics = self._get_all_records("metrics")
 
-            if all_metrics:
-                # Find the latest completed metric
-                completed_metrics = [m for m in all_metrics if m.get("completed", False)]
-                if completed_metrics:
-                    latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    latest_day = metric_record_day(latest_completed)
-                    if latest_day is not None:
-                        return latest_day + timedelta(days=1)
-                else:
-                    # Find the earliest incomplete metric
-                    incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
-                    if incomplete_metrics:
-                        earliest_day = metric_record_day(min(incomplete_metrics, key=lambda x: x.get("date", "")))
-                        if earliest_day is not None:
-                            return earliest_day
+            resume_date = metrics_starting_date_from_records(all_metrics)
+            if resume_date is not None:
+                return resume_date
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1474,9 +1464,13 @@ class RedisDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1556,6 +1550,10 @@ class RedisDb(BaseDb):
             # Filter by user_id
             if user_id is not None:
                 all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
+            else:
+                # Records written before ownership existed hold a whole day, and only an
+                # unscoped read sees them: an owner filter excludes them already
+                all_metrics = drop_legacy_metrics(all_metrics)
 
             # Get latest updated_at
             latest_updated_at = None

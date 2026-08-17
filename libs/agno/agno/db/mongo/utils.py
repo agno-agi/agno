@@ -8,9 +8,10 @@ from uuid import uuid4
 
 from agno.db.mongo.schemas import get_collection_indexes
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 
 try:
+    from pymongo import ReturnDocument
     from pymongo.collection import Collection
     from pymongo.errors import OperationFailure
 except ImportError:
@@ -18,6 +19,10 @@ except ImportError:
 
 if TYPE_CHECKING:
     from agno.db.mongo.async_mongo import AsyncMongoCollectionType
+
+
+LEGACY_METRICS_INDEX = "date_1_aggregation_period_1"
+INDEX_NOT_FOUND = 27  # MongoDB's IndexNotFound error code
 
 
 # -- DB util methods --
@@ -29,6 +34,18 @@ def create_collection_indexes(collection: Collection, collection_type: str) -> N
     remaining indexes from being created.
     """
     try:
+        # Before the creation loop, so an index that fails to build does not leave the
+        # obsolete key in place as well
+        if collection_type == "metrics" and LEGACY_METRICS_INDEX in collection.index_information():
+            try:
+                collection.drop_index(LEGACY_METRICS_INDEX)
+                log_info(
+                    f"Dropped obsolete metrics index {LEGACY_METRICS_INDEX}, superseded by the per-user unique key"
+                )
+            except OperationFailure as e:
+                if e.code != INDEX_NOT_FOUND:
+                    log_warning(f"Could not drop obsolete metrics index {LEGACY_METRICS_INDEX}: {str(e)}")
+
         indexes = get_collection_indexes(collection_type)
     except Exception as e:
         log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
@@ -62,6 +79,17 @@ async def create_collection_indexes_async(collection: Any, collection_type: str)
     remaining indexes from being created.
     """
     try:
+        # See create_collection_indexes: the drop goes before the creation loop
+        if collection_type == "metrics" and LEGACY_METRICS_INDEX in await collection.index_information():
+            try:
+                await collection.drop_index(LEGACY_METRICS_INDEX)
+                log_info(
+                    f"Dropped obsolete metrics index {LEGACY_METRICS_INDEX}, superseded by the per-user unique key"
+                )
+            except OperationFailure as e:
+                if e.code != INDEX_NOT_FOUND:
+                    log_warning(f"Could not drop obsolete metrics index {LEGACY_METRICS_INDEX}: {str(e)}")
+
         indexes = get_collection_indexes(collection_type)
     except Exception as e:
         log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
@@ -256,17 +284,25 @@ def bulk_upsert_metrics(collection: Collection, metrics_records: List[Dict[str, 
         record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
         try:
             # Legacy records have no ``user_id``, so default to the empty-string sentinel bucket
-            collection.replace_one(
-                {
-                    "user_id": record.get("user_id", ""),
-                    "date": record["date"],
-                    "aggregation_period": record["aggregation_period"],
-                },
-                record,
-                upsert=True,
-            )
+            key_filter = {
+                "user_id": record.get("user_id", ""),
+                "date": record["date"],
+                "aggregation_period": record["aggregation_period"],
+            }
 
-            results.append(record)
+            # id and created_at belong to the first write, so only $set the fields that change
+            identity = {"id": record.pop("id"), "created_at": record.pop("created_at")}
+            stored = collection.find_one_and_update(
+                key_filter,
+                {"$set": record, "$setOnInsert": identity},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+                projection={"_id": False},
+            )
+            # Upserting and returning AFTER always yields the document; a miss would put a
+            # None where every caller expects a record
+            if stored is not None:
+                results.append(stored)
 
         except Exception as e:
             log_error(f"Error upserting metrics record: {str(e)}")
@@ -295,17 +331,25 @@ async def abulk_upsert_metrics(
         record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
         try:
             # Legacy records have no ``user_id``, so default to the empty-string sentinel bucket
-            await collection.replace_one(
-                {
-                    "user_id": record.get("user_id", ""),
-                    "date": record["date"],
-                    "aggregation_period": record["aggregation_period"],
-                },
-                record,
-                upsert=True,
-            )
+            key_filter = {
+                "user_id": record.get("user_id", ""),
+                "date": record["date"],
+                "aggregation_period": record["aggregation_period"],
+            }
 
-            results.append(record)
+            # id and created_at belong to the first write, so only $set the fields that change
+            identity = {"id": record.pop("id"), "created_at": record.pop("created_at")}
+            stored = await collection.find_one_and_update(
+                key_filter,
+                {"$set": record, "$setOnInsert": identity},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+                projection={"_id": False},
+            )
+            # Upserting and returning AFTER always yields the document; a miss would put a
+            # None where every caller expects a record
+            if stored is not None:
+                results.append(stored)
 
         except Exception as e:
             log_error(f"Error upserting metrics record: {str(e)}")
