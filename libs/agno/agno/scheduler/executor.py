@@ -2,21 +2,18 @@
 
 import asyncio
 import json
-import re
 import time
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import quote
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule
+from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, SCHEDULE_OWNER_HEADER, Schedule
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
     import httpx
 except ImportError:
     httpx = None  # type: ignore[assignment]
-
-# Regex to detect run endpoints and capture resource type + ID
-_RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?$")
 
 # Terminal run statuses (RunStatus enum values from agno.run.base)
 _TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED"}
@@ -127,6 +124,8 @@ class ScheduleExecutor:
                     "input": None,
                     "output": None,
                     "requirements": None,
+                    # Denormalised from the parent Schedule so the runs router can scope without a JOIN
+                    "user_id": sched.user_id,
                     "created_at": now,
                 }
 
@@ -255,12 +254,15 @@ class ScheduleExecutor:
         timeout_seconds = schedule.timeout_seconds or self.timeout
         url = f"{self.base_url}{endpoint}"
 
-        match = _RUN_ENDPOINT_RE.match(endpoint)
+        match = RUN_ENDPOINT_RE.match(endpoint)
         is_run_endpoint = match is not None and method == "POST"
 
         headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
         }
+        if schedule.user_id is not None:
+            # Percent-encoded: header values must be latin-1, and padded ids stay distinct from bare ones
+            headers[SCHEDULE_OWNER_HEADER] = quote(schedule.user_id, safe="")
 
         client = await self._get_client()
 
@@ -268,6 +270,11 @@ class ScheduleExecutor:
             form_payload = {k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background")}
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
+
+            # The owner wins over the user-controlled payload: a crafted schedule must not run as another user
+            form_payload.pop("user_id", None)
+            if schedule.user_id is not None:
+                form_payload["user_id"] = schedule.user_id
 
             resource_type = match.group(1)
             resource_id = match.group(2)

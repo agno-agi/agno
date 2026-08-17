@@ -281,6 +281,8 @@ def attach_routes(
                 await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
             else:
                 db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -346,6 +348,8 @@ def attach_routes(
                 )
             else:
                 eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
@@ -418,6 +422,9 @@ def attach_routes(
                 table=table,
                 headers=headers,
             )
+
+        # Resolved before the run: get_scoped_user_id raises 403 and the eval below makes real model calls.
+        creator_user_id = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
 
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
@@ -524,7 +531,6 @@ def attach_routes(
         # already persisted, so a backend that can't stamp the owner (e.g. a
         # custom Db without update_eval_run_user_id) must not fail the request.
         if eval_run is not None:
-            creator_user_id = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
             if creator_user_id is not None:
                 try:
                     if isinstance(db, AsyncBaseDb):

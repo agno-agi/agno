@@ -2,8 +2,8 @@
 
 import json
 import time
-from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import UUID
 
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
@@ -48,6 +48,32 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "mcp_oauth_keys_table",
     }
 )
+
+
+def is_unique_violation(exc: Exception) -> bool:
+    """Whether ``exc`` is a DB unique-constraint / duplicate-key violation.
+
+    Matched by exception TYPE (SQLAlchemy ``IntegrityError`` for pg/sqlite, pymongo
+    ``DuplicateKeyError`` for Mongo), never by message text — SQLAlchemy folds bound
+    parameters into ``str(exc)``, so a substring check could misfire on caller data.
+    Used by ``update_schedule`` to let a rename-onto-taken-name propagate (so the
+    router can map it to 409) while all other DB errors keep swallowing to None.
+    """
+    try:
+        from sqlalchemy.exc import IntegrityError
+
+        if isinstance(exc, IntegrityError):
+            return True
+    except ImportError:
+        pass
+    try:
+        from pymongo.errors import DuplicateKeyError
+
+        if isinstance(exc, DuplicateKeyError):
+            return True
+    except ImportError:
+        pass
+    return False
 
 
 def detect_session_type(record: Dict[str, Any]) -> str:
@@ -467,6 +493,228 @@ def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
         )
     if page is not None and page < 1:
         raise ValueError(f"`page` must be >= 1 (pages are 1-indexed); got {page}.")
+
+
+def metric_record_day(record: Dict[str, Any]) -> Optional[date]:
+    """Read the day off a stored metric record, or ``None`` if it has no usable one.
+
+    Key-value backends store the date as an ISO string; an unparseable one is skipped
+    rather than raised, so one bad row cannot break every metrics read.
+    """
+    raw = record.get("date")
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    try:
+        return datetime.fromisoformat(raw).date()  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        log_warning(f"Skipping metrics record {record.get('id')}: date {raw!r} is not a day")
+        return None
+
+
+def _metric_day(record: Dict[str, Any]) -> Optional[date]:
+    """The day a metric record covers, whatever shape the backend stored it in.
+
+    It arrives as a date, a datetime, an ISO string or an epoch second, and a record whose
+    date is none of those is skipped rather than raised on.
+    """
+    day = record.get("date")
+    if isinstance(day, datetime):
+        return day.date()
+    if isinstance(day, date):
+        return day
+    if isinstance(day, str):
+        try:
+            return datetime.fromisoformat(day).date()
+        except ValueError:
+            return None
+    # bool is an int, and a record holding True would otherwise read as 1 January 1970
+    if isinstance(day, (int, float)) and not isinstance(day, bool):
+        return datetime.fromtimestamp(day, tz=timezone.utc).date()
+    return None
+
+
+def metric_bucket_key(record: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """The (day, period) a metric record belongs to, or ``None`` if its date is not a day.
+
+    A period-less record belongs in the daily bucket.
+    """
+    day = _metric_day(record)
+    if day is None:
+        return None
+    return (day.isoformat(), record.get("aggregation_period") or "daily")
+
+
+def metrics_starting_date_from_records(records: Sequence[Dict[str, Any]]) -> Optional[date]:
+    """The first day a metrics recalculation still has to rebuild, or ``None`` if there are no records.
+
+    A day holding a completed record was rebuilt after it ended, so an incomplete record
+    sharing that day belongs to an owner whose sessions have since gone: no recalculation
+    can rebuild it, and resuming there would restart at that day for good. Only the days
+    after the last completed one are still owing, and the earliest is where the work resumes.
+    The day never runs past today, whatever date a record carries.
+    """
+    latest_completed: Optional[date] = None
+    incomplete_dates: List[date] = []
+
+    for record in records:
+        day = _metric_day(record)
+        if day is None:
+            continue
+        if record.get("completed"):
+            if latest_completed is None or day > latest_completed:
+                latest_completed = day
+        else:
+            incomplete_dates.append(day)
+
+    still_incomplete = [day for day in incomplete_dates if latest_completed is None or day > latest_completed]
+    return metrics_starting_date_from_days(latest_completed, min(still_incomplete) if still_incomplete else None)
+
+
+def metrics_starting_date_from_days(
+    latest_completed: Optional[date], earliest_incomplete: Optional[date]
+) -> Optional[date]:
+    """The day a metrics recalculation resumes at, given the two days its backend queried for.
+
+    The rule: resume at the earliest incomplete day after the latest completed one, otherwise at
+    the day after that completed one, and nowhere at all (``None``) when neither day exists.
+    Backends holding every record in memory find the two days by scanning them; the rest ask their
+    own database, since a MAX and a MIN are what it is for. Only the decision is shared, so the day
+    after a completed one is not arrived at nine ways.
+
+    The day is capped at today: a record dated in the future puts the resume point past the last
+    day there is to rebuild, so the caller's list of days to process comes back empty and every
+    recalculation from then on does nothing at all.
+    """
+    if earliest_incomplete is not None:
+        resume_at = earliest_incomplete
+    elif latest_completed is not None:
+        resume_at = latest_completed + timedelta(days=1)
+    else:
+        return None
+    return min(resume_at, datetime.now(timezone.utc).date())
+
+
+def is_legacy_metric(record: Dict[str, Any]) -> bool:
+    """Whether a record predates per-user buckets, so it holds every user's traffic."""
+    # Such a record carries no owner at all, or the unowned sentinel it was stamped with, and
+    # it counted its users; a real unowned bucket has no owner to count and stays at zero
+    return "user_id" not in record or (not record["user_id"] and bool(record.get("users_count")))
+
+
+def drop_legacy_metrics(records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop the pre-user_id record for any bucket the per-user records already cover.
+
+    That record holds the whole day's traffic for every user, so summing it alongside the
+    per-user records counts the day twice. It only goes where per-user records for the same
+    bucket exist to replace it; on its own it is still the only record of that day.
+    """
+    per_user_buckets = set()
+    is_legacy = []
+    for record in records:
+        legacy = is_legacy_metric(record)
+        is_legacy.append(legacy)
+        if not legacy:
+            per_user_buckets.add(metric_bucket_key(record))
+
+    return [
+        record
+        for record, legacy in zip(records, is_legacy)
+        if not legacy or metric_bucket_key(record) not in per_user_buckets
+    ]
+
+
+_METRIC_COUNT_FIELDS = (
+    "agent_sessions_count",
+    "team_sessions_count",
+    "workflow_sessions_count",
+    "agent_runs_count",
+    "team_runs_count",
+    "workflow_runs_count",
+    "users_count",
+)
+
+
+def _merge_model_metrics(target: List[dict], extra: List[dict]) -> None:
+    """Merge extra model_metrics into target in place, summing counts per model."""
+    index: Dict[Any, dict] = {}
+    for m in [*target, *extra]:
+        key = (m.get("model_id"), m.get("model_provider"))
+        entry = index.get(key)
+        if entry is None:
+            index[key] = dict(m)
+        else:
+            entry["count"] = (entry.get("count") or 0) + (m.get("count") or 0)
+    target[:] = list(index.values())
+
+
+def _merge_timestamp(current: Any, candidate: Any, *, latest: bool) -> Any:
+    """Merge two timestamps into the later (or earlier) one, tolerating None."""
+    if candidate is None:
+        return current
+    if current is None:
+        return candidate
+    try:
+        if latest:
+            return candidate if candidate > current else current
+        return candidate if candidate < current else current
+    except TypeError:
+        # Adapters store epoch ints; a row carrying a datetime cannot be ordered against one.
+        return current
+
+
+def aggregate_metrics_by_date(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collapse per-user metric rows into one aggregate row per date and period.
+
+    Every reader that reports a day rather than a user needs this: stored rows are one per
+    owner, so a day with three users arrives as three rows. The id is synthesised rather than
+    carried over, because stored per-user ids embed the owner on most key-value backends and
+    rows arrive in no particular order.
+    """
+    by_bucket: Dict[Any, dict] = {}
+    for row in drop_legacy_metrics(rows):
+        bucket = metric_bucket_key(row)
+        if bucket is None:
+            # The caller reports a day, so a record whose date is not one cannot be reported
+            # at all. Skip it rather than fail every other user's row.
+            log_warning(f"Skipping metrics record {row.get('id')}: date {row.get('date')!r} is not a day")
+            continue
+        day_key, period = bucket
+        agg = by_bucket.get(bucket)
+        if agg is None:
+            agg = {**row, "id": f"{day_key}_{period}"}
+            agg["token_metrics"] = dict(row.get("token_metrics") or {})
+            agg["model_metrics"] = [dict(m) for m in (row.get("model_metrics") or [])]
+            by_bucket[bucket] = agg
+            continue
+        for field in _METRIC_COUNT_FIELDS:
+            agg[field] = (agg.get(field) or 0) + (row.get(field) or 0)
+        for token, value in (row.get("token_metrics") or {}).items():
+            agg["token_metrics"][token] = (agg["token_metrics"].get(token) or 0) + (value or 0)
+        _merge_model_metrics(agg["model_metrics"], row.get("model_metrics") or [])
+        agg["created_at"] = _merge_timestamp(agg.get("created_at"), row.get("created_at"), latest=False)
+        agg["updated_at"] = _merge_timestamp(agg.get("updated_at"), row.get("updated_at"), latest=True)
+    return list(by_bucket.values())
+
+
+def identify_metrics_by_owner(rows: Sequence[Dict[str, Any]], user_id: str) -> List[Dict[str, Any]]:
+    """Give one owner's rows the same id on every backend.
+
+    Stored ids are the backend's own: a uuid on the SQL adapters, an owner-bearing string on
+    the key-value ones. Handing those out makes the field mean something different per
+    deployment, and on some backends puts the owner inside it. A row whose date is not a day
+    keeps the id it was stored with, there being no bucket to name it after.
+    """
+    identified: List[Dict[str, Any]] = []
+    for row in rows:
+        bucket = metric_bucket_key(row)
+        if bucket is None:
+            identified.append(dict(row))
+            continue
+        day_key, period = bucket
+        identified.append({**row, "id": f"{day_key}_{user_id}_{period}"})
+    return identified
 
 
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
