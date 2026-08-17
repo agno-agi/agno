@@ -101,10 +101,6 @@ class TeamResponse(BaseModel):
             # Memory defaults
             "enable_agentic_memory": False,
             "update_memory_on_run": False,
-            # Reasoning defaults
-            "reasoning": False,
-            "reasoning_min_steps": 1,
-            "reasoning_max_steps": 10,
             # Default tools defaults
             "search_knowledge": True,
             "read_chat_history": False,
@@ -207,8 +203,6 @@ class TeamResponse(BaseModel):
         reasoning_info: Dict[str, Any] = {
             "reasoning": team.reasoning_model is not None,
             "reasoning_agent_id": team.reasoning_agent.id if team.reasoning_agent else None,
-            "reasoning_min_steps": team.reasoning_min_steps,
-            "reasoning_max_steps": team.reasoning_max_steps,
         }
 
         if team.reasoning_model:

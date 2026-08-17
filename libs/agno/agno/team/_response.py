@@ -732,28 +732,16 @@ def reason(
     """
     Run reasoning using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
-
-    # Get the reasoning model (use copy of main model if not provided)
-    reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
-            reasoning_model=reasoning_model,
+            reasoning_model=team.reasoning_model,
             reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
@@ -777,28 +765,16 @@ async def areason(
     """
     Run reasoning asynchronously using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
-
-    # Get the reasoning model (use copy of main model if not provided)
-    reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
-            reasoning_model=reasoning_model,
+            reasoning_model=team.reasoning_model,
             reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,

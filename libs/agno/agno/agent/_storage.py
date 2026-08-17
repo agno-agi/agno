@@ -774,10 +774,6 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         else:
             config["reasoning_model"] = str(agent.reasoning_model)
     # Skip reasoning_agent to avoid circular serialization
-    if agent.reasoning_min_steps != 1:
-        config["reasoning_min_steps"] = agent.reasoning_min_steps
-    if agent.reasoning_max_steps != 10:
-        config["reasoning_max_steps"] = agent.reasoning_max_steps
 
     # --- Default tools settings ---
     if agent.read_chat_history:
@@ -1188,8 +1184,6 @@ def from_dict(
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
         # reasoning_model=config.get("reasoning_model"),  # TODO
-        reasoning_min_steps=config.get("reasoning_min_steps", 1),
-        reasoning_max_steps=config.get("reasoning_max_steps", 10),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),

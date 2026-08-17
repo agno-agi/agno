@@ -258,28 +258,16 @@ def reason(
     """
     Run reasoning using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
-
-    # Get the reasoning model (use copy of main model if not provided)
-    reasoning_model: Optional[Model] = agent.reasoning_model
-    if reasoning_model is None and agent.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(agent.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
-            reasoning_model=reasoning_model,
+            reasoning_model=agent.reasoning_model,
             reasoning_agent=agent.reasoning_agent,
-            min_steps=agent.reasoning_min_steps,
-            max_steps=agent.reasoning_max_steps,
-            tools=agent.tools if isinstance(agent.tools, list) else None,
-            tool_call_limit=agent.tool_call_limit,
-            use_json_mode=agent.use_json_mode,
             telemetry=agent.telemetry,
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
@@ -305,28 +293,16 @@ async def areason(
     """
     Run reasoning asynchronously using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
-
-    # Get the reasoning model (use copy of main model if not provided)
-    reasoning_model: Optional[Model] = agent.reasoning_model
-    if reasoning_model is None and agent.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(agent.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
-            reasoning_model=reasoning_model,
+            reasoning_model=agent.reasoning_model,
             reasoning_agent=agent.reasoning_agent,
-            min_steps=agent.reasoning_min_steps,
-            max_steps=agent.reasoning_max_steps,
-            tools=agent.tools if isinstance(agent.tools, list) else None,
-            tool_call_limit=agent.tool_call_limit,
-            use_json_mode=agent.use_json_mode,
             telemetry=agent.telemetry,
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
