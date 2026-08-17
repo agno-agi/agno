@@ -1,9 +1,25 @@
 # v3.0 Deprecation Audit and Removal Plan
 
-## Execution status (2026-08-14)
+## Execution status (updated 2026-08-17)
 
-Tiers 0-3 are REMOVED on this branch (see the tiered commits in this PR), with two
-deviations, both conservative:
+Tiers 0-3 are REMOVED on this branch (see the tiered commits in this PR), with the
+following scope changes after comparing with PR #9584:
+
+- **LearningMode.HITL (Tier 0): KEPT.** Commit `a55211387` (PR #9177) explicitly reverted
+  the "removed in 3.0" announcement; the config.py docstring claiming removal was residue
+  that revert missed. The docstring is corrected instead. Removing HITL is a decision for
+  the maintainer who reverted it, not for this PR.
+- **Doc-only-deprecated surface: moved to PR #9593.** Items that never shipped a runtime
+  deprecation notice (Model.classify_error, FileTools.check_escape,
+  PgVector.enable_prefix_matching, DuckDuckGo method aliases, learn aliases, the
+  Agent/Team from_dict key-drop shims, the flat HITL key shim, BrightData output_path)
+  are split out so the removal-policy question - runtime-notice-required vs
+  changelog-notice-at-a-major - can be decided independently of the uncontested removals.
+- **RedisDB -> RedisDb, ValkeyDB -> ValkeyDb** renamed to match sibling naming (old names
+  kept as deprecated aliases); RedisVectorDb/ValkeyVectorDb restored as non-deprecated
+  disambiguation aliases. Mirrors #9584.
+
+Original conservative deviations, unchanged:
 
 - **SSE standalone transport (3.4): kept, warning upgraded.** SSE is live functionality
   (SSE-only servers exist; the Pipedream/mem0 cookbooks point at SSE endpoints), and the
