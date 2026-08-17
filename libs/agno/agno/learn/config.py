@@ -7,9 +7,9 @@ Uses dataclasses instead of Pydantic BaseModels to avoid runtime
 overhead and validation errors that could break agents mid-run.
 
 Configurations:
-- LearningMode: How learning is extracted (ALWAYS, AGENTIC, PROPOSE)
+- LearningMode: How learning is extracted (ALWAYS, AGENTIC, PROPOSE, HITL)
 - UserProfileConfig: Config for user profile learning
-- UserMemoryConfig: Config for user memory learning
+- MemoriesConfig: Config for memories learning
 - SessionContextConfig: Config for session context learning
 - LearnedKnowledgeConfig: Config for learned knowledge
 - EntityMemoryConfig: Config for entity memory
@@ -39,11 +39,13 @@ class LearningMode(Enum):
     ALWAYS: Automatic extraction after each response.
     AGENTIC: Agent decides when to learn via tools.
     PROPOSE: Agent proposes, human confirms (learned_knowledge only).
+    HITL: Reserved for future use; unsupported by every store.
     """
 
     ALWAYS = "always"
     AGENTIC = "agentic"
     PROPOSE = "propose"
+    HITL = "hitl"
 
 
 # =============================================================================
@@ -176,6 +178,10 @@ class UserMemoryConfig:
 
     def __repr__(self) -> str:
         return f"UserMemoryConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
+
+
+# Backwards compatibility alias
+MemoriesConfig = UserMemoryConfig
 
 
 @dataclass

@@ -50,3 +50,7 @@ class DuckDuckGoTools(WebSearchTools):
             region=region,
             **kwargs,
         )
+
+        # Backward compatibility aliases for old method names
+        self.duckduckgo_search = self.web_search
+        self.duckduckgo_news = self.search_news

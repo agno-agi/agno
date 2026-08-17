@@ -429,8 +429,8 @@ class LearningMachine:
 
     @property
     def requires_history(self) -> bool:
-        # PROPOSE mode needs chat history for multi-turn confirmation
-        modes_needing_history = {LearningMode.PROPOSE}
+        # PROPOSE and HITL modes need chat history for multi-turn confirmation
+        modes_needing_history = {LearningMode.PROPOSE, LearningMode.HITL}
         for cfg in (
             self.learned_knowledge,
             self.user_profile,

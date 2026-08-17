@@ -88,6 +88,8 @@ class UserProfileStore(LearningStore):
 
         if self.config.mode == LearningMode.PROPOSE:
             log_warning("UserProfileStore does not support PROPOSE mode.")
+        elif self.config.mode == LearningMode.HITL:
+            log_warning("UserProfileStore does not support HITL mode.")
 
     # =========================================================================
     # LearningStore Protocol Implementation

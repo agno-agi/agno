@@ -115,7 +115,7 @@ class TestAgenticOnly:
     def test_default_mode_is_agentic(self) -> None:
         assert EntityMemoryConfig().mode is LearningMode.AGENTIC
 
-    @pytest.mark.parametrize("mode", [LearningMode.ALWAYS, LearningMode.PROPOSE])
+    @pytest.mark.parametrize("mode", [LearningMode.ALWAYS, LearningMode.PROPOSE, LearningMode.HITL])
     def test_non_agentic_mode_raises(self, mode: LearningMode) -> None:
         with pytest.raises(ValueError, match="AGENTIC-only"):
             EntityMemoryStore(config=EntityMemoryConfig(mode=mode))
