@@ -314,6 +314,43 @@ class TestQueueAdminGate:
         await _require_queue_admin(self._request())
 
 
+class TestContextualQueueListGate:
+    def _request(self, scopes=None, user_id=None, admin_scope=None):
+        from types import SimpleNamespace
+
+        state = SimpleNamespace()
+        if scopes is not None:
+            state.scopes = scopes
+        if user_id is not None:
+            state.user_id = user_id
+        if admin_scope is not None:
+            state.admin_scope = admin_scope
+        return SimpleNamespace(state=state)
+
+    def test_non_admin_is_pinned_to_authenticated_user(self):
+        from agno.os.routers.job_queue.router import _queue_list_user_id
+
+        request = self._request(scopes=["agents:run"], user_id="u1")
+        assert _queue_list_user_id(request, ["s1", "s2"]) == "u1"
+
+    def test_non_admin_must_filter_by_session(self):
+        from fastapi import HTTPException
+
+        from agno.os.routers.job_queue.router import _queue_list_user_id
+
+        request = self._request(scopes=["agents:run"], user_id="u1")
+        with pytest.raises(HTTPException) as exc:
+            _queue_list_user_id(request, None)
+        assert exc.value.status_code == 403
+
+    def test_admin_and_open_deployments_remain_unscoped(self):
+        from agno.os.routers.job_queue.router import _queue_list_user_id
+
+        admin = self._request(scopes=["agent_os:admin"], user_id="admin")
+        assert _queue_list_user_id(admin, None) is None
+        assert _queue_list_user_id(self._request(), None) is None
+
+
 class TestUnfencedSessionStoreWarning:
     """A durable queue over a session store without the
     atomic run-persistence primitives must degrade LOUDLY - the fencing

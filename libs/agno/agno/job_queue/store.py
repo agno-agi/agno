@@ -277,6 +277,8 @@ class InMemoryQueueStore:
     async def list_jobs(
         self,
         status: Optional[Union[str, List[str]]] = None,
+        session_id: Optional[Union[str, List[str]]] = None,
+        user_id: Optional[str] = None,
         limit: int = 20,
         page: int = 1,
         sort_by: Optional[str] = "created_at",
@@ -284,13 +286,20 @@ class InMemoryQueueStore:
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Paginated job listing: (page of jobs, total matching count).
 
-        status accepts one value or a list (match any). An unknown sort_by is
+        status and session_id accept one value or a list (match any). An unknown sort_by is
         silently ignored (the list-API convention); None-valued sort fields
         group together rather than erroring. Sorting by updated_at falls back
         to created_at when updated_at is None, matching the DB adapters."""
         statuses = [status] if isinstance(status, str) else status
+        session_ids = [session_id] if isinstance(session_id, str) else session_id
         async with self._lock:
-            jobs = [dict(j) for j in self._jobs.values() if statuses is None or j["status"] in statuses]
+            jobs = [
+                dict(j)
+                for j in self._jobs.values()
+                if (statuses is None or j["status"] in statuses)
+                and (session_ids is None or j.get("session_id") in session_ids)
+                and (user_id is None or j.get("user_id") == user_id)
+            ]
         total_count = len(jobs)
         if sort_by and jobs and sort_by in jobs[0]:
 

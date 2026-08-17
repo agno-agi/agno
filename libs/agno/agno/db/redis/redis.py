@@ -3123,6 +3123,8 @@ class RedisDb(BaseDb):
     def list_jobs(
         self,
         status: Optional[Union[str, List[str]]] = None,
+        session_id: Optional[Union[str, List[str]]] = None,
+        user_id: Optional[str] = None,
         limit: int = 20,
         page: int = 1,
         sort_by: Optional[str] = "created_at",
@@ -3130,17 +3132,23 @@ class RedisDb(BaseDb):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Paginated job listing: (page of jobs, total matching count).
 
-        status accepts one value or a list (match any). Loads the full index
+        status and session_id accept one value or a list (match any). Loads the full index
         and filters/sorts in Python, like the other Redis list APIs -
         total_count and arbitrary sort fields need the whole set anyway, and
         the index stays small by construction (bounded by max_queue_depth
         plus the retention sweep)."""
         statuses = [status] if isinstance(status, str) else status
+        session_ids = [session_id] if isinstance(session_id, str) else session_id
         jobs: List[Dict[str, Any]] = []
         raw_ids = self.redis_client.zrevrange(self._q_key("all"), 0, -1)
         for raw_id in raw_ids:
             job = self._q_load_job(_q_to_str(raw_id))
-            if job is not None and (statuses is None or job["status"] in statuses):
+            if (
+                job is not None
+                and (statuses is None or job["status"] in statuses)
+                and (session_ids is None or job.get("session_id") in session_ids)
+                and (user_id is None or job.get("user_id") == user_id)
+            ):
                 jobs.append(job)
         total_count = len(jobs)
         jobs = apply_sorting(records=jobs, sort_by=sort_by, sort_order=sort_order)
