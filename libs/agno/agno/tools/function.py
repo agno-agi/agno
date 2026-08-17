@@ -1575,7 +1575,7 @@ class Function(BaseModel):
                 try:
                     value = _validate_by_field_name(adapter, payload)
                 except Exception as e:
-                    raise _StaleCacheEntry(f"the payload no longer rebuilds into {return_type}: {e}")
+                    raise _StaleCacheEntry(f"the payload no longer rebuilds into {return_type}: {e}") from e
                 if isinstance(value, BaseModel) and _dump_for_cache(value) != payload:
                     raise _StaleCacheEntry(
                         f"{return_type} cannot hold everything the entry carries, so the entry no longer stands "
@@ -1589,7 +1589,7 @@ class Function(BaseModel):
             try:
                 value = ToolResult.model_validate(payload)
             except Exception as e:
-                raise _StaleCacheEntry(f"the payload is not a valid ToolResult: {e}")
+                raise _StaleCacheEntry(f"the payload is not a valid ToolResult: {e}") from e
 
         if _carries_media(value):
             # Media is never written to the cache, so an entry carrying it did

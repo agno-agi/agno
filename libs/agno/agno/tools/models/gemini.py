@@ -68,7 +68,7 @@ class GeminiTools(Toolkit):
             log_debug("Google GenAI Client created successfully.")
         except Exception as e:
             log_error(f"Failed to create Google GenAI Client: {str(e)}")
-            raise ValueError(f"Failed to create Google GenAI Client. Error: {e}")
+            raise ValueError(f"Failed to create Google GenAI Client. Error: {e}") from e
 
         self.image_model = image_generation_model
         self.video_model = video_generation_model
