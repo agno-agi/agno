@@ -422,3 +422,21 @@ class TestSupersededRecords:
 
         by_id = {m["id"]: m["agent_runs_count"] for m in resp.json()["metrics"]}
         assert by_id == {"2026-01-01_daily": 2, "2026-01-02_daily": 7}
+
+    def test_unowned_read_does_not_report_a_superseded_record(self, client, mock_db):
+        """The SQL adapters stamp the unowned sentinel on such a record, so ``?user_id=`` selects it."""
+        legacy = _make_metric("", runs=7)
+        legacy["users_count"] = 3
+        mock_db.get_metrics.return_value = ([legacy], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics?user_id=")
+
+        assert resp.json()["metrics"] == []
+
+    def test_unowned_read_reports_the_real_unowned_bucket(self, client, mock_db):
+        """The bucket the per-user writer produces for unowned sessions is that owner's traffic."""
+        mock_db.get_metrics.return_value = ([_make_metric("", runs=3)], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics?user_id=")
+
+        assert resp.json()["metrics"][0]["agent_runs_count"] == 3

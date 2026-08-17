@@ -570,6 +570,13 @@ def metrics_starting_date_from_days(
     return min(resume_at, datetime.now(timezone.utc).date())
 
 
+def is_legacy_metric(record: Dict[str, Any]) -> bool:
+    """Whether a record predates per-user buckets, so it holds every user's traffic."""
+    # Such a record carries no owner at all, or the unowned sentinel it was stamped with, and
+    # it counted its users; a real unowned bucket has no owner to count and stays at zero
+    return "user_id" not in record or (not record["user_id"] and bool(record.get("users_count")))
+
+
 def drop_legacy_metrics(records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Drop the pre-user_id record for any bucket the per-user records already cover.
 
@@ -580,9 +587,7 @@ def drop_legacy_metrics(records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any
     per_user_buckets = set()
     is_legacy = []
     for record in records:
-        # An earlier Valkey filed the whole day under the unowned bucket, counting its users;
-        # a real unowned bucket has no owner to count and stays at zero
-        legacy = "user_id" not in record or (not record["user_id"] and bool(record.get("users_count")))
+        legacy = is_legacy_metric(record)
         is_legacy.append(legacy)
         if not legacy:
             per_user_buckets.add(metric_bucket_key(record))

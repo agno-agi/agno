@@ -7,7 +7,7 @@ from fastapi.routing import APIRouter
 from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.utils import aggregate_metrics_by_date, identify_metrics_by_owner
+from agno.db.utils import aggregate_metrics_by_date, identify_metrics_by_owner, is_legacy_metric
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.routers.metrics.schemas import (
@@ -141,6 +141,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             if effective_user_id is None:
                 metrics = aggregate_metrics_by_date(metrics)
             else:
+                # The unowned bucket is asked for by the same sentinel the SQL adapters stamp
+                # pre-ownership records with, and those hold every user's traffic
+                if not effective_user_id:
+                    metrics = [metric for metric in metrics if not is_legacy_metric(metric)]
                 metrics = identify_metrics_by_owner(metrics, effective_user_id)
 
             return MetricsResponse(
