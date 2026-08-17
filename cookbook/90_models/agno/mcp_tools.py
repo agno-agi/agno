@@ -22,14 +22,16 @@ from agno.tools.agno import AgnoTools
 
 
 async def main() -> None:
-    async with AgnoTools(include_tools=["web_search"]) as agno_tools:
+    async with AgnoTools(include_tools=["you_search"]) as agno_tools:
         agent = Agent(
             model=Agno(id="openai/gpt-5.4"),
             tools=[agno_tools],
             markdown=True,
+            debug_mode=True,
+            debug_level=2,
         )
         await agent.aprint_response(
-            "Use web_search to find the best espresso machines in 2026, then summarize the top picks."
+            "tell me about new agno features."
         )
 
 
