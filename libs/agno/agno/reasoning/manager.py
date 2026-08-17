@@ -768,7 +768,9 @@ class ReasoningManager:
         """
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.config.reasoning_model
-        if reasoning_model is None:
+        reasoning_model_provided = reasoning_model is not None
+
+        if not reasoning_model_provided:
             yield ReasoningEvent(
                 event_type=ReasoningEventType.error,
                 error="Reasoning model is None",
@@ -779,7 +781,7 @@ class ReasoningManager:
         yield ReasoningEvent(event_type=ReasoningEventType.started)
 
         # Check if this is a native reasoning model
-        if self.is_native_reasoning_model(reasoning_model):
+        if reasoning_model_provided and self.is_native_reasoning_model(reasoning_model):
             if stream:
                 yield from self._stream_native_reasoning_events(reasoning_model, run_messages)
             else:
@@ -816,7 +818,9 @@ class ReasoningManager:
         """
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.config.reasoning_model
-        if reasoning_model is None:
+        reasoning_model_provided = reasoning_model is not None
+
+        if not reasoning_model_provided:
             yield ReasoningEvent(
                 event_type=ReasoningEventType.error,
                 error="Reasoning model is None",
@@ -827,7 +831,7 @@ class ReasoningManager:
         yield ReasoningEvent(event_type=ReasoningEventType.started)
 
         # Check if this is a native reasoning model
-        if self.is_native_reasoning_model(reasoning_model):
+        if reasoning_model_provided and self.is_native_reasoning_model(reasoning_model):
             if stream:
                 async for event in self._astream_native_reasoning_events(reasoning_model, run_messages):
                     yield event
