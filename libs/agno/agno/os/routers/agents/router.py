@@ -194,6 +194,7 @@ async def agent_resumable_response_streamer(
         kwargs["auth_token"] = auth_token
 
     try:
+        warned_not_resumable = False
         async for sse_data in agent.arun(
             input=message,
             session_id=session_id,
@@ -207,7 +208,19 @@ async def agent_resumable_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            if isinstance(sse_data, str):
+                yield sse_data
+            else:
+                # Agents without background support (e.g. external adapters)
+                # ignore background=True and yield raw events: format them so
+                # the stream works, though the run is not resumable.
+                if not warned_not_resumable:
+                    warned_not_resumable = True
+                    log_warning(
+                        f"Agent '{getattr(agent, 'id', None)}' does not support background execution; "
+                        "streaming inline (run is not resumable)."
+                    )
+                yield format_sse_event(sse_data)
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
