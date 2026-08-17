@@ -9,12 +9,14 @@ import pytest
 from agno.knowledge.document import Document
 from agno.vectordb.chroma import ChromaDb
 
+from .conftest import DeterministicEmbedder
+
 TEST_COLLECTION = "isolation_test"
 TEST_PATH = "tmp/test_chromadb_isolation"
 
 
 @pytest.fixture
-def chroma_db(mock_embedder):
+def chroma_db():
     """Fixture to create and clean up a ChromaDb instance, including its per-user collections"""
     os.makedirs(TEST_PATH, exist_ok=True)
     if os.path.exists(TEST_PATH):
@@ -25,7 +27,7 @@ def chroma_db(mock_embedder):
         collection=TEST_COLLECTION,
         path=TEST_PATH,
         persistent_client=False,
-        embedder=mock_embedder,
+        embedder=DeterministicEmbedder(),
     )
     db.create()
     yield db
@@ -94,13 +96,13 @@ class TestCollectionNaming:
         assert attacker_name != chroma_db._collection_name_for(victim)
 
     @pytest.mark.parametrize("base_length", [10, 480, 494, 495, 512, 600])
-    def test_a_long_base_name_still_resolves_within_chromas_limit(self, mock_embedder, base_length):
+    def test_a_long_base_name_still_resolves_within_chromas_limit(self, base_length):
         """Chroma rejects a name over 512 chars, and the owner suffix costs 18 of them.
 
         A base long enough to push past the limit used to fail every scoped operation, so
         the base is digested too rather than letting the name grow unbounded.
         """
-        db = ChromaDb(collection="b" * base_length, embedder=mock_embedder)
+        db = ChromaDb(collection="b" * base_length, embedder=DeterministicEmbedder())
 
         name = db._collection_name_for("alice")
 
@@ -108,11 +110,11 @@ class TestCollectionNaming:
         # The unscoped name is the caller's own and stays untouched
         assert db._collection_name_for(None) == "b" * base_length
 
-    def test_two_long_base_names_do_not_collide(self, mock_embedder):
+    def test_two_long_base_names_do_not_collide(self):
         """Truncating alone would fold every base sharing a 494-char prefix into one collection."""
         shared_prefix = "b" * 600
-        first = ChromaDb(collection=shared_prefix + "one", embedder=mock_embedder)
-        second = ChromaDb(collection=shared_prefix + "two", embedder=mock_embedder)
+        first = ChromaDb(collection=shared_prefix + "one", embedder=DeterministicEmbedder())
+        second = ChromaDb(collection=shared_prefix + "two", embedder=DeterministicEmbedder())
 
         assert first._collection_name_for("alice") != second._collection_name_for("alice")
 
@@ -264,3 +266,71 @@ class TestDropCleansUpPerUserCollections:
         assert _coll(chroma_db, "alice") not in after
         assert _coll(chroma_db, "bob") not in after
         assert TEST_COLLECTION not in after
+
+
+class TestAsyncIsolation:
+    """The async path must scope exactly as the sync one does.
+
+    Chroma isolates by physical collection, so the async write has to resolve the same
+    per-owner collection the sync write does — a divergence here would file a caller's
+    chunks somewhere their own reads never look.
+    """
+
+    @pytest.fixture
+    def async_corpus(self, chroma_db):
+        chroma_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
+        chroma_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
+        chroma_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
+        return chroma_db
+
+    @pytest.mark.asyncio
+    async def test_async_search_returns_own_and_shared_never_another_owner(self, async_corpus):
+        names = {d.name for d in await async_corpus.async_search(query="salary", limit=10, user_id="alice")}
+
+        assert "alice-salary" in names
+        assert "bob-salary" not in names
+
+    @pytest.mark.asyncio
+    async def test_async_search_sees_the_shared_bucket(self, async_corpus):
+        names = {d.name for d in await async_corpus.async_search(query="anything", limit=10, user_id="alice")}
+
+        assert "company-holidays" in names
+
+    @pytest.mark.asyncio
+    async def test_async_unscoped_search_reads_the_base_collection(self, async_corpus):
+        names = {d.name for d in await async_corpus.async_search(query="anything", limit=10, user_id=None)}
+
+        assert "company-holidays" in names
+
+    @pytest.mark.asyncio
+    async def test_async_insert_lands_in_the_owners_collection(self, chroma_db):
+        await chroma_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
+
+        alice_coll = chroma_db.client.get_collection(name=_coll(chroma_db, "alice"))
+        assert len(alice_coll.get()["ids"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_async_insert_with_no_owner_lands_in_the_base_collection(self, chroma_db):
+        await chroma_db.async_insert(content_hash="hs", documents=_shared_docs(), user_id=None)
+
+        base = chroma_db.client.get_collection(name=TEST_COLLECTION)
+        assert len(base.get()["ids"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_async_insert_keeps_two_owners_apart(self, chroma_db):
+        await chroma_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
+        await chroma_db.async_insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
+
+        alice_coll = chroma_db.client.get_collection(name=_coll(chroma_db, "alice"))
+        bob_coll = chroma_db.client.get_collection(name=_coll(chroma_db, "bob"))
+        assert "Alice" in alice_coll.get()["documents"][0]
+        assert "Bob" in bob_coll.get()["documents"][0]
+
+    @pytest.mark.asyncio
+    async def test_async_upsert_does_not_disturb_another_owner(self, chroma_db):
+        await chroma_db.async_upsert(content_hash="h1", documents=_alice_docs(), user_id="alice")
+        await chroma_db.async_upsert(content_hash="h1", documents=_bob_docs(), user_id="bob")
+        await chroma_db.async_upsert(content_hash="h1", documents=_alice_docs(), user_id="alice")
+
+        bob_coll = chroma_db.client.get_collection(name=_coll(chroma_db, "bob"))
+        assert len(bob_coll.get()["ids"]) == 1
