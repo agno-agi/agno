@@ -44,6 +44,7 @@ from agno.db.utils import (
     bind_component_version_guard_after_append,
     capture_component_version_guard,
     get_bound_component_version_guard,
+    resolve_component_id,
     resolve_db_from_config,
     save_component_config,
 )
@@ -1105,7 +1106,7 @@ class Workflow:
         if not isinstance(db_, BaseDb):
             raise ValueError("Async databases not yet supported for save(). Use a sync database.")
         if self.id is None:
-            self.id = generate_component_id_from_name(self.name)
+            self.id = resolve_component_id(db_, self.name, ComponentType.WORKFLOW)
 
         mutation_guard = guard or get_bound_component_version_guard(self, db_)
 

@@ -657,3 +657,68 @@ def test_draft_only_components_load_list_and_read_but_do_not_runtime_resolve(tmp
     assert get_runtime_agent_by_id("draft-agent", db=db) is None
     assert get_runtime_team_by_id("draft-team", db=db) is None
     assert get_runtime_workflow_by_id("draft-workflow", db=db) is None
+
+
+def test_agent_unpinned_save_adopts_legacy_slug_identity(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "agent-legacy-slug.db"))
+    # Row persisted under the pre-single-segment derivation of "Analyst v2.5".
+    assert Agent(id="analyst-v2.5", name="Analyst v2.5", db=db).save() == 1
+
+    agent = Agent(name="Analyst v2.5", db=db)
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        agent.save()
+    assert agent.id == "analyst-v2.5"
+    assert db.get_component("analyst-v2-5") is None
+
+    loaded = Agent.load("analyst-v2.5", db=db)
+    assert loaded is not None
+    assert loaded.save() == 2
+
+
+def test_team_unpinned_save_adopts_legacy_slug_identity(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "team-legacy-slug.db"))
+    assert Team(id="analyst-v2.5", name="Analyst v2.5", members=[], db=db).save() == 1
+
+    team = Team(name="Analyst v2.5", members=[], db=db)
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        team.save()
+    assert team.id == "analyst-v2.5"
+    assert db.get_component("analyst-v2-5") is None
+
+    loaded = Team.load("analyst-v2.5", db=db)
+    assert loaded is not None
+    assert loaded.save() == 2
+
+
+def test_workflow_unpinned_save_adopts_legacy_slug_identity(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "workflow-legacy-slug.db"))
+    assert Workflow(id="analyst-v2.5", name="Analyst v2.5", db=db).save() == 1
+
+    workflow = Workflow(name="Analyst v2.5", db=db)
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        workflow.save()
+    assert workflow.id == "analyst-v2.5"
+    assert db.get_component("analyst-v2-5") is None
+
+    loaded = Workflow.load("analyst-v2.5", db=db)
+    assert loaded is not None
+    assert loaded.save() == 2
+
+
+def test_unpinned_save_without_legacy_row_uses_strict_slug(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "fresh-strict-slug.db"))
+    agent = Agent(name="Analyst v2.5", db=db)
+    assert agent.save() == 1
+    assert agent.id == "analyst-v2-5"
+    assert db.get_component("analyst-v2.5") is None
+
+
+def test_unpinned_save_prefers_strict_slug_row_when_both_exist(tmp_path) -> None:
+    db = SqliteDb(db_file=str(tmp_path / "forked-slug.db"))
+    assert Agent(id="analyst-v2.5", name="Analyst v2.5", db=db).save() == 1
+    assert Agent(id="analyst-v2-5", name="Analyst v2.5", db=db).save() == 1
+
+    agent = Agent(name="Analyst v2.5", db=db)
+    with pytest.raises(ComponentVersionGuardRequiredError):
+        agent.save()
+    assert agent.id == "analyst-v2-5"

@@ -171,6 +171,34 @@ def bind_component_version_guard_after_append(
     )
 
 
+def resolve_component_id(db: "BaseDb", name: Optional[str], component_type: "ComponentType") -> str:
+    """Derive a component id from a name, adopting an existing legacy-slug row.
+
+    Components saved before the single-segment slug contract derived their ids
+    with generate_id_from_name. When only that row exists, re-deriving with the
+    stricter slug would fork the catalog, so the persisted identity wins.
+
+    Archived legacy rows deliberately do not adopt: a deleted component's name
+    mints a fresh strict-slug identity. Construction and initialize keep the
+    plain strict derivation on purpose - probing belongs only where a db is
+    already in hand at persistence time.
+    """
+    from agno.utils.string import generate_component_id_from_name, generate_id_from_name
+
+    component_id = generate_component_id_from_name(name)
+    if not name:
+        return component_id
+    legacy_id = generate_id_from_name(name)
+    if legacy_id == component_id:
+        return component_id
+    if (
+        db.get_component(component_id, component_type) is None
+        and db.get_component(legacy_id, component_type) is not None
+    ):
+        return legacy_id
+    return component_id
+
+
 def save_component_config(
     db: "BaseDb",
     *,

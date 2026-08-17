@@ -32,6 +32,7 @@ from agno.db.utils import (
     bind_component_version_guard_after_append,
     capture_component_version_guard,
     get_bound_component_version_guard,
+    resolve_component_id,
     resolve_db_from_config,
     save_component_config,
 )
@@ -63,7 +64,6 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.merge_dict import merge_dictionaries
-from agno.utils.string import generate_component_id_from_name
 
 # ---------------------------------------------------------------------------
 # Run output accessors
@@ -1417,7 +1417,7 @@ def save(
     if not isinstance(db_, BaseDb):
         raise ValueError("Async databases not yet supported for save(). Use a sync database.")
     if team.id is None:
-        team.id = generate_component_id_from_name(team.name)
+        team.id = resolve_component_id(db_, team.name, ComponentType.TEAM)
 
     mutation_guard = guard or get_bound_component_version_guard(team, db_)
 
