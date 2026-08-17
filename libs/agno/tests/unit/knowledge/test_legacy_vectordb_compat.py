@@ -77,6 +77,24 @@ class ModernVectorDb(LegacyVectorDb):
         return super().content_hash_exists(content_hash)
 
 
+class KwargsVectorDb(LegacyVectorDb):
+    """A v2 adapter written with **kwargs. NOT v3-aware: it swallows user_id.
+
+    Must be treated as legacy (fail-closed on scoped calls), not fooled into
+    running unscoped — otherwise a scoped search returns every owner's chunks
+    and a scoped write lands in the NULL/shared bucket.
+    """
+
+    def search(self, query: str, limit: int = 5, filters: Any = None, **kwargs) -> List[Document]:
+        return super().search(query, limit, filters)
+
+    def insert(self, content_hash: str, documents: List[Document], filters: Any = None, **kwargs) -> None:
+        super().insert(content_hash, documents, filters)
+
+    def content_hash_exists(self, content_hash: str, **kwargs) -> bool:
+        return super().content_hash_exists(content_hash)
+
+
 @pytest.fixture
 def legacy_knowledge():
     db = LegacyVectorDb()
@@ -118,13 +136,13 @@ class TestUnscopedLegacyRunsLikeV2:
 class TestScopedLegacyFailsClosed:
     def test_scoped_search_raises_instead_of_running_unscoped(self, legacy_knowledge):
         knowledge, _ = legacy_knowledge
-        with pytest.raises(ValueError, match="does not accept it"):
+        with pytest.raises(ValueError, match="does not declare a user_id parameter"):
             knowledge.search("report", user_id="alice")
 
     @pytest.mark.asyncio
     async def test_scoped_asearch_raises(self, legacy_knowledge):
         knowledge, _ = legacy_knowledge
-        with pytest.raises(ValueError, match="does not accept it"):
+        with pytest.raises(ValueError, match="does not declare a user_id parameter"):
             await knowledge.asearch("report", user_id="alice")
 
     def test_scoped_insert_marks_content_failed_not_silent(self, legacy_knowledge):
@@ -137,6 +155,81 @@ class TestScopedLegacyFailsClosed:
         )
         assert "h3" not in db.store, "a scoped write must never land unscoped in a legacy store"
         assert content.status is not None and content.status.value.lower() == "failed"
+
+
+class TestKwargsAdapterTreatedAsLegacy:
+    """A **kwargs adapter is NOT v3-aware and must fail closed on scoped calls,
+    never be handed user_id and run unscoped."""
+
+    def _knowledge(self):
+        db = KwargsVectorDb()
+        db.insert("h1", [Document(id="d1", name="doc", content="secret report", content_id="c1")])
+        return Knowledge(vector_db=db), db
+
+    def test_scoped_search_raises_not_unscoped(self):
+        knowledge, _ = self._knowledge()
+        with pytest.raises(ValueError, match="does not declare a user_id parameter"):
+            knowledge.search("report", user_id="alice")
+
+    def test_unscoped_search_still_works(self):
+        knowledge, _ = self._knowledge()
+        assert [d.content for d in knowledge.search("report")] == ["secret report"]
+
+    def test_scoped_write_fails_closed_not_null_bucket(self):
+        knowledge, db = self._knowledge()
+        from agno.knowledge.content import Content
+
+        content = Content(name="n", content_hash="h2", user_id="alice")
+        knowledge._handle_vector_db_insert(
+            content, [Document(id="d2", name="n", content="private", content_id="c2")], upsert=False
+        )
+        assert "h2" not in db.store, "a **kwargs adapter must not swallow user_id and store the row shared"
+        assert content.status is not None and content.status.value.lower() == "failed"
+
+
+class TestMultiSourceScopedIngestFailsNotCompleted:
+    """Regression: the multi-source ingest loop resolved the strict kwarg INSIDE
+    the per-source try, so a scoped ValueError was swallowed and the content was
+    then marked COMPLETED with nothing indexed. It must end FAILED."""
+
+    def _multi_source_content(self):
+        from agno.knowledge.content import Content
+
+        content = Content(name="site", content_hash="site-hash", user_id="alice")
+        content.url = "https://example.com"
+        return content
+
+    def _two_source_docs(self):
+        return [
+            Document(
+                id="p1", name="p1", content="page one", content_id="s1", meta_data={"url": "https://example.com/a"}
+            ),
+            Document(
+                id="p2", name="p2", content="page two", content_id="s2", meta_data={"url": "https://example.com/b"}
+            ),
+        ]
+
+    def test_sync_multi_source_scoped_ends_failed(self, monkeypatch):
+        db = LegacyVectorDb()
+        knowledge = Knowledge(vector_db=db)
+        content = self._multi_source_content()
+        docs = self._two_source_docs()
+
+        monkeypatch.setattr(knowledge, "_insert_contents_db", lambda c: None)
+        monkeypatch.setattr(knowledge, "_should_skip", lambda *a, **k: False)
+        monkeypatch.setattr(knowledge, "_read", lambda *a, **k: docs)
+        monkeypatch.setattr(knowledge, "_prepare_documents_for_insert", lambda *a, **k: None)
+        monkeypatch.setattr(knowledge, "_build_document_content_hash", lambda d, c: f"h-{d.content_id}")
+        monkeypatch.setattr(knowledge, "_update_content", lambda *a, **k: None)
+
+        from agno.knowledge.content import ContentStatus
+
+        # _load_content wraps _load_from_url and marks FAILED on the propagated ValueError.
+        with pytest.raises(ValueError, match="does not declare a user_id parameter"):
+            knowledge._load_content(content, upsert=False, skip_if_exists=False)
+
+        assert content.status == ContentStatus.FAILED, "a swallowed scoped error must NOT report COMPLETED"
+        assert db.store == {}, "nothing may be indexed when the scope cannot be honoured"
 
 
 class TestModernAdapterUnchanged:
@@ -155,9 +248,20 @@ class TestModernAdapterUnchanged:
 
 
 class TestStrictKwargHelper:
-    def test_kwargs_only_callable_counts_as_accepting(self):
-        def fn(query, **kwargs):
+    def test_kwargs_only_does_NOT_count_as_accepting(self):
+        # Every VectorDb method declares user_id explicitly, so a legacy adapter
+        # written with **kwargs is NOT v3-aware — it would swallow user_id and run
+        # unscoped. The strict helper must refuse a scoped call, not fail open.
+        def fn(query, limit=5, **kwargs):
             return kwargs
+
+        assert strict_user_id_kwarg(fn, None) == {}  # unscoped still fine
+        with pytest.raises(ValueError, match="does not declare a user_id parameter"):
+            strict_user_id_kwarg(fn, "alice")
+
+    def test_explicit_user_id_param_accepted(self):
+        def fn(query, limit=5, user_id=None):
+            return user_id
 
         assert strict_user_id_kwarg(fn, "alice") == {"user_id": "alice"}
 
@@ -171,8 +275,17 @@ class TestStrictKwargHelper:
         def fn(query, limit=5):
             return []
 
-        with pytest.raises(ValueError, match="does not accept it"):
+        with pytest.raises(ValueError, match="does not declare a user_id parameter"):
             strict_user_id_kwarg(fn, "alice")
+
+    def test_mock_is_assumed_current(self):
+        # A MagicMock reports a (*args, **kwargs) signature, indistinguishable
+        # from a legacy adapter — but it stands in for a real v3 adapter, so it
+        # must receive user_id, not raise.
+        from unittest.mock import MagicMock
+
+        m = MagicMock()
+        assert strict_user_id_kwarg(m.search, "alice") == {"user_id": "alice"}
 
     def test_uninspectable_assumed_current(self):
         # ``min`` has no introspectable signature - assume current, let it raise its own error

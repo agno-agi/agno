@@ -1,10 +1,12 @@
 """Per-owner schedule-name uniqueness is DB-backed, not just router-checked.
 
 The router's check-then-insert races under concurrent creates. The schema now
-declares a unique (user_id, name) constraint plus a partial unique index for
-the unowned bucket (NULLs are distinct in unique constraints), the v3_0_0
-migration adds both to existing tables (duplicate-tolerant), and the router
-maps the race-loser's integrity error to the same 409 as the pre-check.
+declares two partial unique indexes (owned bucket + unowned bucket, since NULLs
+are distinct in a plain unique index). The v3_0_0 migration adds both to
+existing tables and RAISES on pre-existing duplicates (so the version is not
+stamped and a later re-run can finish). The router maps the race-loser's
+integrity error — matched by exception TYPE, not message text — to the same 409
+as the pre-check, on both create and rename.
 """
 
 import time
@@ -150,13 +152,89 @@ class TestMigrationAddsBackstop:
                     },
                 )
 
-        # Must not raise: legacy rows are all unowned, so the owned-bucket
-        # constraint still lands; the unowned partial index warns and skips.
+        # Must RAISE so the migration is not stamped as applied: a swallowed warning
+        # would advance the version, and the index could never be created afterward
+        # (a re-run skips an already-stamped version). The owned-bucket index still
+        # lands first, but the unowned index cannot be built over the duplicates.
+        from agno.db.migrations.versions.v3_0_0 import ScheduleDuplicateNamesError
+
+        with pytest.raises(ScheduleDuplicateNamesError, match="[Rr]esolve the duplicates"):
+            _migrate_sqlite_user_id(db, "schedules", table)
+
+    def test_migration_reruns_after_duplicates_resolved(self, db):
+        from agno.db.migrations.versions.v3_0_0 import ScheduleDuplicateNamesError, _migrate_sqlite_user_id
+
+        table = self._make_legacy_table(db)
+
+        def _insert(name):
+            with db.Session() as sess, sess.begin():
+                d = _schedule_dict(name)
+                sess.execute(
+                    text(
+                        f"INSERT INTO {table} (id, name, method, endpoint, cron_expr, timezone, timeout_seconds,"
+                        f" max_retries, retry_delay_seconds, enabled, created_at)"
+                        f" VALUES (:id, :name, :method, :endpoint, :cron_expr, :timezone, :timeout_seconds,"
+                        f" :max_retries, :retry_delay_seconds, :enabled, :created_at)"
+                    ),
+                    {
+                        k: d[k]
+                        for k in (
+                            "id",
+                            "name",
+                            "method",
+                            "endpoint",
+                            "cron_expr",
+                            "timezone",
+                            "timeout_seconds",
+                            "max_retries",
+                            "retry_delay_seconds",
+                            "enabled",
+                            "created_at",
+                        )
+                    },
+                )
+
+        _insert("dup-name")
+        dup_id = _schedule_dict("dup-name")["id"]
+        with db.Session() as sess, sess.begin():
+            d = _schedule_dict("dup-name")
+            d["id"] = dup_id
+            sess.execute(
+                text(
+                    f"INSERT INTO {table} (id, name, method, endpoint, cron_expr, timezone, timeout_seconds,"
+                    f" max_retries, retry_delay_seconds, enabled, created_at)"
+                    f" VALUES (:id, :name, :method, :endpoint, :cron_expr, :timezone, :timeout_seconds,"
+                    f" :max_retries, :retry_delay_seconds, :enabled, :created_at)"
+                ),
+                {
+                    k: d[k]
+                    for k in (
+                        "id",
+                        "name",
+                        "method",
+                        "endpoint",
+                        "cron_expr",
+                        "timezone",
+                        "timeout_seconds",
+                        "max_retries",
+                        "retry_delay_seconds",
+                        "enabled",
+                        "created_at",
+                    )
+                },
+            )
+
+        with pytest.raises(ScheduleDuplicateNamesError):
+            _migrate_sqlite_user_id(db, "schedules", table)
+
+        # Operator resolves the duplicate, then re-runs: the backstop now lands.
+        with db.Session() as sess, sess.begin():
+            sess.execute(text(f"DELETE FROM {table} WHERE id = :i"), {"i": dup_id})
         _migrate_sqlite_user_id(db, "schedules", table)
 
         names = self._index_names(db, table)
         assert f"{table}_uq_user_name" in names
-        assert f"{table}_uq_unowned_name" not in names
+        assert f"{table}_uq_unowned_name" in names
 
 
 class TestRouterMapsRaceTo409:
@@ -168,12 +246,15 @@ class TestRouterMapsRaceTo409:
     def _post_body(self):
         return {"name": "daily", "cron_expr": "0 9 * * *", "method": "POST", "endpoint": "/agents/a/runs"}
 
+    def _integrity_error(self):
+        from sqlalchemy.exc import IntegrityError
+
+        return IntegrityError("INSERT ...", params={}, orig=Exception("UNIQUE constraint failed"))
+
     def test_integrity_error_after_passed_check_becomes_409(self):
         mock_db = MagicMock()
         mock_db.get_schedule_by_name = MagicMock(return_value=None)  # the race: check passes
-        mock_db.create_schedule = MagicMock(
-            side_effect=Exception("UNIQUE constraint failed: agno_schedules.user_id, agno_schedules.name")
-        )
+        mock_db.create_schedule = MagicMock(side_effect=self._integrity_error())
         with (
             patch("agno.scheduler.cron._require_pytz"),
             patch("agno.scheduler.cron._require_croniter"),
@@ -193,3 +274,45 @@ class TestRouterMapsRaceTo409:
             client = self._client(mock_db, raise_server_exceptions=False)
             resp = client.post("/schedules", json=self._post_body())
         assert resp.status_code == 500
+
+    def test_check_violation_with_unique_in_message_is_not_409(self):
+        # A CheckViolation (NOT a unique violation) whose bound params contain the
+        # word "unique" must surface as 500, not a false name-conflict 409.
+        from sqlalchemy.exc import DataError
+
+        mock_db = MagicMock()
+        mock_db.get_schedule_by_name = MagicMock(return_value=None)
+        err = DataError(
+            "INSERT ...",
+            params={"description": "this run must be unique per tenant"},
+            orig=Exception('violates check constraint "ck_timeout" ... unique per tenant'),
+        )
+        mock_db.create_schedule = MagicMock(side_effect=err)
+        with (
+            patch("agno.scheduler.cron._require_pytz"),
+            patch("agno.scheduler.cron._require_croniter"),
+        ):
+            client = self._client(mock_db, raise_server_exceptions=False)
+            resp = client.post(
+                "/schedules",
+                json={**self._post_body(), "description": "this run must be unique per tenant"},
+            )
+        assert resp.status_code == 500
+
+    def test_rename_integrity_error_becomes_409(self):
+        # The rename pre-check scopes to the caller but the row is stamped creator_user_id;
+        # with isolation off the check can miss and the DB backstop fires -> must be 409.
+        from agno.scheduler.cron import compute_next_run  # noqa: F401
+
+        mock_db = MagicMock()
+        existing = _schedule_dict("old-name")
+        mock_db.get_schedule = MagicMock(return_value=existing)
+        mock_db.get_schedule_by_name = MagicMock(return_value=None)  # pre-check misses
+        mock_db.update_schedule = MagicMock(side_effect=self._integrity_error())
+        with (
+            patch("agno.scheduler.cron._require_pytz"),
+            patch("agno.scheduler.cron._require_croniter"),
+        ):
+            resp = self._client(mock_db).patch(f"/schedules/{existing['id']}", json={"name": "taken-name"})
+        assert resp.status_code == 409
+        assert "already exists" in resp.json()["detail"]

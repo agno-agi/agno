@@ -137,7 +137,7 @@ LEARNINGS_COLLECTION_SCHEMA = [
 
 SCHEDULES_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
-    # Not unique: name uniqueness is per owner, enforced by the schedules router
+    # Not unique on its own: name uniqueness is per owner, enforced by the router.
     {"key": "name"},
     {"key": "enabled"},
     {"key": "next_run_at"},
@@ -149,6 +149,10 @@ SCHEDULES_COLLECTION_SCHEMA = [
     {"key": [("enabled", 1), ("next_run_at", 1)]},
     # Scoped list / claim queries filter on user_id first
     {"key": [("user_id", 1), ("enabled", 1), ("next_run_at", 1)]},
+    # DB backstop for the router's check-then-insert race: names are unique per
+    # owner. Unlike SQL, Mongo treats missing/null user_id as a single value, so
+    # one compound unique index covers both owned and unowned buckets.
+    {"key": [("user_id", 1), ("name", 1)], "unique": True, "name": "uq_user_name"},
 ]
 
 SCHEDULE_RUNS_COLLECTION_SCHEMA = [

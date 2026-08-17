@@ -1816,25 +1816,29 @@ class Knowledge(RemoteKnowledge):
                 doc_id = generate_id(doc_hash)
                 self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
 
-                # Insert with per-document hash
+                # Insert with per-document hash. Resolve the owner scope OUTSIDE the try:
+                # a scoped write against a legacy adapter must fail the ingest (marked FAILED
+                # by _aload_content), not be swallowed per-source and reported COMPLETED.
                 if self.vector_db.upsert_available() and upsert:
+                    owner_kwargs = strict_user_id_kwarg(self.vector_db.async_upsert, content.user_id)
                     try:
                         await self.vector_db.async_upsert(
                             doc_hash,
                             source_docs,
                             content.metadata,
-                            **strict_user_id_kwarg(self.vector_db.async_upsert, content.user_id),
+                            **owner_kwargs,
                         )
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
+                    owner_kwargs = strict_user_id_kwarg(self.vector_db.async_insert, content.user_id)
                     try:
                         await self.vector_db.async_insert(
                             doc_hash,
                             documents=source_docs,
                             filters=content.metadata,
-                            **strict_user_id_kwarg(self.vector_db.async_insert, content.user_id),
+                            **owner_kwargs,
                         )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
@@ -1981,25 +1985,29 @@ class Knowledge(RemoteKnowledge):
                 doc_id = generate_id(doc_hash)
                 self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
 
-                # Insert with per-document hash
+                # Insert with per-document hash. Resolve the owner scope OUTSIDE the try:
+                # a scoped write against a legacy adapter must fail the ingest (marked FAILED
+                # by _load_content), not be swallowed per-source and reported COMPLETED.
                 if self.vector_db.upsert_available() and upsert:
+                    owner_kwargs = strict_user_id_kwarg(self.vector_db.upsert, content.user_id)
                     try:
                         self.vector_db.upsert(
                             doc_hash,
                             source_docs,
                             content.metadata,
-                            **strict_user_id_kwarg(self.vector_db.upsert, content.user_id),
+                            **owner_kwargs,
                         )
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
+                    owner_kwargs = strict_user_id_kwarg(self.vector_db.insert, content.user_id)
                     try:
                         self.vector_db.insert(
                             doc_hash,
                             documents=source_docs,
                             filters=content.metadata,
-                            **strict_user_id_kwarg(self.vector_db.insert, content.user_id),
+                            **owner_kwargs,
                         )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
@@ -2657,13 +2665,30 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
+        # Resolve the owner scope OUTSIDE the try: a scoped write against a legacy
+        # adapter must surface its ValueError (marked FAILED with the real reason),
+        # not be relabelled as a generic "could not embed" failure.
+        try:
+            owner_kwargs = strict_user_id_kwarg(
+                self.vector_db.async_upsert
+                if (self.vector_db.upsert_available() and upsert)
+                else self.vector_db.async_insert,
+                content.user_id,
+            )
+        except ValueError as e:
+            log_error(f"Error inserting document: {str(e)}")
+            content.status = ContentStatus.FAILED
+            content.status_message = str(e)
+            await self._aupdate_content(content)
+            return
+
         if self.vector_db.upsert_available() and upsert:
             try:
                 await self.vector_db.async_upsert(
                     content.content_hash,  # type: ignore[arg-type]
                     read_documents,
                     content.metadata,
-                    **strict_user_id_kwarg(self.vector_db.async_upsert, content.user_id),
+                    **owner_kwargs,
                 )
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
@@ -2677,7 +2702,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
-                    **strict_user_id_kwarg(self.vector_db.async_insert, content.user_id),
+                    **owner_kwargs,
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -2702,13 +2727,26 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
+        # Resolve the owner scope OUTSIDE the try (see the async twin for rationale).
+        try:
+            owner_kwargs = strict_user_id_kwarg(
+                self.vector_db.upsert if (self.vector_db.upsert_available() and upsert) else self.vector_db.insert,
+                content.user_id,
+            )
+        except ValueError as e:
+            log_error(f"Error inserting document: {str(e)}")
+            content.status = ContentStatus.FAILED
+            content.status_message = str(e)
+            self._update_content(content)
+            return
+
         if self.vector_db.upsert_available() and upsert:
             try:
                 self.vector_db.upsert(
                     content.content_hash,  # type: ignore[arg-type]
                     read_documents,
                     content.metadata,
-                    **strict_user_id_kwarg(self.vector_db.upsert, content.user_id),
+                    **owner_kwargs,
                 )
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
@@ -2722,7 +2760,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
-                    **strict_user_id_kwarg(self.vector_db.insert, content.user_id),
+                    **owner_kwargs,
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
