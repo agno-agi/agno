@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.mongo.utils import (
+    abulk_upsert_metrics,
     apply_pagination,
     apply_sorting,
-    bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes_async,
     deserialize_cultural_knowledge_from_db,
@@ -35,8 +35,10 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -661,7 +663,7 @@ class AsyncMongoDb(AsyncBaseDb):
             {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
-        docs = await self._aggregate_to_list(runs_collection, pipeline)
+        docs = await self._aggregate_to_list(runs_collection, pipeline, length=None)
         return [doc["run_data"] for doc in docs if "run_data" in doc]
 
     async def _get_sessions_runs_docs(
@@ -2088,7 +2090,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return []
-            runs_collection = await self._get_collection(table_type="runs", create_collection_if_not_found=False)
+            runs_collection = await self._get_collection(table_type="runs", create_collection_if_not_found=True)
 
             query = {}
             if start_timestamp is not None:
@@ -2136,14 +2138,25 @@ class AsyncMongoDb(AsyncBaseDb):
     async def _get_metrics_calculation_starting_date(self, collection: AsyncMongoCollectionType) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
         try:
-            result = await collection.find_one({}, sort=[("date", -1)], limit=1)
+            # resume at the earliest incomplete day after the latest completed one, otherwise the day after
+            # that one (:func:`metrics_starting_date_from_days`): the dates are ISO strings, so both queries order
+            # lexicographically and the collection is never loaded whole
+            completed_record = await collection.find_one({"completed": True}, sort=[("date", -1)])
+            latest_completed = completed_record["date"] if completed_record else None
 
-            if result is not None:
-                result_date = datetime.strptime(result["date"], "%Y-%m-%d").date()
-                if result.get("completed"):
-                    return result_date + timedelta(days=1)
-                else:
-                    return result_date
+            incomplete_filter: Dict[str, Any] = {"completed": {"$ne": True}}
+            if latest_completed is not None:
+                incomplete_filter["date"] = {"$gt": latest_completed}
+            earliest_incomplete = await collection.find_one(incomplete_filter, sort=[("date", 1)])
+
+            starting_date = metrics_starting_date_from_days(
+                datetime.strptime(latest_completed, "%Y-%m-%d").date() if latest_completed is not None else None,
+                datetime.strptime(earliest_incomplete["date"], "%Y-%m-%d").date()
+                if earliest_incomplete is not None
+                else None,
+            )
+            if starting_date is not None:
+                return starting_date
 
             # No metrics records. Return the date of the first recorded session.
             first_session_result = await self.get_sessions(
@@ -2207,11 +2220,11 @@ class AsyncMongoDb(AsyncBaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per user_id, plus the empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
-                results = bulk_upsert_metrics(collection, metrics_records)  # type: ignore
+                results = await abulk_upsert_metrics(collection, metrics_records)
 
             return results
 
@@ -2223,14 +2236,22 @@ class AsyncMongoDb(AsyncBaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): The ID of the user to filter by. When None, all per-user buckets are
+                returned, including the unowned one.
+        """
         try:
             collection = await self._get_collection(table_type="metrics")
             if collection is None:
                 return [], None
 
-            query = {}
+            query: Dict[str, Any] = {}
             if starting_date:
                 query["date"] = {"$gte": starting_date.isoformat()}
             if ending_date:
@@ -2238,15 +2259,29 @@ class AsyncMongoDb(AsyncBaseDb):
                     query["date"]["$lte"] = ending_date.isoformat()
                 else:
                     query["date"] = {"$lte": ending_date.isoformat()}
+            if user_id is not None:
+                query["user_id"] = user_id
 
             records = await collection.find(query).to_list(length=None)
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                records = drop_legacy_metrics(records)
             if not records:
                 return [], None
 
             # Get the latest updated_at
             latest_updated_at = max(record.get("updated_at", 0) for record in records)
 
-            return records, latest_updated_at
+            # Map the empty-string user_id sentinel back to None
+            cleaned: List[dict] = []
+            for record in records:
+                row = dict(record)
+                row.pop("_id", None)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
@@ -2254,11 +2289,19 @@ class AsyncMongoDb(AsyncBaseDb):
 
     # -- Knowledge methods --
 
-    async def delete_knowledge_content(self, id: str):
+    def _knowledge_user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Match rows owned by ``user_id`` plus unowned (shared) rows. ``None`` applies no owner filter."""
+        if user_id is None:
+            return None
+        return {"$or": [{"user_id": user_id}, {"user_id": None}, {"user_id": {"$exists": False}}]}
+
+    async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the row
+                belongs to this user.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2268,7 +2311,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return
 
-            await collection.delete_one({"id": id})
+            query: Dict[str, Any] = {"id": id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            await collection.delete_one(query)
 
             log_debug(f"Deleted knowledge content with id '{id}'")
 
@@ -2276,11 +2322,12 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    async def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): The ID of the user to filter by. Unowned rows are shared and always returned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2293,7 +2340,11 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
-            result = await collection.find_one({"id": id})
+            query: Dict[str, Any] = {"id": id}
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]}
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
@@ -2310,6 +2361,7 @@ class AsyncMongoDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2319,6 +2371,7 @@ class AsyncMongoDb(AsyncBaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): The ID of the user to filter by. Unowned rows are shared and always returned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2336,6 +2389,10 @@ class AsyncMongoDb(AsyncBaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 query["linked_to"] = linked_to
+
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]} if query else scope
 
             # Get total count
             total_count = await collection.count_documents(query)
@@ -2379,6 +2436,12 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="knowledge", create_collection_if_not_found=True)
             if collection is None:
                 return None
+
+            # A scoped write must not overwrite a doc it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = await collection.find_one({"id": knowledge_row.id}, {"user_id": 1})
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
 
             update_doc = knowledge_row.model_dump()
             await collection.replace_one({"id": knowledge_row.id}, update_doc, upsert=True)
@@ -3246,14 +3309,18 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
-    # -- Scheduler methods --
-    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # -- Schedule methods --
+    # ``claim_due_schedule`` and ``release_schedule`` take no user_id: the poller fires across all users.
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = await collection.find_one({"id": schedule_id})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
@@ -3263,13 +3330,16 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = await collection.find_one({"name": name})
+            # Names are unique per owner: ``None`` addresses the unowned bucket
+            # ({"user_id": None} matches null and missing), never another owner's schedule.
+            query: Dict[str, Any] = {"name": name, "user_id": user_id}
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
@@ -3284,6 +3354,7 @@ class AsyncMongoDb(AsyncBaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="schedules")
@@ -3293,6 +3364,8 @@ class AsyncMongoDb(AsyncBaseDb):
             query: Dict[str, Any] = {}
             if enabled is not None:
                 query["enabled"] = enabled
+            if user_id is not None:
+                query["user_id"] = user_id
 
             total_count = await collection.count_documents(query)
             offset = (page - 1) * limit
@@ -3318,22 +3391,33 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error creating schedule: {e}")
             raise e
 
-    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
             kwargs["updated_at"] = int(time.time())
-            result = await collection.update_one({"id": schedule_id}, {"$set": kwargs})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.update_one(query, {"$set": kwargs})
             if result.matched_count == 0:
                 return None
-            return await self.get_schedule(schedule_id)
+            return await self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    async def delete_schedule(self, schedule_id: str) -> bool:
+    async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             schedules_collection = await self._get_collection(table_type="schedules")
             if schedules_collection is None:
@@ -3341,9 +3425,16 @@ class AsyncMongoDb(AsyncBaseDb):
 
             runs_collection = await self._get_collection(table_type="schedule_runs")
             if runs_collection is not None:
-                await runs_collection.delete_many({"schedule_id": schedule_id})
+                # Mirror the user_id guard on the cascade delete
+                runs_query: Dict[str, Any] = {"schedule_id": schedule_id}
+                if user_id is not None:
+                    runs_query["user_id"] = user_id
+                await runs_collection.delete_many(runs_query)
 
-            result = await schedules_collection.delete_one({"id": schedule_id})
+            delete_query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                delete_query["user_id"] = user_id
+            result = await schedules_collection.delete_one(delete_query)
             return result.deleted_count > 0
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
@@ -3423,13 +3514,16 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedule_runs")
             if collection is None:
                 return None
 
-            result = await collection.find_one({"id": run_id})
+            query: Dict[str, Any] = {"id": run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
@@ -3444,13 +3538,16 @@ class AsyncMongoDb(AsyncBaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="schedule_runs")
             if collection is None:
                 return [], 0
 
-            query = {"schedule_id": schedule_id}
+            query: Dict[str, Any] = {"schedule_id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
             total_count = await collection.count_documents(query)
             offset = (page - 1) * limit
             cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)

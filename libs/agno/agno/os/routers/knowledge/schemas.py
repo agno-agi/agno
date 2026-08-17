@@ -127,7 +127,7 @@ class VectorDbSchema(BaseModel):
 class VectorSearchResult(BaseModel):
     """Schema for search result documents."""
 
-    id: str = Field(..., description="Unique identifier for the search result document")
+    id: Optional[str] = Field(None, description="Unique identifier for the search result document")
     content: str = Field(..., description="Content text of the document")
     name: Optional[str] = Field(None, description="Name of the document")
     meta_data: Optional[Dict[str, Any]] = Field(None, description="Metadata associated with the document")

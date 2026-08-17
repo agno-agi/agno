@@ -324,3 +324,13 @@ def test_username_without_password_raises(import_valkeydb, mock_embedder):
 
     with pytest.raises(ValueError, match="password"):
         ValkeyDB(index_name="test_index", username="user", embedder=mock_embedder)
+
+
+def test_scoped_doc_id_folds_the_owner_behind_a_digest(valkey_db):
+    db, _client, _ft_mock = valkey_db
+
+    # Shared rows keep the document id untouched, so existing keys need no migration
+    assert db._scoped_doc_id("doc-1", None) == "doc-1"
+    assert db._scoped_doc_id("doc-1", "alice") != db._scoped_doc_id("doc-1", "bob")
+    # Joined raw, ("doc_1", "alice") and ("doc", "1_alice") would collide on one key
+    assert db._scoped_doc_id("doc_1", "alice") != db._scoped_doc_id("doc", "1_alice")
