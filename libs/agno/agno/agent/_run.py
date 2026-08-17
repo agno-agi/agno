@@ -516,13 +516,13 @@ def _run(
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 5. Reason about the task
+                # 8. Reason about the task
                 handle_reasoning(agent, run_response=run_response, run_messages=run_messages, run_context=run_context)
 
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Generate a response from the Model (includes running function calls)
+                # 9. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
                 model_response: ModelResponse = call_model_with_fallback(
@@ -556,7 +556,7 @@ def _run(
                     agent, model_response, run_messages, run_context=run_context, run_response=run_response
                 )
 
-                # 7. Update the RunOutput with the model response
+                # 10. Update the RunOutput with the model response
                 update_run_response(
                     agent,
                     model_response=model_response,
@@ -584,16 +584,16 @@ def _run(
                         user_id=user_id,
                     )
 
-                # 8. Store media in run output for the caller
+                # 11. Store media in run output for the caller
                 store_media_util(run_response, model_response)
 
-                # 9. Convert the response to the structured format if needed
+                # 12. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 9b. Generate follow-up suggestions if enabled
+                # 12b. Generate follow-up suggestions if enabled
                 generate_followups(agent, run_response=run_response)
 
-                # 10. Execute post-hooks after output is generated but before response is returned
+                # 13. Execute post-hooks after output is generated but before response is returned
                 if agent.post_hooks is not None:
                     post_hook_iterator = execute_post_hooks(
                         agent,
@@ -611,7 +611,7 @@ def _run(
                 # Check for cancellation
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 14. Wait for background memory creation
+                # 14. Wait for background tasks
                 wait_for_open_threads(
                     memory_future=memory_future,  # type: ignore
                     learning_future=learning_future,  # type: ignore
@@ -621,7 +621,7 @@ def _run(
                     collect_background_metrics(memory_future, learning_future),
                 )
 
-                # 12. Create session summary
+                # 15. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
                     # Upsert the RunOutput to Agent Session before creating the session summary
                     agent_session.upsert_run(run=run_response)
@@ -634,7 +634,7 @@ def _run(
 
                 run_response.status = RunStatus.completed
 
-                # 13. Cleanup and store the run response and session
+                # 16. Cleanup and store the run response and session
                 cleanup_and_store(
                     agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
@@ -926,7 +926,7 @@ def _run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 5. Reason about the task if reasoning is enabled
+                # 8. Reason about the task if reasoning is enabled
                 yield from handle_reasoning_stream(
                     agent,
                     run_response=run_response,
@@ -938,7 +938,7 @@ def _run_stream(
                 # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Process model response
+                # 9. Process model response
                 if agent.output_model is None:
                     for event in handle_model_response_stream(
                         agent,
@@ -997,7 +997,7 @@ def _run_stream(
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 7. Parse response with parser model if provided
+                # 10. Parse response with parser model if provided
                 for event in parse_response_with_parser_model_stream(
                     agent,  # type: ignore
                     session=agent_session,
@@ -1009,7 +1009,7 @@ def _run_stream(
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-                # 7b. Generate follow-up suggestions if enabled
+                # 10b. Generate follow-up suggestions if enabled
                 for event in generate_followups_stream(
                     agent,  # type: ignore
                     run_response=run_response,
@@ -1085,7 +1085,7 @@ def _run_stream(
                     collect_background_metrics(memory_future, learning_future),
                 )
 
-                # 9. Create session summary
+                # 12. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
                     # Upsert the RunOutput to Agent Session before creating the session summary
                     agent_session.upsert_run(run=run_response)
@@ -1129,7 +1129,7 @@ def _run_stream(
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
 
-                # 10. Cleanup and store the run response and session
+                # 13. Cleanup and store the run response and session
                 cleanup_and_store(
                     agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
@@ -5492,7 +5492,7 @@ async def _acontinue_run_stream(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Create session summary
+                # 12. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
                     # Upsert the RunOutput to Agent Session before creating the session summary
                     agent_session.upsert_run(run=run_response)
