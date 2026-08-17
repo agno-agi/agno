@@ -358,6 +358,10 @@ def _build_jwt_token_verifier(os: "AgentOS") -> Optional[JWTBearerTokenVerifier]
         verification_keys=kwargs["verification_keys"],
         jwks_file=kwargs["jwks_file"],
         algorithm=kwargs["algorithm"],
+        # Thread the issuer pin: without it a token from an untrusted issuer that REST
+        # rejects would still verify on /mcp (the audience is threaded, but issuer was
+        # dropped), so a multi-issuer deployment's pin did not hold on the MCP transport.
+        issuer=kwargs.get("issuer"),
     )
     return JWTBearerTokenVerifier(
         validator,

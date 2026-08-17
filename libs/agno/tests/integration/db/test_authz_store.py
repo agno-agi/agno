@@ -122,11 +122,22 @@ def test_user_directory_round_trip_and_kill_switch(db):
     assert user["email"] == "u@co" and user["metadata"] == {"x": 1}
     assert db.is_authz_user_disabled("u1") is False
 
+    # upsert_authz_user is a PROFILE write: it must NOT change `disabled` on an existing
+    # row (that would let a profile edit / JIT provision revert a revocation -- a lost
+    # update). The kill switch is flipped only by the atomic set_authz_user_disabled.
     db.upsert_authz_user(
-        "u1", {"email": "u@co", "name": "U", "disabled": True, "created_at": 1, "updated_at": 2, "metadata": None}
+        "u1", {"email": "new@co", "name": "U2", "disabled": True, "created_at": 1, "updated_at": 2, "metadata": None}
     )
+    assert db.get_authz_user("u1")["email"] == "new@co", "profile fields still update"
+    assert db.is_authz_user_disabled("u1") is False, "upsert must not flip disabled on an existing row"
+
+    db.set_authz_user_disabled("u1", True)
     assert db.is_authz_user_disabled("u1") is True
-    # an unknown subject is NOT disabled -- absence is not a revocation
+    # set_authz_user_disabled on an unknown subject writes a durable tombstone
+    db.set_authz_user_disabled("ghost", True)
+    assert db.is_authz_user_disabled("ghost") is True
+    db.delete_authz_user("ghost")
+    # an unknown subject with no row is NOT disabled -- absence is not a revocation
     assert db.is_authz_user_disabled("nobody") is False
 
     assert db.count_authz_users() == 1

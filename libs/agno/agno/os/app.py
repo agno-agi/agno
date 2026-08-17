@@ -1333,18 +1333,26 @@ class AgentOS:
         # author believes is governed by roles serves every route to anonymous callers.
         # Fail at construction rather than shipping a silently open instance.
         cfg = self.authorization_config
+        # Any AuthorizationConfig field that only takes effect through the auth middleware
+        # (seeded in _seed_authorization_provider, which runs only when the middleware is
+        # added) leaves a silently-open instance if authorization is off. user_store is one:
+        # its disabled-user kill switch is inert without the middleware, so a no-IdP
+        # directory deployment that forgets authorization=True serves every route to
+        # anonymous callers AND the revocation switch does nothing.
         if (
             cfg is not None
             and not self.authorization
             and (
-                getattr(cfg, "role_store", None) is not None or getattr(cfg, "authorization_provider", None) is not None
+                getattr(cfg, "role_store", None) is not None
+                or getattr(cfg, "authorization_provider", None) is not None
+                or getattr(cfg, "user_store", None) is not None
             )
         ):
             raise ValueError(
-                "AuthorizationConfig(role_store=... / authorization_provider=...) requires "
-                "AgentOS(authorization=True). Without it the authorization plane is never "
-                "enforced and every route is served unauthenticated. Set authorization=True, "
-                "or drop the provider if you intended an open instance."
+                "AuthorizationConfig(role_store=... / authorization_provider=... / user_store=...) "
+                "requires AgentOS(authorization=True). Without it the authorization plane is never "
+                "enforced (every route is served unauthenticated) and the user-directory kill switch "
+                "does nothing. Set authorization=True, or drop the config if you intended an open instance."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped

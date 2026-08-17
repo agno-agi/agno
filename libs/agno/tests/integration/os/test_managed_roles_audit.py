@@ -470,3 +470,23 @@ def test_audit_sink_is_mirrored_onto_the_mcp_subapp():
     assert getattr(app.state, "authz_audit", None) is sink
     sub = getattr(getattr(agent_os, "_mcp_app", None), "state", None)
     assert getattr(sub, "authz_audit", None) is sink, "MCP sub-app must resolve the SAME audit sink"
+
+
+def test_audit_row_survives_a_control_char_in_the_target(tmp_path):
+    """Audit-suppression regression (PERS-2). A NUL in the request path (sent as %00,
+    decoded into the ASGI path) makes the decision row's INSERT fail on Postgres, which
+    the sink swallows -- so the probe vanishes from the trail. Control chars are now
+    stripped so a mangled-but-present row is written instead of dropped."""
+    from agno.os.authz.audit import _sanitize_text
+
+    # the sanitizer strips NUL and other C0 controls, keeps tab/newline and normal text
+    assert _sanitize_text("GET /agents/x\x00") == "GET /agents/x"
+    assert _sanitize_text("a\x01b\x1fc") == "abc"
+    assert _sanitize_text("keep\ttab\nnewline") == "keep\ttab\nnewline"
+
+    sink = DbAuditSink(db_url=f"sqlite:///{tmp_path / 'audit.db'}")
+    sink.record(AuditEvent(action="access.denied", actor="attacker", target="GET /agents/research-agent\x00"))
+    decisions = sink.read_decisions()
+    assert len(decisions) == 1, "the audit row must be written, not silently dropped"
+    assert "\x00" not in decisions[0]["target"]
+    assert decisions[0]["target"] == "GET /agents/research-agent"

@@ -182,6 +182,19 @@ def record_decision(
         log_debug(f"decision audit failed: {e}")
 
 
+def _sanitize_text(value: Any) -> Any:
+    """Strip C0 control characters (except tab/newline) from an audit text field.
+
+    ``target`` is built from the request path, which an attacker controls; a NUL (sent
+    as ``%00``, decoded into the ASGI path) makes the row's INSERT fail on Postgres,
+    which rejects NUL in text -- and the sink swallows the error, so the row silently
+    vanishes and a probe leaves no trace in the decision trail. Sanitizing writes a
+    mangled-but-present row instead of dropping it."""
+    if not isinstance(value, str):
+        return value
+    return "".join(ch for ch in value if ch in ("\t", "\n") or ord(ch) >= 0x20)
+
+
 class DbAuditSink(AuditSink):
     """Append-only audit tables in your own DB (SQLAlchemy).
 
@@ -238,16 +251,23 @@ class DbAuditSink(AuditSink):
             else:
                 self._record_change(event)
         except Exception:
-            logging.getLogger("agno.authz.audit").exception("failed to write audit event %r", event.action)
+            # A swallowed write is an invisible evidence gap, so make it traceable:
+            # carry the actor and target, not just the action.
+            logging.getLogger("agno.authz.audit").exception(
+                "failed to write audit event action=%r actor=%r target=%r",
+                event.action,
+                event.actor,
+                event.target,
+            )
 
     def _record_change(self, event: AuditEvent) -> None:
         self._db.record_authz_audit_event(
             {
                 "event_id": uuid4().hex,
                 "created_at": event.timestamp,
-                "actor": event.actor,
-                "action": event.action,
-                "target": event.target,
+                "actor": _sanitize_text(event.actor),
+                "action": _sanitize_text(event.action),
+                "target": _sanitize_text(event.target),
                 "before": json.dumps(event.before) if event.before is not None else None,
                 "after": json.dumps(event.after) if event.after is not None else None,
             }
@@ -259,10 +279,10 @@ class DbAuditSink(AuditSink):
             {
                 "event_id": uuid4().hex,
                 "created_at": event.timestamp,
-                "actor": event.actor,
-                "action": event.action,
-                "target": event.target,
-                "token_ref": meta.get("token"),
+                "actor": _sanitize_text(event.actor),
+                "action": _sanitize_text(event.action),
+                "target": _sanitize_text(event.target),
+                "token_ref": _sanitize_text(meta.get("token")),
                 "required": json.dumps(meta.get("required")) if meta.get("required") is not None else None,
                 "scopes": json.dumps(meta.get("scopes")) if meta.get("scopes") is not None else None,
             }

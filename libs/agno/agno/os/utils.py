@@ -1692,6 +1692,11 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                     user_id_claim=kwargs.get("user_id_claim", "sub"),
                     session_id_claim=kwargs.get("session_id_claim", "session_id"),
                     audience_claim=kwargs.get("audience_claim", "aud"),
+                    # Thread the issuer pin so the WebSocket validator enforces it too --
+                    # otherwise a token from an untrusted issuer that REST rejects would be
+                    # accepted on the WS handshake (the pin held only on the HTTP path).
+                    issuer=kwargs.get("issuer"),
+                    issuer_claim=kwargs.get("issuer_claim", "iss"),
                 )
             except Exception as e:
                 log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")

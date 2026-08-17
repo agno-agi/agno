@@ -461,6 +461,12 @@ def get_roles_router(
     def assign_role(subject: str, body: AssignRoleRequest, actor: str = Depends(require_admin)) -> dict:
         """Set the subject's role. One role per subject: this REPLACES any
         current role (a role select in a UI, not a multi-grant)."""
+        # Validate the role exists first. Without this, an arbitrary string is written as
+        # a role assignment -- and a transposed call (POST /users/<role-slug>/roles with
+        # {"role": "<a user id>"}) would turn that user id into a "role name" in the shared
+        # subject/role namespace, which the collision guard then refuses on every request,
+        # silently denying that user all access with no trace in the role views.
+        _role_or_404(body.role)
         store.assign(subject, body.role, actor=actor)
         return {"subject": subject, "role": _role_of(subject)}
 

@@ -523,3 +523,20 @@ def test_list_filter_still_carves_a_concrete_deny_from_a_wildcard_allow():
     assert eng.check_resource("agents", "secret", "read", subject="carol") is False
     kept = [r.id for r in provider.filter_accessible(_list_ctx("carol"), resources)]
     assert kept == ["public"]
+
+
+def test_set_role_scopes_deny_wins_on_a_spelling_collision():
+    """Authoring regression (ENG-1). `agents:read` and `agents:*:read` map to the same
+    policy key; a plain last-write-wins would let an allow silently OVERWRITE a deny the
+    author also listed, turning a denial into a grant. Deny must win regardless of order."""
+    eng = _engine()
+    # deny then allow (allow must NOT overwrite the deny)
+    eng.set_role_scopes("r1", [("agents:read", "deny"), ("agents:*:read", "allow")])
+    eng.assign("u1", "r1")
+    assert eng.check_resource("agents", "anything", "read", subject="u1") is False
+    assert eng.denied_resource_ids("agents", "read", subject="u1") == {"*"}
+
+    # allow then deny (deny still wins)
+    eng.set_role_scopes("r2", [("agents:*:read", "allow"), ("agents:read", "deny")])
+    eng.assign("u2", "r2")
+    assert eng.check_resource("agents", "anything", "read", subject="u2") is False

@@ -198,7 +198,14 @@ class NativePolicyEngine(PolicyEngine):
         staged: Dict[Tuple[str, str], str] = {}
         for scope, effect in entries:
             resource, action = scope_to_resource_action(scope)
-            staged[(resource, action)] = _normalize_effect(effect)
+            eff = _normalize_effect(effect)
+            key = (resource, action)
+            # Deny-WINS on a spelling collision. `agents:read` and `agents:*:read` map to
+            # the same policy key, so a plain last-write-wins here would let an allow the
+            # author also listed silently OVERWRITE a deny -- turning an explicit denial
+            # into a grant with no error. Deny-overrides is the whole model, so a deny in
+            # the same payload always survives, regardless of order.
+            staged[key] = _DENY if (eff == _DENY or staged.get(key) == _DENY) else _ALLOW
         self._persist_policies_set(role, [(res, act, eff) for (res, act), eff in staged.items()])
 
     def add_scope(self, role: str, scope: str, effect: str = _ALLOW) -> None:

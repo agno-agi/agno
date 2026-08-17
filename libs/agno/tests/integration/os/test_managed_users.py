@@ -465,3 +465,46 @@ def test_profile_upsert_does_not_clobber_the_disabled_flag():
     # re-enable is still explicit and works
     users.set_disabled("bob", False)
     assert users.is_disabled("bob") is False
+
+
+def test_user_store_without_authorization_flag_is_refused():
+    """Config-guard regression (FGA-2). A user_store's kill switch is inert unless the
+    auth middleware runs (authorization=True). Configuring it without the flag must fail
+    at construction, not ship a silently-open instance whose revocation does nothing."""
+    import pytest
+
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="research-agent", name="R", db=InMemoryDb())],
+        # authorization=True intentionally omitted
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            user_store=ManagedUserStore(db_url=_db_url()),
+        ),
+    )
+    with pytest.raises(ValueError, match="authorization=True"):
+        agent_os.get_app()
+
+
+def test_assign_unknown_role_is_rejected():
+    """Namespace/collision regression (ADM-4). Assigning a role that does not exist must
+    be refused, so an arbitrary string (e.g. a transposed user id) cannot be written as a
+    role assignment and turn a real user id into a 'role name'."""
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.assign("alice", "admin")
+    users = ManagedUserStore(db_url=_db_url())
+
+    app = _os(roles, users).get_app()
+    app.include_router(get_roles_router(roles, user_store=users))
+    client = TestClient(app)
+
+    # unknown role -> 404, nothing written
+    r = client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "does-not-exist"})
+    assert r.status_code == 404, r.text
+    assert roles.roles_of("bob") == []
+    # an existing role still assigns
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    ok = client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "viewer"})
+    assert ok.status_code == 200, ok.text
+    assert roles.roles_of("bob") == ["viewer"]

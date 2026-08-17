@@ -268,3 +268,30 @@ def test_composite_abstains_when_a_plane_errors():
     assert CompositeAuthorizationProvider([Boom(), Boom()]).check(ctx) is False
     # accessible ids union ignores the broken plane
     assert CompositeAuthorizationProvider([Boom(), Grant()]).accessible_resource_ids(ctx) == {"a"}
+
+
+def test_workflow_continue_route_carries_the_approval_gate():
+    """Gate-parity regression (GATE-3). The workflow /continue route must carry the same
+    admin-approval gate as the agent and team continue routes (and the MCP continue_run
+    tool), or a run's initiator could self-approve an admin-required pause over REST with
+    workflows:run alone. Asserts the require_approval_resolved dependency is wired."""
+    from agno.db.in_memory import InMemoryDb as _InMemoryDb
+    from agno.workflow.workflow import Workflow
+
+    def _step(session_state):
+        return "ok"
+
+    wf = Workflow(id="wf-1", name="wf", steps=_step, db=_InMemoryDb())
+    app = AgentOS(id="parity-os", workflows=[wf]).get_app()
+
+    def _dep_names(path_suffix: str, method: str) -> set:
+        for route in app.routes:
+            if getattr(route, "path", "").endswith(path_suffix) and method in getattr(route, "methods", set()):
+                return {d.call.__qualname__ for d in route.dependant.dependencies}
+        raise AssertionError(f"route {method} {path_suffix} not found")
+
+    cont = _dep_names("/workflows/{workflow_id}/runs/{run_id}/continue", "POST")
+    assert any("require_approval_resolved" in name for name in cont), (
+        f"workflow continue route is missing the approval gate; deps={cont}"
+    )
+    assert any("require_resource_access" in name for name in cont), "workflow continue route lost its resource gate"
