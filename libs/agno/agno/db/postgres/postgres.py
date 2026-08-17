@@ -6144,12 +6144,19 @@ class PostgresDb(BaseDb):
         claiming only unstamped jobs.
 
         serialize_sessions restricts claims to each session's HEAD - the
-        oldest non-terminal (queued/running/paused) job by (created_at, id).
-        Eligibility is unique per session (exactly one head), so two workers
-        racing one session always contend on the SAME row and SKIP LOCKED
-        arbitrates; no advisory locks or schema changes are needed. A head
-        that is itself stale-running is reclaimed, not bypassed - FIFO holds
-        across crash recovery too.
+        oldest non-terminal (queued/running/paused) job by (created_at, id) -
+        with NO running sibling. The explicit running check is what makes the
+        exclusion hard under same-second submissions (created_at ties resolve
+        by id, and a later submission with a smaller uuid would otherwise
+        become the head while its sibling executes) and under a backdated
+        concurrent enqueue committing after this claim's predicate read.
+        Eligibility is unique per session, so two workers racing one session
+        always contend on the SAME row and SKIP LOCKED arbitrates; no
+        advisory locks or schema changes are needed. A head that is itself
+        stale-running is reclaimed, not bypassed - FIFO holds across crash
+        recovery too (the running check excludes the candidate itself; two
+        running siblings can only predate this feature, and that legacy pair
+        stays unclaimable until one terminalizes or is swept).
         """
         try:
             table = self._get_table(table_type="jobs")
@@ -6181,6 +6188,18 @@ class PostgresDb(BaseDb):
                                 sibling.c.created_at < table.c.created_at,
                                 and_(sibling.c.created_at == table.c.created_at, sibling.c.id < table.c.id),
                             ),
+                        )
+                        .exists()
+                    )
+                )
+                running_sibling = table.alias("session_running_sibling")
+                conditions.append(
+                    ~(
+                        select(running_sibling.c.id)
+                        .where(
+                            running_sibling.c.session_id == table.c.session_id,
+                            running_sibling.c.status == "running",
+                            running_sibling.c.id != table.c.id,
                         )
                         .exists()
                     )

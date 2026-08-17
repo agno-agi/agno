@@ -528,6 +528,24 @@ class TestSessionSerializationParity:
         assert reclaimed is not None and reclaimed["id"] == "r1"
 
     @pytest.mark.asyncio
+    async def test_same_second_submission_never_two_live(self, store):
+        """created_at has 1-second resolution, so same-second siblings tie and
+        the (created_at, id) tiebreak alone would elect a NEW head while an
+        earlier submission executes (a lexicographically smaller uuid wins
+        the tie). The running-sibling check must block the claim regardless
+        of head order."""
+        await store.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", serialize_sessions=True)
+        assert head["id"] == "r_z"
+        await store.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+        assert await store.claim_job("w2", serialize_sessions=True) is None, (
+            "a smaller-id same-second sibling must not run beside its running sibling"
+        )
+        assert await store.complete_job("r_z", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", serialize_sessions=True)
+        assert nxt is not None and nxt["id"] == "r_a"
+
+    @pytest.mark.asyncio
     async def test_serialize_off_claims_session_siblings_concurrently(self, store):
         """The opt-out restores today's behavior - and doubles as the pin
         that the store-layer default stays off (direct callers unaffected)."""
