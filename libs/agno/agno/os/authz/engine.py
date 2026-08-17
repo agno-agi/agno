@@ -196,6 +196,11 @@ class EngineAuthorizationProvider(AuthorizationProvider):
         subject, roles = self._identity(ctx)
         accessible = self._engine.accessible_resource_ids(ctx.resource_type, ctx.action, subject=subject, roles=roles)
         denied = self._engine.denied_resource_ids(ctx.resource_type, ctx.action, subject=subject, roles=roles)
+        if "*" in denied:
+            # A collection/global deny removes every id of this type -- the same
+            # answer the per-resource gate gives (deny-overrides). Handled before the
+            # wildcard-allow branch below, which would otherwise mask it.
+            return []
         wildcard = "*" in accessible
         return [
             r

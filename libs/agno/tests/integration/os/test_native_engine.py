@@ -15,7 +15,23 @@ import pytest
 
 pytest.importorskip("sqlalchemy")  # managed roles require a SQL DB; no in-memory mode
 
+from agno.os.authz.engine import EngineAuthorizationProvider  # noqa: E402
 from agno.os.authz.native_engine import NativePolicyEngine  # noqa: E402
+from agno.os.authz.provider import AuthorizationContext  # noqa: E402
+
+
+class _Res:
+    """A minimal resource exposing ``id`` — all ``filter_accessible`` reads."""
+
+    def __init__(self, rid: str):
+        self.id = rid
+
+
+def _list_ctx(subject: str) -> AuthorizationContext:
+    """A list/collection context (no resource_id) for ``agents:read``."""
+    return AuthorizationContext(
+        principal_id=subject, scopes=[], claims={}, resource_type="agents", resource_id=None, action="read"
+    )
 
 
 def _engine() -> NativePolicyEngine:
@@ -440,3 +456,70 @@ def test_role_lookup_is_index_covered_not_a_table_scan():
     detail = " ".join(str(row[3]) for row in plan).upper()
     assert "SCAN" not in detail or "INDEX" in detail, f"role lookup is a table scan: {detail}"
     assert "INDEX" in detail, f"expected an index search for the role lookup, got: {detail}"
+
+
+def test_denied_resource_ids_signals_a_collection_deny():
+    """A wildcard/collection deny must surface as the ``"*"`` sentinel (meaning "all
+    ids of this type"), not be stripped to the literal id ``"*"`` which matches no
+    real resource. Mirrors accessible_resource_ids so list filtering can honour
+    deny-overrides the same way the per-resource gate does."""
+    eng = _engine()
+    eng.set_role_scopes("suspended", [("agents:research-agent:read", "allow"), ("agents:*:read", "deny")])
+    eng.assign("dave", "suspended")
+    assert eng.denied_resource_ids("agents", "read", subject="dave") == {"*"}
+
+    # the admin deny form stores resource "*", which also means "all of this type"
+    eng.set_role_scopes("blocked", [("agents:a1:read", "allow"), ("agent_os:admin", "deny")])
+    eng.assign("erin", "blocked")
+    assert eng.denied_resource_ids("agents", "read", subject="erin") == {"*"}
+
+
+def test_list_filter_matches_per_resource_gate_on_a_wildcard_deny():
+    """Regression: a wildcard deny (the natural "suspend this user" shape) was honoured
+    by the per-resource gate but silently dropped by list filtering, so the denied user
+    still saw every agent's full config on GET /agents. The two gates must agree."""
+    eng = _engine()
+    # one role: a concrete allow plus a wildcard deny -> deny-overrides denies BOTH
+    eng.set_role_scopes("suspended", [("agents:research-agent:read", "allow"), ("agents:*:read", "deny")])
+    eng.assign("dave", "suspended")
+    provider = EngineAuthorizationProvider(eng)
+    resources = [_Res("research-agent"), _Res("vault-agent")]
+
+    # per-resource gate denies every agent ...
+    assert eng.check_resource("agents", "research-agent", "read", subject="dave") is False
+    assert eng.check_resource("agents", "vault-agent", "read", subject="dave") is False
+    # ... so the list endpoint must return the SAME (nothing), not leak the denied ones
+    assert provider.filter_accessible(_list_ctx("dave"), resources) == []
+
+
+def test_list_filter_matches_per_resource_gate_on_inherited_wildcard_deny():
+    """Two roles on one subject: a wildcard allow and a wildcard deny land in one policy
+    root, so deny-overrides denies everything — the list must be empty too, not leak the
+    whole catalogue."""
+    eng = _engine()
+    eng.set_role_scopes("base", [("agents:read", "allow")])  # wildcard allow (agents/*)
+    eng.set_role_scopes("suspended", [("agents:*:read", "deny")])  # wildcard deny
+    eng.assign("eve", "base")
+    eng.assign("eve", "suspended")
+    provider = EngineAuthorizationProvider(eng)
+    resources = [_Res("research-agent"), _Res("vault-agent")]
+
+    assert eng.check_resource("agents", "research-agent", "read", subject="eve") is False
+    assert eng.check_resource("agents", "vault-agent", "read", subject="eve") is False
+    assert provider.filter_accessible(_list_ctx("eve"), resources) == []
+
+
+def test_list_filter_still_carves_a_concrete_deny_from_a_wildcard_allow():
+    """The concrete-deny direction keeps working: a wildcard allow minus one denied id
+    shows every OTHER resource and not the denied one (guards against the fix over-
+    correcting into 'deny everything')."""
+    eng = _engine()
+    eng.set_role_scopes("member", [("agents:*:read", "allow"), ("agents:secret:read", "deny")])
+    eng.assign("carol", "member")
+    provider = EngineAuthorizationProvider(eng)
+    resources = [_Res("public"), _Res("secret")]
+
+    assert eng.check_resource("agents", "public", "read", subject="carol") is True
+    assert eng.check_resource("agents", "secret", "read", subject="carol") is False
+    kept = [r.id for r in provider.filter_accessible(_list_ctx("carol"), resources)]
+    assert kept == ["public"]

@@ -30,9 +30,12 @@ updated_at + parsed scopes), scopes are ``{raw, namespace, sub_namespace,
 permission, value}``, and list endpoints use the SDK ``PaginatedResponse``
 ({data, meta}). Single-OS: scopes are a flat list (no org/os split).
 
-Every route is admin-only — admin comes from an ``agent_os:admin`` token scope OR
-an admin role in the store. Unauthenticated requests are rejected (401) by the JWT
-middleware before these handlers; a valid-but-non-admin caller gets 403.
+Every route is admin-only — admin comes from an admin role in the store OR, when a
+scope plane actually enforces on this OS, an ``agent_os:admin`` token scope. Under a
+role-store-only (or ReBAC-only) deployment the token's scopes carry no authorization
+weight anywhere else, so they are not trusted here either (see ``require_admin``).
+Unauthenticated requests are rejected (401) by the JWT middleware before these
+handlers; a valid-but-non-admin caller gets 403.
 
 Endpoints (default prefix ``/authz``):
     GET    /authz/roles                          list roles (paginated)
@@ -237,6 +240,26 @@ def _page(items: list, page: int, limit: int) -> PaginatedResponse:
     return _paginated(items[start : start + limit], page, limit, len(items))
 
 
+def _token_scopes_enforced(request: Request) -> bool:
+    """True when a scope plane actually enforces on this OS -- i.e. the token's
+    ``scopes`` claim carries authorization weight for resource access.
+
+    Only then is an ``agent_os:admin`` token scope a valid admin path on the /authz
+    gate. A managed-role (or ReBAC) provider used on its own never reads token scopes
+    (see :mod:`agno.os.authz.provider`), so honouring them here would let any
+    validly-signed token carrying ``agent_os:admin`` administer roles while being
+    denied every actual resource. Resolve the provider AgentOS is enforcing with and
+    require a ``ScopeAuthorizationProvider`` to be part of it (standalone or composed);
+    a custom provider that wants token-scope admins should compose one into its planes.
+    """
+    from agno.os.auth import resolve_authorization_provider
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    provider = resolve_authorization_provider(request)
+    planes = getattr(provider, "providers", None) or [provider]
+    return any(isinstance(plane, ScopeAuthorizationProvider) for plane in planes)
+
+
 def get_roles_router(
     store: "ManagedRoleStore",
     prefix: str = "/authz",
@@ -259,6 +282,13 @@ def get_roles_router(
           - the OS-local store (``store.can_manage`` — the end-user/managed plane), or
           - the token's own scopes carrying the admin scope (the operator plane,
             e.g. an agno-cloud-minted token for someone who administers this OS).
+
+        The token-scope path is honoured ONLY when a scope plane actually enforces on
+        this OS (:func:`_token_scopes_enforced`). Under a role-store-only or ReBAC-only
+        deployment the enforcement plane ignores the token's scopes for every resource,
+        so trusting ``agent_os:admin`` here would let any validly-signed token carrying
+        that scope administer roles despite being denied every resource — a privilege
+        escalation. The store path is always available for managed admins.
         """
         if not getattr(request.state, "authenticated", False):
             raise HTTPException(status_code=401, detail="Not authenticated")
@@ -266,7 +296,8 @@ def get_roles_router(
         claims = getattr(request.state, "claims", {}) or {}
         token_scopes = getattr(request.state, "scopes", []) or []
         admin_scope = getattr(request.state, "admin_scope", None) or AgentOSScope.ADMIN.value
-        if admin_scope in token_scopes or store.can_manage(principal_id, claims):
+        token_admin = admin_scope in token_scopes and _token_scopes_enforced(request)
+        if token_admin or store.can_manage(principal_id, claims):
             return principal_id or ""
         raise HTTPException(status_code=403, detail="Admin privileges required to manage roles")
 

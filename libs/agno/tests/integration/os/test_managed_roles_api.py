@@ -85,6 +85,39 @@ def test_non_admin_is_403(client_and_store):
     assert client.post("/authz/users/carol/roles", headers=_auth("bob"), json={"role": "viewer"}).status_code == 403
 
 
+def test_admin_token_scope_is_not_trusted_without_a_scope_plane(client_and_store):
+    """Escalation regression. The enforcement plane here is the engine alone
+    (``authorization_provider=store.provider``), which never reads token scopes — the
+    documented contract in :mod:`agno.os.authz.provider`. The /authz admin gate must
+    honour that too: before the fix, ANY validly-signed token carrying ``agent_os:admin``
+    — a principal the engine denies on every resource — could POST /authz/roles, grant
+    itself an admin role, and become a persistent OS admin. It must be rejected, while
+    store-based admins (alice) keep working."""
+    client, _ = client_and_store
+
+    def _admin_scope_auth(sub: str) -> dict:
+        tok = jwt.encode(
+            {"sub": sub, "aud": OS_ID, "scopes": ["agent_os:admin"], "exp": datetime.now(UTC) + timedelta(hours=1)},
+            SECRET,
+            algorithm="HS256",
+        )
+        return {"Authorization": f"Bearer {tok}"}
+
+    # mallory holds no store role; her only claim to admin is the (untrusted-here) scope
+    assert client.get("/authz/roles", headers=_admin_scope_auth("mallory")).status_code == 403
+    assert client.post("/authz/roles", headers=_admin_scope_auth("mallory"), json={"slug": "pwn"}).status_code == 403
+    assert (
+        client.post(
+            "/authz/users/mallory/roles", headers=_admin_scope_auth("mallory"), json={"role": "admin"}
+        ).status_code
+        == 403
+    )
+    # the premise holds: the engine denies her every resource too (scopes carry no weight)
+    assert client.get("/agents/research-agent", headers=_admin_scope_auth("mallory")).status_code == 403
+    # and the managed-admin path is unaffected — alice (admin in the store) still gets in
+    assert client.get("/authz/roles", headers=_auth("alice")).status_code == 200
+
+
 def test_admin_can_list_and_read_roles(client_and_store):
     client, _ = client_and_store
     r = client.get("/authz/roles", headers=_auth("alice"))

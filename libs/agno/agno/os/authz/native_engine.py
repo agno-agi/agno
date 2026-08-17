@@ -350,9 +350,10 @@ class NativePolicyEngine(PolicyEngine):
         subject: Optional[str] = None,
         roles: Optional[List[str]] = None,
     ) -> Set[str]:
-        """Concrete ids of ``resource_type`` explicitly denied for ``action`` (the
-        deny rows). Lets the provider carve denials out of a wildcard-allow list so
-        list endpoints honour deny-overrides like the per-resource gate does."""
+        """Ids of ``resource_type`` explicitly denied for ``action`` (``{"*"}`` = a
+        collection/global deny, i.e. every id of this type). Lets the provider carve
+        denials out of a wildcard-allow list so list endpoints honour deny-overrides
+        like the per-resource gate does."""
         if not resource_type:
             return set()
         principals = self._principals_for(subject, roles)
@@ -365,6 +366,14 @@ class NativePolicyEngine(PolicyEngine):
                 continue
             if action is not None and policy_action != action and policy_action != "*":
                 continue
+            # A collection/global deny (``agents/*``, the bare type, or the admin
+            # ``*`` wildcard) denies every id of this type -- mirror
+            # accessible_resource_ids and signal it with the ``"*"`` sentinel.
+            # Without this the deny was stripped to the literal id ``"*"``, which
+            # never equals a real resource id, so it was silently dropped from list
+            # filtering while the per-resource gate still enforced it.
+            if resource in ("*", f"{resource_type}/*", resource_type):
+                return {"*"}
             if resource.startswith(prefix):
                 ids.add(resource[len(prefix) :])
         return ids
