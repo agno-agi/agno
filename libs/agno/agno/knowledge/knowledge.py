@@ -2431,9 +2431,9 @@ class Knowledge(RemoteKnowledge):
           the same file name get distinct rows instead of colliding
         """
         hash_parts = []
-        # Unowned content hashes exactly as before, so existing rows keep their ids
+        # Digest the owner, don't raw-join it: a namespaced owner could otherwise collide onto another's id
         if content.user_id is not None:
-            hash_parts.append(content.user_id)
+            hash_parts.append(hashlib.sha256(content.user_id.encode()).hexdigest()[:16])
         if content.name:
             hash_parts.append(content.name)
         if content.description:
@@ -2503,9 +2503,9 @@ class Knowledge(RemoteKnowledge):
         """
         hash_parts = []
 
-        # Owner first, as in ``_build_content_hash``, so one owner's crawl doesn't dedup another's
+        # Digest the owner, as in _build_content_hash: no cross-owner dedup, no forgeable id
         if content.user_id is not None:
-            hash_parts.append(content.user_id)
+            hash_parts.append(hashlib.sha256(content.user_id.encode()).hexdigest()[:16])
         if content.name:
             hash_parts.append(content.name)
         if content.description:
@@ -2777,6 +2777,10 @@ class Knowledge(RemoteKnowledge):
     def _update_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.vectordb import VectorDb
 
+        # No scope passed: default it to the content's owner so the re-read can't reach another's row
+        if user_id is None:
+            user_id = content.user_id
+
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.contents_db:
             if isinstance(self.contents_db, AsyncBaseDb):
@@ -2831,6 +2835,10 @@ class Knowledge(RemoteKnowledge):
             return None
 
     async def _aupdate_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        # No scope passed: default it to the content's owner so the re-read can't reach another's row
+        if user_id is None:
+            user_id = content.user_id
+
         if self.contents_db:
             if not content.id:
                 log_warning("Content id is required to update Knowledge content")
