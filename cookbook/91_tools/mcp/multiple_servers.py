@@ -1,6 +1,8 @@
 """
 This example demonstrates how to use multiple MCP servers in a single agent.
 
+Pass one MCPTools instance per server in the agent's tools list.
+
 Prerequisites:
 - Set the environment variable "ACCUWEATHER_API_KEY" for the weather MCP tools.
 - You can get the API key from the AccuWeather website: https://developer.accuweather.com/
@@ -10,7 +12,7 @@ import asyncio
 from os import getenv
 
 from agno.agent import Agent
-from agno.tools.mcp import MultiMCPTools
+from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -18,12 +20,13 @@ from agno.tools.mcp import MultiMCPTools
 
 
 async def run_agent(message: str) -> None:
-    # Initialize the MCP tools
-    mcp_tools = MultiMCPTools(
-        [
-            "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
-            "npx -y @modelcontextprotocol/server-brave-search",
-        ],
+    # Initialize one MCPTools instance per MCP server
+    airbnb_tools = MCPTools(
+        "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
+        timeout_seconds=30,
+    )
+    brave_tools = MCPTools(
+        "npx -y @modelcontextprotocol/server-brave-search",
         env={
             "BRAVE_API_KEY": getenv("BRAVE_API_KEY"),
         },
@@ -31,17 +34,19 @@ async def run_agent(message: str) -> None:
     )
 
     # Connect to the MCP servers
-    await mcp_tools.connect()
+    await airbnb_tools.connect()
+    await brave_tools.connect()
 
     # Use the MCP tools with an Agent
     agent = Agent(
-        tools=[mcp_tools],
+        tools=[airbnb_tools, brave_tools],
         markdown=True,
     )
     await agent.aprint_response(message)
 
-    # Close the MCP connection
-    await mcp_tools.close()
+    # Close the MCP connections
+    await airbnb_tools.close()
+    await brave_tools.close()
 
 
 # Example usage

@@ -661,7 +661,7 @@ def _field_names_of(agent: Any) -> List[str]:
 
 def _is_mcp_tool(tool: Any) -> bool:
     mro = getattr(type(tool), "__mro__", ())
-    return any(c.__name__ in ("MCPTools", "MultiMCPTools") for c in mro)
+    return any(c.__name__ == "MCPTools" for c in mro)
 
 
 def _resolved_tools_factory(tools: Any) -> Any:
@@ -921,7 +921,6 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
     # write into the caller's real store. The shared-db read path depends on
     # these severs; do not remove them in any future refactor.
     agent.update_memory_on_run = False  # the post-run memory extraction call
-    agent.enable_user_memories = False  # deprecated alias of update_memory_on_run
     agent.enable_agentic_memory = False  # the update_user_memory tool and its prompt block
     agent.update_knowledge = False  # the knowledge write tool: agent.knowledge stays shared
     agent.update_cultural_knowledge = False  # the post-run write into the caller's culture store

@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import warnings
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
@@ -278,9 +277,6 @@ class AgentOS:
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
-        # Deprecated aliases for mcp_server
-        enable_mcp_server: Optional[bool] = None,
-        mcp_config: Optional[MCPServerConfig] = None,
     ):
         """Initialize AgentOS.
 
@@ -349,10 +345,6 @@ class AgentOS:
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
-            enable_mcp_server: Deprecated alias for ``mcp_server``. Used when
-                ``mcp_server`` is left at its default.
-            mcp_config: Deprecated. Pass the ``MCPServerConfig`` as ``mcp_server``
-                instead. Configures the MCP server but does not enable it.
 
         """
         if not agents and not workflows and not teams and not knowledge and not db:
@@ -394,36 +386,7 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
-        if enable_mcp_server is not None:
-            if mcp_server is False:
-                warnings.warn(
-                    "AgentOS(enable_mcp_server=...) is deprecated, use mcp_server instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                mcp_server = enable_mcp_server
-            else:
-                warnings.warn(
-                    "Both mcp_server and enable_mcp_server are provided. "
-                    "enable_mcp_server is deprecated; mcp_server will be used.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        if mcp_config is not None:
-            if isinstance(mcp_server, MCPServerConfig):
-                warnings.warn(
-                    "Both mcp_server and mcp_config carry an MCPServerConfig. "
-                    "mcp_config is deprecated; the mcp_server value will be used.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            else:
-                warnings.warn(
-                    "AgentOS(mcp_config=...) is deprecated, pass the MCPServerConfig as mcp_server instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        self.mcp_config: Optional[MCPServerConfig] = mcp_config
+        self.mcp_config: Optional[MCPServerConfig] = None
         self.mcp_server = mcp_server
         self.mcp_auth: Optional["AuthProvider"] = mcp_auth
         # Resolved lazily (and once): the MultiAuth-wrapped provider handed to FastMCP.
@@ -513,7 +476,7 @@ class AgentOS:
 
         # Track MCP tools declared on the registry so they connect in the same
         # lifespan as agent/team/workflow MCP tools (e.g. for components created
-        # from registry tools via StudioTool)
+        # from registry tools via StudioTools)
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
 
         # Check for duplicate IDs
@@ -540,15 +503,6 @@ class AgentOS:
             self.mcp_config = value
         else:
             self._mcp_enabled = bool(value)
-
-    @property
-    def enable_mcp_server(self) -> bool:
-        """Deprecated alias for ``mcp_server``."""
-        return self._mcp_enabled
-
-    @enable_mcp_server.setter
-    def enable_mcp_server(self, value: bool) -> None:
-        self._mcp_enabled = bool(value)
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -801,10 +755,10 @@ class AgentOS:
             # Track all MCP tools to later handle their connection
             if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
-                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    # Checking if the tool is an instance of MCPTools or a subclass of it
                     if hasattr(type(tool), "__mro__"):
                         mro_names = {cls.__name__ for cls in type(tool).__mro__}
-                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                        if "MCPTools" in mro_names:
                             if tool not in self.mcp_tools:
                                 self.mcp_tools.append(tool)
 

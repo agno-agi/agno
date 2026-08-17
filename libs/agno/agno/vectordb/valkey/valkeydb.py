@@ -85,7 +85,7 @@ def _decode_value(val: Any) -> str:
     return str(val) if val is not None else ""
 
 
-class ValkeyDB(VectorDb):
+class ValkeyDb(VectorDb):
     """
     Valkey class for managing vector operations with Valkey and valkey-search.
 
@@ -130,7 +130,7 @@ class ValkeyDB(VectorDb):
         description: Optional[str] = None,
     ):
         """
-        Initialize the ValkeyDB instance.
+        Initialize the ValkeyDb instance.
 
         Args:
             index_name (str): Name of the Valkey index to store vector data.
@@ -199,7 +199,7 @@ class ValkeyDB(VectorDb):
         self._glide_client: Optional[GlideClient] = glide_client
         self._client_initialized: bool = glide_client is not None
 
-        log_debug(f"Initialized ValkeyDB with index '{self.index_name}'")
+        log_debug(f"Initialized ValkeyDb with index '{self.index_name}'")
 
     def _get_client(self) -> GlideClient:
         """Get or create the GlideClient."""

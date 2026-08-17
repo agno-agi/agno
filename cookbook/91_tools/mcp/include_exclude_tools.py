@@ -1,5 +1,8 @@
 """
-This example demonstrates how to use multiple MCP servers in a single agent.
+This example demonstrates how to filter the tools exposed by each MCP server.
+
+include_tools and exclude_tools are set per MCPTools instance, so each server gets
+its own filter.
 
 Prerequisites:
 - Google Maps:
@@ -14,7 +17,7 @@ Prerequisites:
 import asyncio
 
 from agno.agent import Agent
-from agno.tools.mcp import MultiMCPTools
+from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -27,21 +30,21 @@ async def run_agent(message: str) -> None:
     Remember to set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
     """
 
-    # Initialize the MCP server
-    async with MultiMCPTools(
-        [
-            "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
-            "npx -y @modelcontextprotocol/server-google-maps",
-        ],
+    # Initialize one MCPTools instance per MCP server, each with its own filter
+    async with MCPTools(
+        "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
         include_tools=["airbnb_search"],
-        exclude_tools=["maps_place_details"],
-    ) as mcp_tools:
-        agent = Agent(
-            tools=[mcp_tools],
-            markdown=True,
-        )
+    ) as airbnb_tools:
+        async with MCPTools(
+            "npx -y @modelcontextprotocol/server-google-maps",
+            exclude_tools=["maps_place_details"],
+        ) as maps_tools:
+            agent = Agent(
+                tools=[airbnb_tools, maps_tools],
+                markdown=True,
+            )
 
-        await agent.aprint_response(message, stream=True)
+            await agent.aprint_response(message, stream=True)
 
 
 # Example usage

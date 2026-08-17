@@ -17,7 +17,7 @@ import asyncio
 
 from agno.knowledge.document.base import Document
 from agno.vectordb.search import SearchType
-from agno.vectordb.valkey import ValkeyDB
+from agno.vectordb.valkey import ValkeyDb
 
 
 def _doc(name: str, body: str) -> Document:
@@ -25,7 +25,7 @@ def _doc(name: str, body: str) -> Document:
 
 
 async def main() -> None:
-    vector_db = ValkeyDB(
+    vector_db = ValkeyDb(
         index_name="per_user_isolation_demo",
         host="localhost",
         port=6379,

@@ -1,7 +1,7 @@
 """Tests for metadata propagation when using path in Knowledge.
 
 This tests the fix for issue #6077 where metadata was not propagated to documents
-when using path in add_content_async/ainsert.
+when using path in insert/ainsert.
 """
 
 import tempfile

@@ -14,8 +14,8 @@ from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import (

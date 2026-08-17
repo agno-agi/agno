@@ -23,7 +23,7 @@ from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
 
-class RedisDB(VectorDb):
+class RedisDb(VectorDb):
     """
     Redis class for managing vector operations with Redis and RedisVL.
 
