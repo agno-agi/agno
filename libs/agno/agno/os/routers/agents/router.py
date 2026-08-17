@@ -216,7 +216,7 @@ async def agent_resumable_response_streamer(
                 # the stream works, though the run is not resumable.
                 if not warned_not_resumable:
                     warned_not_resumable = True
-                    log_warning(
+                    log_debug(
                         f"Agent '{getattr(agent, 'id', None)}' does not support background execution; "
                         "streaming inline (run is not resumable)."
                     )
