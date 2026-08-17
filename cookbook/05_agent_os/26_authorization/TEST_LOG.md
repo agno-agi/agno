@@ -1,6 +1,6 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-07-27
+Last updated: 2026-08-17 (re-run after rebasing onto feat/extending-user-isolation)
 
 All examples were run with `.venvs/demo/bin/python` against the branch's library.
 None of the local examples need a database server, a model key, or an external
@@ -131,7 +131,20 @@ verified. It is now enforced, and this example is the regression demo for it.
 
 ### console.html
 
-**Status:** NOT RUN
+**Status:** PASS
 
-**Description:** A static browser console for driving the `/authz` admin API by
-hand against `manage_users_and_roles.py`. Nothing to execute in CI.
+**Test mode:** LIVE (driven in a real Chrome via playwriter)
+
+**Description:** The static browser console for the `/authz` admin API, served
+from `http://localhost:3000` (a CORS-allowed origin) against a running
+`manage_users_and_roles.py` and driven end to end in a real browser: connect
+with the printed admin token, become bob (viewer), exercise the playground,
+change his role live, and read every admin tab.
+
+**Result:** Connect succeeded (`GET /authz/scopes` 200) and the persona bar
+loaded. As bob (viewer): look 200, run 403 with the correct required-scope
+message. After promoting bob to runner from the console (same token), the same
+run returned 200; demoting back to viewer also took effect. Users, Roles and
+Scope-catalog tabs rendered from the API; the Change-audit tab showed the live
+`user.assigned bob ["viewer"] -> ["runner"]` entry and the Decisions tab showed
+every allow/deny with its jti reference. No console errors.
