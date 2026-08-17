@@ -123,19 +123,6 @@ class QueueConfig:
     # (they are queued, not stale - no sweep touches them); watch
     # oldest_queued_age_seconds in /queue/stats.
     deployment_id: Optional[str] = None
-    # At most ONE live job per session, executed in submission order. A job is
-    # claimable only while it is the oldest non-terminal (queued/running/
-    # paused) job of its session, so concurrent submissions to one session run
-    # FIFO instead of racing each other's context reads and session-state
-    # writes; different sessions still run concurrently under max_concurrency.
-    # PAUSED blocks the line deliberately: runs queued behind a HITL pause
-    # wait for the approval (their input likely refers to its outcome) -
-    # continue or cancel the paused run to release them. Scope: enforced at
-    # durable-queue claim time; the non-durable in-process background path is
-    # NOT yet session-gated. Residual: an operator requeue of a failed sibling
-    # racing a claim can momentarily double-run a session (operator action,
-    # same window on every store). False restores fully concurrent claiming.
-    serialize_sessions: bool = True
     # Stale-lock grace before a crashed worker's jobs are reclaimed. The
     # worker heartbeat refreshes locks, so this can stay small - but it is
     # coupled to the drain timeout below: the worker requires
@@ -167,6 +154,23 @@ class QueueConfig:
     # is not keyword-only, so inserting mid-list would silently reinterpret
     # positional constructions of the fields behind it.
     stop_timeout_seconds: Optional[int] = None
+    # At most ONE live job per session, executed in submission order. A job is
+    # claimable only while it is the oldest non-terminal (queued/running/
+    # paused) job of its session AND no session sibling is currently running
+    # (the explicit running check covers same-second submissions, where
+    # created_at ties and the id tiebreak alone could elect a new head while
+    # an earlier job executes). Concurrent submissions to one session run
+    # FIFO instead of racing each other's context reads and session-state
+    # writes; different sessions still run concurrently under max_concurrency.
+    # PAUSED blocks the line deliberately: runs queued behind a HITL pause
+    # wait for the approval (their input likely refers to its outcome) -
+    # continue or cancel the paused run to release them. Scope: enforced at
+    # durable-queue claim time; the non-durable in-process background path is
+    # NOT yet session-gated. Residual: an operator requeue of a failed sibling
+    # racing a claim can momentarily double-run a session (operator action,
+    # same window on every store). False restores fully concurrent claiming.
+    # (Appended last: positional-argument compatibility, see above.)
+    serialize_sessions: bool = True
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
