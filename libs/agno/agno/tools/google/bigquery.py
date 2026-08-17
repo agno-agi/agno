@@ -46,6 +46,14 @@ class GoogleBigQueryTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_list_tables" in kwargs:
+            list_tables = kwargs.pop("enable_list_tables")
+        if "enable_describe_table" in kwargs:
+            describe_table = kwargs.pop("enable_describe_table")
+        if "enable_run_sql_query" in kwargs:
+            run_sql_query = kwargs.pop("enable_run_sql_query")
+
         self.project = project or getenv("GOOGLE_CLOUD_PROJECT")
         self.location = location or getenv("GOOGLE_CLOUD_LOCATION")
 

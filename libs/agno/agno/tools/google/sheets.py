@@ -107,6 +107,16 @@ class GoogleSheetsTools(GoogleToolkit):
             create_duplicate_sheet (bool): Enable creating a duplicate sheet.
             all (bool): Enable all tools.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_read_sheet" in kwargs:
+            read_sheet = kwargs.pop("enable_read_sheet")
+        if "enable_create_sheet" in kwargs:
+            create_sheet = kwargs.pop("enable_create_sheet")
+        if "enable_update_sheet" in kwargs:
+            update_sheet = kwargs.pop("enable_update_sheet")
+        if "enable_create_duplicate_sheet" in kwargs:
+            create_duplicate_sheet = kwargs.pop("enable_create_duplicate_sheet")
+
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         # Determine required scopes based on operations if no custom scopes provided
