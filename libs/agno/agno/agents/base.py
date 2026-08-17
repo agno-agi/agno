@@ -449,7 +449,8 @@ class BaseExternalAgent:
         try:
             await self.aupsert_session(session)
             if self.db is not None:
-                run_index = len(session.runs) - 1
+                # run_index from RunOutput: None for new runs → DB allocates via atomic counter
+                run_index = run_output.run_index
                 user_id = run_output.user_id or session.user_id
                 try:
                     if isinstance(self.db, AsyncBaseDb):

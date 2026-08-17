@@ -6771,6 +6771,8 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     # store_events=True the new run's events would otherwise be the parent's
     # events with this run's events appended onto them.
     forked.events = None
+    # Reset run_index so DB allocates a fresh index for this fork
+    forked.run_index = None
 
     _truncate_team_run_to_checkpoint(forked, message_index)
     return forked

@@ -3154,6 +3154,8 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     forked.metrics.start_timer()
     forked.created_at = int(_time())
     forked.events = None
+    # Reset run_index so DB allocates a fresh index for this fork
+    forked.run_index = None
     _truncate_run_to_checkpoint(forked, message_index)
     return forked
 
