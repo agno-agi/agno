@@ -36,7 +36,7 @@ class YouTubeTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
-        # Backwards compat: enable_get_video_X -> get_Xself.languages: Optional[List[str]] = languages
+        self.languages: Optional[List[str]] = languages
 
         tools: List[Callable] = []
         if all or get_transcript:

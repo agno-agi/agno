@@ -38,8 +38,8 @@ class DuckDuckGoTools(WebSearchTools):
         **kwargs,
     ):
         super().__init__(
-            enable_search=enable_search,
-            enable_news=enable_news,
+            search_web=enable_search,
+            search_news=enable_news,
             backend=backend or "duckduckgo",
             modifier=modifier,
             fixed_max_results=fixed_max_results,

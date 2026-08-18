@@ -64,7 +64,7 @@ class ZepTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X_zep_Y -> X_Yself._api_key = api_key or getenv("ZEP_API_KEY")
+        self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
                 "No Zep API key provided. Please set the ZEP_API_KEY environment variable or pass it to the ZepTools constructor."
@@ -290,7 +290,7 @@ class ZepAsyncTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X_zep_Y -> X_Yself._api_key = api_key or getenv("ZEP_API_KEY")
+        self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
                 "No Zep API key provided. Please set the ZEP_API_KEY environment variable or pass it to the ZepTools constructor."

@@ -105,7 +105,7 @@ class FileGenerationTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X_generation -> generate_Xself.generate_json = generate_json
+        self.generate_json = generate_json
         self.generate_csv = generate_csv
         self.generate_pdf = generate_pdf and PDF_AVAILABLE
         self.generate_docx = generate_docx and DOCX_AVAILABLE
