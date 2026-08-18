@@ -329,9 +329,28 @@ class ScheduleExecutor:
         if is_run_endpoint and match is not None:
             # "version" is stripped: schedules always fire the live published
             # version, so a payload-smuggled pin must not turn a schedule into
-            # a draft-preview channel.
+            # a draft-preview channel. The same draft pin also rides in run
+            # metadata (``agno_component_version``), which the run-start route
+            # carries onto the run, so scrub it from any forwarded metadata -
+            # and from the top level - or a crafted schedule smuggles a draft
+            # preview the lifecycle routes would then re-resolve.
+            from agno.os.utils import COMPONENT_VERSION_METADATA_KEY
+
+            sanitized_payload = dict(payload)
+            raw_metadata = sanitized_payload.get("metadata")
+            if isinstance(raw_metadata, str):
+                try:
+                    raw_metadata = json.loads(raw_metadata)
+                except (ValueError, TypeError):
+                    raw_metadata = None
+            if isinstance(raw_metadata, dict):
+                sanitized_payload["metadata"] = {
+                    k: v for k, v in raw_metadata.items() if k != COMPONENT_VERSION_METADATA_KEY
+                }
             form_payload = {
-                k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background", "version")
+                k: _to_form_value(v)
+                for k, v in sanitized_payload.items()
+                if k not in ("stream", "background", "version", COMPONENT_VERSION_METADATA_KEY)
             }
             form_payload["stream"] = "false"
             form_payload["background"] = "true"

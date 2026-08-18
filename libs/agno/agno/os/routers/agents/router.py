@@ -71,8 +71,10 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     afinalize_continue_stream,
+    allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
+    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
@@ -1401,6 +1403,13 @@ def get_agent_router(
             stamped_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
             stamped_version = stamped_component_version(stamped_run)
             if stamped_version is not None:
+                # Re-run the run-start preview gate before trusting the stamp:
+                # a stamp naming a draft version this caller may not preview
+                # must not resolve (defense against a forged/leaked stamp).
+                # Same 404 the run-start route raises, so a denial is
+                # indistinguishable from the component being absent.
+                if not allow_draft_preview(os.db, agent_id, stamped_version, *draft_preview_identity(request)):
+                    raise HTTPException(status_code=404, detail="Agent not found")
                 try:
                     stamped_agent = get_agent_by_id(
                         agent_id=agent_id,

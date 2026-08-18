@@ -2522,13 +2522,27 @@ def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> N
 
     Mutates ``kwargs`` in place: merges the stamp into any caller-provided
     ``metadata`` dict (a copy - the request-state dict is never mutated).
-    No version means no stamp, so unpinned runs keep their legacy shape.
+
+    The stamp is authoritative for lifecycle re-resolution, so a caller must
+    never supply it. ``metadata`` is a caller-writable form field, so ANY
+    inbound ``agno_component_version`` is stripped first - otherwise a forged
+    key survives an unpinned run and lets ``/continue`` dispatch a draft the
+    caller was refused at run-start. The key is (re)written only when a
+    version was pinned via the route's own ``version`` parameter. No pinned
+    version means no stamp, so unpinned runs keep their legacy shape unless
+    the caller sent their own (now-sanitized) metadata.
     """
-    if version is None:
-        return
-    metadata = dict(kwargs.get("metadata") or {})
-    metadata[COMPONENT_VERSION_METADATA_KEY] = version
-    kwargs["metadata"] = metadata
+    inbound = kwargs.get("metadata")
+    had_metadata = inbound is not None
+    metadata = dict(inbound or {})
+    # Strip any forged stamp before trusting the route's own pinned version.
+    metadata.pop(COMPONENT_VERSION_METADATA_KEY, None)
+    if version is not None:
+        metadata[COMPONENT_VERSION_METADATA_KEY] = version
+    # Only touch kwargs when there is a stamp to write or metadata to sanitize;
+    # a purely unpinned run with no caller metadata keeps its legacy shape.
+    if metadata or had_metadata:
+        kwargs["metadata"] = metadata
 
 
 def stamped_component_version(run_output: Any) -> Optional[int]:
