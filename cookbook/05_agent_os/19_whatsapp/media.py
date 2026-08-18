@@ -44,7 +44,7 @@ media_agent = Agent(
     num_history_runs=3,
     instructions=[
         "Analyze images, video, audio, and documents that the user sends.",
-        "Use fal_generate_image when the user asks for a new still image.",
+        "Use gemini_generate_image when the user asks for a new still image.",
         "Use fal_generate_media when the user asks for a short generated video.",
         "Keep accompanying text concise because the result is delivered on WhatsApp.",
     ],

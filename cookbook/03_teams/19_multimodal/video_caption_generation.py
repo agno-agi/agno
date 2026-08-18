@@ -8,8 +8,8 @@ Demonstrates team-based video caption generation and embedding workflow.
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
+from agno.tools.models.openai import OpenAITools
 from agno.tools.moviepy_video import MoviePyVideoTools
-from agno.tools.openai import OpenAITools
 
 # ---------------------------------------------------------------------------
 # Create Members

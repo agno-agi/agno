@@ -24,13 +24,13 @@ agent = Agent(tools=[ScavioTools()])
 web_agent = Agent(
     tools=[
         ScavioTools(
-            enable_google=True,
-            enable_youtube=True,
-            enable_reddit=True,
-            enable_amazon=False,
-            enable_walmart=False,
-            enable_tiktok=False,
-            enable_instagram=False,
+            include_tools=[
+                "search_google",
+                "search_youtube",
+                "get_youtube_video",
+                "search_reddit",
+                "get_reddit_post",
+            ]
         )
     ]
 )
@@ -39,19 +39,28 @@ web_agent = Agent(
 commerce_agent = Agent(
     tools=[
         ScavioTools(
-            enable_google=False,
-            enable_youtube=False,
-            enable_reddit=False,
-            enable_amazon=True,
-            enable_walmart=True,
-            enable_tiktok=False,
-            enable_instagram=False,
+            include_tools=[
+                "search_amazon",
+                "get_amazon_product",
+                "search_walmart",
+                "get_walmart_product",
+            ]
         )
     ]
 )
 
-# Example 4: enable every tool explicitly
-all_agent = Agent(tools=[ScavioTools(all=True)])
+# Example 4: exclude a provider instead of listing includes
+no_social_agent = Agent(
+    tools=[
+        ScavioTools(
+            exclude_tools=[
+                "get_tiktok_profile",
+                "list_tiktok_posts",
+                "get_tiktok_video",
+            ]
+        )
+    ]
+)
 
 # ---------------------------------------------------------------------------
 # Run Agent

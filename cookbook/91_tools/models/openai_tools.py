@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.run.agent import RunOutput
-from agno.tools.openai import OpenAITools
+from agno.tools.models.openai import OpenAITools
 from agno.utils.media import download_file, save_base64_data
 
 # ---------------------------------------------------------------------------

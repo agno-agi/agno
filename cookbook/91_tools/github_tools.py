@@ -72,13 +72,15 @@ agent_safe = Agent(
     ],
 )
 
-# Example 3: Include all functions (default behavior)
+# Example 3: Include every tool, including write operations
+# (by default, tools that modify GitHub state are excluded; pass
+# exclude_tools=[] to opt in to the full surface)
 agent_full = Agent(
     instructions=[
         "Use your tools to answer questions about the repo: agno-agi/agno",
         "You have full access to GitHub repository management",
     ],
-    tools=[GithubTools()],
+    tools=[GithubTools(exclude_tools=[])],
 )
 
 # Basic repository listing

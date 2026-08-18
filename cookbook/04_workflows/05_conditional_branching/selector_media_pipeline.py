@@ -11,7 +11,7 @@ from typing import List, Optional
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models.gemini import GeminiTools
-from agno.tools.openai import OpenAITools
+from agno.tools.models.openai import OpenAITools
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps

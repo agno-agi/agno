@@ -13,7 +13,7 @@ Run `uv pip install openai agno` to install the necessary dependencies.
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.openai import OpenAITools
+from agno.tools.models.openai import OpenAITools
 from agno.utils.media import save_base64_data
 
 # ---------------------------------------------------------------------------
