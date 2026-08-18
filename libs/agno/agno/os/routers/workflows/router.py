@@ -214,10 +214,15 @@ async def handle_workflow_via_websocket(
             return
 
         # An explicit draft version is a control-plane preview: owner/admin only.
-        # Published pins were always reachable.
+        # Published pins were always reachable. Privilege means admin or auth
+        # off; a plain authenticated caller keeps its raw identity even when
+        # isolation is off (scoped_user_id None must not read as admin).
         from agno.os.utils import allow_draft_preview
 
-        if not allow_draft_preview(os.db, workflow_id, version, scoped_user_id):
+        preview_privileged = bool(ws_auth and ws_auth.is_admin) or not bool(ws_auth and ws_auth.jwt_enabled)
+        if not allow_draft_preview(
+            os.db, workflow_id, version, user_id if isinstance(user_id, str) else None, privileged=preview_privileged
+        ):
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
 

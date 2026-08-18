@@ -1215,21 +1215,48 @@ def find_factory_by_id(
     return None
 
 
+def draft_preview_identity(request: Any) -> tuple:
+    """(actor, privileged) for the draft-preview gate.
+
+    ``privileged`` is True only for a caller allowed to preview anyone's
+    draft: the admin scope, or no authentication at all (no request, or no
+    auth middleware ran). A plain authenticated caller keeps its raw
+    identity even when ``user_isolation`` is off - that flag widens reads,
+    never the right to run another owner's draft.
+    """
+    if request is None:
+        return None, True
+    from agno.os.middleware.user_scope import _has_admin_scope
+
+    user_id = getattr(request.state, "user_id", None)
+    scopes = getattr(request.state, "scopes", None)
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    if scopes is None and user_id is None:
+        # No auth middleware ran: authorization is off.
+        return None, True
+    if _has_admin_scope(list(scopes or []), admin_scope=admin_scope):
+        return None, True
+    return (user_id if isinstance(user_id, str) else None), False
+
+
 def allow_draft_preview(
     db: Optional[Union[BaseDb, AsyncBaseDb]],
     component_id: str,
     version: Optional[int],
-    scoped_user_id: Optional[str],
+    actor: Optional[str],
+    privileged: bool = False,
 ) -> bool:
     """Whether an explicit-version run may proceed.
 
     Published versions were always reachable, so pinning one is never gated.
     A draft version is a control-plane preview: allowed for the component's
-    owner and for unscoped callers (admin scope, or authorization/isolation
-    off); anyone else gets the same not-found the component would produce,
-    so drafts are not disclosed. Returns True when there is nothing to gate
-    (no version, no sync db, or no such config) - resolution then produces
-    its own not-found.
+    owner and for privileged callers (admin scope, or authorization off);
+    an authenticated non-admin with no usable identity is denied. Everyone
+    denied gets the same not-found the component would produce, so drafts
+    are not disclosed. Returns True when there is nothing to gate (no
+    version, no sync db, or no such config) - resolution then produces its
+    own not-found.
     """
     if version is None or not isinstance(db, BaseDb):
         return True
@@ -1241,13 +1268,15 @@ def allow_draft_preview(
         return True
     if row.get("stage") == "published":
         return True
-    if scoped_user_id is None:
+    if privileged:
         return True
+    if actor is None:
+        return False
     try:
         component = db.get_component(component_id=component_id)
     except NotImplementedError:
         return True
-    return bool(isinstance(component, dict) and component.get("user_id") == scoped_user_id)
+    return bool(isinstance(component, dict) and component.get("user_id") == actor)
 
 
 def get_agent_by_id(
@@ -2512,7 +2541,8 @@ async def resolve_agent(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    if not allow_draft_preview(db, agent_id, version, scoped_user_id):
+    preview_actor, preview_privileged = draft_preview_identity(request)
+    if not allow_draft_preview(db, agent_id, version, preview_actor, privileged=preview_privileged):
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
     is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
     if is_factory:
@@ -2587,7 +2617,8 @@ async def resolve_team(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    if not allow_draft_preview(db, team_id, version, scoped_user_id):
+    preview_actor, preview_privileged = draft_preview_identity(request)
+    if not allow_draft_preview(db, team_id, version, preview_actor, privileged=preview_privileged):
         raise HTTPException(status_code=404, detail=f"Team not found: {team_id}")
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
@@ -2662,7 +2693,8 @@ async def resolve_workflow(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    if not allow_draft_preview(db, workflow_id, version, scoped_user_id):
+    preview_actor, preview_privileged = draft_preview_identity(request)
+    if not allow_draft_preview(db, workflow_id, version, preview_actor, privileged=preview_privileged):
         raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:

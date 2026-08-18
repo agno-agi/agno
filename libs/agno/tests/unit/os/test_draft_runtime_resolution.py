@@ -106,10 +106,14 @@ class TestPreviewGate:
         _mk(db, "pub-bot", "published", user_id="alice")
         assert allow_draft_preview(db, "pub-bot", 1, "bob") is True
 
-    def test_draft_preview_allowed_for_owner_and_unscoped(self, db):
+    def test_draft_preview_allowed_for_owner_and_privileged(self, db):
         _mk(db, "draft-bot", "draft", user_id="alice")
         assert allow_draft_preview(db, "draft-bot", 1, "alice") is True
-        assert allow_draft_preview(db, "draft-bot", 1, None) is True
+        # Privilege (admin scope, or auth off) is explicit; a bare None actor
+        # is an authenticated caller without a usable identity and is denied -
+        # user_isolation=False widens reads, not the right to run drafts.
+        assert allow_draft_preview(db, "draft-bot", 1, None, privileged=True) is True
+        assert allow_draft_preview(db, "draft-bot", 1, None) is False
 
     def test_draft_preview_denied_for_other_scoped_user(self, db):
         _mk(db, "draft-bot", "draft", user_id="alice")
