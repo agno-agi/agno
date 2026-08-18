@@ -80,7 +80,7 @@ analyst = Agent(
     name="Analyst",
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
-    tools=[SQLTools(db_engine=warehouse)],
+    tools=[SQLTools(db_engine=warehouse, run_sql_query=True)],
     instructions=[
         "Answer questions about the orders table by running SQL.",
         "Report the number you measured and the query you ran. Never estimate a value.",

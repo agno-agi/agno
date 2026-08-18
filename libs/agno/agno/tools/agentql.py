@@ -17,15 +17,15 @@ class AgentQLTools(Toolkit):
         api_key: Optional[str] = None,
         agentql_query: str = "",
         scrape_website: bool = True,
-        custom_scrape_website: bool = False,
+        agentql_custom_scrape_website: bool = False,
         all: bool = False,
         **kwargs,
     ):
         # Backwards compat: enable_X -> X
         if "enable_scrape_website" in kwargs:
             scrape_website = kwargs.pop("enable_scrape_website")
-        if "enable_custom_scrape_website" in kwargs:
-            custom_scrape_website = kwargs.pop("enable_custom_scrape_website")
+        if "enable_agentql_custom_scrape_website" in kwargs:
+            agentql_custom_scrape_website = kwargs.pop("enable_agentql_custom_scrape_website")
 
         self.api_key = api_key or getenv("AGENTQL_API_KEY")
         if not self.api_key:
@@ -36,8 +36,8 @@ class AgentQLTools(Toolkit):
         tools: List[Callable] = []
         if all or scrape_website:
             tools.append(self.agentql_scrape_website)
-        if all or custom_scrape_website or agentql_query:
-            tools.append(self.custom_scrape_website)
+        if all or agentql_custom_scrape_website or agentql_query:
+            tools.append(self.agentql_custom_scrape_website)
 
         super().__init__(name="agentql_tools", tools=tools, **kwargs)
 
@@ -71,7 +71,7 @@ class AgentQLTools(Toolkit):
         except Exception as e:
             return json.dumps({"error": f"Failed to scrape: {e}"})
 
-    def custom_scrape_website(self, url: str) -> str:
+    def agentql_custom_scrape_website(self, url: str) -> str:
         """Scrape a website using a custom AgentQL query.
 
         Args:

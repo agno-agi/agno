@@ -222,7 +222,7 @@ class UnsplashTools(Toolkit):
             return json.dumps(results, indent=2)
 
         except Exception as e:
-            log_exception(e, "Error searching Unsplash")
+            log_exception("Error searching Unsplash")
             return json.dumps({"error": f"Error searching Unsplash: {e}"})
 
     def get_photo(self, photo_id: str) -> str:
@@ -272,7 +272,7 @@ class UnsplashTools(Toolkit):
             return json.dumps(result, indent=2)
 
         except Exception as e:
-            log_exception(e, "Error getting photo")
+            log_exception("Error getting photo")
             return json.dumps({"error": f"Error getting photo: {e}"})
 
     def get_random_photo(
@@ -318,7 +318,7 @@ class UnsplashTools(Toolkit):
             return json.dumps({"photos": photos}, indent=2)
 
         except Exception as e:
-            log_exception(e, "Error getting random photo")
+            log_exception("Error getting random photo")
             return json.dumps({"error": f"Error getting random photo: {e}"})
 
     def download_photo(self, photo_id: str) -> str:
@@ -353,5 +353,5 @@ class UnsplashTools(Toolkit):
             )
 
         except Exception as e:
-            log_exception(e, "Error tracking download")
+            log_exception("Error tracking download")
             return json.dumps({"error": f"Error tracking download: {e}"})

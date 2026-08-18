@@ -8,6 +8,7 @@ from agno.utils.log import log_debug
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api.proxies import GenericProxyConfig
 except ImportError:
     raise ImportError(
         "`youtube_transcript_api` not installed. Please install using `pip install youtube_transcript_api`"
@@ -24,6 +25,7 @@ class YouTubeTools(Toolkit):
         all: Enable all tools. Defaults to False.
         languages: Preferred languages for transcripts.
         timeout: Request timeout in seconds. Defaults to 30.
+        proxy: Proxy URL for transcript API requests (e.g., "http://user:pass@host:port").
     """
 
     def __init__(
@@ -34,6 +36,7 @@ class YouTubeTools(Toolkit):
         all: bool = False,
         languages: Optional[List[str]] = None,
         timeout: int = 30,
+        proxy: Optional[str] = None,
         **kwargs,
     ):
         # Backwards compat: enable_get_video_X -> get_X
@@ -45,6 +48,10 @@ class YouTubeTools(Toolkit):
             get_timestamps = kwargs.pop("enable_get_video_timestamps")
 
         self.languages: Optional[List[str]] = languages
+
+        # Create transcript API with proxy config if provided
+        proxy_config = GenericProxyConfig(https_url=proxy) if proxy else None
+        self._transcript_api = YouTubeTranscriptApi(proxy_config=proxy_config)
 
         tools: List[Callable] = []
         if all or get_transcript:
@@ -144,14 +151,14 @@ class YouTubeTools(Toolkit):
             return json.dumps({"error": "Error getting video ID from URL, please provide a valid YouTube url"})
 
         try:
-            captions = None
+            if video_id is None:
+                return json.dumps({"error": "No video ID found"})
+
             kwargs: Dict = {}
             if self.languages:
                 kwargs["languages"] = self.languages or ["en"]
-            if video_id is not None:
-                captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
-            else:
-                return json.dumps({"error": "No video ID found"})
+
+            captions = self._transcript_api.fetch(video_id, **kwargs)
             if captions:
                 return json.dumps({"captions": " ".join(line.text for line in captions)})
             return json.dumps({"error": "No captions found for video"})
@@ -185,7 +192,7 @@ class YouTubeTools(Toolkit):
             if self.languages:
                 kwargs["languages"] = self.languages or ["en"]
 
-            captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
+            captions = self._transcript_api.fetch(video_id, **kwargs)
             timestamps = []
             for line in captions:
                 start = int(line.start)

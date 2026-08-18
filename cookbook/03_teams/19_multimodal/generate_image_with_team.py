@@ -10,7 +10,7 @@ from typing import Iterator
 from agno.agent import Agent, RunOutputEvent
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
-from agno.tools.dalle import DalleTools
+from agno.tools.models.openai import OpenAITools
 from agno.utils.common import dataclass_to_dict
 from rich.pretty import pprint
 
@@ -21,7 +21,7 @@ image_generator = Agent(
     name="Image Creator",
     role="Generate images using DALL-E",
     model=OpenAIResponses(id="gpt-5.2"),
-    tools=[DalleTools()],
+    tools=[OpenAITools(generate_image=True)],
     instructions=[
         "Use the DALL-E tool to create high-quality images",
         "Return image URLs in markdown format: `![description](URL)`",

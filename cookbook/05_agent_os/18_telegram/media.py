@@ -16,8 +16,8 @@ from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.os import AgentOS
 from agno.os.interfaces.telegram import Telegram
-from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
+from agno.tools.models.openai import OpenAITools
 
 # ---------------------------------------------------------------------------
 # Create Database
@@ -38,10 +38,11 @@ media_agent = Agent(
     model=Gemini(id="gemini-3.5-flash"),
     db=db,
     tools=[
-        DalleTools(
-            model="dall-e-3",
-            size="1024x1024",
-            quality="standard",
+        OpenAITools(
+            generate_image=True,
+            image_model="dall-e-3",
+            image_size="1024x1024",
+            image_quality="standard",
         ),
         ElevenLabsTools(
             get_voices=False,

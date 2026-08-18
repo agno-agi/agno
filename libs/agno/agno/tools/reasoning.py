@@ -1,3 +1,4 @@
+import json
 from textwrap import dedent
 from typing import Any, List, Optional
 
@@ -111,7 +112,7 @@ Confidence: {step_parsed.confidence}
             return reasoning_step.model_dump_json()
         except Exception as e:
             log_error(f"Error recording thought: {str(e)}")
-            return f"Error recording thought: {e}"
+            return json.dumps({"error": f"Error recording thought: {e}"})
 
     def analyze(
         self,
@@ -183,7 +184,7 @@ Confidence: {step_parsed.confidence}
             return reasoning_step.model_dump_json()
         except Exception as e:
             log_error(f"Error recording analysis: {str(e)}")
-            return f"Error recording analysis: {e}"
+            return json.dumps({"error": f"Error recording analysis: {e}"})
 
     # --------------------------------------------------------------------------------
     # Default instructions and few-shot examples

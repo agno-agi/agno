@@ -4,6 +4,7 @@ from typing import Callable, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
+from agno.utils.serialize import to_json_str
 
 try:
     from linkup import LinkupClient
@@ -58,6 +59,6 @@ class LinkupTools(Toolkit):
             )
             if isinstance(response, str):
                 return response
-            return json.dumps(response)
+            return to_json_str(response)
         except Exception as e:
             return json.dumps({"error": str(e)})

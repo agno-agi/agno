@@ -1,3 +1,4 @@
+import dataclasses
 from dataclasses import asdict
 from typing import Any, List, Optional, Set, Type, Union, get_type_hints
 
@@ -32,13 +33,21 @@ def dataclass_to_dict(dataclass_object, exclude: Optional[set[str]] = None, excl
 
 
 def nested_model_dump(value):
+    """Recursively convert pydantic models and dataclasses to dicts.
+
+    Handles nested structures: dicts, lists, tuples, sets.
+    Uses mode='json' to auto-convert datetime/enum to JSON-compatible types.
+    """
     from pydantic import BaseModel
 
     if isinstance(value, BaseModel):
-        return value.model_dump()
+        return value.model_dump(mode="json")
+    # Dataclasses (e.g. Exa SDK responses) — is_dataclass returns True for classes too, so exclude types
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
     elif isinstance(value, dict):
         return {k: nested_model_dump(v) for k, v in value.items()}
-    elif isinstance(value, list):
+    elif isinstance(value, (list, tuple, set)):
         return [nested_model_dump(item) for item in value]
     return value
 

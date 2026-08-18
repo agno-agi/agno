@@ -141,8 +141,10 @@ class FileTools(Toolkit):
             search_content = kwargs.pop("enable_search_content")
 
         self.base_dir: Path = Path(base_dir).resolve() if base_dir else Path.cwd().resolve()
-        self.base_dir.mkdir(parents=True, exist_ok=True)
         self.restrict_to_base_dir = restrict_to_base_dir
+        # Only create base_dir when write tools are enabled
+        if all or save_file or replace_file_chunk:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
         self.default_extension = default_extension.lstrip(".")
 
         tools: List[Callable] = []
@@ -208,10 +210,21 @@ class FileTools(Toolkit):
             JSON with file path and status or error.
         """
         try:
+            # Treat empty string same as None
+            auto_generated = not file_name
             file_name = file_name or str(uuid4())
             name_path = Path(file_name)
-            ext = (extension or name_path.suffix.lstrip(".") or self.default_extension).lstrip(".")
-            full_name = str(name_path.with_name(f"{name_path.stem}.{ext}"))
+            # Use extension param, or existing suffix, or default only for auto-generated names
+            if extension:
+                ext = extension.lstrip(".")
+                full_name = str(name_path.with_name(f"{name_path.stem}.{ext}"))
+            elif name_path.suffix:
+                full_name = file_name
+            elif auto_generated:
+                full_name = f"{file_name}.{self.default_extension}"
+            else:
+                # User passed explicit name without extension (Makefile, Dockerfile, LICENSE)
+                full_name = file_name
 
             safe, file_path = self.check_escape(full_name)
             if not safe:

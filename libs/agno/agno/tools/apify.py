@@ -7,6 +7,7 @@ import requests
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_exception, log_info
+from agno.utils.serialize import to_json_str
 
 try:
     from apify_client import ApifyClient
@@ -94,7 +95,7 @@ class ApifyTools(Toolkit):
                     run = self.client.run(run_id=run_id)
                     results = run.dataset().list_items(clean=True).items
 
-                    return json.dumps(results)
+                    return to_json_str(results)
 
                 except Exception as e:
                     error_msg = f"Error running Apify Actor {actor_id}: {str(e)}"

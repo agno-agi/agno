@@ -41,16 +41,18 @@ class ElevenLabsTools(Toolkit):
         model_id: str = "eleven_multilingual_v2",
         output_format: ElevenLabsAudioOutputFormat = "mp3_44100_64",
         get_voices: bool = True,
-        generate_sound_effect: bool = True,
+        elevenlabs_generate_sound_effect: bool = True,
         text_to_speech: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
+        # Backwards compat: enable_X -> X and old param names
         if "enable_get_voices" in kwargs:
             get_voices = kwargs.pop("enable_get_voices")
         if "enable_generate_sound_effect" in kwargs:
-            generate_sound_effect = kwargs.pop("enable_generate_sound_effect")
+            elevenlabs_generate_sound_effect = kwargs.pop("enable_generate_sound_effect")
+        if "generate_sound_effect" in kwargs:
+            elevenlabs_generate_sound_effect = kwargs.pop("generate_sound_effect")
         if "enable_text_to_speech" in kwargs:
             text_to_speech = kwargs.pop("enable_text_to_speech")
 
@@ -72,8 +74,8 @@ class ElevenLabsTools(Toolkit):
         tools: List[Callable] = []
         if all or get_voices:
             tools.append(self.elevenlabs_get_voices)
-        if all or generate_sound_effect:
-            tools.append(self.generate_sound_effect)
+        if all or elevenlabs_generate_sound_effect:
+            tools.append(self.elevenlabs_generate_sound_effect)
         if all or text_to_speech:
             tools.append(self.elevenlabs_text_to_speech)
 
@@ -135,7 +137,7 @@ class ElevenLabsTools(Toolkit):
 
         return audio_data
 
-    def generate_sound_effect(self, prompt: str, duration_seconds: Optional[float] = None) -> ToolResult:
+    def elevenlabs_generate_sound_effect(self, prompt: str, duration_seconds: Optional[float] = None) -> ToolResult:
         """Generate a sound effect from a text description.
 
         Args:

@@ -70,17 +70,17 @@ class WebSearchTools(Toolkit):
 
         tools: List[Callable] = []
         if all or search_web:
-            tools.append(self.search_web)
+            tools.append(self.web_search)
         if all or search_news:
             tools.append(self.web_search_news)
 
         super().__init__(name="websearch", tools=tools, **kwargs)
 
         # Backwards compat: old method names
-        self.web_search = self.search_web
+        self.search_web = self.web_search
         self.search_news = self.web_search_news
 
-    def search_web(self, query: str, max_results: int = 5) -> str:
+    def web_search(self, query: str, max_results: int = 5) -> str:
         """Search the web for a query.
 
         Args:

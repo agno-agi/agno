@@ -126,7 +126,7 @@ class AdvisorTools(Toolkit):
         return messages
 
     def _unknown_advisor_error(self, advisor: str) -> str:
-        return f"Error: unknown advisor '{advisor}'. Available advisors: {', '.join(self.advisors.keys())}"
+        return json.dumps({"error": f"Unknown advisor '{advisor}'", "available": list(self.advisors.keys())})
 
     def ask_advisor(self, advisor: str, prompt: str, context: Optional[str] = None) -> str:
         """Ask an advisor model for feedback, a second opinion, or additional context.
@@ -151,7 +151,7 @@ class AdvisorTools(Toolkit):
             return str(response.content) if response.content is not None else ""
         except Exception as e:
             log_error(f"Error asking advisor {advisor}: {e}")
-            return f"Error asking advisor '{advisor}': {e}"
+            return json.dumps({"error": f"Error asking advisor '{advisor}': {e}"})
 
     async def aask_advisor(self, advisor: str, prompt: str, context: Optional[str] = None) -> str:
         """Ask an advisor model for feedback, a second opinion, or additional context.
@@ -176,7 +176,7 @@ class AdvisorTools(Toolkit):
             return str(response.content) if response.content is not None else ""
         except Exception as e:
             log_error(f"Error asking advisor {advisor}: {e}")
-            return f"Error asking advisor '{advisor}': {e}"
+            return json.dumps({"error": f"Error asking advisor '{advisor}': {e}"})
 
     def ask_all_advisors(self, prompt: str, context: Optional[str] = None) -> str:
         """Ask all available advisor models the same question and collect their responses.

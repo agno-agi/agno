@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
+from agno.utils.serialize import to_json_str
 
 
 class JinaReaderToolsConfig(BaseModel):
@@ -70,9 +71,9 @@ class JinaReaderTools(Toolkit):
             response = httpx.get(full_url, headers=self._get_headers())
             response.raise_for_status()
             content = response.json()
-            return self._truncate_content(str(content))
+            return self._truncate_content(to_json_str(content))
         except Exception as e:
-            error_msg = f"Error reading URL: {str(e)}"
+            error_msg = f"Error reading URL: {e}"
             log_error(error_msg)
             return json.dumps({"error": error_msg})
 
@@ -95,9 +96,9 @@ class JinaReaderTools(Toolkit):
             response = httpx.post(full_url, headers=headers, json=body)
             response.raise_for_status()
             content = response.json()
-            return self._truncate_content(str(content))
+            return self._truncate_content(to_json_str(content))
         except Exception as e:
-            error_msg = f"Error performing search: {str(e)}"
+            error_msg = f"Error performing search: {e}"
             log_error(error_msg)
             return json.dumps({"error": error_msg})
 

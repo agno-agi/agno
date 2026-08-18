@@ -96,9 +96,9 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.labels()")
                 labels = [record["label"] for record in result]
             return json.dumps(labels)
-        except Exception:
+        except Exception as e:
             logger.exception("Error listing labels")
-            return json.dumps([])
+            return json.dumps({"error": str(e)})
 
     def list_neo4j_relationship_types(self) -> str:
         """
@@ -113,9 +113,9 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.relationshipTypes()")
                 types = [record["relationshipType"] for record in result]
             return json.dumps(types)
-        except Exception:
+        except Exception as e:
             logger.exception("Error listing relationship types")
-            return json.dumps([])
+            return json.dumps({"error": str(e)})
 
     def get_neo4j_schema(self) -> str:
         """
@@ -130,9 +130,9 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.schema.visualization()")
                 schema_data = result.data()
             return json.dumps(schema_data)
-        except Exception:
+        except Exception as e:
             logger.exception("Error getting Neo4j schema")
-            return json.dumps([])
+            return json.dumps({"error": str(e)})
 
     def run_neo4j_cypher_query(self, query: str) -> str:
         """
@@ -150,6 +150,6 @@ class Neo4jTools(Toolkit):
                 result = session.run(query)  # type: ignore[arg-type]
                 data = result.data()
             return json.dumps(data)
-        except Exception:
+        except Exception as e:
             logger.exception("Error running Cypher query")
-            return json.dumps([])
+            return json.dumps({"error": str(e)})

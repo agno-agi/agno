@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 

@@ -90,7 +90,7 @@ class KnowledgeTools(Toolkit):
             return formatted_thoughts
         except Exception as e:
             log_error(f"Error recording thought: {str(e)}")
-            return f"Error recording thought: {e}"
+            return json.dumps({"error": f"Error recording thought: {e}"})
 
     def search_knowledge(self, run_context: RunContext, query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
@@ -112,7 +112,7 @@ class KnowledgeTools(Toolkit):
             return json.dumps([doc.to_dict() for doc in relevant_docs])
         except Exception as e:
             log_error(f"Error searching knowledge base: {str(e)}")
-            return f"Error searching knowledge base: {e}"
+            return json.dumps({"error": f"Error searching knowledge base: {e}"})
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the returned documents are correct and sufficient.
@@ -146,7 +146,7 @@ class KnowledgeTools(Toolkit):
             return formatted_analysis
         except Exception as e:
             log_error(f"Error recording analysis: {str(e)}")
-            return f"Error recording analysis: {e}"
+            return json.dumps({"error": f"Error recording analysis: {e}"})
 
     DEFAULT_INSTRUCTIONS = dedent("""\
         You have access to the Think, Search, and Analyze tools that will help you search your knowledge for relevant information. Use these tools as frequently as needed to find the most relevant information.

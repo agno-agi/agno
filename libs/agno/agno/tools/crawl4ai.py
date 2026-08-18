@@ -156,7 +156,7 @@ class Crawl4aiTools(Toolkit):
 
                 # Process the result
                 if not result:
-                    return "Error: No content found"
+                    return json.dumps({"error": "No content found"})
 
                 log_debug(f"Result attributes: {dir(result)}")
                 log_debug(f"Result success: {getattr(result, 'success', 'N/A')}")
@@ -180,11 +180,11 @@ class Crawl4aiTools(Toolkit):
                         log_debug("Using text attribute")
                     elif hasattr(result, "html"):
                         log_warning("Only HTML available, no markdown extracted")
-                        return "Error: Could not extract markdown from page"
+                        return json.dumps({"error": "Could not extract markdown from page"})
 
                 if not content:
                     log_warning(f"No content extracted. Result type: {type(result)}")
-                    return "Error: No readable content extracted"
+                    return json.dumps({"error": "No readable content extracted"})
 
                 log_debug(f"Extracted content length: {len(content)}")
 
@@ -196,4 +196,4 @@ class Crawl4aiTools(Toolkit):
 
         except Exception as e:
             log_warning(f"Exception during crawl: {str(e)}")
-            return f"Error crawling {url}: {str(e)}"
+            return json.dumps({"error": f"Error crawling {url}: {e}"})

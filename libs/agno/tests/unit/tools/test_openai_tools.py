@@ -1,4 +1,4 @@
-"""Unit tests for OpenAITools (agno.tools.openai)."""
+"""Unit tests for OpenAITools (agno.tools.models.openai)."""
 
 from unittest.mock import patch
 
@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("openai")
 
-from agno.tools.openai import OpenAITools  # noqa: E402
+from agno.tools.models.openai import OpenAITools  # noqa: E402
 
 
 @pytest.fixture

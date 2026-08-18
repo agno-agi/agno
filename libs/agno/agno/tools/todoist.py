@@ -217,11 +217,11 @@ class TodoistTools(Toolkit):
         """Get all active (not completed) tasks."""
         try:
             tasks_response = self.api.get_tasks()
-            tasks = list(tasks_response)[0]
+            # Flatten all pages from the iterator
             tasks_list = []
-            for task in tasks:
-                task_dict = self._task_to_dict(task)
-                tasks_list.append(task_dict)
+            for page in tasks_response:
+                for task in page:
+                    tasks_list.append(self._task_to_dict(task))
             return json.dumps(tasks_list, default=str)
         except Exception as e:
             log_exception("Failed to get active tasks")
@@ -230,10 +230,13 @@ class TodoistTools(Toolkit):
     def get_projects(self) -> str:
         """Get all projects."""
         try:
-            # get_projects returns Iterator[list[Project]], flatten to list
+            # Flatten all pages from the iterator
             projects_response = self.api.get_projects()
-            projects = list(projects_response)[0]
-            return json.dumps([project.__dict__ for project in projects])
+            projects_list = []
+            for page in projects_response:
+                for project in page:
+                    projects_list.append(project.__dict__)
+            return json.dumps(projects_list)
         except Exception as e:
             log_exception("Failed to get projects")
             return json.dumps({"error": str(e)})

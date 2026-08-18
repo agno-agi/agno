@@ -188,7 +188,7 @@ class CsvTools(Toolkit):
                 rows = query_result.fetchall()
                 result_data = [dict(zip(columns, row)) for row in rows]
                 log_debug(f"Query result: {len(result_data)} rows")
-                return json.dumps({"columns": columns, "rows": result_data})
+                return json.dumps({"columns": columns, "rows": result_data}, default=str)
             except AttributeError:
                 return json.dumps({"result": str(query_result)})
         except Exception as e:

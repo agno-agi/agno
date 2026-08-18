@@ -137,7 +137,7 @@ class DatabaseContextProvider(ContextProvider):
         # default. Writes require mode=default (two-tool surface:
         # query_<id> / update_<id>) or explicit instantiation of a second
         # writable provider.
-        return [SQLTools(db_engine=self.readonly_engine, schema=self.schema)]
+        return [SQLTools(db_engine=self.readonly_engine, schema=self.schema, run_sql_query=True)]
 
     # ------------------------------------------------------------------
     # Sub-agents
@@ -166,7 +166,7 @@ class DatabaseContextProvider(ContextProvider):
             name=f"{self.name} Read",
             model=self.model,
             instructions=self.read_instructions_text.replace("{schema}", schema_label),
-            tools=[SQLTools(db_engine=self.readonly_engine, schema=self.schema)],
+            tools=[SQLTools(db_engine=self.readonly_engine, schema=self.schema, run_sql_query=True)],
             markdown=True,
         )
 
@@ -177,7 +177,7 @@ class DatabaseContextProvider(ContextProvider):
             name=f"{self.name} Write",
             model=self.model,
             instructions=self.write_instructions_text.replace("{schema}", schema_label),
-            tools=[SQLTools(db_engine=self.sql_engine, schema=self.schema)],
+            tools=[SQLTools(db_engine=self.sql_engine, schema=self.schema, run_sql_query=True)],
             markdown=True,
         )
 

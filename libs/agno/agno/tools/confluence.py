@@ -6,6 +6,7 @@ import requests
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
+from agno.utils.serialize import to_json_str
 
 try:
     from atlassian import Confluence
@@ -116,7 +117,7 @@ class ConfluenceTools(Toolkit):
             page = self.confluence.get_page_by_title(key, page_title, expand=expand)
             if page:
                 log_info(f"Successfully retrieved page '{page_title}' from space '{space_name}'")
-                return json.dumps(page)
+                return to_json_str(page)
 
             logger.warning(f"Page '{page_title}' not found in space '{space_name}'")
             return json.dumps({"error": f"Page '{page_title}' not found in space '{space_name}'"})

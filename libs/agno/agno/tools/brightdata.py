@@ -129,7 +129,7 @@ class BrightDataTools(Toolkit):
             content = self._make_request(payload)
             return content
         except Exception as e:
-            return f"Error scraping URL {url}: {e}"
+            return json.dumps({"error": f"Error scraping URL {url}: {e}"})
 
     def get_screenshot(self, agent: Agent, url: str, output_path: str = "screenshot.png") -> ToolResult:
         """Capture a screenshot of a webpage.
@@ -249,7 +249,7 @@ class BrightDataTools(Toolkit):
             content = self._make_request(payload)
             return content
         except Exception as e:
-            return f"Error searching for query {query}: {e}"
+            return json.dumps({"error": f"Error searching for query {query}: {e}"})
 
     def web_data_feed(
         self,
@@ -373,7 +373,7 @@ class BrightDataTools(Toolkit):
                     attempts += 1
                     time.sleep(1)
 
-            return f"Timeout after {max_attempts} seconds waiting for {source_type} data"
+            return json.dumps({"error": f"Timeout after {max_attempts} seconds waiting for {source_type} data"})
 
         except Exception as e:
-            return f"Error retrieving {source_type} data from {url}: {e}"
+            return json.dumps({"error": f"Error retrieving {source_type} data from {url}: {e}"})

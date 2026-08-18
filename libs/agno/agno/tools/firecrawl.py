@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
+from agno.utils.serialize import to_json_str
 
 try:
     from firecrawl import FirecrawlApp  # type: ignore[attr-defined]
@@ -101,7 +102,7 @@ class FirecrawlTools(Toolkit):
             params["formats"] = self.formats
 
         scrape_result = self.app.scrape(url, **params)
-        return json.dumps(scrape_result.model_dump(), cls=CustomJSONEncoder)
+        return to_json_str(scrape_result)
 
     def firecrawl_crawl_website(self, url: str, limit: Optional[int] = None) -> str:
         """Crawl a website using Firecrawl.
@@ -124,7 +125,7 @@ class FirecrawlTools(Toolkit):
         params["poll_interval"] = self.poll_interval
 
         crawl_result = self.app.crawl(url, **params)
-        return json.dumps(crawl_result.model_dump(), cls=CustomJSONEncoder)
+        return to_json_str(crawl_result)
 
     def map_website(self, url: str) -> str:
         """Map a website using Firecrawl.
@@ -136,7 +137,7 @@ class FirecrawlTools(Toolkit):
             JSON with site map.
         """
         map_result = self.app.map(url)
-        return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder)
+        return to_json_str(map_result)
 
     def firecrawl_search_web(self, query: str, limit: Optional[int] = None) -> str:
         """Search the web using Firecrawl.
@@ -167,4 +168,4 @@ class FirecrawlTools(Toolkit):
             else:
                 return json.dumps({"error": f"Firecrawl search failed: {search_result.error}"})
         else:
-            return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
+            return to_json_str(search_result)
