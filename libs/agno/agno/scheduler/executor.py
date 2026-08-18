@@ -106,13 +106,64 @@ class ScheduleExecutor:
             schedule_id = sched.id
             # A control-plane-managed schedule must fire the exact component its
             # provenance names: a repointed endpoint under an old target is
-            # refused rather than executed.
+            # refused rather than executed. The refusal must be visible, so it
+            # is recorded as a failed run and the schedule is disabled with a
+            # reason instead of silently re-arming on every tick.
             if sched.managed_by is not None and sched.target_type and sched.target_id:
                 if not match_run_endpoint(sched.endpoint, sched.target_type, sched.target_id):
-                    raise RuntimeError(
+                    last_error = (
                         f"Schedule {sched.id} endpoint {sched.endpoint!r} does not match its "
                         f"provenance target {sched.target_type}:{sched.target_id}; refusing to execute"
                     )
+                    log_error(last_error)
+
+                    run_record_id = str(uuid4())
+                    now = int(time.time())
+                    run_dict = {
+                        "id": run_record_id,
+                        "schedule_id": schedule_id,
+                        "attempt": 1,
+                        "triggered_at": now,
+                        "completed_at": None,
+                        "status": "running",
+                        "status_code": None,
+                        "run_id": None,
+                        "session_id": None,
+                        "error": None,
+                        "input": None,
+                        "output": None,
+                        "requirements": None,
+                        # Denormalised from the parent Schedule so the runs router can scope without a JOIN
+                        "user_id": sched.user_id,
+                        "created_at": now,
+                    }
+                    if asyncio.iscoroutinefunction(getattr(db, "create_schedule_run", None)):
+                        await db.create_schedule_run(run_dict)
+                    else:
+                        db.create_schedule_run(run_dict)
+
+                    drift_updates: Dict[str, Any] = {
+                        "completed_at": int(time.time()),
+                        "status": "failed",
+                        "error": last_error,
+                    }
+                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                        await db.update_schedule_run(run_record_id, **drift_updates)
+                    else:
+                        db.update_schedule_run(run_record_id, **drift_updates)
+
+                    disabled_reason = f"endpoint_drift:{sched.endpoint}!={sched.target_type}:{sched.target_id}"
+                    try:
+                        if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
+                            await db.update_schedule(schedule_id, enabled=False, disabled_reason=disabled_reason)
+                        else:
+                            db.update_schedule(schedule_id, enabled=False, disabled_reason=disabled_reason)
+                    except Exception as exc:
+                        log_error(f"Failed to disable schedule {schedule_id} after endpoint drift: {exc}")
+
+                    final_run = dict(run_dict)
+                    final_run.update(drift_updates)
+                    return final_run
             max_attempts = max(1, (sched.max_retries or 0) + 1)
             retry_delay = sched.retry_delay_seconds or 60
             for attempt in range(1, max_attempts + 1):

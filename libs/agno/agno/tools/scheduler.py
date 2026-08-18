@@ -21,12 +21,87 @@ Example:
 import asyncio
 import json
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from agno.db.schemas.scheduler import Schedule
 from agno.run import RunContext
 from agno.scheduler.manager import ScheduleManager
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
+
+
+def _parse_target_archived_reason(disabled_reason: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Parse a system ``target_archived:<type>:<id>`` disabled_reason into (type, id)."""
+    if not disabled_reason or not disabled_reason.startswith("target_archived:"):
+        return None
+    parts = disabled_reason.split(":", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        return None
+    return parts[1], parts[2]
+
+
+def _is_archived_component(row: Optional[Dict[str, Any]]) -> bool:
+    """True only for a real archived row: present, with ``deleted_at`` set."""
+    return row is not None and row.get("deleted_at") is not None
+
+
+def archived_target_refusal(db: Any, schedule: Schedule) -> Optional[Tuple[str, str]]:
+    """(type, id) of the still-archived component that blocks enabling *schedule*, else None.
+
+    Enable is refused if and only if the schedule's provenance target, or the
+    target named by a system ``target_archived:<type>:<id>`` disabled_reason,
+    resolves to a component row whose ``deleted_at`` is set. A missing catalog
+    row is a live code-defined target (allow); a target that was restored or
+    hard-deleted no longer blocks; adapters without a component catalog
+    (``get_component`` raising NotImplementedError) allow.
+
+    The REST enable route applies this same predicate; keep them identical.
+    """
+    if db is None:
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+
+    def _archived(component_id: str) -> bool:
+        try:
+            return _is_archived_component(get_component(component_id, include_deleted=True))
+        except NotImplementedError:
+            return False
+
+    if schedule.target_id is not None and _archived(schedule.target_id):
+        return schedule.target_type or "component", schedule.target_id
+    parsed = _parse_target_archived_reason(schedule.disabled_reason)
+    if parsed is not None and _archived(parsed[1]):
+        return parsed
+    return None
+
+
+async def aarchived_target_refusal(db: Any, schedule: Schedule) -> Optional[Tuple[str, str]]:
+    """Async variant of ``archived_target_refusal``; same predicate."""
+    if db is None:
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+
+    async def _archived(component_id: str) -> bool:
+        try:
+            if asyncio.iscoroutinefunction(get_component):
+                row = await get_component(component_id, include_deleted=True)
+            else:
+                # A sync adapter would hold the event loop for the whole query
+                row = await asyncio.to_thread(get_component, component_id, include_deleted=True)
+            return _is_archived_component(row)
+        except NotImplementedError:
+            return False
+
+    if schedule.target_id is not None and await _archived(schedule.target_id):
+        return schedule.target_type or "component", schedule.target_id
+    parsed = _parse_target_archived_reason(schedule.disabled_reason)
+    if parsed is not None and await _archived(parsed[1]):
+        return parsed
+    return None
 
 
 class SchedulerTools(Toolkit):
@@ -287,21 +362,22 @@ class SchedulerTools(Toolkit):
             existing = self.manager.get(schedule_id, user_id=self._owner(run_context))
             if existing is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
-            # A schedule whose provenance target is archived can only 404 at
-            # fire time; restoring the component is the way to turn it back on.
-            if existing.target_id is not None and self.manager.db is not None:
-                try:
-                    target = self.manager.db.get_component(existing.target_id)
-                except NotImplementedError:
-                    target = {"component_id": existing.target_id}
-                if target is None:
-                    return json.dumps(
-                        {
-                            "error": f"Cannot enable '{existing.name}': its target "
-                            f"{existing.target_type} '{existing.target_id}' is archived or gone. "
-                            "Restore the component first."
-                        }
-                    )
+            # A schedule aimed at an archived component can only 404 at fire
+            # time; restoring the component is the way to turn it back on. A
+            # target without a catalog row is a live code-defined component.
+            refusal = archived_target_refusal(self.manager.db, existing)
+            if refusal is not None:
+                target_type, target_id = refusal
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': its target "
+                        f"{target_type} '{target_id}' is archived. "
+                        "Restore the component first.",
+                        "error_type": "target_archived",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    }
+                )
             schedule = self.manager.enable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -573,28 +649,22 @@ class SchedulerTools(Toolkit):
             existing = await self.manager.aget(schedule_id, user_id=self._owner(run_context))
             if existing is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
-            # A schedule whose provenance target is archived can only 404 at
-            # fire time; restoring the component is the way to turn it back on.
-            if existing.target_id is not None and self.manager.db is not None:
-                get_component = getattr(self.manager.db, "get_component", None)
-                try:
-                    target = (
-                        await get_component(existing.target_id)
-                        if asyncio.iscoroutinefunction(get_component)
-                        else get_component(existing.target_id)
-                        if get_component
-                        else None
-                    )
-                except NotImplementedError:
-                    target = {"component_id": existing.target_id}
-                if target is None:
-                    return json.dumps(
-                        {
-                            "error": f"Cannot enable '{existing.name}': its target "
-                            f"{existing.target_type} '{existing.target_id}' is archived or gone. "
-                            "Restore the component first."
-                        }
-                    )
+            # A schedule aimed at an archived component can only 404 at fire
+            # time; restoring the component is the way to turn it back on. A
+            # target without a catalog row is a live code-defined component.
+            refusal = await aarchived_target_refusal(self.manager.db, existing)
+            if refusal is not None:
+                target_type, target_id = refusal
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': its target "
+                        f"{target_type} '{target_id}' is archived. "
+                        "Restore the component first.",
+                        "error_type": "target_archived",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    }
+                )
             schedule = await self.manager.aenable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})

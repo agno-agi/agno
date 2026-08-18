@@ -306,6 +306,21 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # Re-arming puts the endpoint back on the poller, so it needs the same permission as creating it.
         _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
 
+        # A schedule aimed at an archived component can only 404 at fire time;
+        # refuse the re-arm until the component is restored. Identical
+        # predicate to the Studio tool (SchedulerTools.enable_schedule).
+        from agno.db.schemas.scheduler import Schedule
+        from agno.tools.scheduler import aarchived_target_refusal
+
+        refusal = await aarchived_target_refusal(os_db, Schedule.from_dict(existing))
+        if refusal is not None:
+            target_type, target_id = refusal
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot enable schedule '{existing.get('name') or schedule_id}': its target "
+                f"{target_type} '{target_id}' is archived. Restore the component first.",
+            )
+
         _check_scheduler_deps()
         from agno.scheduler.cron import compute_next_run
 

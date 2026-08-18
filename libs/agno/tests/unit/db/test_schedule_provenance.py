@@ -139,6 +139,17 @@ class TestDisableForTarget:
         assert row["enabled"] in (True, 1)
         assert row["disabled_reason"] is None
 
+    def test_cascade_reason_round_trips_through_the_enable_guard_parser(self, db):
+        # The enable guard (SchedulerTools / the REST enable route) parses the
+        # cascade's reason back into (type, id); the writer and the parser must
+        # not drift.
+        from agno.tools.scheduler import _parse_target_archived_reason
+
+        _mk(db, "parsed")
+        db.disable_schedules_for_target("agent", "analyst", reason="target_archived:agent:analyst")
+        row = db.get_schedule("sched-parsed")
+        assert _parse_target_archived_reason(row["disabled_reason"]) == ("agent", "analyst")
+
 
 class TestRunEndpointHelpers:
     """The single builder/matcher pair, so builder and parser cannot drift."""
