@@ -10,58 +10,29 @@ from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 from agno.utils.string import generate_id_from_name
 
-# Legacy parameter support for Agno 2.x → 3.0 migration.
-#
-# Agno 2.x used `enable_*` prefixes for tool flags:
-#   SlackTools(enable_send_message=True)
-#
-# Agno 3.0 dropped the prefix:
-#   SlackTools(send_message=True)
-#
-# This shim accepts both styles, remapping old names to new with a deprecation
-# warning. The remapping happens BEFORE Python binds the function signature,
-# which is the only way to correctly handle the case where both old and new
-# names are passed (new wins).
-#
-# Most toolkits need no extra code — the shim strips "enable_" automatically.
-# Toolkits where the new name isn't just the stripped prefix (e.g. WebSearchTools
-# where enable_search → search_web) define _legacy_param_aliases to override.
-#
-# The mechanism: Toolkit.__init_subclass__ wraps every subclass's __init__ at
-# class definition time. The wrapper intercepts kwargs, remaps legacy names,
-# then calls the original __init__ with the transformed kwargs.
+# 2.x → 3.0 backcompat: remap enable_* params to their new names.
+# Custom mappings go in _legacy_param_aliases on the toolkit class.
 
 
 def _remap_legacy_kwargs(cls: type, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    """Transform 2.x constructor kwargs to their 3.0 equivalents.
-
-    Only touches params that start with "enable_" or are in _legacy_param_aliases.
-    Everything else (timeout, api_key, etc.) passes through untouched.
-
-    Example:
-        Input:  {"enable_search": True, "timeout": 30}
-        Output: {"search_web": True, "timeout": 30}
-    """
+    """Remap 2.x enable_* kwargs to 3.0 names. Non-legacy params pass through."""
     aliases: Dict[str, Optional[str]] = getattr(cls, "_legacy_param_aliases", {})
     result = dict(kwargs)
 
     for key in list(result.keys()):
-        # Determine if this is a legacy param and what it maps to
+        # 1. Find target name (from aliases or by stripping enable_)
         if key in aliases:
             target = aliases[key]
             if target is None:
-                # Explicitly removed, no replacement
                 continue
         elif key.startswith("enable_"):
             target = key.removeprefix("enable_")
         else:
-            # Not a legacy param, leave it alone
             continue
 
-        # Remap the value
+        # 2. Remap: pop old key, set new key (unless new key already exists)
         value = result.pop(key)
         if target in result:
-            # User passed both old and new — new wins
             log_warning(f"Both `{key}` and `{target}` passed; using `{target}`.")
         else:
             log_warning(f"`{key}` is deprecated; use `{target}`.")
@@ -71,12 +42,7 @@ def _remap_legacy_kwargs(cls: type, kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _wrap_init_for_legacy_support(cls: type, original_init: Callable) -> Callable:
-    """Wrap a toolkit's __init__ to accept 2.x parameter names.
-
-    Called once per toolkit class at definition time (via __init_subclass__).
-    The wrapper intercepts kwargs before Python binds them to the function
-    signature, transforms legacy names, then calls the original __init__.
-    """
+    """Wrap __init__ to remap legacy kwargs before calling original."""
 
     @wraps(original_init)
     def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
