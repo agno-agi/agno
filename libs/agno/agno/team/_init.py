@@ -27,6 +27,32 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
+from agno.config import (
+    CallableCacheConfig,
+    DelegationConfig,
+    FollowupConfig,
+    HistoryConfig,
+    KnowledgeConfig,
+    MemoryConfig,
+    ParsingConfig,
+    ReasoningConfig,
+    RetryConfig,
+    SessionConfig,
+    StorageConfig,
+    resolve_callable_cache_settings,
+    resolve_compression_settings,
+    resolve_delegation_settings,
+    resolve_followup_settings,
+    resolve_history_settings,
+    resolve_knowledge_settings,
+    resolve_memory_settings,
+    resolve_parsing_settings,
+    resolve_reasoning_settings,
+    resolve_retry_settings,
+    resolve_session_settings,
+    resolve_storage_settings,
+    warn_unsupported_config_fields,
+)
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -70,12 +96,14 @@ def __init__(
     fallback_models: Optional[List[Union[Model, str]]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
+    delegation: Optional[DelegationConfig] = None,
     mode: Optional["TeamMode"] = None,
     respond_directly: bool = False,
     determine_input_for_members: bool = True,
     delegate_to_all_members: bool = False,
     max_iterations: int = 10,
     user_id: Optional[str] = None,
+    session: Optional[SessionConfig] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     add_session_state_to_context: bool = False,
@@ -107,6 +135,7 @@ def __init__(
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: bool = False,
     knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
+    knowledge_config: Optional[KnowledgeConfig] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_knowledge_to_context: bool = False,
     enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -118,10 +147,12 @@ def __init__(
     search_knowledge: bool = True,
     add_search_knowledge_instructions: bool = True,
     read_chat_history: bool = False,
+    storage: Optional[StorageConfig] = None,
     store_media: bool = True,
     store_tool_messages: bool = True,
     store_history_messages: bool = False,
     send_media_to_model: bool = True,
+    history: Optional[Union[bool, HistoryConfig]] = None,
     add_history_to_context: bool = False,
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
@@ -135,6 +166,7 @@ def __init__(
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
     input_schema: Optional[Type[BaseModel]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    parsing: Optional[ParsingConfig] = None,
     parser_model: Optional[Union[Model, str]] = None,
     parser_model_prompt: Optional[str] = None,
     output_model: Optional[Union[Model, str]] = None,
@@ -143,6 +175,7 @@ def __init__(
     parse_response: bool = True,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
+    memory: Optional[Union[bool, MemoryManager, MemoryConfig]] = None,
     enable_agentic_memory: bool = False,
     update_memory_on_run: bool = False,
     add_memories_to_context: Optional[bool] = None,
@@ -152,15 +185,15 @@ def __init__(
     add_session_summary_to_context: Optional[bool] = None,
     learning: Optional[Union[bool, LearningMachine]] = None,
     add_learnings_to_context: bool = True,
-    compress_tool_results: bool = False,
+    compress_tool_results: Union[bool, CompressionManager] = False,
     compression_manager: Optional["CompressionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    reasoning: bool = False,
+    reasoning: Union[bool, ReasoningConfig] = False,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
     reasoning_min_steps: int = 1,
     reasoning_max_steps: int = 10,
-    followups: bool = False,
+    followups: Union[bool, FollowupConfig] = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
     stream: Optional[bool] = None,
@@ -172,11 +205,12 @@ def __init__(
     debug_mode: bool = False,
     debug_level: Literal[1, 2] = 1,
     show_members_responses: bool = False,
+    retry: Optional[RetryConfig] = None,
     retries: int = 0,
     delay_between_retries: int = 1,
     exponential_backoff: bool = False,
     telemetry: bool = True,
-    cache_callables: bool = True,
+    cache_callables: Union[bool, CallableCacheConfig] = True,
     callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
     callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
     callable_members_cache_key: Optional[Callable[..., Optional[str]]] = None,
@@ -199,10 +233,27 @@ def __init__(
     team.id = id
     team.role = role
 
-    team.respond_directly = respond_directly
-    team.determine_input_for_members = determine_input_for_members
-    team.delegate_to_all_members = delegate_to_all_members
-    team.max_iterations = max_iterations
+    _delegation = resolve_delegation_settings(
+        delegation,
+        mode=mode,
+        respond_directly=respond_directly,
+        determine_input_for_members=determine_input_for_members,
+        delegate_to_all_members=delegate_to_all_members,
+        max_iterations=max_iterations,
+        add_team_history_to_members=add_team_history_to_members,
+        num_team_history_runs=num_team_history_runs,
+        share_member_interactions=share_member_interactions,
+        add_member_tools_to_context=add_member_tools_to_context,
+        get_member_information_tool=get_member_information_tool,
+        store_member_responses=store_member_responses,
+        stream_member_events=stream_member_events,
+        show_members_responses=show_members_responses,
+    )
+    mode = _delegation["mode"]
+    team.respond_directly = _delegation["respond_directly"]
+    team.determine_input_for_members = _delegation["determine_input_for_members"]
+    team.delegate_to_all_members = _delegation["delegate_to_all_members"]
+    team.max_iterations = _delegation["max_iterations"]
 
     # Resolve TeamMode: explicit mode wins, otherwise infer from booleans
     from agno.team.mode import TeamMode
@@ -227,32 +278,56 @@ def __init__(
         else:
             team.mode = TeamMode.coordinate
 
+    _session = resolve_session_settings(
+        session,
+        session_id=session_id,
+        session_state=session_state,
+        add_session_state_to_context=add_session_state_to_context,
+        enable_agentic_state=enable_agentic_state,
+        overwrite_db_session_state=overwrite_db_session_state,
+        cache_session=cache_session,
+        enable_session_summaries=enable_session_summaries,
+        session_summary_manager=session_summary_manager,
+        add_session_summary_to_context=add_session_summary_to_context,
+    )
     team.user_id = user_id
-    team.session_id = session_id
-    team.session_state = session_state
-    team.add_session_state_to_context = add_session_state_to_context
-    team.enable_agentic_state = enable_agentic_state
-    team.overwrite_db_session_state = overwrite_db_session_state
+    team.session_id = _session["session_id"]
+    team.session_state = _session["session_state"]
+    team.add_session_state_to_context = _session["add_session_state_to_context"]
+    team.enable_agentic_state = _session["enable_agentic_state"]
+    team.overwrite_db_session_state = _session["overwrite_db_session_state"]
     team.resolve_in_context = resolve_in_context
-    team.cache_session = cache_session
+    team.cache_session = _session["cache_session"]
 
-    team.add_history_to_context = add_history_to_context
-    team.num_history_runs = num_history_runs
-    team.num_history_messages = num_history_messages
+    warn_unsupported_config_fields("history", "Team", history, ["read_tool_call_history"])
+    _history = resolve_history_settings(
+        history,
+        add_history_to_context=add_history_to_context,
+        num_history_runs=num_history_runs,
+        num_history_messages=num_history_messages,
+        max_tool_calls_from_history=max_tool_calls_from_history,
+        read_chat_history=read_chat_history,
+        search_past_sessions=search_past_sessions,
+        num_past_sessions_to_search=num_past_sessions_to_search,
+        num_past_session_runs_in_search=num_past_session_runs_in_search,
+    )
+    team.add_history_to_context = _history["add_history_to_context"]
+    team.num_history_runs = _history["num_history_runs"]
+    team.num_history_messages = _history["num_history_messages"]
     if team.num_history_messages is not None and team.num_history_runs is not None:
         log_warning("num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs.")
         team.num_history_messages = None
     if team.num_history_messages is None and team.num_history_runs is None:
         team.num_history_runs = 3
 
-    team.max_tool_calls_from_history = max_tool_calls_from_history
+    team.max_tool_calls_from_history = _history["max_tool_calls_from_history"]
 
-    team.add_team_history_to_members = add_team_history_to_members
-    team.num_team_history_runs = num_team_history_runs
+    team.add_team_history_to_members = _delegation["add_team_history_to_members"]
+    team.num_team_history_runs = _delegation["num_team_history_runs"]
 
-    team.search_past_sessions = search_past_sessions
-    team.num_past_sessions_to_search = num_past_sessions_to_search
-    team.num_past_session_runs_in_search = num_past_session_runs_in_search
+    team.search_past_sessions = _history["search_past_sessions"]
+    team.num_past_sessions_to_search = _history["num_past_sessions_to_search"]
+    team.num_past_session_runs_in_search = _history["num_past_session_runs_in_search"]
 
     team.description = description
     team.instructions = instructions
@@ -265,7 +340,7 @@ def __init__(
     team.datetime_format = datetime_format
     team.add_name_to_context = add_name_to_context
     team.timezone_identifier = timezone_identifier
-    team.add_member_tools_to_context = add_member_tools_to_context
+    team.add_member_tools_to_context = _delegation["add_member_tools_to_context"]
     team.system_message = system_message
     team.system_message_role = system_message_role
     team.introduction = introduction
@@ -274,23 +349,43 @@ def __init__(
     team.dependencies = dependencies
     team.add_dependencies_to_context = add_dependencies_to_context
 
+    _knowledge = resolve_knowledge_settings(
+        knowledge_config,
+        knowledge_filters=knowledge_filters,
+        enable_agentic_knowledge_filters=enable_agentic_knowledge_filters,
+        add_knowledge_to_context=add_knowledge_to_context,
+        knowledge_retriever=knowledge_retriever,
+        references_format=references_format,
+        search_knowledge=search_knowledge,
+        add_search_knowledge_instructions=add_search_knowledge_instructions,
+        update_knowledge=update_knowledge,
+    )
     team.knowledge = knowledge
-    team.knowledge_filters = knowledge_filters
-    team.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
-    team.update_knowledge = update_knowledge
-    team.add_knowledge_to_context = add_knowledge_to_context
-    team.knowledge_retriever = knowledge_retriever
-    team.references_format = references_format
+    team.knowledge_filters = _knowledge["knowledge_filters"]
+    team.enable_agentic_knowledge_filters = _knowledge["enable_agentic_knowledge_filters"]
+    team.update_knowledge = _knowledge["update_knowledge"]
+    team.add_knowledge_to_context = _knowledge["add_knowledge_to_context"]
+    team.knowledge_retriever = _knowledge["knowledge_retriever"]
+    team.references_format = _knowledge["references_format"]
 
-    team.share_member_interactions = share_member_interactions
-    team.get_member_information_tool = get_member_information_tool
-    team.search_knowledge = search_knowledge
-    team.add_search_knowledge_instructions = add_search_knowledge_instructions
-    team.read_chat_history = read_chat_history
+    team.share_member_interactions = _delegation["share_member_interactions"]
+    team.get_member_information_tool = _delegation["get_member_information_tool"]
+    team.search_knowledge = _knowledge["search_knowledge"]
+    team.add_search_knowledge_instructions = _knowledge["add_search_knowledge_instructions"]
+    team.read_chat_history = _history["read_chat_history"]
 
-    team.store_media = store_media
-    team.store_tool_messages = store_tool_messages
-    team.store_history_messages = store_history_messages
+    warn_unsupported_config_fields("storage", "Team", storage, ["executor_outputs"])
+    _storage = resolve_storage_settings(
+        storage,
+        store_media=store_media,
+        store_tool_messages=store_tool_messages,
+        store_history_messages=store_history_messages,
+        store_events=store_events,
+        events_to_skip=events_to_skip,
+    )
+    team.store_media = _storage["store_media"]
+    team.store_tool_messages = _storage["store_tool_messages"]
+    team.store_history_messages = _storage["store_history_messages"]
     team.send_media_to_model = send_media_to_model
 
     team.skills = skills
@@ -309,72 +404,105 @@ def __init__(
     team.pre_hooks = pre_hooks
     team.post_hooks = post_hooks
 
+    warn_unsupported_config_fields("parsing", "Team", parsing, ["structured_outputs"])
+    _parsing = resolve_parsing_settings(
+        parsing,
+        parser_model=parser_model,
+        parser_model_prompt=parser_model_prompt,
+        output_model=output_model,
+        output_model_prompt=output_model_prompt,
+        parse_response=parse_response,
+        use_json_mode=use_json_mode,
+    )
     team.input_schema = input_schema
     team.output_schema = output_schema
-    team.parser_model = parser_model  # type: ignore[assignment]
-    team.parser_model_prompt = parser_model_prompt
-    team.output_model = output_model  # type: ignore[assignment]
-    team.output_model_prompt = output_model_prompt
-    team.use_json_mode = use_json_mode
-    team.parse_response = parse_response
+    team.parser_model = _parsing["parser_model"]
+    team.parser_model_prompt = _parsing["parser_model_prompt"]
+    team.output_model = _parsing["output_model"]
+    team.output_model_prompt = _parsing["output_model_prompt"]
+    team.use_json_mode = _parsing["use_json_mode"]
+    team.parse_response = _parsing["parse_response"]
 
     team.db = db
     team.checkpoint = checkpoint
 
-    team.enable_agentic_memory = enable_agentic_memory
-    team.update_memory_on_run = update_memory_on_run
+    _memory = resolve_memory_settings(
+        memory,
+        memory_manager=memory_manager,
+        enable_agentic_memory=enable_agentic_memory,
+        update_memory_on_run=update_memory_on_run,
+        add_memories_to_context=add_memories_to_context,
+    )
+    team.enable_agentic_memory = _memory["enable_agentic_memory"]
+    team.update_memory_on_run = _memory["update_memory_on_run"]
 
-    team.add_memories_to_context = add_memories_to_context
-    team.memory_manager = memory_manager
-    team.enable_session_summaries = enable_session_summaries
-    team.session_summary_manager = session_summary_manager
-    team.add_session_summary_to_context = add_session_summary_to_context
+    team.add_memories_to_context = _memory["add_memories_to_context"]
+    team.memory_manager = _memory["memory_manager"]
+
+    team.enable_session_summaries = _session["enable_session_summaries"]
+    team.session_summary_manager = _session["session_summary_manager"]
+    team.add_session_summary_to_context = _session["add_session_summary_to_context"]
 
     team.learning = learning
     team.add_learnings_to_context = add_learnings_to_context
 
     # Context compression settings
-    team.compress_tool_results = compress_tool_results
-    team.compression_manager = compression_manager
+    team.compress_tool_results, team.compression_manager = resolve_compression_settings(
+        compress_tool_results, compression_manager=compression_manager
+    )
 
     team.metadata = metadata
 
-    team.reasoning = reasoning
-    team.reasoning_model = reasoning_model  # type: ignore[assignment]
-    team.reasoning_agent = reasoning_agent
-    team.reasoning_min_steps = reasoning_min_steps
-    team.reasoning_max_steps = reasoning_max_steps
+    team.reasoning, _reasoning = resolve_reasoning_settings(
+        reasoning,
+        reasoning_model=reasoning_model,
+        reasoning_agent=reasoning_agent,
+        reasoning_min_steps=reasoning_min_steps,
+        reasoning_max_steps=reasoning_max_steps,
+    )
+    team.reasoning_model = _reasoning["reasoning_model"]
+    team.reasoning_agent = _reasoning["reasoning_agent"]
+    team.reasoning_min_steps = _reasoning["reasoning_min_steps"]
+    team.reasoning_max_steps = _reasoning["reasoning_max_steps"]
 
-    team.followups = followups
-    if num_followups < 1:
+    team.followups, _followups = resolve_followup_settings(
+        followups, num_followups=num_followups, followup_model=followup_model
+    )
+    if _followups["num_followups"] < 1:
         raise ValueError("num_followups must be at least 1")
-    team.num_followups = num_followups
-    team.followup_model = followup_model  # type: ignore[assignment]
+    team.num_followups = _followups["num_followups"]
+    team.followup_model = _followups["followup_model"]
 
     team.stream = stream
     team.stream_events = stream_events
-    team.store_events = store_events
-    team.store_member_responses = store_member_responses
+    team.store_events = _storage["store_events"]
+    team.store_member_responses = _delegation["store_member_responses"]
 
-    team.events_to_skip = events_to_skip
+    team.events_to_skip = _storage["events_to_skip"]
     if team.events_to_skip is None:
         team.events_to_skip = [
             RunEvent.run_content,
             TeamRunEvent.run_content,
             TeamRunEvent.run_intermediate_content,
         ]
-    team.stream_member_events = stream_member_events
+    team.stream_member_events = _delegation["stream_member_events"]
 
     team.debug_mode = debug_mode
     if debug_level not in [1, 2]:
         log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
         debug_level = 1
     team.debug_level = debug_level
-    team.show_members_responses = show_members_responses
+    team.show_members_responses = _delegation["show_members_responses"]
 
-    team.retries = retries
-    team.delay_between_retries = delay_between_retries
-    team.exponential_backoff = exponential_backoff
+    _retry = resolve_retry_settings(
+        retry,
+        retries=retries,
+        delay_between_retries=delay_between_retries,
+        exponential_backoff=exponential_backoff,
+    )
+    team.retries = _retry["retries"]
+    team.delay_between_retries = _retry["delay_between_retries"]
+    team.exponential_backoff = _retry["exponential_backoff"]
 
     team.telemetry = telemetry
 
@@ -410,10 +538,15 @@ def __init__(
     team._background_executor = None
 
     # Callable factory settings
-    team.cache_callables = cache_callables
-    team.callable_tools_cache_key = callable_tools_cache_key
-    team.callable_knowledge_cache_key = callable_knowledge_cache_key
-    team.callable_members_cache_key = callable_members_cache_key
+    team.cache_callables, _callable_cache = resolve_callable_cache_settings(
+        cache_callables,
+        callable_tools_cache_key=callable_tools_cache_key,
+        callable_knowledge_cache_key=callable_knowledge_cache_key,
+        callable_members_cache_key=callable_members_cache_key,
+    )
+    team.callable_tools_cache_key = _callable_cache["callable_tools_cache_key"]
+    team.callable_knowledge_cache_key = _callable_cache["callable_knowledge_cache_key"]
+    team.callable_members_cache_key = _callable_cache["callable_members_cache_key"]
     team._callable_tools_cache = {}
     team._callable_knowledge_cache = {}
     team._callable_members_cache = {}

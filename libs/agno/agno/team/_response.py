@@ -735,7 +735,7 @@ def reason(
     Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
     default Chain-of-Thought reasoning with a clean, unified interface.
     """
-    from agno.reasoning.manager import ReasoningConfig, ReasoningManager
+    from agno.reasoning.manager import ReasoningManager, ReasoningManagerConfig
 
     # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = team.reasoning_model
@@ -746,7 +746,7 @@ def reason(
 
     # Create reasoning manager with config
     manager = ReasoningManager(
-        ReasoningConfig(
+        ReasoningManagerConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=team.reasoning_agent,
             min_steps=team.reasoning_min_steps,
@@ -780,7 +780,7 @@ async def areason(
     Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
     default Chain-of-Thought reasoning with a clean, unified interface.
     """
-    from agno.reasoning.manager import ReasoningConfig, ReasoningManager
+    from agno.reasoning.manager import ReasoningManager, ReasoningManagerConfig
 
     # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = team.reasoning_model
@@ -791,7 +791,7 @@ async def areason(
 
     # Create reasoning manager with config
     manager = ReasoningManager(
-        ReasoningConfig(
+        ReasoningManagerConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=team.reasoning_agent,
             min_steps=team.reasoning_min_steps,

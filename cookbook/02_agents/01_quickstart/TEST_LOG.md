@@ -5,6 +5,15 @@
 
 ---
 
+### grouped_config.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates grouped config parameters (HistoryConfig, ReasoningConfig, RetryConfig) resolving to flat attributes, then runs the agent. Tested 2026-08-11. Ran successfully and produced expected output.
+**Result:** Completed successfully.
+
+---
+
 ### agent_with_instructions.py
 
 **Status:** PASS

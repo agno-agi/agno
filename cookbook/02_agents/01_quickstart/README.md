@@ -6,6 +6,7 @@ Starter examples for creating and running agents with core settings.
 - `agent_with_instructions.py` - Demonstrates agent with instructions.
 - `agent_with_tools.py` - Demonstrates agent with tools.
 - `basic_agent.py` - Demonstrates basic agent.
+- `grouped_config.py` - Demonstrates grouped config parameters (HistoryConfig, ReasoningConfig, RetryConfig).
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).
