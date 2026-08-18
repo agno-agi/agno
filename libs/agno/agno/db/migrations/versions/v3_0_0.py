@@ -3139,7 +3139,7 @@ async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, tabl
                 applied = True
 
     if table_type == "schedules":
-        async with db.Session() as sess, sess.begin():  # type: ignore
+        async with db.async_session_factory() as sess, sess.begin():  # type: ignore
             for column in SCHEDULE_PROVENANCE_COLUMNS:
                 log_info(f"-- Ensuring {column} column on {table_name}")
                 await sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {column} VARCHAR"))
@@ -3682,7 +3682,7 @@ async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_
                 applied = True
 
     if table_type == "schedules":
-        async with db.Session() as sess, sess.begin():  # type: ignore
+        async with db.async_session_factory() as sess, sess.begin():  # type: ignore
             columns_info = (await sess.execute(text(f"PRAGMA table_info({quoted_table})"))).fetchall()
             existing_columns = {col[1] for col in columns_info}
             indexes = (await sess.execute(text(f"PRAGMA index_list({quoted_table})"))).fetchall()
