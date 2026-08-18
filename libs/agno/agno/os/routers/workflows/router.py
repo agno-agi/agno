@@ -71,7 +71,9 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     afinalize_continue_stream,
+    allow_draft_preview,
     amark_continue_stream_running,
+    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
@@ -181,22 +183,25 @@ async def handle_workflow_via_websocket(
         version = message.get("version")
         factory_input = message.get("factory_input")
 
-        # Defense-in-depth: if the caller authenticated via JWT, ensure user_id
-        # matches the JWT sub for non-admin callers. The WS dispatcher in
-        # router.py already forces this, but the handler should not trust a
-        # client-supplied user_id if called from any other code path.
+        # Defense-in-depth: an authenticated caller's identity is the token,
+        # never the client frame. The WS dispatcher in router.py already forces
+        # this, but the handler must not trust a client-supplied user_id if
+        # called from any other code path. Mirrors the HTTP route's rule
+        # (request.state.user_id, i.e. the JWT sub): a non-admin token pins
+        # user_id to its sub EVEN WHEN THE SUB IS ABSENT - a sub-less token
+        # under isolation-off must not keep a client-chosen value, or the
+        # client could claim a draft owner's identity at the preview gate
+        # below (which the HTTP route denies with actor=None).
         if ws_user_context:
-            jwt_user_id = ws_user_context.get("user_id")
-            if jwt_user_id:
-                from agno.os.scopes import AgentOSScope
+            from agno.os.scopes import AgentOSScope
 
-                scopes = ws_user_context.get("scopes", [])
-                admin_scope = AgentOSScope.ADMIN.value
-                is_admin = admin_scope in scopes
-                if is_admin:
-                    user_id = user_id or jwt_user_id
-                else:
-                    user_id = jwt_user_id
+            jwt_user_id = ws_user_context.get("user_id")
+            scopes = ws_user_context.get("scopes", [])
+            is_admin = AgentOSScope.ADMIN.value in scopes or bool(ws_auth and ws_auth.is_admin)
+            if is_admin:
+                user_id = user_id or jwt_user_id
+            else:
+                user_id = jwt_user_id
 
         # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
         # Fails closed (403) for an identity-less token under isolation, like the REST routes.
@@ -219,8 +224,6 @@ async def handle_workflow_via_websocket(
         # Published pins were always reachable. Privilege means admin or auth
         # off; a plain authenticated caller keeps its raw identity even when
         # isolation is off (scoped_user_id None must not read as admin).
-        from agno.os.utils import allow_draft_preview
-
         preview_privileged = bool(ws_auth and ws_auth.is_admin) or not bool(ws_auth and ws_auth.jwt_enabled)
         if not allow_draft_preview(
             os.db, workflow_id, version, user_id if isinstance(user_id, str) else None, privileged=preview_privileged
@@ -778,6 +781,18 @@ async def handle_workflow_continue_via_websocket(
         # today's resolution. Factories build per-request, so they are exempt.
         stamped_version = stamped_component_version(existing_run)
         if stamped_version is not None and not find_factory_by_id(workflow_id, os.workflows):
+            # Re-run the run-start preview gate before trusting the stamp: a
+            # stamp naming a draft version this caller may not preview must not
+            # resolve (defense against a forged/leaked stamp). Same not-found
+            # message the WS start path emits, so a denial is indistinguishable
+            # from the component being absent.
+            preview_privileged = bool(ws_auth and ws_auth.is_admin) or not bool(ws_auth and ws_auth.jwt_enabled)
+            preview_actor = user_id if isinstance(user_id, str) else None
+            if not allow_draft_preview(
+                os.db, workflow_id, stamped_version, preview_actor, privileged=preview_privileged
+            ):
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
+                return
             stamped_workflow = get_workflow_by_id(
                 workflow_id=workflow_id,
                 workflows=os.workflows,
@@ -2066,6 +2081,13 @@ def get_workflow_router(
         # per-request, so they are exempt.
         stamped_version = stamped_component_version(existing_run)
         if stamped_version is not None and not find_factory_by_id(workflow_id, os.workflows):
+            # Re-run the run-start preview gate before trusting the stamp: a
+            # stamp naming a draft version this caller may not preview must not
+            # resolve (defense against a forged/leaked stamp). Same 404 the
+            # run-start route raises, so a denial is indistinguishable from the
+            # component being absent.
+            if not allow_draft_preview(os.db, workflow_id, stamped_version, *draft_preview_identity(request)):
+                raise HTTPException(status_code=404, detail="Workflow not found")
             try:
                 stamped_workflow = get_workflow_by_id(
                     workflow_id=workflow_id,

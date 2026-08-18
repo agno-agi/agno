@@ -4119,7 +4119,22 @@ class PostgresDb(BaseDb):
                     if metadata is not None:
                         updates["metadata"] = metadata
 
-                    sess.execute(table.update().where(table.c.component_id == component_id).values(**updates))
+                    # deleted_at is re-asserted on the UPDATE itself: the
+                    # archived pre-check above is check-then-write, so a
+                    # concurrent archive committing in the gap must fail this
+                    # write rather than be overtaken by it.
+                    update_result = sess.execute(
+                        table.update()
+                        .where(
+                            table.c.component_id == component_id,
+                            table.c.deleted_at.is_(None),
+                        )
+                        .values(**updates)
+                    )
+                    if update_result.rowcount == 0:
+                        raise ComponentArchivedError(
+                            f"Component {component_id} is archived; restore it explicitly before writing to it"
+                        )
                     log_debug(f"Updated component {component_id}")
 
             result = self.get_component(component_id, user_id=user_id)
@@ -5276,13 +5291,20 @@ class PostgresDb(BaseDb):
                             f"expected {expected_current_version}"
                         )
 
-                # Update pointer. The guard rides the UPDATE itself: the
-                # pre-read gives the friendly message, this predicate gives
+                # Update pointer. The guards ride the UPDATE itself: the
+                # pre-reads give the friendly messages, these predicates give
                 # correctness under concurrent writers (check-then-write lets
-                # two callers expecting the same pointer both win).
+                # two callers expecting the same pointer both win). deleted_at
+                # is re-asserted here because the liveness pre-read above is
+                # check-then-write: a concurrent archive committing in the gap
+                # must make this a no-op, never a pointer move onto an
+                # archived (immutable) row.
                 pointer_update = (
                     components_table.update()
-                    .where(components_table.c.component_id == component_id)
+                    .where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
                     .values(current_version=version, updated_at=int(time.time()))
                 )
                 if expected_current_version is not None:
@@ -5292,11 +5314,20 @@ class PostgresDb(BaseDb):
                 result = sess.execute(pointer_update)
 
                 if result.rowcount == 0:
-                    if expected_current_version is not None:
-                        raise ComponentVersionConflictError(
-                            f"Component {component_id} current version changed; expected {expected_current_version}"
+                    # Zero rows: the row was archived underneath us, or the
+                    # CAS guard lost. Re-read to answer which.
+                    still_live = sess.execute(
+                        select(components_table.c.component_id).where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
                         )
-                    return False
+                    ).scalar_one_or_none()
+                    if still_live is None:
+                        # Concurrent archive won: same verdict as the pre-check.
+                        return False
+                    raise ComponentVersionConflictError(
+                        f"Component {component_id} current version changed; expected {expected_current_version}"
+                    )
 
             log_debug(f"Set {component_id} current version to {version}")
             return True

@@ -133,3 +133,101 @@ class TestControls:
             ws_auth=WebSocketAuthContext(jwt_enabled=True, is_admin=True, user_isolation_enabled=True),
         )
         assert ws.sent and ws.sent[0]["error"] != MISSING_USER_IDENTITY
+
+
+@pytest.mark.asyncio
+class TestStartWorkflowNeverAdoptsTheClientFrameIdentity:
+    """B12: the WS start path derives identity from the token, never the client
+    frame - matching the HTTP run route (request.state.user_id, i.e. the JWT
+    sub). The gap: a sub-less token under isolation-OFF used to keep a
+    client-chosen user_id, letting the client claim a draft owner's identity
+    at the draft-preview gate, which the HTTP route denies (actor=None)."""
+
+    @staticmethod
+    def _draft_db(tmp_path, owner="victim"):
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="ws-identity-db", db_file=str(tmp_path / "ws_identity.db"))
+        db.create_component_with_config(
+            component_id="wf-draft",
+            component_type=ComponentType.WORKFLOW,
+            name="wf-draft",
+            config={"name": "wf-draft"},
+            stage="draft",
+            user_id=owner,
+        )
+        return db
+
+    @staticmethod
+    def _record_resolution(monkeypatch):
+        calls: List[dict] = []
+
+        def fake_get_workflow_by_id(**kwargs):
+            calls.append(kwargs)
+            return None
+
+        monkeypatch.setattr("agno.os.routers.workflows.router.get_workflow_by_id", fake_get_workflow_by_id)
+        return calls
+
+    async def test_subless_token_isolation_off_does_not_adopt_the_client_user_id(self, tmp_path, monkeypatch):
+        db = self._draft_db(tmp_path)
+        resolutions = self._record_resolution(monkeypatch)
+        ws = FakeWebSocket()
+        await handle_workflow_via_websocket(
+            ws,
+            # The client frame claims the draft owner's identity.
+            {"workflow_id": "wf-draft", "message": "hi", "user_id": "victim", "version": 1},
+            SimpleNamespace(workflows=[], db=db, registry=None),
+            # Authenticated via JWT whose sub is absent; isolation OFF.
+            ws_user_context={"user_id": None, "scopes": ["workflows:run"], "payload": {}},
+            ws_auth=WebSocketAuthContext(jwt_enabled=True, is_admin=False, user_isolation_enabled=False),
+        )
+        # Denied at the preview gate (actor is the token's None, not "victim"):
+        # same not-found the HTTP route answers, and resolution is never reached.
+        assert ws.sent == [{"event": "error", "error": "Workflow wf-draft not found"}]
+        assert resolutions == []
+
+    async def test_empty_string_sub_does_not_adopt_the_client_user_id(self, tmp_path, monkeypatch):
+        db = self._draft_db(tmp_path)
+        resolutions = self._record_resolution(monkeypatch)
+        ws = FakeWebSocket()
+        await handle_workflow_via_websocket(
+            ws,
+            {"workflow_id": "wf-draft", "message": "hi", "user_id": "victim", "version": 1},
+            SimpleNamespace(workflows=[], db=db, registry=None),
+            ws_user_context={"user_id": "", "scopes": ["workflows:run"], "payload": {}},
+            ws_auth=WebSocketAuthContext(jwt_enabled=True, is_admin=False, user_isolation_enabled=False),
+        )
+        assert ws.sent == [{"event": "error", "error": "Workflow wf-draft not found"}]
+        assert resolutions == []
+
+    async def test_token_sub_still_previews_its_own_draft(self, tmp_path, monkeypatch):
+        # Control: the owner's own token passes the gate - proving the pin uses
+        # the token identity rather than blanket-denying drafts over WS.
+        db = self._draft_db(tmp_path, owner="victim")
+        resolutions = self._record_resolution(monkeypatch)
+        ws = FakeWebSocket()
+        await handle_workflow_via_websocket(
+            ws,
+            {"workflow_id": "wf-draft", "message": "hi", "version": 1},
+            SimpleNamespace(workflows=[], db=db, registry=None),
+            ws_user_context={"user_id": "victim", "scopes": ["workflows:run"], "payload": {}},
+            ws_auth=WebSocketAuthContext(jwt_enabled=True, is_admin=False, user_isolation_enabled=False),
+        )
+        assert len(resolutions) == 1  # the gate passed; resolution ran
+
+    async def test_client_frame_never_overrides_a_token_sub(self, tmp_path, monkeypatch):
+        # A token WITH a sub is pinned to it even when the frame claims the owner.
+        db = self._draft_db(tmp_path, owner="victim")
+        resolutions = self._record_resolution(monkeypatch)
+        ws = FakeWebSocket()
+        await handle_workflow_via_websocket(
+            ws,
+            {"workflow_id": "wf-draft", "message": "hi", "user_id": "victim", "version": 1},
+            SimpleNamespace(workflows=[], db=db, registry=None),
+            ws_user_context={"user_id": "mallory", "scopes": ["workflows:run"], "payload": {}},
+            ws_auth=WebSocketAuthContext(jwt_enabled=True, is_admin=False, user_isolation_enabled=False),
+        )
+        assert ws.sent == [{"event": "error", "error": "Workflow wf-draft not found"}]
+        assert resolutions == []

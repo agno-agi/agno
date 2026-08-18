@@ -530,6 +530,28 @@ class TestUpdateComponentCurrentVersionEndToEnd:
         row = real_db.get_component("agent-1")
         assert row["current_version"] == 1 and row["name"] == "Renamed"
 
+    def test_patch_with_bogus_component_type_is_400_and_pointer_stays(self, real_client, real_db):
+        """A6: the PATCH is atomic. Body validation runs BEFORE the pointer
+        write, so a bad component_type 400s with the pointer untouched -
+        it must never 400 AFTER the pointer move already committed."""
+        response = real_client.patch(
+            "/components/agent-1",
+            json={"current_version": 1, "component_type": "bogus"},
+        )
+        assert response.status_code == 400
+        row = real_db.get_component("agent-1")
+        assert row["current_version"] == 3
+        assert row["component_type"] == "agent"
+
+    def test_patch_with_bogus_component_type_and_guard_is_400_and_pointer_stays(self, real_client, real_db):
+        """Same atomicity with the CAS guard present: the 400 wins before any write."""
+        response = real_client.patch(
+            "/components/agent-1",
+            json={"current_version": 1, "component_type": "bogus", "guard": {"current_version": 3}},
+        )
+        assert response.status_code == 400
+        assert real_db.get_component("agent-1")["current_version"] == 3
+
 
 # =============================================================================
 # Delete Component Tests

@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # Typed catalog errors that map to 409 Conflict. They are ValueError
 # subclasses, so routes must catch them before any generic ValueError clause
 # or they would surface with the wrong status code.
-def _conflict_detail(db: Any, component_id: str, scoped_user_id: Optional[str], exc: Exception) -> str:
+def _conflict_detail(db: Any, component_id: Optional[str], scoped_user_id: Optional[str], exc: Exception) -> str:
     """409 detail for a conflict, with a scoped caller's foreign dependents
     redacted to a count. A ComponentDependencyError embeds the parent ids in
     its message; a scoped caller must not learn another owner's ids from it."""
@@ -510,6 +510,20 @@ def attach_routes(
                         ),
                     )
 
+            # ALL body validation precedes the first write: the pointer move
+            # below commits immediately, so a late parse failure (a bogus
+            # component_type ValueError -> 400) must not land AFTER the pointer
+            # already moved - the 400 has to leave the component untouched.
+            update_kwargs: Dict[str, Any] = {"component_id": component_id}
+            if body.name is not None:
+                update_kwargs["name"] = body.name
+            if body.description is not None:
+                update_kwargs["description"] = body.description
+            if body.metadata is not None:
+                update_kwargs["metadata"] = body.metadata
+            if body.component_type is not None:
+                update_kwargs["component_type"] = DbComponentType(body.component_type)
+
             # Pointer moves go through set_current_version, never through
             # upsert_component: it enforces the published-only dispatch
             # invariant (drafts and tombstones are refused with ValueError ->
@@ -526,16 +540,6 @@ def attach_routes(
                         status_code=404,
                         detail=f"Config {component_id} v{body.current_version} not found",
                     )
-
-            update_kwargs: Dict[str, Any] = {"component_id": component_id}
-            if body.name is not None:
-                update_kwargs["name"] = body.name
-            if body.description is not None:
-                update_kwargs["description"] = body.description
-            if body.metadata is not None:
-                update_kwargs["metadata"] = body.metadata
-            if body.component_type is not None:
-                update_kwargs["component_type"] = DbComponentType(body.component_type)
 
             component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
             return ComponentResponse(**component)

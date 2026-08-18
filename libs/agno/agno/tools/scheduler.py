@@ -23,7 +23,7 @@ import json
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from agno.db.schemas.scheduler import Schedule
+from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, Schedule, match_run_endpoint
 from agno.run import RunContext
 from agno.scheduler.manager import ScheduleManager
 from agno.tools.toolkit import Toolkit
@@ -31,7 +31,13 @@ from agno.utils.log import log_debug, logger
 
 
 def _parse_target_archived_reason(disabled_reason: Optional[str]) -> Optional[Tuple[str, str]]:
-    """Parse a system ``target_archived:<type>:<id>`` disabled_reason into (type, id)."""
+    """Parse a system ``target_archived:<type>:<id>`` disabled_reason into (type, id).
+
+    Format authority for the cascade's reason string. Deliberately NOT part of
+    the enable predicate: the reason records why a row was disabled, not what
+    it targets now, so refusing on it would brick a row repointed at a live
+    target and miss a row that was disabled before the archive.
+    """
     if not disabled_reason or not disabled_reason.startswith("target_archived:"):
         return None
     parts = disabled_reason.split(":", 2)
@@ -41,67 +47,137 @@ def _parse_target_archived_reason(disabled_reason: Optional[str]) -> Optional[Tu
 
 
 def _is_archived_component(row: Optional[Dict[str, Any]]) -> bool:
-    """True only for a real archived row: present, with ``deleted_at`` set."""
-    return row is not None and row.get("deleted_at") is not None
+    """True only for a real archived row: a dict with ``deleted_at`` set."""
+    return isinstance(row, dict) and row.get("deleted_at") is not None
+
+
+def _endpoint_target(endpoint: Optional[str]) -> Optional[Tuple[str, str]]:
+    """(singular type, id) of the component a run endpoint addresses, else None."""
+    if not endpoint:
+        return None
+    match = RUN_ENDPOINT_RE.match(endpoint)
+    if match is None:
+        return None
+    return match.group(1)[:-1], match.group(2)  # "agents" -> "agent"
+
+
+def _schedule_component_target(schedule: Schedule) -> Optional[Tuple[str, str]]:
+    """The component *schedule* actually targets: provenance when stamped, else its run endpoint."""
+    if schedule.target_id:
+        return schedule.target_type or "component", schedule.target_id
+    return _endpoint_target(schedule.endpoint)
+
+
+def _archived_component_refusal(db: Any, target_type: str, target_id: str) -> Optional[Tuple[str, str]]:
+    """(type, id) iff that component's catalog row exists with ``deleted_at`` set."""
+    if db is None:
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+    try:
+        row = get_component(target_id, include_deleted=True)
+    except NotImplementedError:
+        return None
+    if _is_archived_component(row):
+        return target_type, target_id
+    return None
+
+
+async def _aarchived_component_refusal(db: Any, target_type: str, target_id: str) -> Optional[Tuple[str, str]]:
+    """Async variant of ``_archived_component_refusal``; same predicate."""
+    if db is None:
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+    try:
+        if asyncio.iscoroutinefunction(get_component):
+            row = await get_component(target_id, include_deleted=True)
+        else:
+            # A sync adapter would hold the event loop for the whole query
+            row = await asyncio.to_thread(get_component, target_id, include_deleted=True)
+    except NotImplementedError:
+        return None
+    if _is_archived_component(row):
+        return target_type, target_id
+    return None
 
 
 def archived_target_refusal(db: Any, schedule: Schedule) -> Optional[Tuple[str, str]]:
     """(type, id) of the still-archived component that blocks enabling *schedule*, else None.
 
-    Enable is refused if and only if the schedule's provenance target, or the
-    target named by a system ``target_archived:<type>:<id>`` disabled_reason,
-    resolves to a component row whose ``deleted_at`` is set. A missing catalog
-    row is a live code-defined target (allow); a target that was restored or
-    hard-deleted no longer blocks; adapters without a component catalog
-    (``get_component`` raising NotImplementedError) allow.
+    The verdict is the target's ACTUAL liveness, never the disabled_reason: the
+    target is the provenance (target_type/target_id) when stamped, else the
+    component named by the schedule's run endpoint. Enable is refused if and
+    only if that component's catalog row has ``deleted_at`` set - regardless of
+    why (or whether) the schedule was disabled - so a row disabled before the
+    archive is still refused, and a row since repointed at a live target is not
+    refused over a stale reason. A missing catalog row is a live code-defined
+    target (allow); a restored or hard-deleted target no longer blocks;
+    adapters without a component catalog (``get_component`` raising
+    NotImplementedError) allow.
 
-    The REST enable route applies this same predicate; keep them identical.
+    The REST enable route and the create guards apply this same predicate;
+    keep them identical.
     """
-    if db is None:
+    target = _schedule_component_target(schedule)
+    if target is None:
         return None
-    get_component = getattr(db, "get_component", None)
-    if get_component is None:
-        return None
-
-    def _archived(component_id: str) -> bool:
-        try:
-            return _is_archived_component(get_component(component_id, include_deleted=True))
-        except NotImplementedError:
-            return False
-
-    if schedule.target_id is not None and _archived(schedule.target_id):
-        return schedule.target_type or "component", schedule.target_id
-    parsed = _parse_target_archived_reason(schedule.disabled_reason)
-    if parsed is not None and _archived(parsed[1]):
-        return parsed
-    return None
+    return _archived_component_refusal(db, target[0], target[1])
 
 
 async def aarchived_target_refusal(db: Any, schedule: Schedule) -> Optional[Tuple[str, str]]:
     """Async variant of ``archived_target_refusal``; same predicate."""
-    if db is None:
+    target = _schedule_component_target(schedule)
+    if target is None:
         return None
-    get_component = getattr(db, "get_component", None)
-    if get_component is None:
+    return await _aarchived_component_refusal(db, target[0], target[1])
+
+
+def archived_endpoint_refusal(db: Any, endpoint: Optional[str]) -> Optional[Tuple[str, str]]:
+    """(type, id) when *endpoint* is a run endpoint aimed at an archived component, else None.
+
+    Create-side twin of ``archived_target_refusal``: a schedule pointed at an
+    archived component can only 404 at fire time, so creating or repointing one
+    is refused up front instead of accepted and left armed.
+    """
+    target = _endpoint_target(endpoint)
+    if target is None:
         return None
+    return _archived_component_refusal(db, target[0], target[1])
 
-    async def _archived(component_id: str) -> bool:
-        try:
-            if asyncio.iscoroutinefunction(get_component):
-                row = await get_component(component_id, include_deleted=True)
-            else:
-                # A sync adapter would hold the event loop for the whole query
-                row = await asyncio.to_thread(get_component, component_id, include_deleted=True)
-            return _is_archived_component(row)
-        except NotImplementedError:
-            return False
 
-    if schedule.target_id is not None and await _archived(schedule.target_id):
-        return schedule.target_type or "component", schedule.target_id
-    parsed = _parse_target_archived_reason(schedule.disabled_reason)
-    if parsed is not None and await _archived(parsed[1]):
-        return parsed
-    return None
+async def aarchived_endpoint_refusal(db: Any, endpoint: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Async variant of ``archived_endpoint_refusal``; same predicate."""
+    target = _endpoint_target(endpoint)
+    if target is None:
+        return None
+    return await _aarchived_component_refusal(db, target[0], target[1])
+
+
+def endpoint_drift_refusal(schedule: Schedule) -> Optional[str]:
+    """Why enable must stay refused for an endpoint_drift-disabled row, else None.
+
+    The executor disables a managed schedule whose endpoint no longer matches
+    its provenance target (reason ``endpoint_drift:...``). Re-arming without
+    re-checking would fail-and-disable again on the next tick - or fire the
+    wrong component. Enable is allowed only once the endpoint matches the
+    provenance target again; a drift-disabled row without provenance to check
+    against stays refused (fail closed). Pure predicate (no I/O), shared by the
+    sync and async enable paths.
+    """
+    reason = schedule.disabled_reason or ""
+    if not reason.startswith("endpoint_drift:"):
+        return None
+    if (
+        schedule.target_type
+        and schedule.target_id
+        and schedule.endpoint
+        and match_run_endpoint(schedule.endpoint, schedule.target_type, schedule.target_id)
+    ):
+        return None
+    return reason
 
 
 class SchedulerTools(Toolkit):
@@ -243,6 +319,22 @@ class SchedulerTools(Toolkit):
                     }
                 )
 
+        # A schedule aimed at an archived component can only 404 at fire time:
+        # refuse the create instead of accepting an armed dead schedule.
+        refusal = archived_endpoint_refusal(self.manager.db, resolved_endpoint)
+        if refusal is not None:
+            target_type, target_id = refusal
+            return json.dumps(
+                {
+                    "error": f"Cannot create schedule '{name}': its target "
+                    f"{target_type} '{target_id}' is archived. "
+                    "Restore the component first.",
+                    "error_type": "target_archived",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                }
+            )
+
         try:
             schedule = self.manager.create(
                 name=name,
@@ -376,6 +468,20 @@ class SchedulerTools(Toolkit):
                         "error_type": "target_archived",
                         "target_type": target_type,
                         "target_id": target_id,
+                    }
+                )
+            # A drift-disabled row re-arms only once its endpoint matches its
+            # provenance target again; otherwise it just fails on the next tick.
+            drift = endpoint_drift_refusal(existing)
+            if drift is not None:
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': it was disabled because its "
+                        f"endpoint no longer matches its target ({drift}). "
+                        "Repoint the endpoint back at the target first.",
+                        "error_type": "endpoint_drift",
+                        "target_type": existing.target_type,
+                        "target_id": existing.target_id,
                     }
                 )
             schedule = self.manager.enable(schedule_id, user_id=self._owner(run_context))
@@ -530,6 +636,22 @@ class SchedulerTools(Toolkit):
                     }
                 )
 
+        # A schedule aimed at an archived component can only 404 at fire time:
+        # refuse the create instead of accepting an armed dead schedule.
+        refusal = await aarchived_endpoint_refusal(self.manager.db, resolved_endpoint)
+        if refusal is not None:
+            target_type, target_id = refusal
+            return json.dumps(
+                {
+                    "error": f"Cannot create schedule '{name}': its target "
+                    f"{target_type} '{target_id}' is archived. "
+                    "Restore the component first.",
+                    "error_type": "target_archived",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                }
+            )
+
         try:
             schedule = await self.manager.acreate(
                 name=name,
@@ -663,6 +785,20 @@ class SchedulerTools(Toolkit):
                         "error_type": "target_archived",
                         "target_type": target_type,
                         "target_id": target_id,
+                    }
+                )
+            # A drift-disabled row re-arms only once its endpoint matches its
+            # provenance target again; otherwise it just fails on the next tick.
+            drift = endpoint_drift_refusal(existing)
+            if drift is not None:
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': it was disabled because its "
+                        f"endpoint no longer matches its target ({drift}). "
+                        "Repoint the endpoint back at the target first.",
+                        "error_type": "endpoint_drift",
+                        "target_type": existing.target_type,
+                        "target_id": existing.target_id,
                     }
                 )
             schedule = await self.manager.aenable(schedule_id, user_id=self._owner(run_context))

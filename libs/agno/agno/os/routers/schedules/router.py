@@ -153,6 +153,19 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             raise HTTPException(status_code=422, detail=f"Invalid timezone: {body.timezone}")
         _require_endpoint_permission(request, body.endpoint, body.method)
 
+        # A schedule aimed at an archived component can only 404 at fire time:
+        # refuse the create instead of accepting an armed dead schedule.
+        # Identical predicate to the Studio tool (SchedulerTools.create_schedule).
+        from agno.tools.scheduler import aarchived_endpoint_refusal
+
+        refusal = await aarchived_endpoint_refusal(os_db, body.endpoint)
+        if refusal is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot create schedule '{body.name}': its target "
+                f"{refusal[0]} '{refusal[1]}' is archived. Restore the component first.",
+            )
+
         # Owner the schedule to the caller, falling back to the unscoped JWT sub so
         # admin-created schedules still carry a creator id.
         scoped_user_id = get_scoped_user_id(request)
@@ -242,6 +255,19 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
                 updates.get("method", existing.get("method") or "POST"),
             )
 
+        # Repointing at an archived component is refused for the same reason
+        # creating against one is: the schedule could only 404 at fire time.
+        if "endpoint" in updates:
+            from agno.tools.scheduler import aarchived_endpoint_refusal
+
+            refusal = await aarchived_endpoint_refusal(os_db, updates["endpoint"])
+            if refusal is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot repoint schedule '{existing.get('name') or schedule_id}' at "
+                    f"{refusal[0]} '{refusal[1]}': it is archived. Restore the component first.",
+                )
+
         # Validate cron/timezone if changing
         cron_changed = "cron_expr" in updates or "timezone" in updates
         if cron_changed:
@@ -310,15 +336,27 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # refuse the re-arm until the component is restored. Identical
         # predicate to the Studio tool (SchedulerTools.enable_schedule).
         from agno.db.schemas.scheduler import Schedule
-        from agno.tools.scheduler import aarchived_target_refusal
+        from agno.tools.scheduler import aarchived_target_refusal, endpoint_drift_refusal
 
-        refusal = await aarchived_target_refusal(os_db, Schedule.from_dict(existing))
+        existing_schedule = Schedule.from_dict(existing)
+        refusal = await aarchived_target_refusal(os_db, existing_schedule)
         if refusal is not None:
             target_type, target_id = refusal
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot enable schedule '{existing.get('name') or schedule_id}': its target "
                 f"{target_type} '{target_id}' is archived. Restore the component first.",
+            )
+
+        # A drift-disabled row re-arms only once its endpoint matches its
+        # provenance target again; otherwise it just fails on the next tick.
+        drift = endpoint_drift_refusal(existing_schedule)
+        if drift is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot enable schedule '{existing.get('name') or schedule_id}': it was disabled "
+                f"because its endpoint no longer matches its target ({drift}). "
+                "Repoint the endpoint back at the target first.",
             )
 
         _check_scheduler_deps()

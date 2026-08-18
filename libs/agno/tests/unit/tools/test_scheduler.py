@@ -14,8 +14,11 @@ from agno.db.sqlite import SqliteDb
 from agno.tools.scheduler import (
     SchedulerTools,
     _parse_target_archived_reason,
+    aarchived_endpoint_refusal,
     aarchived_target_refusal,
+    archived_endpoint_refusal,
     archived_target_refusal,
+    endpoint_drift_refusal,
 )
 
 
@@ -517,14 +520,18 @@ class TestParseTargetArchivedReason:
 
 
 class TestArchivedTargetRefusalPredicate:
-    """archived_target_refusal refuses if and only if a real archived row blocks the target."""
+    """archived_target_refusal refuses iff the schedule's ACTUAL target - its
+    provenance when stamped, else the component its run endpoint names - is a
+    really archived catalog row. The disabled_reason never drives the verdict:
+    a row disabled before the archive is still refused, and a row repointed at
+    a live target is not refused over a stale reason."""
 
     def _schedule(self, **overrides):
         return _make_schedule(**overrides)
 
-    def test_no_provenance_and_no_reason_allows_without_touching_db(self):
+    def test_non_run_endpoint_without_provenance_allows_without_touching_db(self):
         db = MagicMock()
-        assert archived_target_refusal(db, self._schedule()) is None
+        assert archived_target_refusal(db, self._schedule(endpoint="/webhooks/notify")) is None
         db.get_component.assert_not_called()
 
     def test_missing_catalog_row_is_a_live_code_defined_target(self):
@@ -546,20 +553,41 @@ class TestArchivedTargetRefusalPredicate:
         schedule = self._schedule(target_type="agent", target_id="a1")
         assert archived_target_refusal(db, schedule) == ("agent", "a1")
 
-    def test_cascade_reason_on_generic_row_refuses_while_archived(self):
+    def test_run_endpoint_names_the_target_when_provenance_is_absent(self):
+        """A generic row disabled BEFORE the archive carries no system reason;
+        its run endpoint still names the archived target, so enable refuses."""
         db = MagicMock()
         db.get_component = MagicMock(return_value={"component_id": "a1", "deleted_at": 123})
-        schedule = self._schedule(disabled_reason="target_archived:agent:a1")
+        schedule = self._schedule(endpoint="/agents/a1/runs", disabled_reason=None)
         assert archived_target_refusal(db, schedule) == ("agent", "a1")
+        db.get_component.assert_called_once_with("a1", include_deleted=True)
 
-    def test_cascade_reason_allows_once_target_is_restored_or_hard_deleted(self):
-        schedule = self._schedule(disabled_reason="target_archived:agent:a1")
+    def test_repointed_row_with_stale_cascade_reason_allows(self):
+        """A row repointed at a live target is judged on where it points NOW,
+        not on the target_archived reason recorded before the repoint."""
+        db = MagicMock()
+        db.get_component = MagicMock(return_value={"component_id": "live", "deleted_at": None})
+        schedule = self._schedule(endpoint="/agents/live/runs", disabled_reason="target_archived:agent:a1")
+        assert archived_target_refusal(db, schedule) is None
+        db.get_component.assert_called_once_with("live", include_deleted=True)
+
+    def test_allows_once_target_is_restored_or_hard_deleted(self):
+        schedule = self._schedule(endpoint="/agents/a1/runs", disabled_reason="target_archived:agent:a1")
         restored = MagicMock()
         restored.get_component = MagicMock(return_value={"component_id": "a1", "deleted_at": None})
         assert archived_target_refusal(restored, schedule) is None
         hard_deleted = MagicMock()
         hard_deleted.get_component = MagicMock(return_value=None)
         assert archived_target_refusal(hard_deleted, schedule) is None
+
+    def test_provenance_wins_over_the_endpoint(self):
+        """A stamped row is judged on its provenance target, not the endpoint
+        (a drifted endpoint is the drift guard's business, not this one's)."""
+        db = MagicMock()
+        db.get_component = MagicMock(return_value={"component_id": "prov", "deleted_at": 123})
+        schedule = self._schedule(endpoint="/agents/other/runs", target_type="agent", target_id="prov")
+        assert archived_target_refusal(db, schedule) == ("agent", "prov")
+        db.get_component.assert_called_once_with("prov", include_deleted=True)
 
     def test_adapter_without_catalog_allows(self):
         db = MagicMock()
@@ -586,6 +614,86 @@ class TestArchivedTargetRefusalPredicate:
         assert await aarchived_target_refusal(db, schedule) is None
         db.get_component = MagicMock(side_effect=NotImplementedError)
         assert await aarchived_target_refusal(db, schedule) is None
+
+    @pytest.mark.asyncio
+    async def test_async_variant_reads_the_endpoint_target(self):
+        db = MagicMock()
+        db.get_component = AsyncMock(return_value={"component_id": "a1", "deleted_at": 123})
+        schedule = self._schedule(endpoint="/agents/a1/runs")
+        assert await aarchived_target_refusal(db, schedule) == ("agent", "a1")
+
+
+class TestEndpointDriftRefusal:
+    """endpoint_drift_refusal keeps a drift-disabled row off the poller until
+    its endpoint matches its provenance target again."""
+
+    def test_non_drift_reasons_allow(self):
+        assert endpoint_drift_refusal(_make_schedule(disabled_reason=None)) is None
+        assert endpoint_drift_refusal(_make_schedule(disabled_reason="target_archived:agent:a1")) is None
+
+    def test_still_drifted_row_is_refused(self):
+        schedule = _make_schedule(
+            endpoint="/webhooks/elsewhere",
+            target_type="agent",
+            target_id="a1",
+            disabled_reason="endpoint_drift:/webhooks/elsewhere!=agent:a1",
+        )
+        refusal = endpoint_drift_refusal(schedule)
+        assert refusal is not None and refusal.startswith("endpoint_drift:")
+
+    def test_repointed_back_at_the_target_allows(self):
+        schedule = _make_schedule(
+            endpoint="/agents/a1/runs",
+            target_type="agent",
+            target_id="a1",
+            disabled_reason="endpoint_drift:/webhooks/elsewhere!=agent:a1",
+        )
+        assert endpoint_drift_refusal(schedule) is None
+
+    def test_trailing_slash_endpoint_still_matches(self):
+        schedule = _make_schedule(
+            endpoint="/agents/a1/runs/",
+            target_type="agent",
+            target_id="a1",
+            disabled_reason="endpoint_drift:/webhooks/elsewhere!=agent:a1",
+        )
+        assert endpoint_drift_refusal(schedule) is None
+
+    def test_drift_reason_without_provenance_fails_closed(self):
+        schedule = _make_schedule(
+            endpoint="/agents/a1/runs",
+            disabled_reason="endpoint_drift:/webhooks/elsewhere!=agent:a1",
+        )
+        assert endpoint_drift_refusal(schedule) is not None
+
+
+class TestArchivedEndpointRefusal:
+    """archived_endpoint_refusal blocks creating/repointing at an archived target."""
+
+    def test_non_run_endpoint_allows_without_touching_db(self):
+        db = MagicMock()
+        assert archived_endpoint_refusal(db, "/webhooks/notify") is None
+        db.get_component.assert_not_called()
+
+    def test_archived_run_endpoint_refuses(self):
+        db = MagicMock()
+        db.get_component = MagicMock(return_value={"component_id": "a1", "deleted_at": 123})
+        assert archived_endpoint_refusal(db, "/agents/a1/runs") == ("agent", "a1")
+        db.get_component.assert_called_once_with("a1", include_deleted=True)
+
+    def test_live_and_code_defined_targets_allow(self):
+        db = MagicMock()
+        db.get_component = MagicMock(return_value={"component_id": "a1", "deleted_at": None})
+        assert archived_endpoint_refusal(db, "/agents/a1/runs") is None
+        db.get_component = MagicMock(return_value=None)
+        assert archived_endpoint_refusal(db, "/agents/a1/runs") is None
+
+    @pytest.mark.asyncio
+    async def test_async_variant_matches(self):
+        db = MagicMock()
+        db.get_component = AsyncMock(return_value={"component_id": "t1", "deleted_at": 5})
+        assert await aarchived_endpoint_refusal(db, "/teams/t1/runs") == ("team", "t1")
+        assert await aarchived_endpoint_refusal(db, "/webhooks/x") is None
 
 
 class TestEnableArchivedTargetGuard:
@@ -702,6 +810,138 @@ class TestEnableArchivedTargetGuard:
         real_tools.manager.db.update_schedule = db.update_schedule
         out = json.loads(real_tools.enable_schedule(sid))
         assert out.get("status") == "enabled", out
+
+    def test_row_disabled_before_the_archive_is_still_refused(self, db, real_tools):
+        """B9a: the cascade only touches enabled rows, so a row disabled BEFORE
+        the archive carries no system reason - target liveness must refuse it anyway."""
+        sid = self._create(real_tools, "pre-disabled", endpoint="/agents/arch-agent/runs")
+        assert json.loads(real_tools.disable_schedule(sid))["status"] == "disabled"
+        self._archive_with_cascade(db, "arch-agent")
+        row = db.get_schedule(sid)
+        assert row["disabled_reason"] is None  # the cascade skipped the already-disabled row
+        out = json.loads(real_tools.enable_schedule(sid))
+        assert out.get("error_type") == "target_archived", out
+        assert db.get_schedule(sid)["enabled"] in (False, 0)
+
+    @pytest.mark.asyncio
+    async def test_row_disabled_before_the_archive_is_still_refused_async(self, db, real_tools):
+        sid = self._create(real_tools, "pre-disabled-async", endpoint="/agents/arch-agent/runs")
+        assert json.loads(await real_tools.adisable_schedule(sid))["status"] == "disabled"
+        self._archive_with_cascade(db, "arch-agent")
+        out = json.loads(await real_tools.aenable_schedule(sid))
+        assert out.get("error_type") == "target_archived", out
+
+    def test_repointed_row_enables_despite_the_stale_cascade_reason(self, db, real_tools):
+        """B9b: a cascade-disabled row repointed at a live target re-enables;
+        the stale target_archived reason must not brick it forever."""
+        db.upsert_component(component_id="live-agent", component_type=ComponentType.AGENT, name="live-agent")
+        sid = self._create(real_tools, "repointed", endpoint="/agents/arch-agent/runs")
+        self._archive_with_cascade(db, "arch-agent")
+        assert db.get_schedule(sid)["disabled_reason"] == "target_archived:agent:arch-agent"
+        db.update_schedule(sid, endpoint="/agents/live-agent/runs")
+        out = json.loads(real_tools.enable_schedule(sid))
+        assert out.get("status") == "enabled", out
+        assert db.get_schedule(sid)["disabled_reason"] is None
+
+    def test_drift_disabled_row_is_refused_until_the_endpoint_matches_again(self, db, real_tools):
+        """B9: re-arming an endpoint_drift-disabled row without re-checking the
+        drift would just fail-and-disable again on the next tick."""
+        db.upsert_component(component_id="live-agent", component_type=ComponentType.AGENT, name="live-agent")
+        sid = self._create(real_tools, "drifted", endpoint="/agents/live-agent/runs")
+        db.stamp_schedule_provenance(sid, managed_by="studio", target_type="agent", target_id="live-agent")
+        # The executor's drift disable: endpoint repointed away from the provenance target
+        db.update_schedule(sid, endpoint="/webhooks/elsewhere")
+        db.update_schedule(sid, enabled=False, disabled_reason="endpoint_drift:/webhooks/elsewhere!=agent:live-agent")
+        out = json.loads(real_tools.enable_schedule(sid))
+        assert out.get("error_type") == "endpoint_drift", out
+        assert db.get_schedule(sid)["enabled"] in (False, 0)
+        # Repointed back at the target: enable is allowed again
+        db.update_schedule(sid, endpoint="/agents/live-agent/runs")
+        out = json.loads(real_tools.enable_schedule(sid))
+        assert out.get("status") == "enabled", out
+
+    @pytest.mark.asyncio
+    async def test_drift_disabled_row_is_refused_async(self, db, real_tools):
+        db.upsert_component(component_id="live-agent", component_type=ComponentType.AGENT, name="live-agent")
+        sid = self._create(real_tools, "drifted-async", endpoint="/agents/live-agent/runs")
+        db.stamp_schedule_provenance(sid, managed_by="studio", target_type="agent", target_id="live-agent")
+        db.update_schedule(sid, endpoint="/webhooks/elsewhere")
+        db.update_schedule(sid, enabled=False, disabled_reason="endpoint_drift:/webhooks/elsewhere!=agent:live-agent")
+        out = json.loads(await real_tools.aenable_schedule(sid))
+        assert out.get("error_type") == "endpoint_drift", out
+
+
+class TestCreateArchivedTargetGuard:
+    """B9: creating a schedule against an archived target is refused up front."""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        return SqliteDb(id="sched-tools-create-guard", db_file=str(tmp_path / "create_guard.db"))
+
+    @pytest.fixture
+    def real_tools(self, db):
+        return SchedulerTools(db=db, default_payload={"message": "go"})
+
+    @staticmethod
+    def _archive(db, component_id):
+        db.upsert_component(component_id=component_id, component_type=ComponentType.AGENT, name=component_id)
+        db.delete_component(component_id)
+
+    def test_create_against_archived_target_is_refused(self, db, real_tools):
+        self._archive(db, "arch-agent")
+        out = json.loads(
+            real_tools.create_schedule(
+                name="dead-on-arrival",
+                cron="0 9 * * *",
+                endpoint="/agents/arch-agent/runs",
+                payload='{"message": "x"}',
+            )
+        )
+        assert out.get("error_type") == "target_archived", out
+        assert out["target_type"] == "agent" and out["target_id"] == "arch-agent"
+        # Nothing was created or left armed
+        schedules, total = db.get_schedules()
+        assert total == 0
+
+    @pytest.mark.asyncio
+    async def test_acreate_against_archived_target_is_refused(self, db, real_tools):
+        self._archive(db, "arch-agent")
+        out = json.loads(
+            await real_tools.acreate_schedule(
+                name="dead-on-arrival-async",
+                cron="0 9 * * *",
+                endpoint="/agents/arch-agent/runs",
+                payload='{"message": "x"}',
+            )
+        )
+        assert out.get("error_type") == "target_archived", out
+        schedules, total = db.get_schedules()
+        assert total == 0
+
+    def test_create_against_live_and_code_defined_targets_still_works(self, db, real_tools):
+        db.upsert_component(component_id="live-agent", component_type=ComponentType.AGENT, name="live-agent")
+        out = json.loads(
+            real_tools.create_schedule(
+                name="live", cron="0 9 * * *", endpoint="/agents/live-agent/runs", payload='{"message": "x"}'
+            )
+        )
+        assert out.get("status") == "created", out
+        out = json.loads(
+            real_tools.create_schedule(
+                name="code-defined", cron="0 9 * * *", endpoint="/agents/no-row/runs", payload='{"message": "x"}'
+            )
+        )
+        assert out.get("status") == "created", out
+
+    def test_create_against_restored_target_works(self, db, real_tools):
+        self._archive(db, "arch-agent")
+        assert db.restore_component("arch-agent")
+        out = json.loads(
+            real_tools.create_schedule(
+                name="revived", cron="0 9 * * *", endpoint="/agents/arch-agent/runs", payload='{"message": "x"}'
+            )
+        )
+        assert out.get("status") == "created", out
 
 
 @pytest.mark.asyncio
