@@ -178,19 +178,25 @@ an unmigrated database:
   conflicts; runs that only exist in the blob are still returned. This means you
   never lose history, even in partial-migration states.
 - **New runs** are written to the runs table as they happen. Legacy runs stay in
-  the blob (which is never modified) until you run the explicit migration; session
-  reads keep merging the two, so nothing is lost either way.
+  the blob, which writes never modify; session reads keep merging the two, so
+  nothing is lost either way.
 
 Session history therefore keeps working without the migration, indefinitely. The
-explicit migration is what actually moves legacy runs into the runs table — run it
-to make the runs table complete and to prepare for reclaiming the blob storage.
+explicit migration is what makes the runs table complete: it **copies** the
+legacy runs into it. The blob itself survives the migration untouched — it
+remains as a frozen backup until you explicitly drop it, which is why
+`cleanup_legacy_runs_column()` still refuses after a successful migration and
+needs `force=True` (see Step 3).
 
-Note: this lazy path covers **sessions only**. The metrics and eval runs tables
-gain a `user_id` column in v3.0 and fail schema validation until the migration
-runs (see "Metrics: per-user buckets" below) — `GET /metrics` answers HTTP 500
-and eval listings raise. Run `MigrationManager(db).up()` (or
-`POST /databases/all/migrate` on AgentOS) to restore them; this works on a live
-process without a restart.
+Note: this lazy path covers **sessions only**. Every table type in the
+migration's `USER_ID_TABLE_TYPES` — evals, components, knowledge, schedules,
+schedule runs and metrics — gains a `user_id` column in v3.0, and a pre-v3.0
+table of any of these types fails schema validation until the migration runs
+(metrics has the loudest failure mode; see "Metrics: per-user buckets" below —
+`GET /metrics` answers HTTP 500 and eval listings raise). Tables that do not
+exist yet are simply created with the new schema. Run
+`MigrationManager(db).up()` (or `POST /databases/all/migrate` on AgentOS) to
+restore the affected tables; this works on a live process without a restart.
 
 ### Step 3: Drop the legacy column when you're ready
 
