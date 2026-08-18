@@ -1553,8 +1553,9 @@ class StudioTools(Toolkit):
             component_id (Optional[str]): Explicit id; overrides the name mint.
             publish (bool): True publishes version 1 immediately.
             mode (str): 'coordinate' (leader delegates and synthesizes),
-                'route' (leader routes, member answers), or 'broadcast'
-                (every member gets the task).
+                'route' (leader routes, member answers), 'broadcast'
+                (every member gets the task), or 'tasks' (leader keeps a
+                shared task list and loops until all work is done).
             markdown (Optional[bool]): Format responses as markdown.
             expected_output (Optional[str]): What a good answer looks like.
             additional_context (Optional[str]): Extra leader context.
@@ -2084,7 +2085,7 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): New leader model id.
             member_ids (Optional[List[str]]): Replacement member list (exact ids).
             description (Optional[str]): New description; "" clears.
-            mode (Optional[str]): 'coordinate', 'route', or 'broadcast'.
+            mode (Optional[str]): 'coordinate', 'route', 'broadcast', or 'tasks'.
             markdown (Optional[bool]): Format responses as markdown.
             expected_output (Optional[str]): What a good answer looks like; "" clears.
             additional_context (Optional[str]): Extra leader context; "" clears.
