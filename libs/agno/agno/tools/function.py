@@ -1387,16 +1387,26 @@ class Function(BaseModel):
         """Process the schema to make it strict mode compliant."""
 
         def make_nested_strict(schema):
-            """Recursively ensure all object schemas have additionalProperties: false"""
+            """Recursively make a schema strict-mode compliant.
+
+            Every object level gets additionalProperties: false and a fully
+            populated `required`; anyOf/oneOf list branches are visited too.
+            """
             if not isinstance(schema, dict):
                 return schema
 
             # Make a copy to avoid modifying the original
             result = schema.copy()
 
-            # If this is an object schema, ensure additionalProperties: false
+            # If this is an object schema, ensure additionalProperties: false.
+            # Also complete pydantic's `required`, which omits defaulted or
+            # Optional fields -- OpenAI strict mode requires it to name every
+            # property (issue #9413).
             if result.get("type") == "object" or "properties" in result:
                 result["additionalProperties"] = False
+                properties = result.get("properties")
+                if isinstance(properties, dict):
+                    result["required"] = list(properties.keys())
 
             # If schema has no type but has other schema properties, give it a type
             if "type" not in result:
@@ -1412,9 +1422,12 @@ class Function(BaseModel):
             for key, value in result.items():
                 if key == "properties" and isinstance(value, dict):
                     result[key] = {k: make_nested_strict(v) for k, v in value.items()}
-                elif key == "items" and isinstance(value, dict):
-                    # This handles array items like List[KnowledgeFilter]
-                    result[key] = make_nested_strict(value)
+                elif isinstance(value, list):
+                    # anyOf/oneOf/allOf branches, and tuple-form items
+                    result[key] = [
+                        make_nested_strict(item) if isinstance(item, dict) else item
+                        for item in value
+                    ]
                 elif isinstance(value, dict):
                     result[key] = make_nested_strict(value)
 
