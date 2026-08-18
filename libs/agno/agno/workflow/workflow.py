@@ -4415,6 +4415,10 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            # Caller metadata persists on the run, as agents and teams already
+            # do: the run routes read it back, e.g. the pinned component
+            # version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -4614,6 +4618,10 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            # Caller metadata persists on the run, as agents and teams already
+            # do: the run routes read it back, e.g. the pinned component
+            # version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -10074,6 +10082,7 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -10338,6 +10347,7 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer

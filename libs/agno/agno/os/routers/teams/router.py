@@ -81,6 +81,8 @@ from agno.os.utils import (
     replayed_payload_to_sse,
     resolve_team,
     sse_error_frame,
+    stamp_component_version,
+    stamped_component_version,
 )
 from agno.registry import Registry
 from agno.run.agent import RunOutput
@@ -681,6 +683,11 @@ def get_team_router(
             session_id=session_id,
             factory_input=factory_input,
         )
+
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the lifecycle routes can reload
+        # the SAME version later instead of whatever is current by then.
+        stamp_component_version(kwargs, version)
 
         # Member HITL needs member runs embedded on the team run (member_responses).
         # Without this, API continue cannot reliably reload member tool state from the DB.
@@ -1378,6 +1385,38 @@ def get_team_router(
                 component_type="teams",
                 component_id=team_id,
             )
+
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now. No stamp
+        # (legacy or unpinned runs) keeps today's resolution. Factories build
+        # per-request and remote teams resolve remotely, so both are exempt.
+        if not factory and not isinstance(team, RemoteTeam):
+            stamped_run = await team.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+            stamped_version = stamped_component_version(stamped_run)
+            if stamped_version is not None:
+                try:
+                    stamped_team = get_team_by_id(
+                        team_id=team_id,
+                        teams=os.teams,
+                        db=os.db,
+                        registry=registry,
+                        version=stamped_version,
+                        create_fresh=True,
+                        user_id=scoped_user_id,
+                        published_only=False,
+                    )
+                except ComponentRehydrationError as rehydration_error:
+                    raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+                if stamped_team is None or isinstance(stamped_team, RemoteTeam):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Team version {stamped_version} recorded on run {run_id} is no longer available",
+                    )
+                # Member HITL needs member runs embedded on the team run,
+                # exactly like the pre-stamp handle resolved above.
+                stamped_team.store_member_responses = True
+                team = stamped_team
 
         # Convert requirements dict to RunRequirement objects if provided
         updated_requirements = None

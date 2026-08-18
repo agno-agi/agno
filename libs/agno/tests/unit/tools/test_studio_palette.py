@@ -15,10 +15,10 @@ from typing import Any, Dict
 import pytest
 
 from agno.agent import Agent
-from agno.team import Team
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
+from agno.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.function import Function
 from agno.tools.studio import StudioTools

@@ -2510,6 +2510,46 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 # High-level resolvers with error handling for routers
 # ---------------------------------------------------------------------------
 
+# Run-metadata key recording which component version a run was started with.
+# Written by the run-start routes when the caller pins a version explicitly
+# (draft preview); read back by the lifecycle routes so a paused/completed
+# run continues on the SAME version instead of whatever is current by then.
+COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
+
+
+def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> None:
+    """Record an explicitly requested component version in the run metadata.
+
+    Mutates ``kwargs`` in place: merges the stamp into any caller-provided
+    ``metadata`` dict (a copy - the request-state dict is never mutated).
+    No version means no stamp, so unpinned runs keep their legacy shape.
+    """
+    if version is None:
+        return
+    metadata = dict(kwargs.get("metadata") or {})
+    metadata[COMPONENT_VERSION_METADATA_KEY] = version
+    kwargs["metadata"] = metadata
+
+
+def stamped_component_version(run_output: Any) -> Optional[int]:
+    """The component version recorded on a run at start, or None.
+
+    None (no stamp, pre-stamp legacy runs, or an unusable value) means the
+    caller must keep today's unpinned resolution.
+    """
+    metadata = getattr(run_output, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get(COMPONENT_VERSION_METADATA_KEY)
+    if isinstance(value, bool):  # bool is an int; a True stamp is garbage
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        # JSON round-trips through form fields/stores may stringify the int
+        return int(value)
+    return None
+
 
 async def resolve_agent(
     agent_id: str,
@@ -2584,6 +2624,7 @@ async def resolve_agent(
                 create_fresh=True,
                 user_id=scoped_user_id,
                 strict=strict,
+                published_only=published_only,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
@@ -2662,6 +2703,7 @@ async def resolve_team(
                 create_fresh=True,
                 user_id=scoped_user_id,
                 strict=strict,
+                published_only=published_only,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
@@ -2740,6 +2782,7 @@ async def resolve_workflow(
                 create_fresh=True,
                 user_id=scoped_user_id,
                 strict=strict,
+                published_only=published_only,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so

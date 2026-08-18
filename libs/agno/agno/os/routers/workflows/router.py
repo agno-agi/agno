@@ -81,6 +81,8 @@ from agno.os.utils import (
     replayed_payload_to_sse,
     resolve_workflow,
     sse_error_frame,
+    stamp_component_version,
+    stamped_component_version,
     stored_event_replay_dicts,
 )
 from agno.run.base import RunStatus
@@ -377,6 +379,12 @@ async def handle_workflow_via_websocket(
                 "workflows are not queueable): bounded and observable, but NOT durable."
             )
 
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the continue paths can reload the
+        # SAME version later instead of whatever is current by then.
+        ws_run_kwargs: Dict[str, Any] = {}
+        stamp_component_version(ws_run_kwargs, version)
+
         # Execute workflow in background with streaming via WebSocket
         await workflow.arun(  # type: ignore
             input=user_message,
@@ -387,6 +395,7 @@ async def handle_workflow_via_websocket(
             background=True,
             websocket=websocket,
             enable_websocket=True,
+            **ws_run_kwargs,
         )
 
         # NOTE: Don't register the original websocket in the manager
@@ -761,6 +770,36 @@ async def handle_workflow_continue_via_websocket(
                 )
             )
             return
+
+        # Version-stable continuation (see the HTTP continue route): a run
+        # started with an explicitly pinned version (draft preview) recorded
+        # it in its run metadata; continue on THAT version, not whatever is
+        # published/current now. No stamp (legacy or unpinned runs) keeps
+        # today's resolution. Factories build per-request, so they are exempt.
+        stamped_version = stamped_component_version(existing_run)
+        if stamped_version is not None and not find_factory_by_id(workflow_id, os.workflows):
+            stamped_workflow = get_workflow_by_id(
+                workflow_id=workflow_id,
+                workflows=os.workflows,
+                db=os.db,
+                registry=os.registry,
+                version=stamped_version,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                published_only=False,
+            )
+            if not stamped_workflow or isinstance(stamped_workflow, RemoteWorkflow):
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": f"Workflow version {stamped_version} recorded on run {run_id} "
+                            "is no longer available",
+                        }
+                    )
+                )
+                return
+            workflow = stamped_workflow
 
         # Apply step requirements if provided
         if step_requirements_data:
@@ -1606,6 +1645,11 @@ def get_workflow_router(
             factory_input=factory_input,
         )
 
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the lifecycle routes can reload
+        # the SAME version later instead of whatever is current by then.
+        stamp_component_version(kwargs, version)
+
         if session_id:
             logger.debug(f"Continuing session: {session_id}")
         else:
@@ -2014,6 +2058,33 @@ def get_workflow_router(
                 f"run is not paused (status={getattr(status, 'value', status)})",
             )
             raise HTTPException(status_code=409, detail=detail)
+
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now. No stamp
+        # (legacy or unpinned runs) keeps today's resolution. Factories build
+        # per-request, so they are exempt.
+        stamped_version = stamped_component_version(existing_run)
+        if stamped_version is not None and not find_factory_by_id(workflow_id, os.workflows):
+            try:
+                stamped_workflow = get_workflow_by_id(
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    version=stamped_version,
+                    create_fresh=True,
+                    user_id=scoped_user_id,
+                    published_only=False,
+                )
+            except ComponentRehydrationError as rehydration_error:
+                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+            if stamped_workflow is None or isinstance(stamped_workflow, RemoteWorkflow):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Workflow version {stamped_version} recorded on run {run_id} is no longer available",
+                )
+            workflow = stamped_workflow
 
         # Convert step requirements dicts to StepRequirement objects
         from agno.workflow.types import StepRequirement

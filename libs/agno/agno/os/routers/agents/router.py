@@ -85,6 +85,8 @@ from agno.os.utils import (
     replayed_payload_to_sse,
     resolve_agent,
     sse_error_frame,
+    stamp_component_version,
+    stamped_component_version,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
@@ -715,6 +717,11 @@ def get_agent_router(
             session_id=session_id,
             factory_input=factory_input,
         )
+
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the lifecycle routes can reload
+        # the SAME version later instead of whatever is current by then.
+        stamp_component_version(kwargs, version)
 
         if session_id is None or session_id == "":
             log_debug("Creating new session")
@@ -1384,6 +1391,35 @@ def get_agent_router(
                 component_type="agents",
                 component_id=agent_id,
             )
+
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now. No stamp
+        # (legacy or unpinned runs) keeps today's resolution. Factories build
+        # per-request and remote agents resolve remotely, so both are exempt.
+        if not factory and not isinstance(agent, RemoteAgent):
+            stamped_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            stamped_version = stamped_component_version(stamped_run)
+            if stamped_version is not None:
+                try:
+                    stamped_agent = get_agent_by_id(
+                        agent_id=agent_id,
+                        agents=os.agents,
+                        db=os.db,
+                        registry=os.registry,
+                        version=stamped_version,
+                        create_fresh=True,
+                        user_id=scoped_user_id,
+                        published_only=False,
+                    )
+                except ComponentRehydrationError as rehydration_error:
+                    raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+                if stamped_agent is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agent version {stamped_version} recorded on run {run_id} is no longer available",
+                    )
+                agent = stamped_agent
 
         # No router-level status gate, deliberately: the continue dispatch
         # handles EVERY run state itself - COMPLETED forks as a follow-up,
