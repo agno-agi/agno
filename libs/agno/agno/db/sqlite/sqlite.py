@@ -4036,7 +4036,9 @@ class SqliteDb(BaseDb):
                 # archived parent's history, so it checks every link.
                 dependents = self.get_dependents(component_id, active_parents_only=not hard_delete)
                 if dependents:
-                    parents = sorted({d.get("parent_component_id") for d in dependents if d.get("parent_component_id")})
+                    parents = sorted(
+                        {str(d["parent_component_id"]) for d in dependents if d.get("parent_component_id")}
+                    )
                     raise ComponentDependencyError(
                         f"Cannot delete {component_id}: referenced by {', '.join(str(x) for x in parents)}"
                     )
@@ -4756,7 +4758,7 @@ class SqliteDb(BaseDb):
                         )
                     ).fetchall()
                     if pinned_by:
-                        parents = sorted({r.parent_component_id for r in pinned_by})
+                        parents = sorted({r.parent_component_id for r in pinned_by if r.parent_component_id})
                         raise ComponentDependencyError(
                             f"Cannot delete {component_id} v{version}: pinned by {', '.join(parents)}"
                         )
@@ -5749,10 +5751,17 @@ class SqliteDb(BaseDb):
     def update_schedule(
         self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
+            if kwargs.get("enabled") is True:
+                # A system-set disabled_reason describes why the row was off;
+                # turning it on retires the explanation.
+                kwargs.setdefault("disabled_reason", None)
             kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
                 stmt = table.update().where(table.c.id == schedule_id)
@@ -5791,6 +5800,75 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
+
+    def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Matches provenance-tagged rows (target_type/target_id) AND generic rows
+        whose endpoint is that component's run endpoint - a schedule that can
+        only 404 against an archived target is not a schedule. A system reason
+        lands in disabled_reason so the owner's next read explains the flip;
+        enable clears it. Crosses owners deliberately: archiving the target is
+        a system action.
+        """
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return 0
+            endpoint = f"/{target_type}s/{target_id}/runs"
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.update()
+                    .where(
+                        or_(
+                            and_(table.c.target_type == target_type, table.c.target_id == target_id),
+                            table.c.endpoint == endpoint,
+                        ),
+                        table.c.enabled.is_(True),
+                    )
+                    .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                )
+            return int(result.rowcount or 0)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses.
+
+        The trusted path for control planes: managed_by, target_type,
+        target_id, created_by_*/updated_by_*. Never touches ownership or the
+        mutable surface.
+        """
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.update().where(table.c.id == schedule_id).values(updated_at=int(time.time()), **provenance)
+                )
+            return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:

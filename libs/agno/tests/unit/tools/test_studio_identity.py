@@ -262,16 +262,38 @@ class TestScheduleOwnership:
             )
         )
         assert made.get("status") == "created", made
-        row = db.get_schedule(made["id"])
+        row = db.get_schedule(made["data"]["id"])
         assert row is not None and row["user_id"] == "alice"
         # The regression this phase exists for: the owner-scoped management
         # tools Studio mounts must see the schedule Studio just created for
         # the same actor. They are registered functions, not methods.
         list_schedules = studio.functions["list_schedules"].entrypoint
         listed = _loads(list_schedules(run_context=ALICE))
-        assert any(s["id"] == made["id"] for s in listed["schedules"]), listed
+        assert any(s["id"] == made["data"]["id"] for s in listed["schedules"]), listed
         other = _loads(list_schedules(run_context=BOB))
-        assert not any(s["id"] == made["id"] for s in other.get("schedules", [])), other
+        assert not any(s["id"] == made["data"]["id"] for s in other.get("schedules", [])), other
+
+    def test_update_schedule_is_owner_scoped(self, studio, db):
+        created = _create(studio, "Scoped Sched Agent", ALICE, publish=True)
+        made = _loads(
+            studio.create_schedule(
+                name="alices-cadence",
+                cron="0 9 * * *",
+                target_type="agent",
+                target_id=created["id"],
+                message="Run.",
+                _agno_run_context=ALICE,
+            )
+        )
+        sched_id = made["data"]["id"]
+
+        hijack = _loads(studio.update_schedule(sched_id, cron="0 4 * * *", _agno_run_context=BOB))
+        assert hijack["error"]["code"] == "schedule_not_found", hijack
+        assert db.get_schedule(sched_id)["cron_expr"] == "0 9 * * *"
+
+        allowed = _loads(studio.update_schedule(sched_id, cron="0 4 * * *", _agno_run_context=ALICE))
+        assert allowed["ok"], allowed
+        assert db.get_schedule(sched_id)["cron_expr"] == "0 4 * * *"
 
     def test_schedule_without_context_is_unowned(self, studio, db):
         created = _create(studio, "Cron Target", publish=True)
@@ -285,7 +307,7 @@ class TestScheduleOwnership:
             )
         )
         assert made.get("status") == "created", made
-        assert db.get_schedule(made["id"])["user_id"] is None
+        assert db.get_schedule(made["data"]["id"])["user_id"] is None
 
 
 # ----------------------------------------------------------------------

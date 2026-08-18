@@ -4031,6 +4031,13 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def update_schedule(
         self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        if kwargs.get("enabled") is True:
+            # A system-set disabled_reason describes why the row was off;
+            # turning it on retires the explanation.
+            kwargs.setdefault("disabled_reason", None)
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -4075,6 +4082,71 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Async variant of the sync adapter's primitive: matches provenance-tagged
+        rows and generic rows whose endpoint is the component's run endpoint,
+        across owners, and records the system reason in disabled_reason.
+        """
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return 0
+            endpoint = f"/{target_type}s/{target_id}/runs"
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.update()
+                        .where(
+                            or_(
+                                and_(table.c.target_type == target_type, table.c.target_id == target_id),
+                                table.c.endpoint == endpoint,
+                            ),
+                            table.c.enabled.is_(True),
+                        )
+                        .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                    )
+            return int(result.rowcount or 0)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses."""
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.update()
+                        .where(table.c.id == schedule_id)
+                        .values(updated_at=int(time.time()), **provenance)
+                    )
+            return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:

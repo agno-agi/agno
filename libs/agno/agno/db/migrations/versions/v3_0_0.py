@@ -49,6 +49,21 @@ BATCH_SIZE = 50
 # never called for it; a backend whose schema does not declare the column is skipped.
 USER_ID_TABLE_TYPES = ("evals", "components", "knowledge", "schedules", "schedule_runs", "metrics")
 
+# Studio 3.0 schedule provenance (specs/agno/studio-3.0/spec-v0.md section 3.5):
+# nullable TEXT columns, so legacy rows need only the ALTERs. managed_by and
+# target_id also get lookup indexes.
+SCHEDULE_PROVENANCE_COLUMNS = (
+    "managed_by",
+    "target_type",
+    "target_id",
+    "created_by_run_id",
+    "created_by_session_id",
+    "updated_by_run_id",
+    "updated_by_session_id",
+    "disabled_reason",
+)
+SCHEDULE_PROVENANCE_INDEXED = ("managed_by", "target_id")
+
 # The pre-v3.0 metrics unique key. It has to go: a per-user bucket needs user_id in the
 # key, or the second user's row for a date is rejected.
 METRICS_LEGACY_UNIQUE_NAME = "uq_metrics_date_period"
@@ -3025,6 +3040,18 @@ def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> b
                 )
                 applied = True
 
+    if table_type == "schedules":
+        with db.Session() as sess, sess.begin():  # type: ignore
+            for column in SCHEDULE_PROVENANCE_COLUMNS:
+                log_info(f"-- Ensuring {column} column on {table_name}")
+                sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {column} VARCHAR"))
+            for column in SCHEDULE_PROVENANCE_INDEXED:
+                index = f"idx_{table_name}_{column}"
+                sess.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS {quote_db_identifier(db_type, index)} ON {full_table} ({column})")
+                )
+        applied = True
+
     # Outside the main transaction: a duplicate-name failure only skips the backstop.
     if table_type == "schedules":
         applied = _postgres_schedule_unique_backstop(db, db_schema, table_name, full_table, db_type) or applied
@@ -3110,6 +3137,18 @@ async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, tabl
                     )
                 )
                 applied = True
+
+    if table_type == "schedules":
+        async with db.Session() as sess, sess.begin():  # type: ignore
+            for column in SCHEDULE_PROVENANCE_COLUMNS:
+                log_info(f"-- Ensuring {column} column on {table_name}")
+                await sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {column} VARCHAR"))
+            for column in SCHEDULE_PROVENANCE_INDEXED:
+                index = f"idx_{table_name}_{column}"
+                await sess.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS {quote_db_identifier(db_type, index)} ON {full_table} ({column})")
+                )
+        applied = True
 
     # Outside the main transaction: a duplicate-name failure only skips the backstop.
     if table_type == "schedules":
@@ -3566,6 +3605,26 @@ def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> boo
                 )
                 applied = True
 
+    if table_type == "schedules":
+        with db.Session() as sess, sess.begin():  # type: ignore
+            columns_info = sess.execute(text(f"PRAGMA table_info({quoted_table})")).fetchall()
+            existing_columns = {col[1] for col in columns_info}
+            indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
+            existing_indexes = {idx[1] for idx in indexes}
+            for column in SCHEDULE_PROVENANCE_COLUMNS:
+                if column not in existing_columns:
+                    log_info(f"-- Adding {column} column to {table_name}")
+                    sess.execute(text(f"ALTER TABLE {quoted_table} ADD COLUMN {column} TEXT"))
+                    applied = True
+            for column in SCHEDULE_PROVENANCE_INDEXED:
+                index = f"idx_{table_name}_{column}"
+                if index not in existing_indexes:
+                    log_info(f"-- Adding index {index} on {table_name}")
+                    sess.execute(
+                        text(f"CREATE INDEX {quote_db_identifier(db_type, index)} ON {quoted_table} ({column})")
+                    )
+                    applied = True
+
     # Outside the main transaction: a duplicate-name failure only skips the backstop.
     if table_type == "schedules":
         applied = _sqlite_schedule_unique_backstop(db, table_name, quoted_table, db_type) or applied
@@ -3621,6 +3680,26 @@ async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_
                     )
                 )
                 applied = True
+
+    if table_type == "schedules":
+        async with db.Session() as sess, sess.begin():  # type: ignore
+            columns_info = (await sess.execute(text(f"PRAGMA table_info({quoted_table})"))).fetchall()
+            existing_columns = {col[1] for col in columns_info}
+            indexes = (await sess.execute(text(f"PRAGMA index_list({quoted_table})"))).fetchall()
+            existing_indexes = {idx[1] for idx in indexes}
+            for column in SCHEDULE_PROVENANCE_COLUMNS:
+                if column not in existing_columns:
+                    log_info(f"-- Adding {column} column to {table_name}")
+                    await sess.execute(text(f"ALTER TABLE {quoted_table} ADD COLUMN {column} TEXT"))
+                    applied = True
+            for column in SCHEDULE_PROVENANCE_INDEXED:
+                index = f"idx_{table_name}_{column}"
+                if index not in existing_indexes:
+                    log_info(f"-- Adding index {index} on {table_name}")
+                    await sess.execute(
+                        text(f"CREATE INDEX {quote_db_identifier(db_type, index)} ON {quoted_table} ({column})")
+                    )
+                    applied = True
 
     # Outside the main transaction: a duplicate-name failure only skips the backstop.
     if table_type == "schedules":

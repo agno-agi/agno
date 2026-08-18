@@ -1754,7 +1754,10 @@ class TestSchedules:
             "message": "Send the daily digest.",
         }
         params.update(overrides)
-        return _loads(studio.create_schedule(**params))
+        out = _loads(studio.create_schedule(**params))
+        if out.get("ok"):
+            return {"status": out["status"], **out["data"]}
+        return out
 
     def test_create_schedule_for_created_agent_persists_endpoint_and_payload(self, studio_schedules):
         self._create_target_agent(studio_schedules)
@@ -1783,44 +1786,78 @@ class TestSchedules:
 
     def test_unknown_target_returns_error(self, studio_schedules):
         out = self._create_schedule(studio_schedules, target_id="ghost")
-        assert "error" in out
-        assert "Agent not found: ghost" in out["error"]
+        assert out["error"]["code"] == "component_not_found"
+        assert "Agent not found: ghost" in out["error"]["message"]
 
     def test_bad_target_type_returns_error(self, studio_schedules):
         self._create_target_agent(studio_schedules)
         out = self._create_schedule(studio_schedules, target_type="cron-job")
-        assert "error" in out
-        assert "Invalid target_type" in out["error"]
+        assert out["error"]["code"] == "component_not_found"
+        assert "Invalid target_type" in out["error"]["message"]
 
     def test_invalid_cron_returns_error(self, studio_schedules):
         self._create_target_agent(studio_schedules)
         out = self._create_schedule(studio_schedules, cron="not-a-cron")
-        assert "error" in out
-        assert "Invalid cron expression" in out["error"]
+        assert out["error"]["code"] == "invalid_request"
+        assert "Invalid cron expression" in out["error"]["message"]
 
     def test_invalid_timezone_returns_error(self, studio_schedules):
         self._create_target_agent(studio_schedules)
         out = self._create_schedule(studio_schedules, timezone="Mars/Olympus")
-        assert "error" in out
-        assert "Invalid timezone" in out["error"]
+        assert out["error"]["code"] == "invalid_request"
+        assert "Invalid timezone" in out["error"]["message"]
 
     def test_empty_message_returns_error(self, studio_schedules):
         self._create_target_agent(studio_schedules)
         out = self._create_schedule(studio_schedules, message="   ")
-        assert "error" in out
-        assert "message" in out["error"]
+        assert out["error"]["code"] == "invalid_request"
+        assert "message" in out["error"]["message"]
 
-    def test_same_name_create_updates_in_place(self, studio_schedules):
+    def test_same_name_create_is_a_conflict_and_update_changes_cadence(self, studio_schedules):
+        # Create means create (studio-3.0 spec section 3.5): a reused name can
+        # no longer silently repoint an existing schedule; update_schedule is
+        # the explicit edit path and the target stays immutable.
         self._create_target_agent(studio_schedules)
         first = self._create_schedule(studio_schedules)
         second = self._create_schedule(studio_schedules, cron="30 18 * * *")
 
-        assert second["id"] == first["id"]
-        assert second["cron"] == "30 18 * * *"
+        assert second["error"]["code"] == "schedule_conflict"
+        assert "update_schedule" in second["error"]["message"]
+
+        updated = _loads(studio_schedules.update_schedule(first["id"], cron="30 18 * * *"))
+        assert updated["ok"] and updated["data"]["cron"] == "30 18 * * *"
 
         listed = _loads(_tool(studio_schedules, "list_schedules")())
         assert listed["count"] == 1
         assert listed["schedules"][0]["cron"] == "30 18 * * *"
+
+    def test_update_schedule_changes_message_and_stamps_provenance(self, studio_schedules, db):
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules)
+        out = _loads(studio_schedules.update_schedule(created["id"], message="New prompt."))
+        assert out["ok"], out
+        row = db.get_schedule(created["id"])
+        assert row["payload"] == {"message": "New prompt."}
+
+    def test_update_schedule_requires_a_field(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules)
+        out = _loads(studio_schedules.update_schedule(created["id"]))
+        assert out["error"]["code"] == "invalid_request"
+
+    def test_schedule_refuses_a_draft_only_target(self, studio_schedules):
+        # A schedule fires the live published version; a draft target would
+        # 404 on every tick.
+        _data(studio_schedules.create_agent(name="draft-target", instructions="i", model_id="gpt-5.4"))
+        out = self._create_schedule(studio_schedules, target_id="draft-target")
+        assert out["error"]["code"] == "target_not_published"
+
+    def test_create_stamps_studio_provenance(self, studio_schedules, db):
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules)
+        row = db.get_schedule(created["id"])
+        assert row["managed_by"] == "studio"
+        assert row["target_type"] == "agent" and row["target_id"] == "digest"
 
     def test_get_schedule_reports_endpoint_and_payload(self, studio_schedules):
         self._create_target_agent(studio_schedules)
@@ -1900,7 +1937,36 @@ class TestSchedules:
             )
         )
         assert out["status"] == "created"
-        assert out["endpoint"] == "/agents/digest/runs"
+        assert out["data"]["endpoint"] == "/agents/digest/runs"
+
+    def test_archive_cascade_disables_schedules_and_warns(self, studio_schedules, db):
+        # Archiving a component must not leave live schedules firing at a 404;
+        # the archive result carries the count so the model can relay it.
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules)
+
+        archived = _loads(studio_schedules.archive_component("digest"))
+        assert archived["ok"], archived
+        assert any("1 schedule" in w for w in archived["warnings"]), archived["warnings"]
+
+        row = db.get_schedule(created["id"])
+        assert row["enabled"] in (False, 0)
+        assert row["disabled_reason"] == "target_archived:agent:digest"
+
+    def test_enable_refuses_schedule_whose_target_is_archived(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules)
+        studio_schedules.archive_component("digest")
+
+        out = _loads(_tool(studio_schedules, "enable_schedule")(created["id"]))
+        assert "archived" in out["error"]
+        assert "Restore" in out["error"]
+
+        # Restoring the target makes enable work again.
+        restored = _loads(studio_schedules.restore_component("digest"))
+        assert restored["ok"], restored
+        enabled = _loads(_tool(studio_schedules, "enable_schedule")(created["id"]))
+        assert enabled["status"] == "enabled"
 
 
 # ----------------------------------------------------------------------

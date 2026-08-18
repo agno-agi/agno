@@ -104,6 +104,16 @@ class ScheduleExecutor:
 
         try:
             schedule_id = sched.id
+            # A control-plane-managed schedule must fire the exact component its
+            # provenance names: a repointed endpoint under an old target is
+            # refused rather than executed (studio-3.0 spec section 3.5).
+            if sched.managed_by is not None and sched.target_type and sched.target_id:
+                expected_endpoint = f"/{sched.target_type}s/{sched.target_id}/runs"
+                if sched.endpoint.rstrip("/") != expected_endpoint:
+                    raise RuntimeError(
+                        f"Schedule {sched.id} endpoint {sched.endpoint!r} does not match its "
+                        f"provenance target {sched.target_type}:{sched.target_id}; refusing to execute"
+                    )
             max_attempts = max(1, (sched.max_retries or 0) + 1)
             retry_delay = sched.retry_delay_seconds or 60
             for attempt in range(1, max_attempts + 1):

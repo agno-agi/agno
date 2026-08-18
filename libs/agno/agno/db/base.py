@@ -1496,6 +1496,32 @@ class BaseDb(ABC):
         """Delete a schedule and its associated runs."""
         raise NotImplementedError
 
+    def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component.
+
+        Matches provenance-tagged rows and generic rows whose endpoint is the
+        component's run endpoint, across owners (archiving the target is a
+        system action). ``reason`` lands in disabled_reason; enable clears it.
+
+        Returns:
+            The number of schedules disabled.
+        """
+        raise NotImplementedError
+
+    def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write control-plane provenance columns (managed_by, target_*,
+        created_by_*/updated_by_*) that the generic update_schedule refuses.
+
+        Returns:
+            True when the schedule row was updated.
+        """
+        raise NotImplementedError
+
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
@@ -2766,6 +2792,19 @@ class AsyncBaseDb(ABC):
 
     async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Async variant of BaseDb.disable_schedules_for_target."""
+        raise NotImplementedError
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Async variant of BaseDb.stamp_schedule_provenance."""
         raise NotImplementedError
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:

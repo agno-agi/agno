@@ -264,6 +264,7 @@ class StudioTools(Toolkit):
             tools.extend(
                 [
                     self.create_schedule,
+                    self.update_schedule,
                     self._scheduler_tools.list_schedules,
                     self._scheduler_tools.get_schedule,
                     self._scheduler_tools.get_schedule_runs,
@@ -316,6 +317,7 @@ class StudioTools(Toolkit):
             async_tools.extend(
                 [
                     (self.acreate_schedule, "create_schedule"),
+                    (self.aupdate_schedule, "update_schedule"),
                     (self._scheduler_tools.alist_schedules, "list_schedules"),
                     (self._scheduler_tools.aget_schedule, "get_schedule"),
                     (self._scheduler_tools.aget_schedule_runs, "get_schedule_runs"),
@@ -2389,6 +2391,7 @@ class StudioTools(Toolkit):
             denied = self._check_component_access(component_id, _actor_id(_agno_run_context), "archive")
             if denied is not None:
                 return self._denied_error(denied)
+            component_type = str(row.get("component_type"))
             archived = self.db.delete_component(
                 component_id,
                 hard_delete=False,
@@ -2397,7 +2400,29 @@ class StudioTools(Toolkit):
             )
             if not archived:
                 return error_result("component_not_found", f"Component not found: {component_id}")
-            return ok_result("archived", id=component_id)
+            warnings: List[str] = []
+            try:
+                disabled = self.db.disable_schedules_for_target(
+                    component_type,
+                    component_id,
+                    reason=f"target_archived:{component_type}:{component_id}",
+                )
+            except NotImplementedError:
+                disabled = 0
+            except Exception:
+                logger.exception("Failed to disable schedules for archived target")
+                warnings.append(
+                    f"Could not disable the schedules targeting {component_type} '{component_id}'; check them manually."
+                )
+                disabled = 0
+            if disabled:
+                # The count only - listing ids would disclose other owners' rows
+                # through the archiver's result.
+                warnings.append(
+                    f"Disabled {disabled} schedule(s) that targeted {component_type} '{component_id}'. "
+                    "They cannot be re-enabled while the target is archived."
+                )
+            return ok_result("archived", warnings=warnings, id=component_id)
         except Exception as e:
             return self._error_from_exception(e, "Failed to archive component")
 
@@ -3000,35 +3025,52 @@ class StudioTools(Toolkit):
         description: Optional[str] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
-        """Create (or update) a schedule that runs an existing component on a cron cadence.
+        """Create a schedule that runs an existing PUBLISHED component on a cron
+        cadence. Create means create: a name you already used is a conflict,
+        and update_schedule changes an existing schedule's cadence or message.
+
+        The schedule is owned by the current user and its runs execute as that
+        user. Always tell the user the next run time, the timezone, and how to
+        turn it off (disable_schedule or the AgentOS UI toggle) - and name any
+        recurring model cost.
 
         Args:
-            name (str): Unique schedule name (e.g. "daily-news-digest"). Re-using an
-                existing name updates that schedule in place.
+            name (str): Unique schedule name (e.g. "daily-news-digest").
             cron (str): 5-field cron expression (e.g. "0 9 * * *" for daily at 9am).
             target_type (str): One of 'agent', 'team', or 'workflow'.
-            target_id (str): Id (or name) of an existing component -- use ids from
-                list_agents/list_teams/list_workflows.
-            message (str): The message sent to the component on every scheduled run.
+            target_id (str): Id (or name) of an existing component.
+            message (str): The prompt sent to the component on every scheduled run.
             timezone (str): IANA timezone name for the cron expression
                 (e.g. "America/New_York"). Defaults to "UTC".
             description (Optional[str]): Human-readable description of the schedule.
 
         Returns:
-            str: JSON with {status, id, name, cron, target_type, target_id, endpoint,
-                timezone, enabled, next_run_at}.
+            str: StudioResult JSON; data carries {id, name, cron, target_type,
+            target_id, endpoint, timezone, enabled, next_run_at, runs_as}.
         """
         try:
             component_id, target_error = self._resolve_schedule_target(target_type, target_id)
             if target_error is not None:
-                return json.dumps({"error": target_error})
+                return error_result("component_not_found", target_error)
             if not message or not message.strip():
-                return json.dumps(
-                    {
-                        "error": "message must be a non-empty string; it is the prompt "
-                        "sent to the component on every scheduled run."
-                    }
+                return error_result(
+                    "invalid_request",
+                    "message must be a non-empty string; it is the prompt sent to the "
+                    "component on every scheduled run.",
                 )
+            assert component_id is not None
+            # A schedule fires the live published version; a draft-only target
+            # would 404 on every tick.
+            if self.db is not None:
+                row = self.db.get_component(component_id)
+                if row is not None and row.get("current_version") is None:
+                    return error_result(
+                        "target_not_published",
+                        f"{target_type.capitalize()} '{component_id}' has no published version; "
+                        "publish it before scheduling it.",
+                        target_id=component_id,
+                    )
+            actor = _actor_id(_agno_run_context)
             manager = self._get_schedule_manager()
             # The schedule is owned by the acting user: the run executes as the
             # owner, and the owner-scoped schedule tools can see and manage it.
@@ -3040,31 +3082,117 @@ class StudioTools(Toolkit):
                 description=description,
                 payload={"message": message},
                 timezone=timezone,
-                if_exists="update",
-                user_id=_actor_id(_agno_run_context),
+                if_exists="raise",
+                user_id=actor,
             )
-            log_debug(f"StudioTools created schedule name={name} target={target_type}:{component_id}")
-            return json.dumps(
-                {
-                    "status": "created",
-                    "id": schedule.id,
-                    "name": schedule.name,
-                    "cron": schedule.cron_expr,
+            if self.db is not None:
+                from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY
+
+                provenance: Dict[str, Any] = {
+                    "managed_by": STUDIO_SCHEDULE_MANAGED_BY,
                     "target_type": target_type,
                     "target_id": component_id,
-                    "endpoint": schedule.endpoint,
-                    "timezone": schedule.timezone,
-                    "enabled": schedule.enabled,
-                    "next_run_at": schedule.next_run_at,
                 }
+                if _agno_run_context is not None:
+                    provenance["created_by_run_id"] = _agno_run_context.run_id
+                    provenance["created_by_session_id"] = _agno_run_context.session_id
+                try:
+                    self.db.stamp_schedule_provenance(schedule.id, **provenance)
+                except NotImplementedError:
+                    pass
+            log_debug(f"StudioTools created schedule name={name} target={target_type}:{component_id}")
+            return ok_result(
+                "created",
+                id=schedule.id,
+                name=schedule.name,
+                cron=schedule.cron_expr,
+                target_type=target_type,
+                target_id=component_id,
+                endpoint=schedule.endpoint,
+                timezone=schedule.timezone,
+                enabled=schedule.enabled,
+                next_run_at=schedule.next_run_at,
+                runs_as=actor or "the platform (unowned schedule)",
+            )
+        except ValueError as e:
+            if "already exists" in str(e):
+                return error_result(
+                    "schedule_conflict",
+                    f"A schedule named '{name}' already exists. Change its cadence or message with "
+                    "update_schedule, or pick a new name.",
+                    name=name,
+                )
+            return self._error_from_exception(e, "Failed to create schedule")
+        except Exception as e:
+            return self._error_from_exception(e, "Failed to create schedule")
+
+    def update_schedule(
+        self,
+        schedule_id: str,
+        cron: Optional[str] = None,
+        message: Optional[str] = None,
+        timezone: Optional[str] = None,
+        description: Optional[str] = None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> str:
+        """Change an existing schedule's cadence, message, timezone, or
+        description. The target component is immutable: pointing at a
+        different component is a new schedule.
+
+        Args:
+            schedule_id (str): Exact schedule id from list_schedules.
+            cron (Optional[str]): New 5-field cron expression. Omit to keep.
+            message (Optional[str]): New prompt for every run. Omit to keep.
+            timezone (Optional[str]): New IANA timezone. Omit to keep.
+            description (Optional[str]): New description. Omit to keep.
+
+        Returns:
+            str: StudioResult JSON; data carries the updated schedule fields.
+        """
+        try:
+            if cron is None and message is None and timezone is None and description is None:
+                return error_result("invalid_request", "Pass at least one field to change.")
+            actor = _actor_id(_agno_run_context)
+            manager = self._get_schedule_manager()
+            existing = manager.get(schedule_id, user_id=actor)
+            if existing is None:
+                return error_result("schedule_not_found", f"Schedule not found: {schedule_id}")
+            updates: Dict[str, Any] = {}
+            if cron is not None:
+                updates["cron_expr"] = cron
+            if timezone is not None:
+                updates["timezone"] = timezone
+            if description is not None:
+                updates["description"] = description or None
+            if message is not None:
+                if not message.strip():
+                    return error_result("invalid_request", "message must be a non-empty string.")
+                payload = dict(existing.payload or {})
+                payload["message"] = message
+                updates["payload"] = payload
+            schedule = manager.update(schedule_id, user_id=actor, **updates)
+            if schedule is None:
+                return error_result("schedule_not_found", f"Schedule not found: {schedule_id}")
+            if self.db is not None and _agno_run_context is not None:
+                try:
+                    self.db.stamp_schedule_provenance(
+                        schedule_id,
+                        updated_by_run_id=_agno_run_context.run_id,
+                        updated_by_session_id=_agno_run_context.session_id,
+                    )
+                except NotImplementedError:
+                    pass
+            return ok_result(
+                "updated",
+                id=schedule.id,
+                name=schedule.name,
+                cron=schedule.cron_expr,
+                timezone=schedule.timezone,
+                enabled=schedule.enabled,
+                next_run_at=schedule.next_run_at,
             )
         except Exception as e:
-            logger.exception("Failed to create schedule")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    # ------------------------------------------------------------------
-    # Async tools
-    # ------------------------------------------------------------------
+            return self._error_from_exception(e, "Failed to update schedule")
 
     async def acreate_schedule(
         self,
@@ -3093,6 +3221,26 @@ class StudioTools(Toolkit):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    async def aupdate_schedule(
+        self,
+        schedule_id: str,
+        cron: Optional[str] = None,
+        message: Optional[str] = None,
+        timezone: Optional[str] = None,
+        description: Optional[str] = None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> str:
+        """Async variant of update_schedule."""
+        return await self._run_sync_tool(
+            self.update_schedule,
+            schedule_id,
+            cron=cron,
+            message=message,
+            timezone=timezone,
+            description=description,
+            _agno_run_context=_agno_run_context,
+        )
 
     async def _run_sync_tool(self, function: Callable[..., str], *args: Any, **kwargs: Any) -> str:
         import asyncio

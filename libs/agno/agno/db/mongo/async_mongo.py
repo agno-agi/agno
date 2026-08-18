@@ -3171,6 +3171,13 @@ class AsyncMongoDb(AsyncBaseDb):
     async def update_schedule(
         self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        if kwargs.get("enabled") is True:
+            # A system-set disabled_reason describes why the row was off;
+            # turning it on retires the explanation.
+            kwargs.setdefault("disabled_reason", None)
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:

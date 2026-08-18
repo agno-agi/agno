@@ -18,6 +18,7 @@ Example:
     )
 """
 
+import asyncio
 import json
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -283,6 +284,24 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            existing = self.manager.get(schedule_id, user_id=self._owner(run_context))
+            if existing is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            # A schedule whose provenance target is archived can only 404 at
+            # fire time; restoring the component is the way to turn it back on.
+            if existing.target_id is not None and self.manager.db is not None:
+                try:
+                    target = self.manager.db.get_component(existing.target_id)
+                except NotImplementedError:
+                    target = {"component_id": existing.target_id}
+                if target is None:
+                    return json.dumps(
+                        {
+                            "error": f"Cannot enable '{existing.name}': its target "
+                            f"{existing.target_type} '{existing.target_id}' is archived or gone. "
+                            "Restore the component first."
+                        }
+                    )
             schedule = self.manager.enable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -551,6 +570,31 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            existing = await self.manager.aget(schedule_id, user_id=self._owner(run_context))
+            if existing is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            # A schedule whose provenance target is archived can only 404 at
+            # fire time; restoring the component is the way to turn it back on.
+            if existing.target_id is not None and self.manager.db is not None:
+                get_component = getattr(self.manager.db, "get_component", None)
+                try:
+                    target = (
+                        await get_component(existing.target_id)
+                        if asyncio.iscoroutinefunction(get_component)
+                        else get_component(existing.target_id)
+                        if get_component
+                        else None
+                    )
+                except NotImplementedError:
+                    target = {"component_id": existing.target_id}
+                if target is None:
+                    return json.dumps(
+                        {
+                            "error": f"Cannot enable '{existing.name}': its target "
+                            f"{existing.target_type} '{existing.target_id}' is archived or gone. "
+                            "Restore the component first."
+                        }
+                    )
             schedule = await self.manager.aenable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})

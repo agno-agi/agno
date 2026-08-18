@@ -21,6 +21,42 @@ INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
 # newline can't slip past the run-endpoint check.
 RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
 
+# Marker for builder-managed schedules; generic surfaces may filter on it.
+STUDIO_SCHEDULE_MANAGED_BY = "studio"
+
+# The columns a generic update_schedule may write. Everything else - ownership,
+# provenance, trigger and lock state - moves only through dedicated primitives,
+# so a name-keyed upsert can never repoint who a schedule belongs to or which
+# runs wrote it. user_id stays a WHERE filter in the adapters, never a SET
+# column, which is why it is not in this set.
+SCHEDULE_MUTABLE_COLUMNS = frozenset(
+    {
+        "name",
+        "description",
+        "method",
+        "endpoint",
+        "payload",
+        "cron_expr",
+        "timezone",
+        "timeout_seconds",
+        "max_retries",
+        "retry_delay_seconds",
+        "enabled",
+        "next_run_at",
+        "disabled_reason",
+    }
+)
+
+
+def validate_schedule_update(kwargs: dict) -> None:
+    """Refuse update_schedule writes outside the mutable column set."""
+    rejected = sorted(set(kwargs) - SCHEDULE_MUTABLE_COLUMNS)
+    if rejected:
+        raise ValueError(
+            f"update_schedule cannot modify {rejected}: only {sorted(SCHEDULE_MUTABLE_COLUMNS)} are mutable; "
+            "ownership, provenance, trigger and lock state move only through their dedicated APIs"
+        )
+
 
 @dataclass
 class Schedule:
@@ -44,6 +80,20 @@ class Schedule:
     # Owner of this schedule, from the JWT sub when ``user_isolation`` is on. ``None`` for
     # system-created ones. Routes scope on this column; the executor poller fires across all users.
     user_id: Optional[str] = None
+    # Which control plane manages this row: "studio" for builder-created
+    # schedules, None for generic/code-registered ones. Provenance columns
+    # record the exact component target and the runs that wrote the row, so
+    # an operator can always answer "who scheduled this, at what".
+    managed_by: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    created_by_run_id: Optional[str] = None
+    created_by_session_id: Optional[str] = None
+    updated_by_run_id: Optional[str] = None
+    updated_by_session_id: Optional[str] = None
+    # Why the schedule is disabled, when the system did it (for example
+    # "target_archived:agent:analyst-v2-5"). Cleared by enable.
+    disabled_reason: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
@@ -99,6 +149,14 @@ class Schedule:
             "locked_by",
             "locked_at",
             "user_id",
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+            "disabled_reason",
             "created_at",
             "updated_at",
         }
