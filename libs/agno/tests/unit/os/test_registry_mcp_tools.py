@@ -5,7 +5,7 @@ declared on the registry.
 MCP toolkits in ``registry.tools`` are not attached to any agent, team or
 workflow, so they are not covered by the per-component collectors. AgentOS
 must still connect them in its lifespan: components created from registry
-tools (e.g. via StudioTool) serialize a toolkit's functions at persist time,
+tools (e.g. via StudioTools) serialize a toolkit's functions at persist time,
 and an unconnected MCP toolkit has none -- its tools would be silently and
 permanently dropped from the persisted config.
 

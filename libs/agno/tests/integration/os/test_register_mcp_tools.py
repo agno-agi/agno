@@ -165,15 +165,17 @@ def test_subclasses_are_registered():
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
 
-    mcp_subclass_instance = MCPSubclass("npm fake-command")
+    first_subclass_instance = MCPSubclass("npm fake-command")
+    second_subclass_instance = MCPSubclass("npm other-fake-command")
 
-    # Assert the tool is registered in the Agent
-    agent = Agent(tools=[mcp_subclass_instance])
+    # Assert the tools are registered in the Agent
+    agent = Agent(tools=[first_subclass_instance, second_subclass_instance])
     assert agent.tools is not None
-    assert len(agent.tools) == 1
+    assert len(agent.tools) == 2
 
-    # Assert the tool is registered in the AgentOS
+    # Assert the tools are registered in the AgentOS
     agent_os = AgentOS(agents=[agent])
     assert agent_os.mcp_tools is not None
-    assert len(agent_os.mcp_tools) == 1
-    assert mcp_subclass_instance in agent_os.mcp_tools
+    assert len(agent_os.mcp_tools) == 2
+    assert first_subclass_instance in agent_os.mcp_tools
+    assert second_subclass_instance in agent_os.mcp_tools

@@ -2,6 +2,7 @@
 
 import pytest
 
+from agno.run import RunContext
 from agno.run.workflow import (
     RouterExecutionCompletedEvent,
     RouterExecutionStartedEvent,
@@ -16,7 +17,6 @@ from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-from agno.run import RunContext
 
 
 def find_content_in_steps(step_output, search_text):

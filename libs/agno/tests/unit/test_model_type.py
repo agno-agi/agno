@@ -354,16 +354,3 @@ class TestAgentInitModelType:
             reasoning_model=OpenAIChat(id="gpt-4o-mini"),
         )
         assert agent.reasoning_model.model_type == ModelType.REASONING_MODEL
-
-
-# ---------------------------------------------------------------------------
-# Re-export shim
-# ---------------------------------------------------------------------------
-
-
-class TestReExportShim:
-    def test_model_type_importable_from_models_metrics(self):
-        from agno.metrics import ModelType as MT
-
-        assert MT is ModelType
-        assert MT.MODEL.value == "model"

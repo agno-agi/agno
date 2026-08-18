@@ -23,11 +23,6 @@ class _AsyncContextManager:
         return False
 
 
-class _AsyncExitStackStub:
-    async def enter_async_context(self, context):
-        return await context.__aenter__()
-
-
 @pytest.mark.asyncio
 async def test_sse_transport_without_url_nor_sse_client_params():
     """Test that ValueError is raised when transport is SSE but URL is not provided."""

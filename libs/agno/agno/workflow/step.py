@@ -1018,7 +1018,7 @@ class Step:
                         else:
                             response = StepOutput(content=content)
                     else:
-                        # Execute function with signature inspection for session_state support
+                        # Execute function with signature inspection for run_context support
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,

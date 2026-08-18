@@ -88,7 +88,6 @@ def get_entrypoint_for_tool(
     tool: MCPTool,
     session: ClientSession,
     mcp_tools_instance: Optional["MCPTools"] = None,
-    server_idx: int = 0,
 ):
     """
     Return an entrypoint for an MCP tool.
@@ -97,7 +96,6 @@ def get_entrypoint_for_tool(
         tool: The MCP tool to create an entrypoint for
         session: The MCP ClientSession to use
         mcp_tools_instance: Optional MCPTools instance
-        server_idx: Index of the server
 
     Returns:
         Callable: The entrypoint function for the tool

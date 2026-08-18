@@ -5,6 +5,7 @@ from typing import List
 
 import pytest
 
+from agno.run import RunContext
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
@@ -14,7 +15,6 @@ from agno.run.workflow import (
 )
 from agno.workflow import Condition, Loop, Parallel, Router, Step, StepInput, StepOutput, Workflow
 from agno.workflow.types import StepType
-from agno.run import RunContext
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -1531,9 +1531,8 @@ def test_workflow_passed_directly_as_step(shared_db):
 def test_nested_workflow_shared_session_state(shared_db):
     """Test that session state is shared between outer and nested workflow.
 
-    Function executors access session_state by declaring it as a parameter
-    in their function signature. The framework inspects the signature and
-    passes the dict automatically.
+    Function executors access session state by declaring run_context as a
+    parameter and reading run_context.session_state off it.
     """
 
     def set_state(step_input: StepInput, run_context: RunContext) -> StepOutput:
