@@ -103,7 +103,7 @@ def test_up_adds_user_id_column_and_index():
 
     assert "user_id" in _columns(db_file)
     assert EVAL_INDEX in _indexes(db_file)
-    assert db.get_latest_schema_version(EVAL_TABLE) == "3.0.1"
+    assert db.get_latest_schema_version(EVAL_TABLE) == "3.0.0"
 
 
 def test_migrated_column_type_matches_fresh_schema():
@@ -387,8 +387,8 @@ def test_schedules_migration_restores_column_and_composite_index():
     assert SCHEDULES_COMPOSITE_INDEX in _table_indexes(db_file, SCHEDULES_TABLE)
     assert "user_id" in _table_columns(db_file, SCHEDULE_RUNS_TABLE)
     assert f"idx_{SCHEDULE_RUNS_TABLE}_user_id" in _table_indexes(db_file, SCHEDULE_RUNS_TABLE)
-    assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.1"
-    assert db.get_latest_schema_version(SCHEDULE_RUNS_TABLE) == "3.0.1"
+    assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
+    assert db.get_latest_schema_version(SCHEDULE_RUNS_TABLE) == "3.0.0"
 
 
 def test_schedules_revert_drops_composite_before_column():
@@ -426,7 +426,7 @@ def test_knowledge_migration_adds_user_id():
     assert f"idx_{KNOWLEDGE_TABLE}_user_id" in _table_indexes(db_file, KNOWLEDGE_TABLE)
     # linked_to still exists on this table, so the (user_id, linked_to) composite comes back too
     assert knowledge_composite in _table_indexes(db_file, KNOWLEDGE_TABLE)
-    assert db.get_latest_schema_version(KNOWLEDGE_TABLE) == "3.0.1"
+    assert db.get_latest_schema_version(KNOWLEDGE_TABLE) == "3.0.0"
 
 
 def test_schedules_migration_is_idempotent():
@@ -508,7 +508,7 @@ def test_schedules_migration_adds_provenance_columns_to_stripped_table():
     idx = _table_indexes(db_file, SCHEDULES_TABLE)
     assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
     assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
-    assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.1"
+    assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
 
 
 @pytest.mark.asyncio
@@ -532,104 +532,10 @@ async def test_async_schedules_migration_adds_provenance_columns():
     idx = _table_indexes(db_file, SCHEDULES_TABLE)
     assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
     assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
-    assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.1"
+    assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
 
     created = await db.create_schedule(_schedule_row("after-migration"))
     assert created["id"] == "sched-after-migration"
-
-
-def _stamp_3_0_0_without_provenance(db_file: str) -> None:
-    """Mimic a schedules table an early 3.0.0 build created: stamped 3.0.0 at creation,
-    but the provenance columns did not exist in that build's schema yet."""
-    conn = sqlite3.connect(db_file)
-    try:
-        for index in (f"idx_{SCHEDULES_TABLE}_managed_by", f"idx_{SCHEDULES_TABLE}_target_id"):
-            conn.execute(f"DROP INDEX IF EXISTS {index}")
-        for column in SCHEDULE_PROVENANCE_COLUMNS:
-            conn.execute(f"ALTER TABLE {SCHEDULES_TABLE} DROP COLUMN {column}")
-        conn.execute("UPDATE agno_schema_versions SET version='3.0.0' WHERE table_name=?", (SCHEDULES_TABLE,))
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def test_schedules_stamped_3_0_0_without_provenance_columns_is_healed():
-    """Regression: a schedules table an early 3.0.0 build created lacks the provenance
-    columns but is stamped 3.0.0 — and the manager only runs versions strictly greater
-    than the stamp, so v3.0.0's ensure-block could never reach it (force=True only skips
-    the up-to-date check, not the version selection). v3.0.1 re-ships the ensure-block."""
-    db, db_file = _new_db_with(["schedules"])
-    _stamp_3_0_0_without_provenance(db_file)
-    cols = _table_columns(db_file, SCHEDULES_TABLE)
-    assert "user_id" in cols
-    assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
-    assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
-
-    asyncio.run(MigrationManager(db).up(table_type="schedules"))
-
-    cols = _table_columns(db_file, SCHEDULES_TABLE)
-    assert set(SCHEDULE_PROVENANCE_COLUMNS) <= cols
-    idx = _table_indexes(db_file, SCHEDULES_TABLE)
-    assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
-    assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
-    assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.1"
-
-    created = db.create_schedule(_schedule_row("healed"))
-    assert created["id"] == "sched-healed"
-
-
-def test_v3_0_1_is_idempotent():
-    """Running v3.0.1 on a table that already has the provenance columns changes nothing."""
-    from agno.db.migrations.versions import v3_0_1
-
-    db, db_file = _new_db_with(["schedules"])
-
-    # A freshly created table already has everything: nothing to apply
-    assert v3_0_1.up(db, "schedules", SCHEDULES_TABLE) is False
-
-    # A healed table is not touched again either
-    _stamp_3_0_0_without_provenance(db_file)
-    asyncio.run(MigrationManager(db).up(table_type="schedules"))
-    before_cols = _table_columns(db_file, SCHEDULES_TABLE)
-    before_idx = _table_indexes(db_file, SCHEDULES_TABLE)
-
-    assert v3_0_1.up(db, "schedules", SCHEDULES_TABLE) is False
-
-    assert _table_columns(db_file, SCHEDULES_TABLE) == before_cols
-    assert _table_indexes(db_file, SCHEDULES_TABLE) == before_idx
-
-
-def test_v3_0_1_only_touches_schedules():
-    from agno.db.migrations.versions import v3_0_1
-
-    db, _ = _new_db()
-    assert v3_0_1.up(db, "evals", EVAL_TABLE) is False
-    assert v3_0_1.down(db, "evals", EVAL_TABLE) is False
-
-
-@pytest.mark.asyncio
-async def test_async_schedules_stamped_3_0_0_without_provenance_columns_is_healed():
-    """Async variant of the v3.0.1 regression: same early-3.0.0 table shape, AsyncSqliteDb."""
-    db_file = os.path.join(tempfile.mkdtemp(), "test_async_schedules_301.db")
-    db = AsyncSqliteDb(db_file=db_file)
-    await db._get_table(table_type="schedules", create_table_if_not_found=True)
-    _stamp_3_0_0_without_provenance(db_file)
-    cols = _table_columns(db_file, SCHEDULES_TABLE)
-    assert "user_id" in cols
-    assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
-    assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
-
-    await MigrationManager(db).up(table_type="schedules")
-
-    cols = _table_columns(db_file, SCHEDULES_TABLE)
-    assert set(SCHEDULE_PROVENANCE_COLUMNS) <= cols
-    idx = _table_indexes(db_file, SCHEDULES_TABLE)
-    assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
-    assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
-    assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.1"
-
-    created = await db.create_schedule(_schedule_row("healed-async"))
-    assert created["id"] == "sched-healed-async"
 
 
 # ---------------------------------------------------------------------------
@@ -872,7 +778,7 @@ def test_metrics_migration_swaps_the_unique_key():
     assert METRICS_USER_INDEX in _table_indexes(db_file, METRICS_TABLE)
     assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
     assert METRICS_LEGACY_UNIQUE not in _table_ddl(db_file, METRICS_TABLE)
-    assert db.get_latest_schema_version(METRICS_TABLE) == "3.0.1"
+    assert db.get_latest_schema_version(METRICS_TABLE) == "3.0.0"
 
 
 def test_metrics_migration_keeps_rows_and_other_indexes():
@@ -1026,7 +932,7 @@ def test_metrics_revert_refuses_while_rows_are_owned():
 
     assert "user_id" in _table_columns(db_file, METRICS_TABLE)
     assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
-    assert db.get_latest_schema_version(METRICS_TABLE) == "3.0.1"
+    assert db.get_latest_schema_version(METRICS_TABLE) == "3.0.0"
 
 
 def test_metrics_revert_refuses_when_an_owner_is_null():

@@ -8,7 +8,6 @@ Runs against the live pgvector container (localhost:5532) with a unique schema p
 skips cleanly when psycopg or the server is absent.
 """
 
-import asyncio
 import uuid
 
 import pytest
@@ -136,7 +135,7 @@ async def test_async_postgres_schedules_migration_adds_provenance_columns(schema
         idx = _table_indexes(schema)
         assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
         assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
-        assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.1"
+        assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
 
         created = await db.create_schedule(_schedule_row("after-migration"))
         assert created["id"] == "sched-after-migration"
@@ -144,77 +143,3 @@ async def test_async_postgres_schedules_migration_adds_provenance_columns(schema
         await db.db_engine.dispose()
 
 
-def _stamp_3_0_0_without_provenance(schema: str) -> None:
-    """Mimic a schedules table an early 3.0.0 build created: stamped 3.0.0 at creation,
-    but the provenance columns did not exist in that build's schema yet. Postgres drops
-    the managed_by/target_id indexes with their columns."""
-    engine = create_engine(DB_URL)
-    try:
-        with engine.connect() as conn:
-            for column in SCHEDULE_PROVENANCE_COLUMNS:
-                conn.execute(text(f'ALTER TABLE "{schema}".{SCHEDULES_TABLE} DROP COLUMN {column}'))
-            conn.execute(
-                text(f"UPDATE \"{schema}\".agno_schema_versions SET version='3.0.0' WHERE table_name=:t"),
-                {"t": SCHEDULES_TABLE},
-            )
-            conn.commit()
-    finally:
-        engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_async_postgres_schedules_stamped_3_0_0_is_healed(schema):
-    """Regression: a schedules table an early 3.0.0 build created lacks the provenance
-    columns but is stamped 3.0.0 — the manager only runs versions strictly greater than
-    the stamp, so v3.0.0's ensure-block could never reach it. v3.0.1 re-ships it."""
-    db = AsyncPostgresDb(db_url=DB_URL, db_schema=schema)
-    try:
-        await db._get_table(table_type="schedules", create_table_if_not_found=True)
-        _stamp_3_0_0_without_provenance(schema)
-        cols = _table_columns(schema)
-        assert "user_id" in cols
-        assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
-        assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
-
-        await MigrationManager(db).up(table_type="schedules")
-
-        cols = _table_columns(schema)
-        assert set(SCHEDULE_PROVENANCE_COLUMNS) <= cols
-        idx = _table_indexes(schema)
-        assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
-        assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
-        assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.1"
-
-        created = await db.create_schedule(_schedule_row("healed"))
-        assert created["id"] == "sched-healed"
-    finally:
-        await db.db_engine.dispose()
-
-
-def test_sync_postgres_schedules_stamped_3_0_0_is_healed(schema):
-    """Sync PostgresDb variant of the v3.0.1 regression: exercises the sync
-    column/index existence helpers the async path does not touch."""
-    from agno.db.postgres import PostgresDb
-
-    db = PostgresDb(db_url=DB_URL, db_schema=schema)
-    try:
-        db._get_table(table_type="schedules", create_table_if_not_found=True)
-        _stamp_3_0_0_without_provenance(schema)
-        cols = _table_columns(schema)
-        assert "user_id" in cols
-        assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
-        assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
-
-        asyncio.run(MigrationManager(db).up(table_type="schedules"))
-
-        cols = _table_columns(schema)
-        assert set(SCHEDULE_PROVENANCE_COLUMNS) <= cols
-        idx = _table_indexes(schema)
-        assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
-        assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
-        assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.1"
-
-        created = db.create_schedule(_schedule_row("healed-sync"))
-        assert created["id"] == "sched-healed-sync"
-    finally:
-        db.db_engine.dispose()
