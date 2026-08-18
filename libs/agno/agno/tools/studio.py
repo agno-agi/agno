@@ -3212,6 +3212,21 @@ class StudioTools(Toolkit):
                 )
             actor = _actor_id(_agno_run_context)
             manager = self._get_schedule_manager()
+            from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY
+
+            # Provenance rides the insert: a separate stamp write could fail
+            # and leave a live unmanaged row whose name then blocks the retry
+            # with schedule_conflict.
+            provenance: Dict[str, str] = {
+                "managed_by": STUDIO_SCHEDULE_MANAGED_BY,
+                "target_type": target_type,
+                "target_id": component_id,
+            }
+            if _agno_run_context is not None:
+                if _agno_run_context.run_id:
+                    provenance["created_by_run_id"] = _agno_run_context.run_id
+                if _agno_run_context.session_id:
+                    provenance["created_by_session_id"] = _agno_run_context.session_id
             # The schedule is owned by the acting user: the run executes as the
             # owner, and the owner-scoped schedule tools can see and manage it.
             schedule = manager.create(
@@ -3224,22 +3239,8 @@ class StudioTools(Toolkit):
                 timezone=timezone,
                 if_exists="raise",
                 user_id=actor,
+                provenance=provenance,
             )
-            if self.db is not None:
-                from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY
-
-                provenance: Dict[str, Any] = {
-                    "managed_by": STUDIO_SCHEDULE_MANAGED_BY,
-                    "target_type": target_type,
-                    "target_id": component_id,
-                }
-                if _agno_run_context is not None:
-                    provenance["created_by_run_id"] = _agno_run_context.run_id
-                    provenance["created_by_session_id"] = _agno_run_context.session_id
-                try:
-                    self.db.stamp_schedule_provenance(schedule.id, **provenance)
-                except NotImplementedError:
-                    pass
             log_debug(f"StudioTools created schedule name={name} target={target_type}:{component_id}")
             return ok_result(
                 "created",

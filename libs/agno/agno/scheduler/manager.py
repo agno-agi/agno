@@ -115,6 +115,7 @@ class ScheduleManager:
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
         user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, str]] = None,
     ) -> Schedule:
         """Create a new schedule.
 
@@ -131,6 +132,12 @@ class ScheduleManager:
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
+
+        # Control-plane provenance rides the insert itself, so a managed
+        # schedule is never observable as an unmanaged row between two writes.
+        allowed_provenance = {"managed_by", "target_type", "target_id", "created_by_run_id", "created_by_session_id"}
+        if provenance is not None and not set(provenance) <= allowed_provenance:
+            raise ValueError(f"provenance may only carry {sorted(allowed_provenance)}, got {sorted(provenance)}")
 
         # A blank or sentinel owner would be rejected by the route on every fire
         if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
@@ -191,6 +198,7 @@ class ScheduleManager:
             locked_at=None,
             created_at=now,
             updated_at=None,
+            **(provenance or {}),
         )
 
         result = self._to_schedule(self._call("create_schedule", schedule.to_dict()))
@@ -274,6 +282,7 @@ class ScheduleManager:
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
         user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, str]] = None,
     ) -> Schedule:
         """Async create a new schedule.
 
@@ -290,6 +299,12 @@ class ScheduleManager:
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
+
+        # Control-plane provenance rides the insert itself, so a managed
+        # schedule is never observable as an unmanaged row between two writes.
+        allowed_provenance = {"managed_by", "target_type", "target_id", "created_by_run_id", "created_by_session_id"}
+        if provenance is not None and not set(provenance) <= allowed_provenance:
+            raise ValueError(f"provenance may only carry {sorted(allowed_provenance)}, got {sorted(provenance)}")
 
         # A blank or sentinel owner would be rejected by the route on every fire
         if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
@@ -350,6 +365,7 @@ class ScheduleManager:
             locked_at=None,
             created_at=now,
             updated_at=None,
+            **(provenance or {}),
         )
 
         result = self._to_schedule(await self._acall("create_schedule", schedule.to_dict()))

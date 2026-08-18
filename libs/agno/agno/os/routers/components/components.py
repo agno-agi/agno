@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, Response
 
 from agno.db.base import (
     AsyncBaseDb,
@@ -521,6 +521,7 @@ def attach_routes(
     )
     async def delete_component(
         request: Request,
+        response: Response,
         component_id: str = Path(description="Component ID"),
         expected_current_version: Optional[int] = Query(
             None, description="Optional compare-and-set guard on the current version"
@@ -553,7 +554,14 @@ def attach_routes(
                 # Database without scheduler support: nothing could be scheduled against it.
                 pass
             except Exception as e:
+                # The archive committed; do not fail the request, but do not
+                # report a clean 204 either - the caller must know schedules
+                # aimed at the archived target may still be live.
                 log_error(f"Failed to disable schedules for archived component {component_id}: {e}")
+                response.headers["X-Agno-Warning"] = (
+                    f"archived, but schedules targeting {component_type} '{component_id}' "
+                    "could not be disabled; check them manually"
+                )
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
