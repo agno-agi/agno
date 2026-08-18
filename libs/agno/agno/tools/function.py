@@ -806,6 +806,11 @@ class Function(BaseModel):
 
     # The function to be called.
     entrypoint: Optional[Callable] = None
+    # Whether calling this function changes external state. None = undeclared.
+    # Toolkits set it so palette policies can express "read-only tools only"
+    # and discovery can label capability honestly (studio-3.0 spec 3.4).
+    mutating: Optional[bool] = None
+
     # If True, the entrypoint processing is skipped and the Function is used as is.
     skip_entrypoint_processing: bool = False
     # If True, the function call will show the result along with sending it to the model.

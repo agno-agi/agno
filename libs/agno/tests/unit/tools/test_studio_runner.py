@@ -478,7 +478,7 @@ class TestResolution:
     def test_find_agent_resolves_db_component_by_display_name(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
         created = _loads(studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4"))
-        assert created["id"] == "radar-scout"
+        assert created["data"]["id"] == "radar-scout"
 
         runner = StudioRunnerTools(registry=registry, db=db)
         by_id = runner._find_agent("radar-scout")
@@ -525,10 +525,13 @@ class TestResolution:
         # The team owns the base slug; the same-named agent got a -2 suffix.
         # Name resolution is typed, so each type's lookup reaches its own component.
         studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True)
         studio.create_team(name="Radar Scout", instructions="i", member_ids=["member"], model_id="gpt-5.4")
-        created = _loads(studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4"))
-        assert created["id"] == "radar-scout-2"
+        # The base slug is taken, so the same-named agent needs an explicit id.
+        created = _loads(
+            studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4", component_id="radar-scout-2")
+        )
+        assert created["data"]["id"] == "radar-scout-2"
 
         runner = StudioRunnerTools(registry=registry, db=db)
         agent = runner._find_agent("Radar Scout")
@@ -538,8 +541,10 @@ class TestResolution:
 
     def test_ambiguous_display_name_errors_with_matching_ids(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4", publish=True)
+        studio.create_agent(
+            name="Radar Scout", instructions="i", model_id="gpt-5.4", component_id="radar-scout-2", publish=True
+        )
 
         runner = StudioRunnerTools(registry=registry, db=db)
         out = _loads(runner.run_agent("Radar Scout", "hi"))
@@ -552,8 +557,10 @@ class TestResolution:
     @pytest.mark.asyncio
     async def test_async_ambiguous_display_name_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4", publish=True)
+        studio.create_agent(
+            name="Radar Scout", instructions="i", model_id="gpt-5.4", component_id="radar-scout-2", publish=True
+        )
 
         runner = StudioRunnerTools(registry=registry, db=db)
         out = _loads(await runner.arun_agent("Radar Scout", "hi"))
@@ -598,9 +605,13 @@ class TestResolution:
         from agno.agent.agent import Agent as AgentClass
 
         studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Reports", instructions="i", model_id="gpt-5.4")
-        created = _loads(studio.create_agent(name="reports", instructions="i", model_id="gpt-5.4"))
-        assert created["id"] == "reports-2"
+        studio.create_agent(name="Reports", instructions="i", model_id="gpt-5.4", publish=True)
+        created = _loads(
+            studio.create_agent(
+                name="reports", instructions="i", model_id="gpt-5.4", component_id="reports-2", publish=True
+            )
+        )
+        assert created["data"]["id"] == "reports-2"
 
         original_from_dict = AgentClass.from_dict
 
@@ -933,9 +944,9 @@ class TestStudioEmbedding:
         calls: List[str] = []
 
         class Guarded(StudioTools):
-            def run_agent(self, agent_id, message, _agno_run_context=None):
+            def run_agent(self, agent_id, message, version=None, _agno_run_context=None):
                 calls.append(agent_id)
-                return super().run_agent(agent_id, message, _agno_run_context)
+                return super().run_agent(agent_id, message, version=version, _agno_run_context=_agno_run_context)
 
         stub = _StubAgent()
         studio = Guarded(registry=registry, db=db, agents_list=[stub])
@@ -960,48 +971,54 @@ class TestStudioEmbedding:
     def test_studio_lookups_gain_name_resolution(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        # get_agent by display name resolves via the shared runner lookup path.
-        out = _loads(studio.get_agent("Radar Scout"))
-        assert out.get("id") == "radar-scout"
+        # get_component by display name resolves via the shared lookup path.
+        out = _loads(studio.get_component("Radar Scout"))
+        assert out["data"]["id"] == "radar-scout"
 
-    def test_get_agent_ambiguous_name_errors(self, registry, db):
+    def test_get_component_ambiguous_name_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        out = _loads(studio.get_agent("Radar Scout"))
-        assert "Ambiguous" in out.get("error", "")
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4", component_id="radar-scout-2")
+        out = _loads(studio.get_component("Radar Scout"))
+        assert out["error"]["code"] == "ambiguous_reference"
 
     def test_edit_resolves_display_name_to_canonical_id(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
         out = _loads(studio.edit_agent("Radar Scout", instructions="updated"))
         assert out.get("status") == "edited"
-        assert out.get("id") == "radar-scout"
-        fetched = _loads(studio.get_agent("radar-scout"))
-        assert fetched["instructions"] == "updated"
+        assert out["data"]["id"] == "radar-scout"
+        fetched = _loads(studio.get_component("radar-scout"))
+        assert fetched["data"]["instructions"] == "updated"
 
     def test_exact_team_member_id_beats_agent_display_name(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
-        studio.create_team(name="support", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True)
+        studio.create_team(name="support", instructions="i", member_ids=["member"], model_id="gpt-5.4", publish=True)
         # An agent NAMED "support" (stored as support-2) must not steal the
         # team's exact id in member resolution.
-        created_agent = _loads(studio.create_agent(name="support", instructions="i", model_id="gpt-5.4"))
-        assert created_agent["id"] == "support-2"
+        created_agent = _loads(
+            studio.create_agent(
+                name="support", instructions="i", model_id="gpt-5.4", component_id="support-2", publish=True
+            )
+        )
+        assert created_agent["data"]["id"] == "support-2"
 
         created = _loads(studio.create_team(name="squad", instructions="i", member_ids=["support"], model_id="gpt-5.4"))
-        assert created.get("member_ids") == ["support"]
+        assert created["data"]["member_ids"] == ["support"]
 
     def test_list_shows_db_component_named_like_a_code_id(self, registry, db):
         code_agent = _StubAgent()
         code_agent.id = "support"
         code_agent.name = "Support Code"
         shadowed = StudioTools(registry=registry, db=db, agents_list=[code_agent])
-        created = _loads(shadowed.create_agent(name="support", instructions="i", model_id="gpt-5.4"))
-        assert created["id"] == "support-2"
+        created = _loads(
+            shadowed.create_agent(name="support", instructions="i", model_id="gpt-5.4", component_id="support-2")
+        )
+        assert created["data"]["id"] == "support-2"
 
-        listed = _loads(shadowed.list_agents())
-        ids = {row["id"] for row in listed["agents"]}
+        listed = _loads(shadowed.list_components())
+        ids = {row["id"] for row in listed["data"]["components"]}
         assert "support" in ids
         assert "support-2" in ids
 
@@ -1012,30 +1029,39 @@ class TestStudioEmbedding:
         shadow.id = "code-1"
         shadow.name = "Radar Scout"
         shadowed = StudioTools(registry=registry, db=db, agents_list=[shadow])
-        out = _loads(shadowed.edit_agent("Radar Scout", instructions="x"))
-        assert "Cannot edit code-defined agent" in out["error"]
-        assert "radar-scout" in out["error"]
+        error = _loads(shadowed.edit_agent("Radar Scout", instructions="x"))["error"]
+        assert error["code"] == "invalid_request"
+        assert "Cannot edit code-defined agent" in error["message"]
+        assert "radar-scout" in error["message"]
 
     def test_cross_type_member_id_collision_errors(self, registry, db):
         # An agent and team may legally share an id (uniqueness is per type);
         # member resolution must refuse rather than silently pick the agent.
         studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4")
-        studio.create_team(name="shared", instructions="i", member_ids=["helper"], model_id="gpt-5.4")
+        studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4", publish=True)
+        studio.create_team(name="shared", instructions="i", member_ids=["helper"], model_id="gpt-5.4", publish=True)
         code_agent = _StubAgent()
         code_agent.id = "shared"
         code_agent.name = "Shared Agent"
         shadowed = StudioTools(registry=registry, db=db, teams=True, agents_list=[code_agent])
         out = _loads(shadowed.create_team(name="squad", instructions="i", member_ids=["shared"], model_id="gpt-5.4"))
-        assert "matches both an agent and a team" in out.get("error", "")
+        assert "matches both an agent and a team" in out["error"]["message"]
 
     def test_cross_type_member_name_collision_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="Ops", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4")
-        studio.create_team(name="Ops", instructions="i", member_ids=["helper"], model_id="gpt-5.4")
+        studio.create_agent(name="Ops", instructions="i", model_id="gpt-5.4", publish=True)
+        studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4", publish=True)
+        # The agent owns the "ops" slug, so the same-named team needs an explicit id.
+        studio.create_team(
+            name="Ops",
+            instructions="i",
+            member_ids=["helper"],
+            model_id="gpt-5.4",
+            component_id="ops-team",
+            publish=True,
+        )
         out = _loads(studio.create_team(name="squad", instructions="i", member_ids=["Ops"], model_id="gpt-5.4"))
-        assert "matches both an agent and a team" in out.get("error", "")
+        assert "matches both an agent and a team" in out["error"]["message"]
 
     def test_registry_less_runner_refuses_tool_bearing_component(self, db):
         from agno.tools.calculator import CalculatorTools
@@ -1086,9 +1112,9 @@ class TestStudioEmbedding:
             dbs=[db],
         )
         studio = StudioTools(registry=armed_registry, db=db, teams=True, workflows=True)
-        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
-        studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4")
-        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "armed"}])
+        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"], publish=True)
+        studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4", publish=True)
+        studio.create_workflow(name="Flow", steps=[{"name": "s1", "agent_id": "armed"}], publish=True)
 
         toolless_registry = Registry(name="Toolless", models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
         runner = StudioRunnerTools(registry=toolless_registry, db=db)
@@ -1109,7 +1135,7 @@ class TestStudioEmbedding:
     def test_registry_less_runner_refuses_workflow_with_code_defined_step(self, registry, db):
         code_agent = _StubAgent()
         studio = StudioTools(registry=registry, db=db, workflows=True, agents_list=[code_agent])
-        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "stub"}])
+        studio.create_workflow(name="Flow", steps=[{"name": "s1", "agent_id": "stub"}], publish=True)
 
         runner = StudioRunnerTools(db=db)
         out = _loads(runner.run_workflow("flow", "go"))
@@ -1147,8 +1173,8 @@ class TestStudioEmbedding:
             name="Armed Registry", models=[OpenAIResponses(id="gpt-5.4")], tools=[CalculatorTools()], dbs=[db]
         )
         studio = StudioTools(registry=armed_registry, db=db, workflows=True)
-        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
-        studio.create_workflow(name="Direct", description="d", step_specs=[{"name": "s", "agent_id": "armed"}])
+        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"], publish=True)
+        studio.create_workflow(name="Direct", steps=[{"name": "s", "agent_id": "armed"}], publish=True)
         # StudioTools cannot author a compound step, so the persisted config for
         # the nested shape is written directly, the way a posted config arrives.
         db.upsert_component(component_id="nested", component_type="workflow", name="Nested")
@@ -1529,13 +1555,11 @@ class TestStudioEmbedding:
         studio = StudioTools(registry=registry, db=db, teams=True, workflows=True, agents_list=[helper])
 
         created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["Helper"], model_id="gpt-5.4"))
-        assert "no id" in created.get("error", "")
+        assert "no id" in created["error"]["message"]
         assert db.get_component("crew") is None
 
-        created = _loads(
-            studio.create_workflow(name="flow", description="d", step_specs=[{"name": "s1", "agent_id": "Helper"}])
-        )
-        assert "no id" in created.get("error", "")
+        created = _loads(studio.create_workflow(name="flow", steps=[{"name": "s1", "agent_id": "Helper"}]))
+        assert "no id" in created["error"]["message"]
 
         # An empty-string id is refused the same way: the write guard matches
         # the load guard's falsiness test, or the component is created and
@@ -1545,7 +1569,7 @@ class TestStudioEmbedding:
         created = _loads(
             studio_blank.create_team(name="crew2", instructions="i", member_ids=["Blank"], model_id="gpt-5.4")
         )
-        assert "no id" in created.get("error", "")
+        assert "no id" in created["error"]["message"]
 
     def test_edit_team_keeps_agents_list_members_resolvable(self, registry, db):
         # StudioTools mirrors agents_list into the registry so rehydration can
@@ -1652,19 +1676,17 @@ class TestStudioEmbedding:
         reg = Registry(name="Singleton Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
         studio = StudioTools(registry=reg, db=db, workflows=True)
         created = _loads(
-            studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "researcher"}])
+            studio.create_workflow(name="Flow", steps=[{"name": "s1", "agent_id": "researcher"}], publish=True)
         )
-        assert "error" not in created
+        assert created["ok"] is True, created
 
         out = _loads(StudioRunnerTools(registry=reg, db=db).run_workflow("flow", "go"))
         assert "shared registry instance" in out.get("error", "")
 
         # Reads reach the workflow, and no read or edit reports the dispatch
         # refusal, so the offending step stays repairable.
-        assert "error" not in _loads(studio.get_workflow("flow"))
-        assert "shared registry instance" not in _loads(studio.edit_workflow("flow", description="new")).get(
-            "error", ""
-        )
+        assert _loads(studio.get_component("flow"))["ok"] is True
+        assert _loads(studio.edit_workflow("flow", description="new"))["ok"] is True
 
     def test_healthy_workflow_step_dispatches(self, registry, db):
         # The isolation check must not refuse a step whose registry agent
@@ -1674,7 +1696,7 @@ class TestStudioEmbedding:
         researcher = AgentClass(id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db)
         reg = Registry(name="Healthy Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
         studio = StudioTools(registry=reg, db=db, workflows=True)
-        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "researcher"}])
+        studio.create_workflow(name="Flow", steps=[{"name": "s1", "agent_id": "researcher"}], publish=True)
 
         loaded = StudioRunnerTools(registry=reg, db=db)._workflow_for_run("flow")
         assert loaded is not None
@@ -1686,7 +1708,7 @@ class TestStudioEmbedding:
         import logging
 
         studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Plain", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Plain", instructions="i", model_id="gpt-5.4", publish=True)
 
         records: list = []
         handler = logging.Handler()
@@ -1729,33 +1751,35 @@ class TestStudioEmbedding:
 
     def test_create_team_ambiguous_member_name_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4", publish=True)
+        studio.create_agent(
+            name="Radar Scout", instructions="i", model_id="gpt-5.4", component_id="radar-scout-2", publish=True
+        )
         out = _loads(studio.create_team(name="squad", instructions="i", member_ids=["Radar Scout"], model_id="gpt-5.4"))
-        assert "Ambiguous" in out.get("error", "")
+        assert "Ambiguous" in out["error"]["message"]
 
-    def test_delete_requires_exact_id_and_points_to_it(self, registry, db):
+    def test_archive_requires_exact_id_and_points_to_it(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        out = _loads(studio.delete_agent("Radar Scout"))
-        assert "error" in out
-        assert "radar-scout" in out["error"]
-        assert _loads(studio.delete_agent("radar-scout"))["status"] == "deleted"
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4", publish=True)
+        out = _loads(studio.archive_component("Radar Scout"))
+        assert out["error"]["code"] == "invalid_request"
+        assert "radar-scout" in out["error"]["message"]
+        assert _loads(studio.archive_component("radar-scout"))["status"] == "archived"
 
     def test_edit_reaches_db_component_shadowed_by_code_defined_name(self, registry, db):
         # A code-defined component NAMED like a DB component's id must not make
         # the DB component uneditable: exact ids win on every path.
         studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="support", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="support", instructions="i", model_id="gpt-5.4", publish=True)
         shadow = _StubAgent()
         shadow.id = "code-1"
         shadow.name = "support"
         shadowed = StudioTools(registry=registry, db=db, agents_list=[shadow])
-        got = _loads(shadowed.get_agent("support"))
-        assert got["id"] == "support"
+        got = _loads(shadowed.get_component("support"))
+        assert got["data"]["id"] == "support"
         out = _loads(shadowed.edit_agent("support", instructions="updated"))
         assert out.get("status") == "edited"
-        assert out.get("id") == "support"
+        assert out["data"]["id"] == "support"
 
     def test_edit_by_display_name_accumulates_drafts_with_versions(self, registry, db):
         # The edit base version must come from the RESOLVED id: a display-name
@@ -1776,8 +1800,8 @@ class TestStudioEmbedding:
     def test_studio_instructions_carry_run_guidance(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
         instructions = studio.instructions or ""
-        assert "sequentially" in instructions
-        assert "ambiguous display name" in instructions.lower()
+        assert "current user" in instructions
+        assert "PAUSED" in instructions
 
 
 class TestDispatchCheckInvariants:
@@ -2266,7 +2290,7 @@ class TestDispatchCheckInvariants:
         from agno.agent import Agent
 
         studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Database Target", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Database Target", instructions="i", model_id="gpt-5.4", publish=True)
         runner = StudioRunnerTools(
             registry=registry,
             db=db,
@@ -2280,7 +2304,7 @@ class TestDispatchCheckInvariants:
         assert runner._find_agent("Database Target").name == "Database Target"
 
         # An unshadowed name is untouched.
-        studio.create_agent(name="Solo", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Solo", instructions="i", model_id="gpt-5.4", publish=True)
         assert runner._agent_for_run("Solo") is not None
 
     def test_total_counts_a_shadowed_row_beyond_the_page(self, db, registry):
@@ -2741,7 +2765,7 @@ class TestPartialRegistryFailsClosed:
 
         full = Registry(name="full", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")], tools=[CalculatorTools()])
         StudioTools(registry=full, db=db, default_model_id="gpt-5.4").create_agent(
-            name="Calc Agent", instructions="math", model_id="gpt-5.4", tool_names=["calculator"]
+            name="Calc Agent", instructions="math", model_id="gpt-5.4", tool_names=["calculator"], publish=True
         )
 
         partial = Registry(name="partial", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
@@ -2751,14 +2775,14 @@ class TestPartialRegistryFailsClosed:
         assert "calc-agent" in error and "registry" in error
 
         # The component stays loadable and repairable on the same partial registry.
-        assert _loads(StudioTools(registry=partial, db=db).get_agent("calc-agent"))["id"] == "calc-agent"
+        assert _loads(StudioTools(registry=partial, db=db).get_component("calc-agent"))["data"]["id"] == "calc-agent"
 
     def test_a_component_without_registry_references_is_unaffected(self, db):
         from agno.registry import Registry
 
         registry = Registry(name="r", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
         StudioTools(registry=registry, db=db, default_model_id="gpt-5.4").create_agent(
-            name="Plain", instructions="hi", model_id="gpt-5.4"
+            name="Plain", instructions="hi", model_id="gpt-5.4", publish=True
         )
         assert StudioRunnerTools(registry=registry, db=db)._find_agent("plain", for_dispatch=True) is not None
 

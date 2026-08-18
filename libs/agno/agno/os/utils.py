@@ -2101,7 +2101,7 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     tools = getattr(agent, "tools", None)
     if isinstance(tools, list):
         for tool in tools:
-            registry.add_tool(tool)
+            registry.add_tool(tool, source="folded")
 
     registry.add_schema(getattr(agent, "input_schema", None))
     registry.add_schema(getattr(agent, "output_schema", None))
@@ -2124,7 +2124,7 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
     tools = getattr(team, "tools", None)
     if isinstance(tools, list):
         for tool in tools:
-            registry.add_tool(tool)
+            registry.add_tool(tool, source="folded")
 
     registry.add_schema(getattr(team, "input_schema", None))
     registry.add_schema(getattr(team, "output_schema", None))

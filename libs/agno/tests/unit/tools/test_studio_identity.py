@@ -8,7 +8,9 @@ run context the toolkit behaves exactly as before: unowned writes,
 unscoped reads.
 
 Uses a real SqliteDb so the ownership filters in the adapter are exercised,
-not mocked.
+not mocked. Refusals are asserted by stable error code: another owner's row
+answers component_not_found (its existence is not disclosed); a shared row
+answers shared_component (the honest refusal).
 """
 
 import json
@@ -44,17 +46,29 @@ def registry(db):
 
 @pytest.fixture
 def studio(registry, db):
-    return StudioTools(registry=registry, db=db, versions=True, schedules=True)
+    return StudioTools(registry=registry, db=db, teams=True, workflows=True, schedules=True)
 
 
 def _loads(s: str) -> Dict[str, Any]:
     return json.loads(s)
 
 
-def _create(studio: StudioTools, name: str, run_context=None) -> Dict[str, Any]:
-    result = _loads(studio.create_agent(name=name, instructions="Say hello.", _agno_run_context=run_context))
-    assert result.get("status") == "created", result
-    return result
+def _data(s: str) -> Dict[str, Any]:
+    out = json.loads(s)
+    assert out.get("ok") is True, out
+    return out["data"]
+
+
+def _error(s: str) -> Dict[str, Any]:
+    out = json.loads(s)
+    assert out.get("ok") is False, out
+    return out["error"]
+
+
+def _create(studio: StudioTools, name: str, run_context=None, publish=False) -> Dict[str, Any]:
+    return _data(
+        studio.create_agent(name=name, instructions="Say hello.", publish=publish, _agno_run_context=run_context)
+    )
 
 
 # ----------------------------------------------------------------------
@@ -92,7 +106,7 @@ class TestCreateOwnership:
     def test_team_and_workflow_creates_own_their_rows(self, studio, db):
         member = _create(studio, "Member Agent", ALICE)
         studio.publish_component(member["id"], _agno_run_context=ALICE)
-        team = _loads(
+        team = _data(
             studio.create_team(
                 name="Owned Team",
                 instructions="Coordinate.",
@@ -100,17 +114,15 @@ class TestCreateOwnership:
                 _agno_run_context=ALICE,
             )
         )
-        assert team.get("status") == "created", team
         assert db.get_component(team["id"])["user_id"] == "alice"
-        workflow = _loads(
+        workflow = _data(
             studio.create_workflow(
                 name="Owned Workflow",
                 description="One step.",
-                step_specs=[{"name": "s1", "agent_id": member["id"]}],
+                steps=[{"name": "s1", "agent_id": member["id"]}],
                 _agno_run_context=ALICE,
             )
         )
-        assert workflow.get("status") == "created", workflow
         assert db.get_component(workflow["id"])["user_id"] == "alice"
 
 
@@ -130,42 +142,63 @@ class TestMutationOwnership:
 
     def test_other_owner_cannot_edit_and_learns_nothing(self, studio):
         created = _create(studio, "Private Agent", ALICE)
-        denied = _loads(studio.edit_agent(created["id"], instructions="Hijack.", _agno_run_context=BOB))
-        assert denied.get("error") == f"Agent not found: {created['id']}"
+        error = _error(studio.edit_agent(created["id"], instructions="Hijack.", _agno_run_context=BOB))
+        assert error["code"] == "component_not_found"
+        assert created["id"] in error["message"]
 
     def test_scoped_actor_cannot_edit_shared_component(self, studio):
         created = _create(studio, "Communal Agent")
-        denied = _loads(studio.edit_agent(created["id"], instructions="Claim.", _agno_run_context=ALICE))
-        assert "shared" in denied.get("error", "")
+        error = _error(studio.edit_agent(created["id"], instructions="Claim.", _agno_run_context=ALICE))
+        assert error["code"] == "shared_component"
 
     def test_unscoped_caller_edits_anything(self, studio):
         created = _create(studio, "Anyones Agent", ALICE)
         edited = _loads(studio.edit_agent(created["id"], instructions="Operator edit."))
         assert edited.get("status") == "edited", edited
 
-    def test_other_owner_cannot_delete(self, studio, db):
+    def test_other_owner_cannot_archive(self, studio, db):
         created = _create(studio, "Sturdy Agent", ALICE)
-        denied = _loads(studio.delete_agent(created["id"], _agno_run_context=BOB))
-        assert denied.get("error") == f"Agent not found: {created['id']}"
+        error = _error(studio.archive_component(created["id"], _agno_run_context=BOB))
+        assert error["code"] == "component_not_found"
         assert db.get_component(created["id"]) is not None
 
-    def test_owner_deletes_own(self, studio, db):
+    def test_owner_archives_own(self, studio, db):
         created = _create(studio, "Doomed Agent", ALICE)
-        deleted = _loads(studio.delete_agent(created["id"], _agno_run_context=ALICE))
-        assert deleted.get("status") == "deleted", deleted
+        archived = _loads(studio.archive_component(created["id"], _agno_run_context=ALICE))
+        assert archived.get("status") == "archived", archived
         assert db.get_component(created["id"]) is None
+
+    def test_other_owner_cannot_restore_an_archived_component(self, studio, db):
+        created = _create(studio, "Recoverable Agent", ALICE)
+        studio.archive_component(created["id"], _agno_run_context=ALICE)
+
+        error = _error(studio.restore_component(created["id"], _agno_run_context=BOB))
+        assert error["code"] == "component_not_found"
+        assert db.get_component(created["id"]) is None  # still archived
+
+        restored = _loads(studio.restore_component(created["id"], _agno_run_context=ALICE))
+        assert restored.get("status") == "restored", restored
+        assert db.get_component(created["id"]) is not None
+
+    def test_other_owner_archive_of_an_archived_row_learns_nothing(self, studio):
+        created = _create(studio, "Ghosted Agent", ALICE)
+        studio.archive_component(created["id"], _agno_run_context=ALICE)
+        # The owner sees the idempotent status; another owner sees not-found.
+        assert _loads(studio.archive_component(created["id"], _agno_run_context=ALICE))["status"] == "already_archived"
+        error = _error(studio.archive_component(created["id"], _agno_run_context=BOB))
+        assert error["code"] == "component_not_found"
 
     def test_lifecycle_tools_are_gated(self, studio):
         created = _create(studio, "Guarded Agent", ALICE)
-        edited = _loads(studio.edit_agent(created["id"], instructions="v2", _agno_run_context=ALICE))
+        edited = _data(studio.edit_agent(created["id"], instructions="v2", _agno_run_context=ALICE))
         assert edited.get("stage") == "draft"
         for call in (
             lambda: studio.publish_component(created["id"], _agno_run_context=BOB),
             lambda: studio.set_current_version(created["id"], 1, _agno_run_context=BOB),
             lambda: studio.delete_version(created["id"], edited["draft_version"], _agno_run_context=BOB),
         ):
-            denied = _loads(call())
-            assert denied.get("error") == f"Component not found: {created['id']}", denied
+            error = _error(call())
+            assert error["code"] == "component_not_found", error
         published = _loads(studio.publish_component(created["id"], _agno_run_context=ALICE))
         assert published.get("status") == "published", published
 
@@ -180,33 +213,33 @@ class TestReadScoping:
         _create(studio, "Alices Agent", ALICE)
         _create(studio, "Bobs Agent", BOB)
         _create(studio, "Shared Listing Agent")
-        listed = _loads(studio.list_agents(_agno_run_context=ALICE))
-        ids = {a["id"] for a in listed["agents"] if a.get("source") == "db"}
+        listed = _data(studio.list_components(component_type="agent", _agno_run_context=ALICE))
+        ids = {row["id"] for row in listed["components"] if row.get("source") == "db"}
         assert "alices-agent" in ids
         assert "shared-listing-agent" in ids
         assert "bobs-agent" not in ids
-        unscoped = _loads(studio.list_agents())
+        unscoped = _data(studio.list_components(component_type="agent"))
         assert {"alices-agent", "bobs-agent", "shared-listing-agent"} <= {
-            a["id"] for a in unscoped["agents"] if a.get("source") == "db"
+            row["id"] for row in unscoped["components"] if row.get("source") == "db"
         }
 
     def test_scoped_get_hides_other_owners(self, studio):
         created = _create(studio, "Hidden Agent", ALICE)
-        denied = _loads(studio.get_agent(created["id"], _agno_run_context=BOB))
-        assert denied.get("error") == f"Agent not found: {created['id']}"
+        error = _error(studio.get_component(created["id"], _agno_run_context=BOB))
+        assert error["code"] == "component_not_found"
         shared = _create(studio, "Visible Shared Agent")
-        visible = _loads(studio.get_agent(shared["id"], _agno_run_context=BOB))
+        visible = _data(studio.get_component(shared["id"], _agno_run_context=BOB))
         assert visible.get("id") == shared["id"]
 
     def test_version_reads_are_gated(self, studio):
         created = _create(studio, "Versioned Agent", ALICE)
         for call in (
             lambda: studio.list_versions(created["id"], _agno_run_context=BOB),
-            lambda: studio.get_version(created["id"], _agno_run_context=BOB),
+            lambda: studio.get_component(created["id"], version=1, _agno_run_context=BOB),
         ):
-            denied = _loads(call())
-            assert denied.get("error") == f"Component not found: {created['id']}", denied
-        own = _loads(studio.list_versions(created["id"], _agno_run_context=ALICE))
+            error = _error(call())
+            assert error["code"] == "component_not_found", error
+        own = _data(studio.list_versions(created["id"], _agno_run_context=ALICE))
         assert own.get("count") == 1
 
 
@@ -217,7 +250,7 @@ class TestReadScoping:
 
 class TestScheduleOwnership:
     def test_schedule_is_owned_and_visible_to_its_creator(self, studio, db):
-        created = _create(studio, "Scheduled Agent", ALICE)
+        created = _create(studio, "Scheduled Agent", ALICE, publish=True)
         made = _loads(
             studio.create_schedule(
                 name="alices-daily",
@@ -241,7 +274,7 @@ class TestScheduleOwnership:
         assert not any(s["id"] == made["id"] for s in other.get("schedules", [])), other
 
     def test_schedule_without_context_is_unowned(self, studio, db):
-        created = _create(studio, "Cron Target")
+        created = _create(studio, "Cron Target", publish=True)
         made = _loads(
             studio.create_schedule(
                 name="ownerless-daily",
