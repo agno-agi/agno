@@ -727,6 +727,7 @@ class BaseDb(ABC):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -736,6 +737,8 @@ class BaseDb(ABC):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            name: Exact-match filter on the component name; the returned total
+                counts the filtered set.
 
         Returns:
             Tuple of (list of component dicts, total count).
