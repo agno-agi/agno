@@ -1384,25 +1384,42 @@ class StudioTools(Toolkit):
             single function stays a single function, never its whole toolkit.
         """
         actor = _actor_id(_agno_run_context)
-        # Code-defined components resolve first; their id may shadow a row.
-        for type_name, iterator in (
+        code_tiers = (
             ("agent", self._iter_agents),
             ("team", self._iter_teams),
             ("workflow", self._iter_workflows),
-        ):
+        )
+
+        def _code_result(type_name: str, component: Any) -> str:
+            view = self._curated_config_view(type_name, _component_to_dict(component))
+            return ok_result(
+                "read",
+                id=getattr(component, "id", None),
+                component_type=type_name,
+                source="code",
+                **view,
+            )
+
+        # Exact ids first: a code-defined id may shadow a row, but a
+        # code-defined display NAME never outranks an exact DB id - the same
+        # id-first order _is_code_defined applies on the edit path.
+        for type_name, iterator in code_tiers:
             for component in iterator():
-                # A code-defined component resolves by exact id OR exact display
-                # name - the display name works even when the component has an
-                # id, matching _is_code_defined and the runner's name tier.
-                if getattr(component, "id", None) == component_id or getattr(component, "name", None) == component_id:
-                    view = self._curated_config_view(type_name, _component_to_dict(component))
-                    return ok_result(
-                        "read",
-                        id=getattr(component, "id", None),
-                        component_type=type_name,
-                        source="code",
-                        **view,
-                    )
+                if getattr(component, "id", None) == component_id:
+                    return _code_result(type_name, component)
+        db_id_hit = False
+        if self.db is not None:
+            try:
+                db_id_hit = self.db.get_component(component_id, user_id=actor) is not None
+            except NotImplementedError:
+                db_id_hit = False
+        if not db_id_hit:
+            # The display-name tier works even when the code component has an
+            # id, matching the runner's name tier.
+            for type_name, iterator in code_tiers:
+                for component in iterator():
+                    if getattr(component, "name", None) == component_id:
+                        return _code_result(type_name, component)
         row, resolved_id, err = self._component_row(component_id, actor)
         if err is not None:
             return err

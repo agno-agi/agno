@@ -1816,6 +1816,27 @@ class TestStudioEmbedding:
         assert out.get("status") == "edited"
         assert out["data"]["id"] == "support"
 
+    def test_other_owners_row_does_not_block_code_defined_name_read(self, registry, db, tmp_path):
+        # The id-first gate probes the DB with the ACTOR'S visibility: a row
+        # the actor cannot see must neither block the code-defined name read
+        # nor make the response differ from the row not existing at all.
+        from agno.agent import Agent
+
+        owner = StudioTools(registry=registry, db=db)
+        owner.create_agent(
+            name="support", instructions="i", model_id="gpt-5.4", publish=True, _agno_run_context=_context("alice")
+        )
+        shadow = Agent(id="code-1", name="support", model=OpenAIResponses(id="gpt-5.4"))
+        studio = StudioTools(registry=registry, db=db, agents_list=[shadow])
+        with_row = _loads(studio.get_component("support", _agno_run_context=_context("bob")))
+        assert with_row["data"]["id"] == "code-1"
+        assert with_row["data"]["source"] == "code"
+        # Same read against a db that never held the row: identical data.
+        clean_db = SqliteDb(id="clean-db", db_file=str(tmp_path / "clean.db"))
+        clean = StudioTools(registry=registry, db=clean_db, agents_list=[shadow])
+        without_row = _loads(clean.get_component("support", _agno_run_context=_context("bob")))
+        assert without_row["data"] == with_row["data"]
+
     def test_edit_by_display_name_accumulates_drafts_with_versions(self, registry, db):
         # The edit base version must come from the RESOLVED id: a display-name
         # edit picks up the pending draft, not the published config.
