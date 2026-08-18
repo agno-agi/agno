@@ -64,16 +64,10 @@ def _remap_legacy_kwargs(
             continue
 
         # 2. Skip params that aren't legacy patterns we recognize
-        if not (key.startswith("enable_") or key == "all" or key in aliases):
+        if not (key.startswith("enable_") or key in aliases):
             continue
 
-        # 3. Handle 'all' specially — some toolkits dropped this param entirely
-        if key == "all" and key not in valid_params and key not in aliases:
-            result.pop(key)
-            log_warning(f"`all` is no longer supported by {cls.__name__}. Enable individual tool flags instead.")
-            continue
-
-        # 4. Determine the new param name
+        # 3. Determine the new param name
         if key in aliases:
             target = aliases[key]
             if target is None:
@@ -83,7 +77,7 @@ def _remap_legacy_kwargs(
             # Default: strip "enable_" prefix (enable_send_message → send_message)
             target = key.removeprefix("enable_")
 
-        # 5. Perform the remap
+        # 4. Perform the remap
         value = result.pop(key)
         if target not in valid_params:
             # The target param doesn't exist — this legacy flag was removed entirely
