@@ -652,9 +652,17 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["add_dependencies_to_context"] = agent.add_dependencies_to_context
 
     # --- Agentic Memory settings ---
-    # TODO: implement agentic memory serialization
-    # if agent.memory_manager is not None:
-    # config["memory_manager"] = agent.memory_manager.to_dict()
+    # Stored as a registry reference by id, like knowledge: the manager holds
+    # a model and callables, so the config names it and the registry supplies
+    # the live object on load.
+    if agent.memory_manager is not None:
+        memory_manager_id = getattr(agent.memory_manager, "id", None)
+        if memory_manager_id:
+            config["memory_manager"] = {"registry_id": memory_manager_id}
+        else:
+            log_warning(
+                "Agent memory_manager has no id; it cannot be referenced from the registry and will not be saved."
+            )
     if agent.enable_agentic_memory:
         config["enable_agentic_memory"] = agent.enable_agentic_memory
     if agent.update_memory_on_run:
@@ -962,13 +970,8 @@ def from_dict(
         config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle reasoning_model reconstruction ---
-    # TODO: implement reasoning model deserialization
-    # if "reasoning_model" in config:
-    #     model_data = config["reasoning_model"]
-    #     if isinstance(model_data, dict) and "id" in model_data:
-    #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-    #     elif isinstance(model_data, str):
-    #         config["reasoning_model"] = get_model(model_data)
+    if config.get("reasoning_model") is not None:
+        config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1067,10 +1070,20 @@ def from_dict(
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
-    # TODO: implement memory manager deserialization
-    # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
-    #     from agno.memory import MemoryManager
-    #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+    if config.get("memory_manager") is not None:
+        manager_ref = config["memory_manager"]
+        ref_id = manager_ref.get("registry_id") if isinstance(manager_ref, dict) else manager_ref
+        resolved_manager = registry.get_memory_manager(ref_id) if (registry is not None and ref_id) else None
+        if resolved_manager is None:
+            if strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} references memory manager '{ref_id}' which was not found in the "
+                    "registry. Register the manager, or pass strict=False to load the component without it."
+                )
+            log_warning(f"Memory manager {ref_id!r} not found in registry, skipping.")
+            config.pop("memory_manager", None)
+        else:
+            config["memory_manager"] = resolved_manager
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization
@@ -1142,7 +1155,7 @@ def from_dict(
         dependencies=config.get("dependencies"),
         add_dependencies_to_context=config.get("add_dependencies_to_context", False),
         # --- Agentic Memory settings ---
-        # memory_manager=config.get("memory_manager"),  # TODO
+        memory_manager=config.get("memory_manager"),
         enable_agentic_memory=config.get("enable_agentic_memory", False),
         update_memory_on_run=config.get("update_memory_on_run", False),
         add_memories_to_context=config.get("add_memories_to_context"),
@@ -1167,7 +1180,7 @@ def from_dict(
         tool_call_limit=config.get("tool_call_limit"),
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
-        # reasoning_model=config.get("reasoning_model"),  # TODO
+        reasoning_model=config.get("reasoning_model"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),

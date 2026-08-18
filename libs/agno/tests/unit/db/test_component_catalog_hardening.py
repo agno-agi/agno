@@ -572,3 +572,49 @@ class TestConcurrentCASWrites:
         assert outcomes == ["err", "ok"], results
         errs = [r[1] for r in results if r[0] == "err"]
         assert isinstance(errs[0], ComponentVersionConflictError)
+
+
+class TestRestorePinnedChildren:
+    def _team_with_member(self, db):
+        from agno.db.base import ComponentType
+
+        db.create_component_with_config(
+            component_id="pin-child",
+            component_type=ComponentType.AGENT,
+            name="pin-child",
+            config={"name": "pin-child"},
+            stage="published",
+        )
+        db.create_component_with_config(
+            component_id="pin-parent",
+            component_type=ComponentType.TEAM,
+            name="pin-parent",
+            config={"name": "pin-parent"},
+            stage="published",
+            links=[
+                {
+                    "link_kind": "member",
+                    "link_key": "pin-child",
+                    "child_component_id": "pin-child",
+                    "child_version": 1,
+                    "position": 0,
+                }
+            ],
+        )
+
+    def test_restore_refuses_while_pinned_child_archived(self, db):
+        from agno.db.base import ComponentDependencyError
+
+        self._team_with_member(db)
+        db.delete_component("pin-parent", hard_delete=False)
+        db.delete_component("pin-child", hard_delete=False)
+        with pytest.raises(ComponentDependencyError, match="pin-child"):
+            db.restore_component("pin-parent")
+        # Children first, then the parent.
+        assert db.restore_component("pin-child") is True
+        assert db.restore_component("pin-parent") is True
+
+    def test_restore_of_leaf_components_is_unaffected(self, db):
+        self._team_with_member(db)
+        db.delete_component("pin-parent", hard_delete=False)
+        assert db.restore_component("pin-parent") is True

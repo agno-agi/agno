@@ -1576,12 +1576,14 @@ class StudioRunnerTools(Toolkit):
         capability: the alternative is a successful answer computed some other
         way, which is the failure this toolkit exists to prevent. Reads and
         edits still load the component, so it stays inspectable."""
-        declared = [field for field in ("reasoning_model", "parser_model", "output_model") if config.get(field)]
+        # reasoning_model reconstructs through the registry now; the other two
+        # model roles still do not, so they keep the honest refusal.
+        declared = [field for field in ("parser_model", "output_model") if config.get(field)]
         if not declared:
             return
         raise ComponentNotDispatchableError(
             f"{component_type.capitalize()} '{component_id}' declares {', '.join(declared)}, which the framework "
-            "does not reconstruct (#9452), so the run would answer through a different pipeline than it was "
+            "does not reconstruct, so the run would answer through a different pipeline than it was "
             "configured for. Remove the declaration, or run it as a code-defined component."
         )
 

@@ -2149,7 +2149,7 @@ class TestDispatchCheckInvariants:
         """Two branches pin the same child id at different versions. The walk
         must pair each rebuilt branch object with the config version its own
         branch-qualified link pinned: collapsed by id, the v1 branch (which
-        declares a reasoning model nothing reconstructs) was validated against
+        declares a parser model nothing reconstructs) was validated against
         the v2 config and dispatched degraded."""
         from agno.agent import Agent
         from agno.workflow.condition import Condition
@@ -2157,7 +2157,7 @@ class TestDispatchCheckInvariants:
         from agno.workflow.workflow import Workflow
 
         model = OpenAIResponses(id="gpt-5.4")
-        rich = Agent(id="shared-agent", name="A", model=model, reasoning_model=OpenAIResponses(id="gpt-5.5"))
+        rich = Agent(id="shared-agent", name="A", model=model, parser_model=OpenAIResponses(id="gpt-5.5"))
         plain = Agent(id="shared-agent", name="A", model=model)
         Workflow(
             id="branch-workflow",
@@ -2174,7 +2174,7 @@ class TestDispatchCheckInvariants:
 
         runner = StudioRunnerTools(registry=registry, db=db)
         error = _loads(runner.run_workflow("branch-workflow", "hi")).get("error", "")
-        assert "reasoning_model" in error
+        assert "parser_model" in error
         assert "shared-agent" in error
 
     def test_branch_pins_catch_a_redirected_db_before_any_write(self, db, registry, tmp_path):
@@ -2251,18 +2251,18 @@ class TestDispatchCheckInvariants:
             id="rich",
             name="Rich",
             model=OpenAIResponses(id="gpt-5.4"),
-            reasoning_model=OpenAIResponses(id="o3-deep"),
+            parser_model=OpenAIResponses(id="o3-deep"),
         ).save(db=db)
 
         runner = StudioRunnerTools(registry=registry, db=db)
-        assert "reasoning_model" in _loads(runner.run_agent("rich", "hi"))["error"]
+        assert "parser_model" in _loads(runner.run_agent("rich", "hi"))["error"]
 
         studio = StudioTools(registry=registry, db=db)
         assert "error" not in _loads(studio.edit_agent("rich", description="an unrelated change"))
 
         stored = db.get_config(component_id="rich") or {}
-        assert (stored.get("config") or {}).get("reasoning_model") is not None
-        assert "reasoning_model" in _loads(runner.run_agent("rich", "hi"))["error"]
+        assert (stored.get("config") or {}).get("parser_model") is not None
+        assert "parser_model" in _loads(runner.run_agent("rich", "hi"))["error"]
 
     def test_an_edit_refuses_rather_than_guessing_when_it_cannot_read_the_original(self, db, registry):
         """A read that fails is not evidence there was nothing to carry. Taking
@@ -2295,12 +2295,10 @@ class TestDispatchCheckInvariants:
         stored = (db.get_config(component_id="rich") or {}).get("config") or {}
         assert stored.get("reasoning_model") is not None
 
-    def test_a_teams_reasoning_model_survives_being_saved(self, db, registry):
-        """It was dropped at save time, so the loader had nothing to notice and
-        the team dispatched without the reasoning it was configured for -- the
-        exact different-pipeline outcome the refusal exists to prevent. Nothing
-        reads it back yet (#9452), but losing it before anything can is a
-        separate loss."""
+    def test_a_teams_reasoning_model_survives_save_and_rebuild(self, db, registry):
+        """The declaration is serialized at save time and reconstructed on
+        rebuild, so the dispatched team answers through the pipeline it was
+        configured for instead of silently dropping the reasoning stage."""
         from agno.agent import Agent
         from agno.team import Team
 
@@ -2314,7 +2312,9 @@ class TestDispatchCheckInvariants:
 
         stored = (db.get_config(component_id="crew") or {}).get("config") or {}
         assert stored.get("reasoning_model") is not None
-        assert "reasoning_model" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("crew", "hi"))["error"]
+        rebuilt = StudioRunnerTools(registry=registry, db=db)._team_for_run("crew")
+        assert rebuilt is not None
+        assert getattr(rebuilt.reasoning_model, "id", None) == "o3-deep"
 
         # A team that declares none is untouched.
         Team(
@@ -2406,7 +2406,7 @@ class TestDispatchCheckInvariants:
         rather than only to the component the caller named."""
         model_config = {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"}
         for component_id, component_type, extra in (
-            ("member", "agent", {"reasoning_model": {"id": "o3-deep", "provider": "OpenAI"}}),
+            ("member", "agent", {"parser_model": {"id": "o3-deep", "provider": "OpenAI"}}),
             ("crew", "team", {"members": [{"type": "agent", "agent_id": "member"}]}),
         ):
             config = {"id": component_id, "name": component_id, "model": model_config}
@@ -2415,29 +2415,39 @@ class TestDispatchCheckInvariants:
             db.upsert_config(component_id=component_id, config=config, stage="published")
 
         error = _loads(StudioRunnerTools(registry=registry, db=db).run_team("crew", "hi"))["error"]
-        assert "reasoning_model" in error and "member" in error
+        assert "parser_model" in error and "member" in error
 
     def test_a_declared_model_that_cannot_be_rebuilt_is_refused(self, db, registry):
-        """A reasoning, parser or output model is serialized and never read back
-        -- from_dict's reconstruction for all three is still a TODO (#9452) --
-        so a component declaring one always answers through a different
-        pipeline than it was configured for. The run succeeds, which makes a
-        log line invisible to whoever asked, so dispatch refuses instead. Until
-        #9452 lands, not dispatchable is what the capability actually is."""
+        """A parser or output model is serialized and never read back, so a
+        component declaring one always answers through a different pipeline
+        than it was configured for; dispatch refuses instead of succeeding
+        some other way. reasoning_model reconstructs now and dispatches with
+        the pipeline it declared."""
         from agno.agent import Agent
 
         Agent(
             id="rich",
             name="Rich",
             model=OpenAIResponses(id="gpt-5.4"),
-            reasoning_model=OpenAIResponses(id="o3-deep"),
+            parser_model=OpenAIResponses(id="o3-deep"),
         ).save(db=db)
 
         runner = StudioRunnerTools(registry=registry, db=db)
-        assert "reasoning_model" in _loads(runner.run_agent("rich", "hi"))["error"]
+        assert "parser_model" in _loads(runner.run_agent("rich", "hi"))["error"]
 
         # Reads and edits still load it, so the declaration stays repairable.
         assert runner._find_agent("rich") is not None
+
+        # A reasoning declaration rebuilds instead of refusing.
+        Agent(
+            id="reasoner",
+            name="Reasoner",
+            model=OpenAIResponses(id="gpt-5.4"),
+            reasoning_model=OpenAIResponses(id="o3-deep"),
+        ).save(db=db)
+        reasoning_agent = runner._agent_for_run("reasoner")
+        assert reasoning_agent is not None
+        assert getattr(reasoning_agent.reasoning_model, "id", None) == "o3-deep"
 
         # A component declaring none of them is untouched.
         Agent(id="plain", name="Plain", model=OpenAIResponses(id="gpt-5.4")).save(db=db)

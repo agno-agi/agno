@@ -2539,8 +2539,10 @@ class TestEditIdentityStability:
         assert link_keys <= set(base_ids)
 
     def test_description_edit_keeps_auxiliary_model_keys(self, tmp_path):
-        """to_dict emits reasoning/parser/output models that from_dict does not
-        yet consume; an unrelated edit must not persist their loss."""
+        """parser/output models are emitted by to_dict but not yet consumed by
+        from_dict; an unrelated edit must not persist their loss. The
+        reasoning model reconstructs now, so it survives by round-tripping
+        (re-serialized with the full provider/id/name shape)."""
         from agno.db.base import ComponentType
 
         db = SqliteDb(db_file=str(tmp_path / "auxmodels.db"))
@@ -2564,7 +2566,7 @@ class TestEditIdentityStability:
         assert out.get("status") == "edited"
 
         config = db.get_config(component_id="aux-agent", version=_edit_version(out))["config"]
-        assert config["reasoning_model"] == aux
+        assert {k: config["reasoning_model"][k] for k in aux} == aux
         assert config["parser_model"] == aux
         assert config["output_model"] == aux
 

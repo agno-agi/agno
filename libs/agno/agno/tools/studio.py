@@ -544,11 +544,25 @@ class StudioTools(Toolkit):
         return False
 
     def _edit_base_version(self, component_id: str) -> Optional[int]:
-        """Version to base an edit on: the latest draft when versioning is
-        enabled, else None (the current published version)."""
+        """Version to base an edit on: the LATEST visible version - the one
+        get_component and the toolkit instructions just showed the model.
+        Basing on the current published version instead silently resurrects
+        rolled-back content: after set_current_version(1) with a published v2,
+        an edit would produce a v3 carrying v1's fields while the guard
+        (checked against latest) still passes."""
         if not self.enable_versions:
             return None
-        return self._latest_draft_version(component_id)
+        draft = self._latest_draft_version(component_id)
+        if draft is not None:
+            return draft
+        if self.db is None:
+            return None
+        try:
+            latest_row = self.db.get_latest_config(component_id)
+        except NotImplementedError:
+            return None
+        version = (latest_row or {}).get("version")
+        return version if isinstance(version, int) else None
 
     def _latest_draft_version(self, component_id: str) -> Optional[int]:
         if self.db is None:

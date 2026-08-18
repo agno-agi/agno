@@ -1079,13 +1079,8 @@ def from_dict(
                 log_warning(f"Team member of unknown type skipped: {member_type!r}")
 
     # --- Handle reasoning_model reconstruction ---
-    # TODO: implement reasoning model deserialization
-    # if "reasoning_model" in config:
-    #     model_data = config["reasoning_model"]
-    #     if isinstance(model_data, dict) and "id" in model_data:
-    #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-    #     elif isinstance(model_data, str):
-    #         config["reasoning_model"] = get_model(model_data)
+    if config.get("reasoning_model") is not None:
+        config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1330,7 +1325,7 @@ def from_dict(
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO
             # --- Reasoning settings ---
-            # reasoning_model=config.get("reasoning_model"),  # TODO
+            reasoning_model=config.get("reasoning_model"),
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),

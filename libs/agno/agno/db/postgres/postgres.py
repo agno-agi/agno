@@ -4264,6 +4264,41 @@ class PostgresDb(BaseDb):
                 if component is None or component.get("user_id") != user_id:
                     return False
 
+            # A restore returns the component to dispatch, so its live version's
+            # pinned children must be live too: archiving allowed parent-then-
+            # child, and restoring only the parent would publish a component
+            # whose members can never rebuild. Restore children first.
+            configs_table = self._get_table(table_type="component_configs")
+            links_table = self._get_table(table_type="component_links")
+            row = self.get_component(component_id, include_deleted=True)
+            current_version = (row or {}).get("current_version")
+            if row is not None and current_version is not None and links_table is not None:
+                with self.Session() as sess:
+                    link_rows = sess.execute(
+                        select(
+                            links_table.c.child_component_id,
+                            links_table.c.link_kind,
+                        ).where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == current_version,
+                        )
+                    ).fetchall()
+                archived_children = sorted(
+                    {
+                        str(link.child_component_id)
+                        for link in link_rows
+                        if link.link_kind in ("member", "step")
+                        and (child := self.get_component(str(link.child_component_id), include_deleted=True))
+                        is not None
+                        and child.get("deleted_at") is not None
+                    }
+                )
+                if archived_children:
+                    raise ComponentDependencyError(
+                        f"Cannot restore {component_id}: pinned child(ren) "
+                        f"{', '.join(archived_children)} are archived. Restore them first."
+                    )
+
             with self.Session() as sess, sess.begin():
                 result = sess.execute(
                     components_table.update()
