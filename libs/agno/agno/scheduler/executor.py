@@ -106,7 +106,7 @@ class ScheduleExecutor:
             schedule_id = sched.id
             # A control-plane-managed schedule must fire the exact component its
             # provenance names: a repointed endpoint under an old target is
-            # refused rather than executed (studio-3.0 spec section 3.5).
+            # refused rather than executed.
             if sched.managed_by is not None and sched.target_type and sched.target_id:
                 if not match_run_endpoint(sched.endpoint, sched.target_type, sched.target_id):
                     raise RuntimeError(

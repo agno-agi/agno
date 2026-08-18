@@ -1,7 +1,6 @@
 """Regression coverage for PostgreSQL component archive semantics.
 
-Behavior change pinned deliberately (specs/agno/studio-3.0/spec-v0.md section
-3.2): upsert_component on a soft-deleted row used to silently reactivate it,
+Behavior change pinned deliberately: upsert_component on a soft-deleted row used to silently reactivate it,
 letting a create inherit a dead component's history. Archived ids are now
 reserved and immutable; ComponentArchivedError is raised and restore_component
 is the explicit way back.

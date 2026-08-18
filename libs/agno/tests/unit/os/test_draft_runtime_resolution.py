@@ -1,6 +1,6 @@
 """Draft components are inert on dispatch surfaces; preview is owner-gated.
 
-Studio 3.0 phase 3 (specs/agno/studio-3.0/spec-v0.md section 3.3):
+The Studio 3.0 dispatch contract:
 - Unversioned resolution on a dispatch surface resolves only a published
   version; a draft-only component is readable and editable but not runnable.
 - An explicit draft version is a control-plane preview: allowed for the

@@ -98,7 +98,7 @@ def sample_workflow_config() -> Dict[str, Any]:
 def _force_delete_config(db, component_id: str, version: int) -> None:
     """Simulate a corrupt/legacy catalog by removing a config row directly.
 
-    The hardened delete_config (studio-3.0 spec section 3.2) refuses to break
+    The hardened delete_config refuses to break
     a pin, so the broken state these tests exercise can only arrive from
     outside the API - which is exactly what this raw delete reproduces.
     """
@@ -902,7 +902,7 @@ class TestWritePathFidelity:
         db = SqliteDb(db_file=str(tmp_path / "noname.db"))
         Workflow(id="nn-wf", name="WF", steps=[Step(agent=Agent(id="nn-agent", name="A"))]).save(db=db)
         # The hardened delete refuses to break nn-wf's pin; the degraded state
-        # this test exercises arrives from outside the API (spec section 3.2).
+        # this test exercises arrives from outside the API.
         db.delete_component("nn-agent", hard_delete=True, require_no_dependents=False)
 
         loaded = Workflow.load(id="nn-wf", db=db, strict=False)

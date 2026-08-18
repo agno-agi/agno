@@ -1205,8 +1205,7 @@ def get_agent_router(
         summary="Continue Agent Run",
         description=(
             "Advance a persisted agent run from its current state. Dispatches on the body "
-            "shape and the persisted run state (see ADR-003 in "
-            "specs/agno/features/checkpointing/decisions.md).\n\n"
+            "shape and the persisted run state.\n\n"
             "**Variants:**\n"
             "- PAUSED + tools provided → apply HITL tool results, resume\n"
             "- PAUSED + resolved admin approval (empty tools) → apply resolution, resume\n"

@@ -1,6 +1,6 @@
 """Catalog hardening semantics on the SQLite adapter.
 
-Studio 3.0 phase 2 (specs/agno/studio-3.0/spec-v0.md section 3.2): archived
+The Studio 3.0 catalog contract: archived
 ids are reserved and restored explicitly, deletes refuse to break pins,
 version numbers are never reused (tombstones), compare-and-set guards are
 optional kwargs, publishing re-projects identity onto the component row,

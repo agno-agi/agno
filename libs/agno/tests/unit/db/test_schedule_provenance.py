@@ -1,6 +1,6 @@
 """Schedule provenance columns, the update allow-list, and the archive cascade.
 
-Studio 3.0 phase 5 (specs/agno/studio-3.0/spec-v0.md section 3.5): a generic
+The Studio 3.0 schedule governance contract: a generic
 update_schedule can never write ownership, provenance, trigger or lock state;
 control planes write provenance through stamp_schedule_provenance; archiving a
 component disables every schedule aimed at it (provenance-tagged and generic

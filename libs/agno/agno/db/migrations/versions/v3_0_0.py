@@ -49,7 +49,7 @@ BATCH_SIZE = 50
 # never called for it; a backend whose schema does not declare the column is skipped.
 USER_ID_TABLE_TYPES = ("evals", "components", "knowledge", "schedules", "schedule_runs", "metrics")
 
-# Studio 3.0 schedule provenance (specs/agno/studio-3.0/spec-v0.md section 3.5):
+# Studio 3.0 schedule provenance:
 # nullable TEXT columns, so legacy rows need only the ALTERs. managed_by and
 # target_id also get lookup indexes.
 SCHEDULE_PROVENANCE_COLUMNS = (

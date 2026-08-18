@@ -1,6 +1,6 @@
 """Identity and ownership threading through StudioTools.
 
-Studio 3.0 phase 1 (specs/agno/studio-3.0/spec-v0.md section 3.1): every
+The Studio 3.0 identity contract: every
 mutating tool and every user-scoped read consumes the framework-injected
 ``_agno_run_context``; the acting user owns what it creates, cannot touch
 another owner's rows, and cannot modify shared (unowned) rows. Without a

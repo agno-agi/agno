@@ -1,4 +1,4 @@
-"""Palette policy for StudioTools (studio-3.0 spec section 3.4, G6).
+"""Palette policy for StudioTools.
 
 The build palette is declared tools + buildable_tools - denied_tools. Tools
 that arrived via the registry fold (Registry.add_tool(tool, source="folded"),

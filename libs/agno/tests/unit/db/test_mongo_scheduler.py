@@ -552,7 +552,7 @@ async def test_async_mongo_get_schedule_runs_returns_paginated_items_and_total(m
 
 
 # =============================================================================
-# Studio 3.0 schedule governance on Mongo (spec section 3.5)
+# Studio 3.0 schedule governance on Mongo
 #
 # Both primitives used to fall through to BaseDb's NotImplementedError, which
 # StudioTools swallows: a Studio schedule on Mongo persisted enabled but without

@@ -811,7 +811,7 @@ class Function(BaseModel):
     entrypoint: Optional[Callable] = None
     # Whether calling this function changes external state. None = undeclared.
     # Toolkits set it so palette policies can express "read-only tools only"
-    # and discovery can label capability honestly (studio-3.0 spec 3.4).
+    # and discovery can label capability honestly.
     mutating: Optional[bool] = None
 
     # If True, the entrypoint processing is skipped and the Function is used as is.

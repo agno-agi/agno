@@ -145,7 +145,7 @@ def sample_team_config() -> Dict[str, Any]:
 def _force_delete_config(db, component_id: str, version: int) -> None:
     """Simulate a corrupt/legacy catalog by removing a config row directly.
 
-    The hardened delete_config (studio-3.0 spec section 3.2) refuses to break
+    The hardened delete_config refuses to break
     a pin, so the broken state these tests exercise can only arrive from
     outside the API - which is exactly what this raw delete reproduces.
     """

@@ -11270,7 +11270,7 @@ def get_workflow_by_id(
 
         if published_only and version is None and label is None:
             # Dispatch surfaces resolve only a published version; a draft-only
-            # component is not runnable (studio-3.0 spec section 3.3). Uses the
+            # component is not runnable. Uses the
             # component row rather than get_current_config so third-party
             # adapters with only the old surface keep working.
             component_row = db.get_component(component_id=id)

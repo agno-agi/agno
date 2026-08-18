@@ -7,8 +7,8 @@ must be owned by that user. The delegation path threads
 (``team/_default_tools.py``), the member run builds a ``RunContext`` from
 it, and the framework injects that context into the member's tools.
 
-This is the mock-model unit version of the live check recorded in
-specs/agno/studio-3.0/memory.md (2026-08-18): explicit user -> the tool
+This is the mock-model unit version of the live check this behavior
+was built against: explicit user -> the tool
 sees it and the write is owned; no user anywhere -> the write is unowned.
 """
 

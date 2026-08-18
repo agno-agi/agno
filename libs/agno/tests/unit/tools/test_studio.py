@@ -1,4 +1,4 @@
-"""Unit tests for the StudioTools toolkit (studio-3.0 spec section 3.4).
+"""Unit tests for the StudioTools toolkit.
 
 Uses a real SqliteDb backed by a pytest tmp_path so the full component +
 config persistence path is exercised, not mocked.
@@ -1187,7 +1187,7 @@ class TestEditAgent:
         assert out["data"]["draft_version"] == 2
 
     def test_second_edit_appends_a_new_draft(self, studio):
-        # Append-only history (studio-3.0 spec section 3.2): the old in-place
+        # Append-only history: the old in-place
         # draft reuse let two editors silently overwrite each other; now both
         # edits survive as versions and publish takes the latest by default.
         self._create(studio)
@@ -1799,7 +1799,7 @@ class TestSchedules:
         assert "message" in out["error"]["message"]
 
     def test_same_name_create_is_a_conflict_and_update_changes_cadence(self, studio_schedules):
-        # Create means create (studio-3.0 spec section 3.5): a reused name can
+        # Create means create: a reused name can
         # no longer silently repoint an existing schedule; update_schedule is
         # the explicit edit path and the target stays immutable.
         self._create_target_agent(studio_schedules)

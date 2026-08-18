@@ -57,7 +57,7 @@ class Registry:
     _ambiguous_knowledge_names: Set[str] = field(default_factory=set, init=False, repr=False)
     # Names of tools that arrived via the AgentOS fold rather than the
     # declaration. Resolvable at rehydration, but not buildable by default:
-    # Studio's palette policy reads this set (studio-3.0 spec section 3.4).
+    # Studio's palette policy reads this set.
     folded_tool_names: Set[str] = field(default_factory=set, init=False, repr=False)
     # Knowledge a framework sync mirrored in for name resolution, as opposed to
     # the user registering it. Kept on the registry, not on the AgentOS that
@@ -420,7 +420,7 @@ class Registry:
         if source == "folded":
             # The fold makes every registered agent's own tools resolvable at
             # rehydration; resolvable is not the same as buildable. Studio's
-            # palette policy reads this set (studio-3.0 spec section 3.4).
+            # palette policy reads this set.
             name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
             if name:
                 self.folded_tool_names.add(name)

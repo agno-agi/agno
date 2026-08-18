@@ -172,7 +172,7 @@ class ComponentNotDispatchableError(StudioRunnerError, RuntimeError):
 class ComponentNotPublishedError(ComponentNotDispatchableError):
     """The identifier names a stored component with no published version.
 
-    Drafts are inert on dispatch surfaces (studio-3.0 spec section 3.3): a
+    Drafts are inert on dispatch surfaces: a
     draft runs only through an explicit-version preview. Subclasses
     ComponentNotDispatchableError so existing handlers keep working; kept
     distinct so callers can map it to its own error code."""
@@ -774,7 +774,7 @@ class StudioRunnerTools(Toolkit):
 
     def _refuse_if_stored_draft_only(self, component_type: str, identifier: str) -> None:
         """A stored component with no published version is not a registry
-        problem: drafts are inert on dispatch surfaces (spec section 3.3).
+        problem: drafts are inert on dispatch surfaces.
         Diagnose it first, or the include-all message below blames the
         registry for a component that only needs publishing."""
         if self.db is None:
@@ -1989,8 +1989,7 @@ class StudioRunnerTools(Toolkit):
                 return None
             if published_only and version is None:
                 # Dispatch resolves only a published version: a draft-only
-                # component is inspectable and editable, never runnable
-                # (studio-3.0 spec section 3.3).
+                # component is inspectable and editable, never runnable.
                 current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
                 if current_version is None:
                     return None

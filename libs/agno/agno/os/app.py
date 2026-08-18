@@ -287,8 +287,8 @@ class AgentOS:
             version: Version of the AgentOS instance
             db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
             checkpoint: Default checkpoint level for agents in this AgentOS. Agents without their own
-                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools" (see
-                specs/agno/features/checkpointing/). None means no OS-level default; each agent falls
+                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools".
+                None means no OS-level default; each agent falls
                 back to "runs" at first-run time.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS

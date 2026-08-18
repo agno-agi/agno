@@ -1,8 +1,8 @@
 """Catalog hardening semantics on the PostgreSQL adapter.
 
 Mirror of test_component_catalog_hardening.py (the SQLite suite) against a
-live Postgres (cookbook/scripts/run_pgvector.sh, port 5532). Studio 3.0
-phase 2 (specs/agno/studio-3.0/spec-v0.md section 3.2): archived ids are
+live Postgres (cookbook/scripts/run_pgvector.sh, port 5532). The Studio
+3.0 catalog contract: archived ids are
 reserved and restored explicitly, deletes refuse to break pins, version
 numbers are never reused (tombstones), compare-and-set guards are optional
 kwargs, publishing re-projects identity onto the component row, and link

@@ -213,8 +213,8 @@ async def handle_workflow_via_websocket(
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
             return
 
-        # An explicit draft version is a control-plane preview: owner/admin only
-        # (studio-3.0 spec section 3.3). Published pins were always reachable.
+        # An explicit draft version is a control-plane preview: owner/admin only.
+        # Published pins were always reachable.
         from agno.os.utils import allow_draft_preview
 
         if not allow_draft_preview(os.db, workflow_id, version, scoped_user_id):

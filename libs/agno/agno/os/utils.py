@@ -1221,7 +1221,7 @@ def allow_draft_preview(
     version: Optional[int],
     scoped_user_id: Optional[str],
 ) -> bool:
-    """Whether an explicit-version run may proceed (studio-3.0 spec section 3.3).
+    """Whether an explicit-version run may proceed.
 
     Published versions were always reachable, so pinning one is never gated.
     A draft version is a control-plane preview: allowed for the component's

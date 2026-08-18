@@ -15,7 +15,7 @@ Typical use:
         tools=[StudioTools(registry=registry, db=db)],
     )
 
-Lifecycle (studio-3.0 spec section 3.4):
+Lifecycle:
     * create_* writes version 1 as a DRAFT unless publish=True. Drafts are
       readable, editable, and previewable (run_*(version=)), but never serve
       users, schedules, or dispatch until published.
@@ -688,7 +688,7 @@ class StudioTools(Toolkit):
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
-    # Envelope + palette internals (studio-3.0 spec section 3.4)
+    # Envelope + palette internals
     # ------------------------------------------------------------------
 
     _TYPED_ERROR_CODES = {
