@@ -42,9 +42,26 @@ from agno.utils.string import generate_id_from_name, hash_string_sha256
 
 logger = logging.getLogger(__name__)
 
+
 # Typed catalog errors that map to 409 Conflict. They are ValueError
 # subclasses, so routes must catch them before any generic ValueError clause
 # or they would surface with the wrong status code.
+def _reject_unsupported_guard(guard: Any, supported: str) -> None:
+    """400 when the request carries a guard half this route does not check.
+
+    Silently ignoring it lets a caller believe the write was protected.
+    ``supported`` is "latest_version" or "current_version"."""
+    if guard is None:
+        return
+    unsupported = "current_version" if supported == "latest_version" else "latest_version"
+    if getattr(guard, unsupported, None) is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This route checks guard.{supported} only; guard.{unsupported} is not honoured here. "
+            "Remove it, or use the route that enforces it.",
+        )
+
+
 _CONFLICT_ERRORS = (
     ComponentVersionConflictError,
     ComponentArchivedError,
@@ -460,6 +477,7 @@ def attach_routes(
 
             # upsert_component has no CAS parameter; the guard is enforced as a
             # pre-check against the row that was just read.
+            _reject_unsupported_guard(body.guard, "current_version")
             if body.guard is not None and body.guard.current_version is not None:
                 actual_current = existing.get("current_version")
                 if actual_current != body.guard.current_version:
@@ -673,6 +691,7 @@ def attach_routes(
                 own_component_id=component_id,
             )
 
+            _reject_unsupported_guard(body.guard, "latest_version")
             config = db.upsert_config(
                 component_id=component_id,
                 version=None,  # Always create new
@@ -732,6 +751,7 @@ def attach_routes(
                 own_component_id=component_id,
             )
 
+            _reject_unsupported_guard(body.guard, "latest_version")
             config = db.upsert_config(
                 component_id=component_id,
                 version=version,  # Always update existing
@@ -868,6 +888,7 @@ def attach_routes(
             # Non-admins can read shared (unowned) components but not modify them.
             if scoped_user_id is not None and existing.get("user_id") is None:
                 raise HTTPException(status_code=403, detail="Cannot modify shared component")
+            _reject_unsupported_guard(body.guard if body else None, "current_version")
             success = db.set_current_version(
                 component_id,
                 version=version,

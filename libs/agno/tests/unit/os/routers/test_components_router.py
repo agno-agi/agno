@@ -1215,3 +1215,44 @@ class TestResolveDbInConfig:
 
         assert "arbitrary_extension" not in out["db"]
         assert out["db"]["session_table"] == "custom_sessions"
+
+
+class TestGuardHalfRejection:
+    """A guard half a route cannot honour is rejected, never silently ignored:
+    a caller who sent it believes it protected the write."""
+
+    @pytest.fixture
+    def guard_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="guard-half-db", db_file=str(tmp_path / "guard-half.db"))
+        db.create_component_with_config(
+            component_id="guarded",
+            component_type=ComponentType.AGENT,
+            name="guarded",
+            config={"name": "guarded"},
+            stage="published",
+        )
+        return db
+
+    @pytest.fixture
+    def guard_client(self, guard_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=guard_db, settings=settings))
+        return TestClient(app)
+
+    def test_config_append_rejects_current_version_guard(self, guard_client):
+        response = guard_client.post(
+            "/components/guarded/configs",
+            json={"config": {"name": "guarded"}, "guard": {"current_version": 1}},
+        )
+        assert response.status_code == 400
+        assert "guard.latest_version" in response.json()["detail"]
+
+    def test_set_current_rejects_latest_version_guard(self, guard_client):
+        response = guard_client.post(
+            "/components/guarded/configs/1/set-current",
+            json={"guard": {"latest_version": 1}},
+        )
+        assert response.status_code == 400
+        assert "guard.current_version" in response.json()["detail"]
