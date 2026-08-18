@@ -675,3 +675,123 @@ class TestRestorePinnedChildren:
         self._team_with_member(db)
         db.delete_component("pin-parent", hard_delete=False)
         assert db.restore_component("pin-parent") is True
+
+
+class TestHardDeleteSucceeds:
+    """A populated component (configs + links, FK-constrained on Postgres)
+    hard-deletes in one call; the CAS conflict path still refuses. The FK
+    order regression made every populated hard delete raise on Postgres while
+    the suite only exercised the refusal path."""
+
+    def _populated(self, db, cid="hd-comp"):
+        from agno.db.base import ComponentType
+
+        db.create_component_with_config(
+            component_id=f"{cid}-child",
+            component_type=ComponentType.AGENT,
+            name=f"{cid}-child",
+            config={"name": f"{cid}-child"},
+            stage="published",
+        )
+        db.create_component_with_config(
+            component_id=cid,
+            component_type=ComponentType.TEAM,
+            name=cid,
+            config={"name": cid},
+            stage="published",
+            links=[
+                {
+                    "link_kind": "member",
+                    "link_key": f"{cid}-child",
+                    "child_component_id": f"{cid}-child",
+                    "child_version": 1,
+                    "position": 0,
+                }
+            ],
+        )
+        return cid
+
+    def test_populated_hard_delete_succeeds(self, db):
+        cid = self._populated(db)
+        assert db.delete_component(cid, hard_delete=True, require_no_dependents=False) is True
+        assert db.get_component(cid, include_deleted=True) is None
+        assert db.get_config(component_id=cid, version=1) is None
+
+    def test_guarded_hard_delete_conflicts_on_stale_pointer(self, db):
+        from agno.db.base import ComponentVersionConflictError
+
+        cid = self._populated(db, cid="hd-guarded")
+        with pytest.raises(ComponentVersionConflictError):
+            db.delete_component(cid, hard_delete=True, expected_current_version=99, require_no_dependents=False)
+        assert db.get_component(cid) is not None
+        assert db.get_config(component_id=cid, version=1) is not None
+
+    def test_guarded_hard_delete_succeeds_with_matching_pointer(self, db):
+        cid = self._populated(db, cid="hd-match")
+        assert (
+            db.delete_component(cid, hard_delete=True, expected_current_version=1, require_no_dependents=False) is True
+        )
+
+
+class TestWorkflowPinGuards:
+    """The pin guards must cover the kinds Step.get_links actually emits
+    (step_agent/step_team/step_workflow) - a guard written against a bare
+    "step" kind held for teams and silently skipped every workflow."""
+
+    def _wf_with_step_child(self, db, kind="step_agent", cid="wfp"):
+        from agno.db.base import ComponentType
+
+        child_type = {"step_agent": ComponentType.AGENT, "step_team": ComponentType.TEAM}.get(
+            kind, ComponentType.WORKFLOW
+        )
+        db.create_component_with_config(
+            component_id=f"{cid}-child",
+            component_type=child_type,
+            name=f"{cid}-child",
+            config={"name": f"{cid}-child"},
+            stage="draft",
+        )
+        db.create_component_with_config(
+            component_id=cid,
+            component_type=ComponentType.WORKFLOW,
+            name=cid,
+            config={"name": cid, "steps": []},
+            stage="draft",
+            links=[
+                {
+                    "link_kind": kind,
+                    "link_key": f"{cid}-child",
+                    "child_component_id": f"{cid}-child",
+                    "child_version": 1,
+                    "position": 0,
+                }
+            ],
+        )
+        return cid
+
+    @pytest.mark.parametrize("kind", ["step_agent", "step_team", "step_workflow"])
+    def test_publish_refuses_draft_step_child_for_every_kind(self, db, kind):
+        from agno.db.base import ComponentDependencyError
+
+        cid = self._wf_with_step_child(db, kind=kind, cid=f"wfp-{kind}")
+        with pytest.raises(ComponentDependencyError, match=f"wfp-{kind}-child"):
+            db.upsert_config(component_id=cid, version=1, stage="published")
+
+    def test_publish_passes_once_step_child_published(self, db):
+        cid = self._wf_with_step_child(db, cid="wfp-ok")
+        db.upsert_config(component_id=f"{cid}-child", version=1, stage="published")
+        result = db.upsert_config(component_id=cid, version=1, stage="published")
+        assert result["stage"] == "published"
+
+    def test_restore_refuses_archived_step_child(self, db):
+        from agno.db.base import ComponentDependencyError
+
+        cid = self._wf_with_step_child(db, cid="wfr")
+        db.upsert_config(component_id=f"{cid}-child", version=1, stage="published")
+        db.upsert_config(component_id=cid, version=1, stage="published")
+        db.delete_component(cid, hard_delete=False)
+        db.delete_component(f"{cid}-child", hard_delete=False)
+        with pytest.raises(ComponentDependencyError, match=f"{cid}-child"):
+            db.restore_component(cid)
+        assert db.restore_component(f"{cid}-child") is True
+        assert db.restore_component(cid) is True

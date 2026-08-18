@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 from agno.db import mcp_oauth_store
 from agno.db.base import (
+    PIN_LINK_KINDS,
     DELETED_CONFIG_STAGE,
     BaseDb,
     ComponentArchivedError,
@@ -4064,10 +4065,12 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 if expected_current_version is not None:
+                    # Locked read (a no-op lock on SQLite, a row lock on
+                    # Postgres): the guard is decided before any row goes.
                     row = sess.execute(
-                        select(components_table.c.current_version).where(
-                            components_table.c.component_id == component_id
-                        )
+                        select(components_table.c.current_version)
+                        .where(components_table.c.component_id == component_id)
+                        .with_for_update()
                     ).fetchone()
                     if row is None:
                         return False
@@ -4077,9 +4080,16 @@ class SqliteDb(BaseDb):
                             f"expected {expected_current_version}"
                         )
                 if hard_delete:
-                    # Component row first, with the guard on the DELETE itself:
-                    # a raced pointer move must abort before configs and links
-                    # go, and the row write serializes concurrent deleters.
+                    # FK order: links and configs go before the component row
+                    # (the FKs have no ON DELETE CASCADE, so the reverse order
+                    # violates them on every populated component). The guard
+                    # was taken as a locked read above; the predicate on the
+                    # final DELETE is the belt over that lock.
+                    if links_table is not None:
+                        sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
+                        sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
+                    if configs_table is not None:
+                        sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
                     component_delete = components_table.delete().where(components_table.c.component_id == component_id)
                     if expected_current_version is not None:
                         component_delete = component_delete.where(
@@ -4090,12 +4100,6 @@ class SqliteDb(BaseDb):
                         raise ComponentVersionConflictError(
                             f"Component {component_id} current version changed; expected {expected_current_version}"
                         )
-                    if result.rowcount > 0:
-                        if links_table is not None:
-                            sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
-                            sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
-                        if configs_table is not None:
-                            sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
                 else:
                     # Archive: stamp deleted_at on a live row only, so the call is
                     # idempotent-visible (a second archive returns False). The
@@ -4171,7 +4175,7 @@ class SqliteDb(BaseDb):
                     {
                         str(link.child_component_id)
                         for link in link_rows
-                        if link.link_kind in ("member", "step")
+                        if link.link_kind in PIN_LINK_KINDS
                         and (child := self.get_component(str(link.child_component_id), include_deleted=True))
                         is not None
                         and child.get("deleted_at") is not None
@@ -4779,7 +4783,7 @@ class SqliteDb(BaseDb):
                             )
                         ).fetchall()
                         for link_row in link_rows:
-                            if link_row.link_kind not in ("member", "step"):
+                            if link_row.link_kind not in PIN_LINK_KINDS:
                                 continue
                             child_stage = sess.execute(
                                 select(configs_table.c.stage).where(

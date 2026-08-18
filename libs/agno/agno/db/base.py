@@ -35,6 +35,13 @@ class ComponentType(str, Enum):
 # recycle into a history another component version may still cite.
 DELETED_CONFIG_STAGE = "_deleted"
 
+# Link kinds that pin a child component version for rebuild: team members and
+# the three step-executor kinds Step.get_links emits. Guards that enforce
+# "published parents pin published children" and "restore refuses orphaned
+# pins" filter on THIS tuple - a bare "step" kind does not exist, and a guard
+# written against it silently skips every workflow.
+PIN_LINK_KINDS = ("member", "step_agent", "step_team", "step_workflow")
+
 
 class ComponentVersionConflictError(ValueError):
     """A compare-and-set guard did not match the stored version state.
