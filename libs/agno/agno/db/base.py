@@ -1013,6 +1013,7 @@ class BaseDb(ABC):
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
@@ -2417,6 +2418,7 @@ class AsyncBaseDb(ABC):
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError(
             "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"

@@ -430,14 +430,19 @@ class TestCreateAgent:
         assert error["code"] == "invalid_component_id"
 
     def test_persist_failure_returns_internal_error_without_leaking(self, studio, db, monkeypatch):
-        def fail_upsert_config(*args, **kwargs):
+        # Creates persist through the atomic create_component_with_config; a
+        # failure there must not leave a component row behind (the id and
+        # name would be permanently blocked by the strict-mint conflict).
+        def fail_create(*args, **kwargs):
             raise RuntimeError("persist failed: dsn=postgres://secret")
 
-        monkeypatch.setattr(db, "upsert_config", fail_upsert_config)
+        monkeypatch.setattr(db, "create_component_with_config", fail_create)
+        monkeypatch.setattr(db, "upsert_config", fail_create)
 
         error = _error(studio.create_agent(name="broken", instructions="i", model_id="gpt-5.4"))
         assert error["code"] == "internal_error"
         assert "secret" not in error["message"]
+        assert db.get_component("broken") is None
 
     @pytest.mark.asyncio
     async def test_async_create_agent_persists_component(self, studio, db):
@@ -2925,3 +2930,27 @@ class TestNoCatalogAdapter:
         out = _loads(studio.archive_component("anything"))
         assert out["error"]["code"] in ("db_not_configured", "component_not_found"), out
         assert out["error"]["code"] != "internal_error"
+
+
+class TestStudioGuardedWriteRaces:
+    def test_two_guarded_edits_produce_exactly_one_conflict(self, studio):
+        # The guard must ride the adapter write: with a Python-side compare
+        # both editors read latest=1, both pass, and drafts v2 AND v3 land
+        # with zero conflicts.
+        import threading
+
+        _data(studio.create_agent(name="race-agent", instructions="v1", model_id="gpt-5.4"))
+        barrier = threading.Barrier(2)
+        results: list = [None, None]
+
+        def edit(slot, text):
+            barrier.wait()
+            results[slot] = _loads(studio.edit_agent("race-agent", instructions=text, expected_version=1))
+
+        threads = [threading.Thread(target=edit, args=(i, f"edit-{i}")) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        codes = sorted(("ok" if r.get("ok") else r["error"]["code"]) for r in results)
+        assert codes == ["ok", "version_conflict"], results

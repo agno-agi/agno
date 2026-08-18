@@ -4192,22 +4192,32 @@ class PostgresDb(BaseDb):
                             f"expected {expected_current_version}"
                         )
                 if hard_delete:
-                    # Delete links where this component is parent or child
-                    if links_table is not None:
-                        sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
-                        sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
-                    # Delete configs
-                    if configs_table is not None:
-                        sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
-                    # Delete component
-                    result = sess.execute(
-                        components_table.delete().where(components_table.c.component_id == component_id)
-                    )
+                    # Component row first, with the guard on the DELETE itself:
+                    # a raced pointer move must abort before configs and links
+                    # go, and the row lock serializes concurrent deleters.
+                    component_delete = components_table.delete().where(components_table.c.component_id == component_id)
+                    if expected_current_version is not None:
+                        component_delete = component_delete.where(
+                            components_table.c.current_version == expected_current_version
+                        )
+                    result = sess.execute(component_delete)
+                    if result.rowcount == 0 and expected_current_version is not None:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version changed; expected {expected_current_version}"
+                        )
+                    if result.rowcount > 0:
+                        if links_table is not None:
+                            sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
+                            sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
+                        if configs_table is not None:
+                            sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
                 else:
                     # Archive: stamp deleted_at on a live row only, so the call is
-                    # idempotent-visible (a second archive returns False).
+                    # idempotent-visible (a second archive returns False). The
+                    # guard rides the UPDATE, so a raced pointer move conflicts
+                    # instead of archiving the wrong state.
                     now = int(time.time())
-                    result = sess.execute(
+                    archive_update = (
                         components_table.update()
                         .where(
                             components_table.c.component_id == component_id,
@@ -4215,6 +4225,22 @@ class PostgresDb(BaseDb):
                         )
                         .values(deleted_at=now, updated_at=now)
                     )
+                    if expected_current_version is not None:
+                        archive_update = archive_update.where(
+                            components_table.c.current_version == expected_current_version
+                        )
+                    result = sess.execute(archive_update)
+                    if result.rowcount == 0 and expected_current_version is not None:
+                        still_live = sess.execute(
+                            select(components_table.c.component_id).where(
+                                components_table.c.component_id == component_id,
+                                components_table.c.deleted_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
+                        if still_live is not None:
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} current version changed; expected {expected_current_version}"
+                            )
 
             return result.rowcount > 0
 
@@ -4629,6 +4655,7 @@ class PostgresDb(BaseDb):
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
@@ -4770,6 +4797,35 @@ class PostgresDb(BaseDb):
                         raise ComponentVersionConflictError(
                             f"Concurrent append on {component_id}: version {final_version} was taken"
                         ) from exc
+
+                    if expected_latest_version is not None:
+                        # Re-verify the guard AFTER the insert: the pre-check
+                        # and the insert are separate statements, so a raced
+                        # append can land between them (both writers reading
+                        # the same latest). Exactly one row can be the direct
+                        # successor of the expected version; a loser removes
+                        # its own row and conflicts.
+                        prior = sess.execute(
+                            select(configs_table.c.version)
+                            .where(
+                                configs_table.c.component_id == component_id,
+                                configs_table.c.stage != DELETED_CONFIG_STAGE,
+                                configs_table.c.version < final_version,
+                            )
+                            .order_by(configs_table.c.version.desc())
+                            .limit(1)
+                        ).scalar()
+                        if prior != expected_latest_version:
+                            sess.execute(
+                                configs_table.delete().where(
+                                    configs_table.c.component_id == component_id,
+                                    configs_table.c.version == final_version,
+                                )
+                            )
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} latest version is {prior}, "
+                                f"expected {expected_latest_version}"
+                            )
                 else:
                     existing = (
                         sess.execute(
@@ -4888,11 +4944,23 @@ class PostgresDb(BaseDb):
                             projection["description"] = published_config.get("description")
                         if published_config.get("metadata") is not None:
                             projection["metadata"] = published_config.get("metadata")
-                    sess.execute(
+                    projection_update = (
                         components_table.update()
                         .where(components_table.c.component_id == component_id)
                         .values(**projection)
                     )
+                    if expected_current_version is not None:
+                        # CAS on the pointer being replaced: the guard rides the
+                        # UPDATE so two publishers expecting the same current
+                        # version cannot both win.
+                        projection_update = projection_update.where(
+                            components_table.c.current_version == expected_current_version
+                        )
+                    projection_result = sess.execute(projection_update)
+                    if projection_result.rowcount == 0 and expected_current_version is not None:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version changed; expected {expected_current_version}"
+                        )
 
             result = self.get_config(component_id, version=final_version)
             if result is None:
@@ -5145,14 +5213,26 @@ class PostgresDb(BaseDb):
                             f"expected {expected_current_version}"
                         )
 
-                # Update pointer
-                result = sess.execute(
+                # Update pointer. The guard rides the UPDATE itself: the
+                # pre-read gives the friendly message, this predicate gives
+                # correctness under concurrent writers (check-then-write lets
+                # two callers expecting the same pointer both win).
+                pointer_update = (
                     components_table.update()
                     .where(components_table.c.component_id == component_id)
                     .values(current_version=version, updated_at=int(time.time()))
                 )
+                if expected_current_version is not None:
+                    pointer_update = pointer_update.where(
+                        components_table.c.current_version == expected_current_version
+                    )
+                result = sess.execute(pointer_update)
 
                 if result.rowcount == 0:
+                    if expected_current_version is not None:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version changed; expected {expected_current_version}"
+                        )
                     return False
 
             log_debug(f"Set {component_id} current version to {version}")

@@ -490,3 +490,85 @@ class TestCycles:
             return any(_has_cycle_stub(child.get("graph")) for child in node.get("children", []))
 
         assert _has_cycle_stub(graph)
+
+
+class TestConcurrentCASWrites:
+    """The compare-and-set guards must ride the write itself: with a
+    check-then-write shape, two writers expecting the same state both pass
+    the check and both win. Each race here asserts exactly one winner and
+    exactly one ComponentVersionConflictError."""
+
+    def _race(self, fn_a, fn_b):
+        import threading
+
+        barrier = threading.Barrier(2)
+        results: list = [None, None]
+
+        def run(slot, fn):
+            barrier.wait()
+            try:
+                results[slot] = ("ok", fn())
+            except Exception as e:
+                results[slot] = ("err", e)
+
+        threads = [threading.Thread(target=run, args=(i, f)) for i, f in enumerate((fn_a, fn_b))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return results
+
+    def _component_with_versions(self, db, cid="race-comp", publish_two=True):
+        from agno.db.base import ComponentType
+
+        db.create_component_with_config(
+            component_id=cid,
+            component_type=ComponentType.AGENT,
+            name=cid,
+            config={"name": cid, "instructions": "v1"},
+            stage="published",
+        )
+        db.upsert_config(component_id=cid, config={"name": cid, "instructions": "v2"}, stage="draft")
+        if publish_two:
+            db.upsert_config(component_id=cid, version=2, stage="published")
+        return cid
+
+    def test_set_current_version_race_has_one_winner(self, db):
+        from agno.db.base import ComponentVersionConflictError
+
+        cid = self._component_with_versions(db)  # current is now 2
+        results = self._race(
+            lambda: db.set_current_version(cid, 1, expected_current_version=2),
+            lambda: db.set_current_version(cid, 1, expected_current_version=2),
+        )
+        outcomes = sorted(r[0] for r in results)
+        assert outcomes == ["err", "ok"], results
+        errs = [r[1] for r in results if r[0] == "err"]
+        assert isinstance(errs[0], ComponentVersionConflictError)
+
+    def test_archive_race_has_one_winner(self, db):
+        from agno.db.base import ComponentVersionConflictError
+
+        cid = self._component_with_versions(db)
+        results = self._race(
+            lambda: db.set_current_version(cid, 1, expected_current_version=2),
+            lambda: db.delete_component(cid, hard_delete=False, expected_current_version=2),
+        )
+        outcomes = sorted(r[0] for r in results)
+        assert outcomes == ["err", "ok"], results
+        errs = [r[1] for r in results if r[0] == "err"]
+        assert isinstance(errs[0], ComponentVersionConflictError)
+
+    def test_guarded_publish_race_has_one_winner(self, db):
+        from agno.db.base import ComponentVersionConflictError
+
+        cid = self._component_with_versions(db, publish_two=False)  # current 1, draft 2
+        db.upsert_config(component_id=cid, config={"name": cid, "instructions": "v3"}, stage="draft")
+        results = self._race(
+            lambda: db.upsert_config(component_id=cid, version=2, stage="published", expected_current_version=1),
+            lambda: db.upsert_config(component_id=cid, version=3, stage="published", expected_current_version=1),
+        )
+        outcomes = sorted(r[0] for r in results)
+        assert outcomes == ["err", "ok"], results
+        errs = [r[1] for r in results if r[0] == "err"]
+        assert isinstance(errs[0], ComponentVersionConflictError)

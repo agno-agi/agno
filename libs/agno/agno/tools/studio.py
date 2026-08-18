@@ -2030,6 +2030,7 @@ class StudioTools(Toolkit):
                 pinned_children=pinned_children,
                 run_context=run_context,
                 publish=publish,
+                expected_latest_version=expected_version,
             )
             log_debug(f"StudioTools edited {component_type} id={component.id} result={result}")
             return ok_result("edited", id=resolved_id, component_type=component_type, **result)
@@ -2366,7 +2367,12 @@ class StudioTools(Toolkit):
                         retryable=True,
                         current_version=row.get("current_version"),
                     )
-            result = self.db.upsert_config(component_id=component_id, version=target, stage="published")
+            result = self.db.upsert_config(
+                component_id=component_id,
+                version=target,
+                stage="published",
+                expected_current_version=expected_current_version,
+            )
             published_version = result.get("version", target)
             self._sync_component_row(component_id, published_version)
             return ok_result("published", id=component_id, version=published_version)
@@ -3788,6 +3794,7 @@ class StudioTools(Toolkit):
         pinned_children: Optional[Dict[str, int]] = None,
         run_context: Optional[RunContext] = None,
         publish: bool = False,
+        expected_latest_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Persist an edited component.
 
@@ -3814,9 +3821,22 @@ class StudioTools(Toolkit):
             # including link kinds this walk does not reconstruct.
             links = self._base_links(component_id)
         if self.enable_versions and not publish:
-            version = self._upsert_draft(component, config=config, links=links, user_id=_actor_id(run_context))
+            version = self._upsert_draft(
+                component,
+                config=config,
+                links=links,
+                user_id=_actor_id(run_context),
+                expected_latest_version=expected_latest_version,
+            )
             return {"draft_version": version, "stage": "draft"}
-        version = _persist_only(component, self.db, config=config, links=links, user_id=_actor_id(run_context))
+        version = _persist_only(
+            component,
+            self.db,
+            config=config,
+            links=links,
+            user_id=_actor_id(run_context),
+            expected_latest_version=expected_latest_version,
+        )
         return {"version": version, "stage": "published"}
 
     def _preserve_unresolved_keys(
@@ -4002,6 +4022,7 @@ class StudioTools(Toolkit):
         config: Optional[Dict[str, Any]] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         user_id: Optional[str] = None,
+        expected_latest_version: Optional[int] = None,
     ) -> Optional[int]:
         """Save a component as a draft. Updates the latest draft in place, else creates one.
 
@@ -4035,6 +4056,7 @@ class StudioTools(Toolkit):
             config=config if config is not None else _component_to_dict(component),
             stage="draft",
             links=links,
+            expected_latest_version=expected_latest_version,
         )
         return result.get("version")
 
@@ -4123,6 +4145,7 @@ def _persist_only(
     config: Optional[Dict[str, Any]] = None,
     links: Optional[List[Dict[str, Any]]] = None,
     user_id: Optional[str] = None,
+    expected_latest_version: Optional[int] = None,
 ) -> Optional[int]:
     """Save a component WITHOUT cascading to members or step agents.
 
@@ -4142,6 +4165,28 @@ def _persist_only(
     component_id = getattr(component, "id", None)
     if component_id is None:
         raise ValueError("Component has no id")
+    from agno.db.base import ComponentType
+
+    resolved_config = config if config is not None else _component_to_dict(component)
+    if db.get_component(component_id) is None:
+        # First write: one atomic transaction, so a failed config write can
+        # never leave an active component with zero configs whose id and name
+        # then block the retry with a strict-mint conflict.
+        try:
+            _, config_row = db.create_component_with_config(
+                component_id=component_id,
+                component_type=ComponentType(_component_type(component)),
+                name=getattr(component, "name", component_id),
+                config=resolved_config,
+                description=getattr(component, "description", None),
+                metadata=getattr(component, "metadata", None),
+                stage=stage,
+                links=links,
+                user_id=user_id,
+            )
+            return config_row.get("version")
+        except NotImplementedError:
+            pass  # Adapter without the atomic path: fall through to two writes.
     db.upsert_component(
         component_id=component_id,
         component_type=_component_type(component),
@@ -4152,9 +4197,10 @@ def _persist_only(
     )
     result = db.upsert_config(
         component_id=component_id,
-        config=config if config is not None else _component_to_dict(component),
+        config=resolved_config,
         stage=stage,
         links=links,
+        expected_latest_version=expected_latest_version,
     )
     return result.get("version")
 
