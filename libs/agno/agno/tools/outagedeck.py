@@ -1,4 +1,4 @@
-"""OutageDeck toolkit for live provider, incident, and service status.
+"""OutageDeck toolkit for vendor-published provider, incident, and service status.
 
 OutageDeck (https://outagedeck.com) aggregates operational status and incident
 history for infrastructure providers. Its public API does not require an API
