@@ -131,7 +131,6 @@ def test_agent_with_all_model_params_as_strings():
     """Test Agent with all 4 model parameters as strings."""
     agent = Agent(
         model="openai:gpt-4o",
-        reasoning=True,
         reasoning_model="anthropic:claude-3-5-sonnet-20241022",
         parser_model="google:gemini-2.0-flash-exp",
         output_model="groq:llama-3.1-70b-versatile",
@@ -162,7 +161,6 @@ def test_team_with_all_model_params_as_strings():
     team = Team(
         members=[agent],
         model="anthropic:claude-3-5-sonnet-20241022",
-        reasoning=True,
         reasoning_model="openai:gpt-4o",
         parser_model="google:gemini-2.0-flash-exp",
         output_model="groq:llama-3.1-70b-versatile",

@@ -155,11 +155,8 @@ def __init__(
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    reasoning: bool = False,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
-    reasoning_min_steps: int = 1,
-    reasoning_max_steps: int = 10,
     followups: bool = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
@@ -339,11 +336,8 @@ def __init__(
 
     team.metadata = metadata
 
-    team.reasoning = reasoning
     team.reasoning_model = reasoning_model  # type: ignore[assignment]
     team.reasoning_agent = reasoning_agent
-    team.reasoning_min_steps = reasoning_min_steps
-    team.reasoning_max_steps = reasoning_max_steps
 
     team.followups = followups
     if num_followups < 1:
