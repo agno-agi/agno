@@ -37,7 +37,7 @@ class Cerebras(Model):
     A class for interacting with models using the Cerebras API.
     """
 
-    id: str = "llama-4-scout-17b-16e-instruct"
+    id: str = "gpt-oss-120b"
     name: str = "Cerebras"
     provider: str = "Cerebras"
 
