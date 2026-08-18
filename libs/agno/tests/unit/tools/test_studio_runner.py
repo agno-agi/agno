@@ -1940,9 +1940,17 @@ class TestDispatchCheckInvariants:
         lazy = Team(id="lazy", name="Lazy", model=OpenAIResponses(id="gpt-5.4"), members=lambda: [member])
         runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, teams_list=[lazy])
 
-        with caplog.at_level("WARNING"):
-            assert runner._team_for_run("lazy") is not None
-        assert any("callable members factory" in record.message for record in caplog.records)
+        import logging
+
+        agno_logger = logging.getLogger("agno")
+        previous_propagate = agno_logger.propagate
+        agno_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="agno"):
+                assert runner._team_for_run("lazy") is not None
+        finally:
+            agno_logger.propagate = previous_propagate
+        assert any("callable members factory" in record.getMessage() for record in caplog.records)
 
     def test_a_member_is_judged_by_the_rule_a_step_executor_is(self):
         # _member_divergence answered only type/id/name while the executor path
