@@ -17,12 +17,9 @@ from agno.db.postgres.utils import (
     ais_valid_table,
     apply_sorting,
     calculate_date_metrics,
-    deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -41,6 +38,7 @@ from agno.db.utils import (
     json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -108,10 +106,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        components_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
@@ -150,10 +148,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
-            culture_table (Optional[str]): Name of the table to store cultural knowledge.
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            components_table (Optional[str]): Name of the table to store components.
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
@@ -173,10 +171,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            components_table=components_table,
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
@@ -451,14 +449,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
-
-        if table_type == "culture":
-            self.culture_table = await self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.culture_table
 
         if table_type == "versions":
             self.versions_table = await self._get_or_create_table(
@@ -1754,247 +1744,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_warning(f"Exception deleting all memories: {str(e)}")
 
-    # -- Cultural Knowledge methods --
-    async def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            async with self.async_session_factory() as sess, sess.begin():
-                await sess.execute(table.delete())
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-
-    async def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            async with self.async_session_factory() as sess, sess.begin():
-                stmt = table.delete().where(table.c.id == id)
-                await sess.execute(stmt)
-
-        except Exception as e:
-            log_error(f"Exception deleting cultural knowledge: {str(e)}")
-
-    async def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-            if table is None:
-                return None
-
-            async with self.async_session_factory() as sess:
-                stmt = select(table).where(table.c.id == id)
-                result = await sess.execute(stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-                db_row = dict(row._mapping)
-
-                if not deserialize:
-                    return db_row
-
-                return deserialize_cultural_knowledge(db_row)
-
-        except Exception as e:
-            log_error(f"Exception reading cultural knowledge: {str(e)}")
-            return None
-
-    async def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        validate_pagination(limit, page)
-        try:
-            table = await self._get_table(table_type="culture")
-            if table is None:
-                return [] if deserialize else ([], 0)
-
-            async with self.async_session_factory() as sess:
-                # Build query with filters
-                stmt = select(table)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-                if name is not None:
-                    stmt = stmt.where(table.c.name.ilike(f"%{name}%"))
-
-                # Get total count
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count_result = await sess.execute(count_stmt)
-                total_count = total_count_result.scalar() or 0
-
-                # Apply sorting
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-
-                # Apply pagination
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                # Execute query
-                result = await sess.execute(stmt)
-                rows = result.fetchall()
-
-                db_rows = [dict(row._mapping) for row in rows]
-
-                if not deserialize:
-                    return db_rows, total_count
-
-                return [deserialize_cultural_knowledge(row) for row in db_rows]
-
-        except Exception as e:
-            log_error(f"Exception reading all cultural knowledge: {str(e)}")
-            return [] if deserialize else ([], 0)
-
-    async def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in the database.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            # Generate ID if not present
-            if cultural_knowledge.id is None:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge(cultural_knowledge)
-            # Sanitize content_dict to remove null bytes from nested strings
-            if content_dict:
-                content_dict = cast(Dict[str, Any], sanitize_postgres_strings(content_dict))
-
-            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
-            sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
-            sanitized_summary = sanitize_postgres_string(cultural_knowledge.summary)
-            sanitized_input = sanitize_postgres_string(cultural_knowledge.input)
-
-            async with self.async_session_factory() as sess, sess.begin():
-                # Use PostgreSQL-specific insert with on_conflict_do_update
-                insert_stmt = postgresql.insert(table).values(
-                    id=cultural_knowledge.id,
-                    name=sanitized_name,
-                    summary=sanitized_summary,
-                    content=content_dict if content_dict else None,
-                    metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
-                    if cultural_knowledge.metadata
-                    else None,
-                    input=sanitized_input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-
-                # Update all fields except id on conflict
-                update_dict = {
-                    "name": sanitized_name,
-                    "summary": sanitized_summary,
-                    "content": content_dict if content_dict else None,
-                    "metadata": sanitize_postgres_strings(cultural_knowledge.metadata)
-                    if cultural_knowledge.metadata
-                    else None,
-                    "input": sanitized_input,
-                    "updated_at": int(time.time()),
-                    "agent_id": cultural_knowledge.agent_id,
-                    "team_id": cultural_knowledge.team_id,
-                }
-                upsert_stmt = insert_stmt.on_conflict_do_update(index_elements=["id"], set_=update_dict).returning(
-                    table
-                )
-
-                result = await sess.execute(upsert_stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-                db_row = dict(row._mapping)
-
-            if not deserialize:
-                return db_row
-
-            # Deserialize from DB format to model format
-            return deserialize_cultural_knowledge(db_row)
-
-        except Exception as e:
-            log_warning(f"Exception upserting cultural knowledge: {str(e)}")
-            raise e
-
     async def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -2237,16 +1986,22 @@ class AsyncPostgresDb(AsyncBaseDb):
             Optional[date]: The starting date for which metrics calculation is needed.
         """
         async with self.async_session_factory() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = await sess.execute(stmt)
-            row = result.fetchone()
+            # resume at the earliest incomplete day after the latest completed one, otherwise the
+            # day after that one: a day holding a completed row was rebuilt after it ended, so an
+            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
+            # be rebuilt
+            latest_completed = (
+                await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
+            ).scalar()
 
-            # 1. Return the date of the first day without a complete metrics record.
-            if row is not None:
-                if row.completed:
-                    return row._mapping["date"] + timedelta(days=1)
-                else:
-                    return row._mapping["date"]
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = (await sess.execute(incomplete_stmt)).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2318,9 +2073,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                metrics_records.append(metrics_record)
+                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 async with self.async_session_factory() as sess, sess.begin():
@@ -2332,10 +2086,13 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception refreshing metrics: {str(e)}")
-            return None
+            raise e
 
     async def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -2345,6 +2102,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): If set, only return this user's metrics.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2371,6 +2129,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 records = result.fetchall()
                 if not records:
@@ -2378,21 +2138,31 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 # Get the latest updated_at
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_result = await sess.execute(latest_stmt)
                 latest_updated_at = latest_result.scalar()
 
-            return [dict(row._mapping) for row in records], latest_updated_at
+            # Unowned rows use an empty-string user_id, map it back to None
+            rows: List[dict] = []
+            for row in records:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_warning(f"Exception getting metrics: {str(e)}")
             return [], None
 
     # -- Knowledge methods --
-    async def delete_knowledge_content(self, id: str):
+    async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): If set, only delete the row if owned by this user.
         """
         table = await self._get_table(table_type="knowledge")
         if table is None:
@@ -2401,16 +2171,19 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {str(e)}")
 
-    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    async def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2422,6 +2195,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = await sess.execute(stmt)
                 row = result.fetchone()
                 if row is None:
@@ -2440,6 +2215,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2449,6 +2225,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): If set, only return rows owned by this user or unowned.
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2468,6 +2245,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply owner scoping if provided
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -2504,6 +2285,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return None
             async with self.async_session_factory() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = (
+                        await sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id))
+                    ).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -2526,6 +2315,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",
+                    "user_id": "user_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
@@ -2576,7 +2366,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {str(e)}")
-            return None
+            raise e
 
     # -- Eval methods --
     async def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
@@ -4167,6 +3957,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4177,6 +3968,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         name: Optional[str] = None,
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4184,6 +3976,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4194,6 +3987,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
         name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Component methods not yet supported for async databases")
@@ -4210,6 +4004,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4278,26 +4073,37 @@ class AsyncPostgresDb(AsyncBaseDb):
         raise NotImplementedError("Component methods not yet supported for async databases")
 
     # -- Schedule methods --
-    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # ``claim_due_schedule`` / ``release_schedule`` take no user_id: the poller fires schedules for all users.
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == schedule_id))
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.name == name))
+                stmt = select(table).where(table.c.name == name)
+                # Names are unique per owner: ``None`` addresses the unowned bucket,
+                # never another owner's schedule of the same name.
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -4309,6 +4115,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedules")
@@ -4319,6 +4126,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -4349,7 +4158,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error creating schedule: {str(e)}")
             raise
 
-    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -4357,13 +4168,22 @@ class AsyncPostgresDb(AsyncBaseDb):
             kwargs["updated_at"] = int(time.time())
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    await sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
-            return await self.get_schedule(schedule_id)
+                    stmt = table.update().where(table.c.id == schedule_id)
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    await sess.execute(stmt.values(**kwargs))
+            return await self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    async def delete_schedule(self, schedule_id: str) -> bool:
+    async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -4372,8 +4192,15 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     if runs_table is not None:
-                        await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                    result = await sess.execute(table.delete().where(table.c.id == schedule_id))
+                        # Mirror the owner filter on the cascade delete of schedule runs
+                        runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                        if user_id is not None:
+                            runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                        await sess.execute(runs_delete)
+                    delete_stmt = table.delete().where(table.c.id == schedule_id)
+                    if user_id is not None:
+                        delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(delete_stmt)
                     return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
@@ -4461,13 +4288,16 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == run_id))
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -4479,14 +4309,19 @@ class AsyncPostgresDb(AsyncBaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
                 return [], 0
             async with self.async_session_factory() as sess:
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = and_(base_filter, table.c.user_id == user_id)
+
                 # Get total count
-                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
                 count_result = await sess.execute(count_stmt)
                 total_count = count_result.scalar() or 0
 
@@ -4494,13 +4329,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(table.c.schedule_id == schedule_id)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
@@ -5141,21 +4970,35 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_warning(f"Job queue store: queued-count failed: {e}")
             return 0
 
-    async def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    async def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
-                return []
+                return [], 0
             stmt = select(table)
             if status is not None:
-                stmt = stmt.where(table.c.status == status)
-            stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+                statuses = [status] if isinstance(status, str) else list(status)
+                stmt = stmt.where(table.c.status.in_(statuses))
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            stmt = apply_sorting(stmt, table, sort_by, sort_order)
+            # Deterministic tiebreaker: timestamps are epoch seconds, so ties
+            # are common and would let rows move between pages otherwise
+            stmt = stmt.order_by(table.c.id)
+            stmt = stmt.limit(limit).offset(max(page - 1, 0) * limit)
             async with self.async_session_factory() as sess:
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
                 result = await sess.execute(stmt)
-                return [dict(row._mapping) for row in result.fetchall()]
+                return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
             log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
-            return []
+            return [], 0
 
     async def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
@@ -5548,13 +5391,18 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error creating service account: {str(e)}")
             raise
 
-    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="service_accounts")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == service_account_id))
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -5608,6 +5456,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="service_accounts")
@@ -5618,6 +5467,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 base_query = select(table)
                 if not include_revoked:
                     base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())

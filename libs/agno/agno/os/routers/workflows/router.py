@@ -30,6 +30,7 @@ from agno.exceptions import (
 )
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
+    INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_resource_access,
@@ -47,11 +48,13 @@ from agno.os.job_queue import (
     validate_seam_input,
 )
 from agno.os.middleware.user_scope import (
+    MISSING_USER_IDENTITY,
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
     assert_session_matches_component,
     get_scoped_user_id,
+    get_scoped_user_id_for_ws,
     run_matches_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
@@ -161,7 +164,11 @@ async def cancel_subscription_pump(websocket: WebSocket) -> None:
 
 
 async def handle_workflow_via_websocket(
-    websocket: WebSocket, message: dict, os: "AgentOS", ws_user_context: Optional[Dict[str, Any]] = None
+    websocket: WebSocket,
+    message: dict,
+    os: "AgentOS",
+    ws_user_context: Optional[Dict[str, Any]] = None,
+    ws_auth: Optional["WebSocketAuthContext"] = None,
 ):
     """Handle workflow execution directly via WebSocket"""
     try:
@@ -187,6 +194,19 @@ async def handle_workflow_via_websocket(
                     user_id = user_id or jwt_user_id
                 else:
                     user_id = jwt_user_id
+
+        # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id,
+                jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+                user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -222,6 +242,7 @@ async def handle_workflow_via_websocket(
                     registry=os.registry,
                     create_fresh=True,
                     ctx=ctx,
+                    user_id=scoped_user_id,
                 )
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Factory error: {e}"}))
@@ -229,7 +250,12 @@ async def handle_workflow_via_websocket(
         else:
             try:
                 workflow = get_workflow_by_id(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=scoped_user_id,
                 )
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
@@ -414,6 +440,15 @@ async def handle_workflow_subscription(
         jwt_enabled = ctx.jwt_enabled
         is_admin = ctx.is_admin
         user_isolation_enabled = ctx.user_isolation_enabled
+        # Owner scope for DB-backed workflow components on reconnect.
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id, jwt_enabled=jwt_enabled, is_admin=is_admin, user_isolation_enabled=user_isolation_enabled
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
@@ -425,7 +460,7 @@ async def handle_workflow_subscription(
         # isolation is on) a caller with workflows:run could read another user's
         # run events by guessing the run_id. With isolation off, RBAC alone
         # governs reconnect access.
-        if jwt_enabled and user_isolation_enabled and not is_admin and user_id:
+        if scoped_user_id is not None:
             if not session_id:
                 await websocket.send_text(
                     json.dumps(
@@ -457,7 +492,7 @@ async def handle_workflow_subscription(
                     os.db,
                     session_id,
                     run_id,
-                    user_id,
+                    scoped_user_id,
                     component_type="workflows",
                     component_id=workflow_id,
                 )
@@ -489,6 +524,7 @@ async def handle_workflow_subscription(
                         db=os.db,
                         registry=os.registry,
                         create_fresh=True,
+                        user_id=scoped_user_id,
                         strict=False,
                     )
                 except FactoryContextRequired:
@@ -629,6 +665,18 @@ async def handle_workflow_continue_via_websocket(
         session_id = message.get("session_id")
         user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
+        # Owner scope for DB-backed workflow components on continue.
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id,
+                jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+                user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -640,7 +688,7 @@ async def handle_workflow_continue_via_websocket(
         # Enforce ownership for non-admin callers when user isolation is enabled.
         # Mirrors the HTTP cancel/resume routes: a non-admin caller must own
         # both the session and the run before we even fetch the paused state.
-        if ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id:
+        if scoped_user_id is not None:
             if not session_id:
                 await websocket.send_text(json.dumps({"event": "error", "error": SESSION_ID_REQUIRED}))
                 return
@@ -654,7 +702,7 @@ async def handle_workflow_continue_via_websocket(
                     check_db,
                     session_id,
                     run_id,
-                    user_id,
+                    scoped_user_id,
                     component_type="workflows",
                     component_id=workflow_id,
                 )
@@ -663,7 +711,12 @@ async def handle_workflow_continue_via_websocket(
                 return
 
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            user_id=scoped_user_id,
         )
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
@@ -1351,7 +1404,7 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            db_workflows = get_workflows(db=os.db, registry=os.registry)
+            db_workflows = get_workflows(db=os.db, registry=os.registry, user_id=get_scoped_user_id(request))
             if db_workflows:
                 # Apply the same RBAC filtering to DB-loaded workflows:
                 # without it, a caller whose scope excludes a workflow
@@ -1413,12 +1466,15 @@ def get_workflow_router(
                 registry=os.registry,
                 create_fresh=True,
                 version=version,
+                user_id=get_scoped_user_id(request),
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -1487,12 +1543,17 @@ def get_workflow_router(
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
         scoped_user_id = get_scoped_user_id(request)
+        state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id and user_id != request.state.user_id:
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # The sentinel identifies the caller, not the owner: keep the form-field ``user_id``
+            # the executor wrote, which is None for an unowned schedule.
+            pass
+        elif state_user_id is not None:
+            if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
-            user_id = request.state.user_id
+            user_id = state_user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -2154,11 +2215,14 @@ def get_workflow_router(
                 db=os.db,
                 registry=os.registry,
                 create_fresh=True,
+                user_id=get_scoped_user_id(request),
                 strict=False,
             )  # type: ignore[assignment]
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -2251,6 +2315,7 @@ def get_workflow_router(
             db=os.db,
             registry=os.registry,
             create_fresh=True,
+            user_id=scoped_user_id,
             strict=False,
         )
         if workflow is None:
@@ -2325,11 +2390,14 @@ def get_workflow_router(
                     db=os.db,
                     registry=os.registry,
                     create_fresh=True,
+                    user_id=get_scoped_user_id(request),
                     strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if workflow is None:
                 raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):

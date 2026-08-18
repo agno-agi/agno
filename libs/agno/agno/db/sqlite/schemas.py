@@ -108,6 +108,13 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": String, "nullable": True},
+    # Uploader. NULL means shared: visible to all (legacy and admin uploads).
+    "user_id": {"type": String, "nullable": True, "index": True},
+    # Composite index so "my content + shared"
+    # (WHERE (user_id=? OR user_id IS NULL) AND linked_to=?) is index-served.
+    "__composite_indexes__": [
+        {"name": "ix_knowledge_user_linked_to", "columns": ["user_id", "linked_to"]},
+    ],
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -123,13 +130,16 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSON, "nullable": False, "default": "{}"},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": String, "nullable": False, "index": True},
+    # Owner of this metric bucket. Empty string, not NULL, for "no owner":
+    # SQL treats multiple NULLs as distinct, which would break the unique constraint below.
+    "user_id": {"type": String, "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
-            "name": "uq_metrics_date_period",
-            "columns": ["date", "aggregation_period"],
+            "name": "uq_metrics_user_date_period",
+            "columns": ["user_id", "date", "aggregation_period"],
         }
     ],
 }
@@ -181,19 +191,6 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces") -> dict[str, 
     }
 
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "name": {"type": String, "nullable": False, "index": True},
-    "summary": {"type": String, "nullable": True},
-    "content": {"type": JSON, "nullable": True},
-    "metadata": {"type": JSON, "nullable": True},
-    "input": {"type": String, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
-}
-
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": String, "nullable": False, "primary_key": True},
     "version": {"type": String, "nullable": False},
@@ -205,6 +202,7 @@ COMPONENTS_TABLE_SCHEMA = {
     "component_id": {"type": String, "primary_key": True},
     "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
     "name": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "description": {"type": String, "nullable": True},
     "current_version": {"type": BigInteger, "nullable": True, "index": True},
     "metadata": {"type": JSON, "nullable": True},
@@ -271,10 +269,22 @@ SCHEDULE_TABLE_SCHEMA = {
     "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
     "locked_by": {"type": String, "nullable": True},
     "locked_at": {"type": BigInteger, "nullable": True},
+    # Owner. NULL means system-created: executor, migrations, legacy rows.
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+        # Serves the "my active schedules" list read.
+        {"name": "user_enabled_next_run_at", "columns": ["user_id", "enabled", "next_run_at"]},
+    ],
+    # Names are unique per owner. The router's check-then-insert races under
+    # concurrent creates, so the DB backs it with two partial unique indexes
+    # (NULLs are distinct in a plain unique constraint, and SQLite cannot drop
+    # a table-level constraint, so named partial indexes cover both buckets).
+    "_partial_unique_indexes": [
+        {"name": "uq_user_name", "columns": ["user_id", "name"], "where": "user_id IS NOT NULL"},
+        {"name": "uq_unowned_name", "columns": ["name"], "where": "user_id IS NULL"},
     ],
 }
 
@@ -387,6 +397,8 @@ def _get_schedule_runs_table_schema(schedules_table_name: str = "agno_schedules"
         "input": {"type": JSON, "nullable": True},
         "output": {"type": JSON, "nullable": True},
         "requirements": {"type": JSON, "nullable": True},
+        # Denormalised from agno_schedules.user_id so run reads scope by owner without a JOIN.
+        "user_id": {"type": String, "nullable": True, "index": True},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
     }
 
@@ -426,7 +438,6 @@ def get_table_schema_definition(
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "components": COMPONENTS_TABLE_SCHEMA,
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,

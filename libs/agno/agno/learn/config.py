@@ -39,7 +39,7 @@ class LearningMode(Enum):
     ALWAYS: Automatic extraction after each response.
     AGENTIC: Agent decides when to learn via tools.
     PROPOSE: Agent proposes, human confirms (learned_knowledge only).
-    HITL: Deprecated, unsupported by every store; removed in 3.0.
+    HITL: Reserved for future use; unsupported by every store.
     """
 
     ALWAYS = "always"

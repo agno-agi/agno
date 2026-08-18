@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.compression.manager import CompressionManager
-from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
@@ -97,24 +96,6 @@ def set_default_model(agent: Agent) -> None:
 
         log_info("Setting default model to OpenAI Responses")
         agent.model = OpenAIResponses(id="gpt-5.4")
-
-
-def set_culture_manager(agent: Agent) -> None:
-    if agent.db is None:
-        log_warning("Database not provided. Cultural knowledge will not be stored.")
-
-    if agent.culture_manager is None:
-        agent.culture_manager = CultureManager(model=agent.model, db=agent.db)
-    else:
-        if agent.culture_manager.model is None:
-            agent.culture_manager.model = agent.model
-        if agent.culture_manager.db is None:
-            agent.culture_manager.db = agent.db
-
-    if agent.add_culture_to_context is None:
-        agent.add_culture_to_context = (
-            agent.enable_agentic_culture or agent.update_cultural_knowledge or agent.culture_manager is not None
-        )
 
 
 def set_memory_manager(agent: Agent) -> None:
@@ -272,13 +253,6 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_checkpoint(agent)
     if agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None:
         set_memory_manager(agent)
-    if (
-        agent.add_culture_to_context
-        or agent.update_cultural_knowledge
-        or agent.enable_agentic_culture
-        or agent.culture_manager is not None
-    ):
-        set_culture_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
@@ -318,10 +292,10 @@ async def connect_mcp_tools(agent: Agent) -> None:
     """Connect the MCP tools to the agent."""
     if agent.tools and isinstance(agent.tools, list):
         for tool in agent.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             if (
                 hasattr(type(tool), "__mro__")
-                and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
                 and not tool.initialized  # type: ignore
             ):
                 try:

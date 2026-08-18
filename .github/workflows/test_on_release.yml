@@ -1013,6 +1013,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
+          export SSL_CERT_FILE="$(python -m certifi)"
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \

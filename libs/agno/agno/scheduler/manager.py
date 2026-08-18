@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule, ScheduleRun
+from agno.db.schemas.scheduler import INTERNAL_SCHEDULER_USER_ID, Schedule, ScheduleRun
 from agno.utils.log import log_debug, log_warning
 
 # Valid DB method names for the scheduler
@@ -114,6 +114,7 @@ class ScheduleManager:
         max_retries: int = 0,
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
+        user_id: Optional[str] = None,
     ) -> Schedule:
         """Create a new schedule.
 
@@ -123,18 +124,24 @@ class ScheduleManager:
                 ``"skip"`` returns the existing schedule unchanged,
                 ``"update"`` overwrites the existing schedule with the
                 supplied values.
+            user_id: Owner of the schedule; names are unique per owner. ``None``
+                leaves it unowned and the executor fires it unscoped.
         """
         from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
 
+        # A blank or sentinel owner would be rejected by the route on every fire
+        if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
+            raise ValueError(f"'{user_id}' is not a usable schedule owner")
+
         if not validate_cron_expr(cron):
             raise ValueError(f"Invalid cron expression: {cron}")
         if not validate_timezone(timezone):
             raise ValueError(f"Invalid timezone: {timezone}")
 
-        existing = self._to_schedule(self._call("get_schedule_by_name", name))
+        existing = self._to_schedule(self._call("get_schedule_by_name", name, user_id=user_id))
         if existing is not None:
             if if_exists == "skip":
                 log_debug(f"Schedule '{name}' already exists, skipping")
@@ -146,6 +153,7 @@ class ScheduleManager:
                     self._call(
                         "update_schedule",
                         existing.id,
+                        user_id=user_id,
                         cron_expr=cron,
                         endpoint=endpoint,
                         method=method.upper(),
@@ -166,6 +174,7 @@ class ScheduleManager:
 
         schedule = Schedule(
             id=str(uuid4()),
+            user_id=user_id,
             name=name,
             description=description,
             method=method.upper(),
@@ -190,38 +199,42 @@ class ScheduleManager:
         log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
         return result
 
-    def list(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
-        """List all schedules."""
-        result = self._call("get_schedules", enabled=enabled, limit=limit, page=page)
+    def list(
+        self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1, user_id: Optional[str] = None
+    ) -> List[Schedule]:
+        """List schedules. ``user_id`` scopes the listing to one owner."""
+        result = self._call("get_schedules", enabled=enabled, limit=limit, page=page, user_id=user_id)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
 
-    def get(self, schedule_id: str) -> Optional[Schedule]:
+    def get(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Get a schedule by ID."""
-        return self._to_schedule(self._call("get_schedule", schedule_id))
+        return self._to_schedule(self._call("get_schedule", schedule_id, user_id=user_id))
 
-    def update(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
-        """Update a schedule."""
-        return self._to_schedule(self._call("update_schedule", schedule_id, **kwargs))
+    def update(self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any) -> Optional[Schedule]:
+        """Update a schedule. ``user_id`` filters the row, it does not reassign the owner."""
+        return self._to_schedule(self._call("update_schedule", schedule_id, user_id=user_id, **kwargs))
 
-    def delete(self, schedule_id: str) -> bool:
+    def delete(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule."""
-        return self._call("delete_schedule", schedule_id)
+        return self._call("delete_schedule", schedule_id, user_id=user_id)
 
-    def enable(self, schedule_id: str) -> Optional[Schedule]:
+    def enable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Enable a schedule and compute next run."""
-        schedule = self._to_schedule(self._call("get_schedule", schedule_id))
+        schedule = self._to_schedule(self._call("get_schedule", schedule_id, user_id=user_id))
         if schedule is None:
             return None
         from agno.scheduler.cron import compute_next_run
 
         next_run_at = compute_next_run(schedule.cron_expr, schedule.timezone)
-        return self._to_schedule(self._call("update_schedule", schedule_id, enabled=True, next_run_at=next_run_at))
+        return self._to_schedule(
+            self._call("update_schedule", schedule_id, user_id=user_id, enabled=True, next_run_at=next_run_at)
+        )
 
-    def disable(self, schedule_id: str) -> Optional[Schedule]:
+    def disable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Disable a schedule."""
-        return self._to_schedule(self._call("update_schedule", schedule_id, enabled=False))
+        return self._to_schedule(self._call("update_schedule", schedule_id, user_id=user_id, enabled=False))
 
     def trigger(self, schedule_id: str) -> None:
         """Manually trigger a schedule.
@@ -236,9 +249,11 @@ class ScheduleManager:
             "SchedulePoller.trigger() with a running executor."
         )
 
-    def get_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
+    def get_runs(
+        self, schedule_id: str, limit: int = 20, page: int = 1, user_id: Optional[str] = None
+    ) -> List[ScheduleRun]:
         """Get run history for a schedule."""
-        result = self._call("get_schedule_runs", schedule_id, limit=limit, page=page)
+        result = self._call("get_schedule_runs", schedule_id, limit=limit, page=page, user_id=user_id)
         # get_schedule_runs returns (runs_list, total_count) tuple
         runs_data = result[0] if isinstance(result, tuple) else result
         return self._to_run_list(runs_data)
@@ -258,6 +273,7 @@ class ScheduleManager:
         max_retries: int = 0,
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
+        user_id: Optional[str] = None,
     ) -> Schedule:
         """Async create a new schedule.
 
@@ -267,18 +283,24 @@ class ScheduleManager:
                 ``"skip"`` returns the existing schedule unchanged,
                 ``"update"`` overwrites the existing schedule with the
                 supplied values.
+            user_id: Owner of the schedule; names are unique per owner. ``None``
+                leaves it unowned and the executor fires it unscoped.
         """
         from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
 
+        # A blank or sentinel owner would be rejected by the route on every fire
+        if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
+            raise ValueError(f"'{user_id}' is not a usable schedule owner")
+
         if not validate_cron_expr(cron):
             raise ValueError(f"Invalid cron expression: {cron}")
         if not validate_timezone(timezone):
             raise ValueError(f"Invalid timezone: {timezone}")
 
-        existing = self._to_schedule(await self._acall("get_schedule_by_name", name))
+        existing = self._to_schedule(await self._acall("get_schedule_by_name", name, user_id=user_id))
         if existing is not None:
             if if_exists == "skip":
                 log_debug(f"Schedule '{name}' already exists, skipping")
@@ -290,6 +312,7 @@ class ScheduleManager:
                     await self._acall(
                         "update_schedule",
                         existing.id,
+                        user_id=user_id,
                         cron_expr=cron,
                         endpoint=endpoint,
                         method=method.upper(),
@@ -310,6 +333,7 @@ class ScheduleManager:
 
         schedule = Schedule(
             id=str(uuid4()),
+            user_id=user_id,
             name=name,
             description=description,
             method=method.upper(),
@@ -334,44 +358,48 @@ class ScheduleManager:
         log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
         return result
 
-    async def alist(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
-        """Async list all schedules."""
-        result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page)
+    async def alist(
+        self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1, user_id: Optional[str] = None
+    ) -> List[Schedule]:
+        """Async list schedules. ``user_id`` scopes the listing to one owner."""
+        result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page, user_id=user_id)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
 
-    async def aget(self, schedule_id: str) -> Optional[Schedule]:
+    async def aget(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Async get a schedule by ID."""
-        return self._to_schedule(await self._acall("get_schedule", schedule_id))
+        return self._to_schedule(await self._acall("get_schedule", schedule_id, user_id=user_id))
 
-    async def aupdate(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
-        """Async update a schedule."""
-        return self._to_schedule(await self._acall("update_schedule", schedule_id, **kwargs))
+    async def aupdate(self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any) -> Optional[Schedule]:
+        """Async update a schedule. ``user_id`` filters the row, it does not reassign the owner."""
+        return self._to_schedule(await self._acall("update_schedule", schedule_id, user_id=user_id, **kwargs))
 
-    async def adelete(self, schedule_id: str) -> bool:
+    async def adelete(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Async delete a schedule."""
-        return await self._acall("delete_schedule", schedule_id)
+        return await self._acall("delete_schedule", schedule_id, user_id=user_id)
 
-    async def aenable(self, schedule_id: str) -> Optional[Schedule]:
+    async def aenable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Async enable a schedule."""
-        schedule = self._to_schedule(await self._acall("get_schedule", schedule_id))
+        schedule = self._to_schedule(await self._acall("get_schedule", schedule_id, user_id=user_id))
         if schedule is None:
             return None
         from agno.scheduler.cron import compute_next_run
 
         next_run_at = compute_next_run(schedule.cron_expr, schedule.timezone)
         return self._to_schedule(
-            await self._acall("update_schedule", schedule_id, enabled=True, next_run_at=next_run_at)
+            await self._acall("update_schedule", schedule_id, user_id=user_id, enabled=True, next_run_at=next_run_at)
         )
 
-    async def adisable(self, schedule_id: str) -> Optional[Schedule]:
+    async def adisable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Async disable a schedule."""
-        return self._to_schedule(await self._acall("update_schedule", schedule_id, enabled=False))
+        return self._to_schedule(await self._acall("update_schedule", schedule_id, user_id=user_id, enabled=False))
 
-    async def aget_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
+    async def aget_runs(
+        self, schedule_id: str, limit: int = 20, page: int = 1, user_id: Optional[str] = None
+    ) -> List[ScheduleRun]:
         """Async get run history for a schedule."""
-        result = await self._acall("get_schedule_runs", schedule_id, limit=limit, page=page)
+        result = await self._acall("get_schedule_runs", schedule_id, limit=limit, page=page, user_id=user_id)
         # get_schedule_runs returns (runs_list, total_count) tuple
         runs_data = result[0] if isinstance(result, tuple) else result
         return self._to_run_list(runs_data)

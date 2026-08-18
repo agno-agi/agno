@@ -28,11 +28,9 @@ db = SqliteDb(
 reasoning_agent = Agent(
     id="agui-reasoning-agent",
     name="AG-UI Reasoning Agent",
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6"),
     db=db,
-    reasoning=True,
-    reasoning_min_steps=2,
-    reasoning_max_steps=4,
+    reasoning_model=OpenAIResponses(id="o3-mini"),
     instructions="Solve the problem carefully, then give a concise final answer.",
 )
 

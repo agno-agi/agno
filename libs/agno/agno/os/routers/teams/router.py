@@ -29,6 +29,7 @@ from agno.exceptions import (
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
+    INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_approval_resolved,
@@ -631,12 +632,17 @@ def get_team_router(
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
         scoped_user_id = get_scoped_user_id(request)
+        state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id and user_id != request.state.user_id:
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # Scheduler executor: the sentinel is the caller, not the owner. Keep the form-field
+            # ``user_id``, which the executor leaves unset for an unowned schedule.
+            pass
+        elif state_user_id is not None:
+            if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
-            user_id = request.state.user_id
+            user_id = state_user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -1099,11 +1105,19 @@ def get_team_router(
 
         try:
             team = get_team_by_id(
-                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
             )  # type: ignore[assignment]
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1191,7 +1205,13 @@ def get_team_router(
             )
 
         team = get_team_by_id(
-            team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+            team_id=team_id,
+            teams=os.teams,
+            db=os.db,
+            registry=registry,
+            create_fresh=True,
+            user_id=get_scoped_user_id(request),
+            strict=False,
         )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1315,12 +1335,21 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1606,11 +1635,19 @@ def get_team_router(
 
         try:
             team = get_team_by_id(
-                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1748,7 +1785,12 @@ def get_team_router(
 
             # Exclude teams whose IDs are owned by the registry
             exclude_ids = registry.get_team_ids() if registry else None
-            db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
+            db_teams = get_teams(
+                db=os.db,
+                registry=registry,
+                exclude_component_ids=exclude_ids or None,
+                user_id=get_scoped_user_id(request),
+            )
             if db_teams:
                 # Apply the same RBAC filtering to DB-loaded teams: without
                 # it, a caller whose scope excludes a team still saw its
@@ -1853,12 +1895,21 @@ def get_team_router(
             return TeamResponse.from_factory(factory)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            team = get_team_by_id(
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+            )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1900,11 +1951,19 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -1991,11 +2050,19 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -2052,11 +2119,19 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -2113,11 +2188,19 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):

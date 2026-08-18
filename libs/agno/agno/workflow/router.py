@@ -27,7 +27,6 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
-    warn_session_state_param_deprecated,
 )
 
 WorkflowSteps = List[
@@ -545,16 +544,12 @@ class Router:
         # Handle callable selector
         if callable(self.selector):
             has_run_context = run_context is not None and self._selector_has_run_context_param()
-            has_session_state = session_state is not None and self._selector_has_session_state_param()
             has_step_choices = self._selector_has_step_choices_param()
 
             # Build kwargs based on what parameters the selector accepts
             kwargs: Dict[str, Any] = {}
             if has_run_context:
                 kwargs["run_context"] = run_context
-            if has_session_state:
-                kwargs["session_state"] = session_state
-                warn_session_state_param_deprecated(self.selector, "Router selector functions")
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
@@ -589,16 +584,12 @@ class Router:
         # Handle callable selector
         if callable(self.selector):
             has_run_context = run_context is not None and self._selector_has_run_context_param()
-            has_session_state = session_state is not None and self._selector_has_session_state_param()
             has_step_choices = self._selector_has_step_choices_param()
 
             # Build kwargs based on what parameters the selector accepts
             kwargs: Dict[str, Any] = {}
             if has_run_context:
                 kwargs["run_context"] = run_context
-            if has_session_state:
-                kwargs["session_state"] = session_state
-                warn_session_state_param_deprecated(self.selector, "Router selector functions")
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
@@ -610,17 +601,6 @@ class Router:
             return self._resolve_selector_result(result)
 
         return []
-
-    def _selector_has_session_state_param(self) -> bool:
-        """Check if the selector function has a session_state parameter."""
-        if not callable(self.selector):
-            return False
-
-        try:
-            sig = inspect.signature(self.selector)
-            return "session_state" in sig.parameters
-        except Exception:
-            return False
 
     def _selector_has_run_context_param(self) -> bool:
         """Check if the selector function has a run_context parameter."""

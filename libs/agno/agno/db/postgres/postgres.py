@@ -16,14 +16,11 @@ from agno.db.postgres.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
-    deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
-    serialize_cultural_knowledge,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.mcp_oauth import (
@@ -50,6 +47,7 @@ from agno.db.utils import (
     json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -115,7 +113,6 @@ class PostgresDb(BaseDb):
         db_schema: Optional[str] = None,
         session_table: Optional[str] = None,
         runs_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -160,7 +157,6 @@ class PostgresDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
-            culture_table (Optional[str]): Name of the table to store cultural knowledge.
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
@@ -212,7 +208,6 @@ class PostgresDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
@@ -262,7 +257,6 @@ class PostgresDb(BaseDb):
             db_schema=data.get("db_schema"),
             session_table=data.get("session_table"),
             runs_table=data.get("runs_table"),
-            culture_table=data.get("culture_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
             eval_table=data.get("eval_table"),
@@ -611,14 +605,6 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
-
-        if table_type == "culture":
-            self.culture_table = self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.culture_table
 
         if table_type == "versions":
             self.versions_table = self._get_or_create_table(
@@ -2482,15 +2468,20 @@ class PostgresDb(BaseDb):
             Optional[date]: The starting date for which metrics calculation is needed.
         """
         with self.Session() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = sess.execute(stmt).fetchone()
+            # resume at the earliest incomplete day after the latest completed one, otherwise the
+            # day after that one: a day holding a completed row was rebuilt after it ended, so an
+            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
+            # be rebuilt
+            latest_completed = sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True))).scalar()
 
-            # 1. Return the date of the first day without a complete metrics record.
-            if result is not None:
-                if result.completed:
-                    return result._mapping["date"] + timedelta(days=1)
-                else:
-                    return result._mapping["date"]
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = sess.execute(incomplete_stmt).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2562,9 +2553,8 @@ class PostgresDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                metrics_records.append(metrics_record)
+                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 with self.Session() as sess, sess.begin():
@@ -2582,6 +2572,7 @@ class PostgresDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -2591,6 +2582,8 @@ class PostgresDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When set, return only this user's bucket. ``None`` returns every
+                bucket, including the empty-string one holding unowned sessions.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2617,26 +2610,39 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchall()
                 if not result:
                     return [], None
 
-                # Get the latest updated_at
+                # Get the latest updated_at, scoped to the same user filter
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_updated_at = sess.execute(latest_stmt).scalar()
 
-            return [row._mapping for row in result], latest_updated_at
+            # Map the empty-string owner sentinel back to None for API consumers
+            rows: List[dict] = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only delete the row if owned by this user. Shared
+                (``user_id IS NULL``) rows are not deleted.
         """
         try:
             table = self._get_table(table_type="knowledge")
@@ -2645,17 +2651,21 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, only return the row if owned by this user or shared
+                (``user_id IS NULL``).
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2667,6 +2677,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2684,6 +2696,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2693,6 +2706,8 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, return rows owned by this user plus shared
+                (``user_id IS NULL``) rows.
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2712,6 +2727,10 @@ class PostgresDb(BaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply owner scoping if provided
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -2748,6 +2767,12 @@ class PostgresDb(BaseDb):
                 return None
 
             with self.Session() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id)).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -2770,6 +2795,7 @@ class PostgresDb(BaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",
+                    "user_id": "user_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
@@ -3120,246 +3146,6 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
-            raise e
-
-    # -- Culture methods --
-
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                sess.execute(table.delete())
-
-        except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural knowledge entry from the database.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.id == id)
-                result = sess.execute(delete_stmt)
-
-                success = result.rowcount > 0
-                if success:
-                    log_debug(f"Successfully deleted cultural knowledge id: {id}")
-                else:
-                    log_debug(f"No cultural knowledge found with id: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural knowledge entry from the database.
-
-        Args:
-            id (str): The ID of the cultural knowledge to get.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge entry, or None if it doesn't exist.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table).where(table.c.id == id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
-                    return None
-
-                db_row = dict(result._mapping)
-                if not db_row or not deserialize:
-                    return db_row
-
-            return deserialize_cultural_knowledge(db_row)
-
-        except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge from the database as CulturalKnowledge objects.
-
-        Args:
-            name (Optional[str]): The name of the cultural knowledge to filter by.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            limit (Optional[int]): The maximum number of cultural knowledge entries to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: List of CulturalKnowledge dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        validate_pagination(limit, page)
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return [] if deserialize else ([], 0)
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table)
-
-                # Filtering
-                if name is not None:
-                    stmt = stmt.where(table.c.name == name)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-
-                # Get total count after applying filtering
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
-
-                # Sorting
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-                # Paginating
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [] if deserialize else ([], 0)
-
-                db_rows = [dict(record._mapping) for record in result]
-
-                if not deserialize:
-                    return db_rows, total_count
-
-            return [deserialize_cultural_knowledge(row) for row in db_rows]
-
-        except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural knowledge entry into the database.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Optional[CulturalKnowledge]: The upserted cultural knowledge entry.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="culture", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            if cultural_knowledge.id is None:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge(cultural_knowledge)
-            # Sanitize content_dict to remove null bytes from nested strings
-            if content_dict:
-                content_dict = cast(Dict[str, Any], sanitize_postgres_strings(content_dict))
-
-            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
-            sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
-            sanitized_summary = sanitize_postgres_string(cultural_knowledge.summary)
-            sanitized_input = sanitize_postgres_string(cultural_knowledge.input)
-
-            with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table).values(
-                    id=cultural_knowledge.id,
-                    name=sanitized_name,
-                    summary=sanitized_summary,
-                    content=content_dict if content_dict else None,
-                    metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
-                    if cultural_knowledge.metadata
-                    else None,
-                    input=sanitized_input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-                stmt = stmt.on_conflict_do_update(  # type: ignore
-                    index_elements=["id"],
-                    set_=dict(
-                        name=sanitized_name,
-                        summary=sanitized_summary,
-                        content=content_dict if content_dict else None,
-                        metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
-                        if cultural_knowledge.metadata
-                        else None,
-                        input=sanitized_input,
-                        updated_at=int(time.time()),
-                        agent_id=cultural_knowledge.agent_id,
-                        team_id=cultural_knowledge.team_id,
-                    ),
-                ).returning(table)
-
-                result = sess.execute(stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-            db_row = dict(row._mapping)
-            if not db_row or not deserialize:
-                return db_row
-
-            return deserialize_cultural_knowledge(db_row)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # -- Migrations --
@@ -4193,6 +3979,7 @@ class PostgresDb(BaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="components")
@@ -4207,6 +3994,9 @@ class PostgresDb(BaseDb):
 
                 if component_type is not None:
                     stmt = stmt.where(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    # Unowned components are shared: visible to every scoped caller
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 row = sess.execute(stmt).mappings().one_or_none()
                 return dict(row) if row else None
@@ -4223,6 +4013,7 @@ class PostgresDb(BaseDb):
         description: Optional[str] = None,
         current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
 
@@ -4233,6 +4024,7 @@ class PostgresDb(BaseDb):
             description: Optional description.
             current_version: Optional current version.
             metadata: Optional metadata dict.
+            user_id: Owner to set when creating; scopes the update to this user when set.
 
         Returns:
             Created/updated component dictionary.
@@ -4246,8 +4038,19 @@ class PostgresDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
+                existing_stmt = select(table).where(table.c.component_id == component_id)
+                if user_id is not None:
+                    existing_stmt = existing_stmt.where(table.c.user_id == user_id)
+                existing = sess.execute(existing_stmt).fetchone()
                 if existing is None:
+                    # The row may exist under another owner: fail closed rather than collide on the PK
+                    if user_id is not None:
+                        unscoped = sess.execute(
+                            select(table.c.component_id).where(table.c.component_id == component_id)
+                        ).fetchone()
+                        if unscoped is not None:
+                            raise ValueError(f"Component {component_id} not found")
+
                     # Create new component
                     if component_type is None:
                         raise ValueError("component_type is required when creating a new component")
@@ -4257,6 +4060,7 @@ class PostgresDb(BaseDb):
                             component_id=component_id,
                             component_type=component_type.value,
                             name=name,
+                            user_id=user_id,
                             description=description,
                             current_version=None,
                             metadata=metadata,
@@ -4302,7 +4106,7 @@ class PostgresDb(BaseDb):
                     sess.execute(table.update().where(table.c.component_id == component_id).values(**updates))
                     log_debug(f"Updated component {component_id}")
 
-            result = self.get_component(component_id)
+            result = self.get_component(component_id, user_id=user_id)
             if result is None:
                 raise ValueError(f"Failed to get component {component_id} after upsert")
             return result
@@ -4315,12 +4119,14 @@ class PostgresDb(BaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
         Args:
             component_id: The component ID.
             hard_delete: If True, permanently delete. Otherwise soft-delete.
+            user_id: If set, only delete the component if owned by this user.
 
         Returns:
             True if deleted, False if not found or already deleted.
@@ -4332,6 +4138,13 @@ class PostgresDb(BaseDb):
 
             if components_table is None:
                 return False
+
+            # Scope to owner: a non-owner must not delete the component or its configs/links.
+            if user_id is not None:
+                # Reads treat unowned as shared, but delete stays strict: only the owner (or admin) removes it
+                component = self.get_component(component_id, user_id=user_id)
+                if component is None or component.get("user_id") != user_id:
+                    return False
 
             with self.Session() as sess, sess.begin():
                 # Verify component exists (and not already soft-deleted for soft-delete)
@@ -4382,6 +4195,7 @@ class PostgresDb(BaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
         name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
@@ -4392,6 +4206,7 @@ class PostgresDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            user_id: If set, list components owned by this user plus shared ones.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 
@@ -4408,6 +4223,9 @@ class PostgresDb(BaseDb):
                 where_clauses = []
                 if component_type is not None:
                     where_clauses.append(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    # Unowned components are shared: they list for every scoped caller
+                    where_clauses.append(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:
@@ -4449,6 +4267,7 @@ class PostgresDb(BaseDb):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Create a component with its initial config atomically.
 
@@ -4463,12 +4282,13 @@ class PostgresDb(BaseDb):
             stage: "draft" or "published".
             notes: Optional notes.
             links: Optional list of links. Each must have child_version set.
+            user_id: Owner to attribute the component to.
 
         Returns:
             Tuple of (component dict, config dict).
 
         Raises:
-            ValueError: If component already exists, invalid stage, or link missing child_version.
+            ValueError: If component ID is already taken, invalid stage, or link missing child_version.
         """
         if stage not in {"draft", "published"}:
             raise ValueError(f"Invalid stage: {stage}")
@@ -4496,7 +4316,8 @@ class PostgresDb(BaseDb):
                 ).scalar_one_or_none()
 
                 if existing is not None:
-                    raise ValueError(f"Component {component_id} already exists")
+                    # Deliberately vague: the message must not confirm another user's component exists
+                    raise ValueError(f"Component ID {component_id} is not available")
 
                 # Check label uniqueness
                 if label is not None:
@@ -4518,6 +4339,7 @@ class PostgresDb(BaseDb):
                         component_id=component_id,
                         component_type=component_type.value,
                         name=name,
+                        user_id=user_id,
                         description=description,
                         metadata=metadata,
                         current_version=version if stage == "published" else None,
@@ -5690,25 +5512,37 @@ class PostgresDb(BaseDb):
             raise e
 
     # -- Schedule methods --
-    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # User-facing methods take an optional ``user_id`` filter. ``claim_due_schedule`` and
+    # ``release_schedule`` intentionally don't: the poller fires schedules for every user.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                stmt = select(table).where(table.c.name == name)
+                # Names are unique per owner: ``None`` addresses the unowned bucket,
+                # never another owner's schedule of the same name.
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule by name: {e}")
@@ -5719,6 +5553,7 @@ class PostgresDb(BaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedules")
@@ -5729,6 +5564,8 @@ class PostgresDb(BaseDb):
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -5757,20 +5594,31 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating schedule: {str(e)}")
             raise
 
-    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
-                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
-            return self.get_schedule(schedule_id)
+                stmt = table.update().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                sess.execute(stmt.values(**kwargs))
+            return self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    def delete_schedule(self, schedule_id: str) -> bool:
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
@@ -5778,8 +5626,15 @@ class PostgresDb(BaseDb):
             runs_table = self._get_table(table_type="schedule_runs")
             with self.Session() as sess, sess.begin():
                 if runs_table is not None:
-                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                    # Mirror the owner guard on the cascade so another user's runs aren't deleted
+                    runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                    if user_id is not None:
+                        runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete)
+                delete_stmt = table.delete().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
@@ -5863,13 +5718,16 @@ class PostgresDb(BaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
@@ -5880,27 +5738,26 @@ class PostgresDb(BaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return [], 0
             with self.Session() as sess:
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = and_(base_filter, table.c.user_id == user_id)
+
                 # Get total count
-                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
                 total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Calculate offset from page
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(table.c.schedule_id == schedule_id)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
@@ -6486,21 +6343,35 @@ class PostgresDb(BaseDb):
             log_warning(f"Job queue store: queued-count failed: {e}")
             return 0
 
-    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
-                return []
+                return [], 0
             stmt = select(table)
             if status is not None:
-                stmt = stmt.where(table.c.status == status)
-            stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+                statuses = [status] if isinstance(status, str) else list(status)
+                stmt = stmt.where(table.c.status.in_(statuses))
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            stmt = apply_sorting(stmt, table, sort_by, sort_order)
+            # Deterministic tiebreaker: timestamps are epoch seconds, so ties
+            # are common and would let rows move between pages otherwise
+            stmt = stmt.order_by(table.c.id)
+            stmt = stmt.limit(limit).offset(max(page - 1, 0) * limit)
             with self.Session() as sess:
+                total_count = sess.execute(count_stmt).scalar() or 0
                 result = sess.execute(stmt)
-                return [dict(row._mapping) for row in result.fetchall()]
+                return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
             log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
-            return []
+            return [], 0
 
     def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
@@ -6977,13 +6848,16 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating service account: {str(e)}")
             raise
 
-    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="service_accounts")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == service_account_id)).fetchone()
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting service account: {e}")
@@ -7035,6 +6909,7 @@ class PostgresDb(BaseDb):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="service_accounts")
@@ -7045,6 +6920,8 @@ class PostgresDb(BaseDb):
                 base_query = select(table)
                 if not include_revoked:
                     base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())

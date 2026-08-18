@@ -775,8 +775,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     #     config["compression_manager"] = team.compression_manager.to_dict()
 
     # --- Reasoning settings ---
-    if team.reasoning:
-        config["reasoning"] = team.reasoning
     if team.reasoning_model is not None:
         # Mirrors the agent side. from_dict does not read this back yet
         # (#9452), so it is not round-tripped -- but without it the field is
@@ -786,10 +784,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
             config["reasoning_model"] = team.reasoning_model.to_dict()
         else:
             config["reasoning_model"] = str(team.reasoning_model)
-    if team.reasoning_min_steps != 1:  # default is 1
-        config["reasoning_min_steps"] = team.reasoning_min_steps
-    if team.reasoning_max_steps != 10:  # default is 10
-        config["reasoning_max_steps"] = team.reasoning_max_steps
 
     # --- Streaming settings ---
     if team.stream is not None:
@@ -942,6 +936,11 @@ def from_dict(
     members: Optional[List[Union[Agent, "Team"]]] = None
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
+    from agno.utils.component_scope import get_component_owner_scope
+
+    # Resolve DB-backed members as the component owner when a scope is set, so a stored
+    # reference to another user's private component is not rehydrated here.
+    owner_user_id = get_component_owner_scope()
 
     # Member versions pinned by this team version's links (written by save()).
     pinned_versions: Dict[str, Optional[int]] = {}
@@ -970,6 +969,7 @@ def from_dict(
                             db=db,
                             version=pinned,
                             registry=registry,
+                            user_id=owner_user_id,
                             strict=strict,
                         )
                         if db is not None
@@ -999,7 +999,9 @@ def from_dict(
                         "was not found in the db; loading the member's current version instead."
                     )
                     if db is not None:
-                        agent = get_agent_by_id(id=agent_id, db=db, registry=registry, strict=False)
+                        agent = get_agent_by_id(
+                            id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -1033,6 +1035,7 @@ def from_dict(
                             db=db,
                             version=pinned,
                             registry=registry,
+                            user_id=owner_user_id,
                             strict=strict,
                         )
                         if db is not None
@@ -1062,7 +1065,9 @@ def from_dict(
                         "was not found in the db; loading the member's current version instead."
                     )
                     if db is not None:
-                        nested_team = get_team_by_id(id=team_id, db=db, registry=registry, strict=False)
+                        nested_team = get_team_by_id(
+                            id=team_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:
@@ -1392,10 +1397,7 @@ def from_dict(
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO
             # --- Reasoning settings ---
-            reasoning=config.get("reasoning", False),
             # reasoning_model=config.get("reasoning_model"),  # TODO
-            reasoning_min_steps=config.get("reasoning_min_steps", 1),
-            reasoning_max_steps=config.get("reasoning_max_steps", 10),
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),

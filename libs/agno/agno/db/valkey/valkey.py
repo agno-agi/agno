@@ -7,7 +7,6 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -16,8 +15,11 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metric_record_day,
+    metrics_starting_date_from_records,
 )
 from agno.db.valkey.utils import (
     apply_filters,
@@ -1792,18 +1794,9 @@ class ValkeyDb(BaseDb):
         try:
             all_metrics = self._get_all_records("metrics")
 
-            if all_metrics:
-                # Find the latest completed metric
-                completed_metrics = [m for m in all_metrics if m.get("completed", False)]
-                if completed_metrics:
-                    latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    return datetime.fromisoformat(latest_completed["date"]).date() + timedelta(days=1)
-                else:
-                    # Find the earliest incomplete metric
-                    incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
-                    if incomplete_metrics:
-                        earliest_incomplete = min(incomplete_metrics, key=lambda x: x.get("date", ""))
-                        return datetime.fromisoformat(earliest_incomplete["date"]).date()
+            resume_date = metrics_starting_date_from_records(all_metrics)
+            if resume_date is not None:
+                return resume_date
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1817,7 +1810,7 @@ class ValkeyDb(BaseDb):
             log_error(f"Error getting metrics starting date: {str(e)}")
             raise e
 
-    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
+    def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1868,9 +1861,7 @@ class ValkeyDb(BaseDb):
                 # calculate_date_metrics returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Iterate and upsert each.
-                for metrics_record in calculate_date_metrics(
-                    date_to_process, sessions_for_date, user_isolation=user_isolation
-                ):
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
                     # Preserve created_at across re-runs.
                     existing_record = self._get_record("metrics", metrics_record["id"])
                     if existing_record:
@@ -1916,7 +1907,9 @@ class ValkeyDb(BaseDb):
             if starting_date is not None or ending_date is not None:
                 filtered_metrics = []
                 for metric in all_metrics:
-                    metric_date = datetime.fromisoformat(metric.get("date", "")).date()
+                    metric_date = metric_record_day(metric)
+                    if metric_date is None:
+                        continue
                     if starting_date is not None and metric_date < starting_date:
                         continue
                     if ending_date is not None and metric_date > ending_date:
@@ -1924,9 +1917,20 @@ class ValkeyDb(BaseDb):
                     filtered_metrics.append(metric)
                 all_metrics = filtered_metrics
 
-            # Filter by user_id if requested.
+            # Before the owner filter, not inside it: this is the one backend that ever wrote a
+            # record holding a whole day under the unowned bucket, so "" would select it
+            all_metrics = drop_legacy_metrics(all_metrics)
+
+            # Filter by user_id if requested. A whole-day record with no per-user rows covering
+            # its day survives the drop above and also carries "", but it holds the day for
+            # every user, so it must never match the unowned bucket. users_count tells them
+            # apart: the fresh unowned bucket has no owner to count and stays at zero.
             if user_id is not None:
-                all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
+                all_metrics = [
+                    m
+                    for m in all_metrics
+                    if m.get("user_id") == user_id and not (user_id == "" and m.get("users_count"))
+                ]
 
             # Get latest updated_at
             latest_updated_at = None
@@ -1963,8 +1967,7 @@ class ValkeyDb(BaseDb):
 
         Args:
             id (str): The ID of the knowledge row to delete.
-            user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+            user_id (Optional[str]): If provided, only deletes rows owned by this user, not unowned rows.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
@@ -1972,7 +1975,7 @@ class ValkeyDb(BaseDb):
         try:
             if user_id is not None:
                 existing = self._get_record("knowledge", id)
-                if existing is not None and not self._knowledge_doc_is_visible(existing, user_id):
+                if existing is None or existing.get("user_id") != user_id:
                     log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
                     return
             self._delete_record("knowledge", id)
@@ -2072,6 +2075,12 @@ class ValkeyDb(BaseDb):
             Exception: If any error occurs while upserting the knowledge content.
         """
         try:
+            # A scoped write must not overwrite a record it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = self._get_record("knowledge", knowledge_row.id)
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             data = knowledge_row.model_dump()
             success = self._store_record("knowledge", knowledge_row.id, data)  # type: ignore
 
@@ -2135,17 +2144,28 @@ class ValkeyDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from Valkey using GLIDE Batch (pipeline) for reduced round trips.
 
         Args:
             eval_run_ids (List[str]): The IDs of the eval runs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
 
         Raises:
             Exception: If any error occurs while deleting the eval runs.
         """
         if not eval_run_ids:
             return
+
+        if user_id is not None:
+            # Filter to this owner's ids up front so the batch below stays one round trip.
+            eval_run_ids = [
+                eval_run_id
+                for eval_run_id in eval_run_ids
+                if (self._get_record("evals", eval_run_id) or {}).get("user_id") == user_id
+            ]
+            if not eval_run_ids:
+                return
 
         try:
             index_fields = ["agent_id", "team_id", "workflow_id", "model_id", "eval_type"]
@@ -2175,6 +2195,9 @@ class ValkeyDb(BaseDb):
 
                 record_data = deserialize_data(raw_str)
 
+                if user_id is not None and record_data.get("user_id") != user_id:
+                    continue
+
                 # Remove index entries
                 for field in index_fields:
                     if field in record_data and record_data[field] is not None:
@@ -2197,12 +2220,13 @@ class ValkeyDb(BaseDb):
             raise
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from Valkey.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[EvalRunRecord]: The eval run if found, None otherwise.
@@ -2213,6 +2237,9 @@ class ValkeyDb(BaseDb):
         try:
             eval_run_raw = self._get_record("evals", eval_run_id)
             if eval_run_raw is None:
+                return None
+
+            if user_id is not None and eval_run_raw.get("user_id") != user_id:
                 return None
 
             if not deserialize:
@@ -2237,6 +2264,7 @@ class ValkeyDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from Valkey.
 
@@ -2258,6 +2286,9 @@ class ValkeyDb(BaseDb):
             # Apply filters
             filtered_runs = []
             for run in all_eval_runs:
+                if user_id is not None and run.get("user_id") != user_id:
+                    continue
+
                 # Agent/team/workflow filters
                 if agent_id is not None and run.get("agent_id") != agent_id:
                     continue
@@ -2266,6 +2297,9 @@ class ValkeyDb(BaseDb):
                 if workflow_id is not None and run.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run.get("model_id") != model_id:
+                    continue
+
+                if user_id is not None and run.get("user_id") != user_id:
                     continue
 
                 # Eval type filter
@@ -2301,13 +2335,14 @@ class ValkeyDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in Valkey.
 
         Args:
             eval_run_id (str): The ID of the eval run to rename.
             name (str): The new name of the eval run.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Dict[str, Any]]: The updated eval run data if successful, None otherwise.
@@ -2318,6 +2353,9 @@ class ValkeyDb(BaseDb):
         try:
             eval_run_data = self._get_record("evals", eval_run_id)
             if eval_run_data is None:
+                return None
+
+            if user_id is not None and eval_run_data.get("user_id") != user_id:
                 return None
 
             eval_run_data["name"] = name
@@ -2338,37 +2376,24 @@ class ValkeyDb(BaseDb):
             log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
             raise
 
-    # -- Cultural Knowledge methods --
-    # These methods raise NotImplementedError to satisfy the BaseDb interface.
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
 
-    def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            eval_run_data = self._get_record("evals", eval_run_id)
+            if eval_run_data is None:
+                return
 
-    def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
+            eval_run_data["user_id"] = user_id
+            self._store_record("evals", eval_run_id, eval_run_data)
 
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
+            raise
 
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
