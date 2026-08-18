@@ -18,10 +18,6 @@ class SleepTools(Toolkit):
             sleep: Enable the sleep tool. Defaults to True.
             all: Enable all tools. Defaults to False.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_sleep" in kwargs:
-            sleep = kwargs.pop("enable_sleep")
-
         tools: List[Callable] = []
         if all or sleep:
             tools.append(self.sleep)

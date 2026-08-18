@@ -24,10 +24,6 @@ class NewspaperTools(Toolkit):
             all: Enable all tools regardless of individual flags.
             **kwargs: Additional arguments passed to the Toolkit base class.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_get_article_text" in kwargs:
-            get_article_text = kwargs.pop("enable_get_article_text")
-
         tools: List[Callable] = []
         if all or get_article_text:
             tools.append(self.get_article_text)

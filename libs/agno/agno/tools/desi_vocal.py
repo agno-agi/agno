@@ -24,12 +24,6 @@ class DesiVocalTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_get_voices" in kwargs:
-            get_voices = kwargs.pop("enable_get_voices")
-        if "enable_text_to_speech" in kwargs:
-            text_to_speech = kwargs.pop("enable_text_to_speech")
-
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
         if not self.api_key:
             log_error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")

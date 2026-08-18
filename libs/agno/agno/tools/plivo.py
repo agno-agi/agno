@@ -45,20 +45,6 @@ class PlivoTools(Toolkit):
             lookup_number: Register the lookup_number tool
             all: Register all tools regardless of the individual flags
         """
-        # Backwards compat: enable_X -> X
-        if "enable_send_sms" in kwargs:
-            send_sms = kwargs.pop("enable_send_sms")
-        if "enable_make_call" in kwargs:
-            make_call = kwargs.pop("enable_make_call")
-        if "enable_get_call_details" in kwargs:
-            get_call_details = kwargs.pop("enable_get_call_details")
-        if "enable_list_messages" in kwargs:
-            list_messages = kwargs.pop("enable_list_messages")
-        if "enable_list_calls" in kwargs:
-            list_calls = kwargs.pop("enable_list_calls")
-        if "enable_lookup_number" in kwargs:
-            lookup_number = kwargs.pop("enable_lookup_number")
-
         self.auth_id = auth_id or getenv("PLIVO_AUTH_ID")
         self.auth_token = auth_token or getenv("PLIVO_AUTH_TOKEN")
 

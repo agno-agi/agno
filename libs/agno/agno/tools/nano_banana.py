@@ -57,10 +57,6 @@ class NanoBananaTools(Toolkit):
             all: Enable all tools at once
             create_image: Enable the create_image tool. Defaults to True.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_create_image" in kwargs:
-            create_image = kwargs.pop("enable_create_image")
-
         self.model = model
         self.aspect_ratio = aspect_ratio
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")

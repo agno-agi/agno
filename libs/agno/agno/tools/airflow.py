@@ -27,12 +27,6 @@ class AirflowTools(Toolkit):
             read_dag_file: Enable the read_dag_file tool. Defaults to True.
             all: Enable all tools.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_save_dag_file" in kwargs:
-            save_dag_file = kwargs.pop("enable_save_dag_file")
-        if "enable_read_dag_file" in kwargs:
-            read_dag_file = kwargs.pop("enable_read_dag_file")
-
         self.dags_dir = Path(dags_dir).resolve() if dags_dir is not None else Path.cwd().resolve()
 
         tools: List[Callable] = []

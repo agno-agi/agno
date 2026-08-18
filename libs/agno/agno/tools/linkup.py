@@ -21,10 +21,6 @@ class LinkupTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_web_search_with_linkup" in kwargs:
-            web_search_with_linkup = kwargs.pop("enable_web_search_with_linkup")
-
         self.api_key = api_key or getenv("LINKUP_API_KEY")
         if not self.api_key:
             log_error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")

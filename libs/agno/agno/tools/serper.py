@@ -35,16 +35,6 @@ class SerperTools(Toolkit):
             date_range Optional[str]: Default date range filter for searches.
             timeout Optional[int]: Per-request HTTP timeout in seconds. Default is 30.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_search" in kwargs:
-            search = kwargs.pop("enable_search")
-        if "enable_search_news" in kwargs:
-            search_news = kwargs.pop("enable_search_news")
-        if "enable_search_scholar" in kwargs:
-            search_scholar = kwargs.pop("enable_search_scholar")
-        if "enable_scrape_webpage" in kwargs:
-            scrape_webpage = kwargs.pop("enable_scrape_webpage")
-
         self.api_key = api_key or getenv("SERPER_API_KEY")
         if not self.api_key:
             log_debug("No Serper API key provided")

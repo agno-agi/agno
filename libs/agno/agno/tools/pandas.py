@@ -33,12 +33,6 @@ class PandasTools(Toolkit):
                 Defaults to False (dispatches to arbitrary dataframe callables, i.e. code execution).
             all: Enable all tools.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_create_pandas_dataframe" in kwargs:
-            create_pandas_dataframe = kwargs.pop("enable_create_pandas_dataframe")
-        if "enable_run_dataframe_operation" in kwargs:
-            run_dataframe_operation = kwargs.pop("enable_run_dataframe_operation")
-
         self.dataframes: Dict[str, pd.DataFrame] = {}
 
         tools: List[Callable] = []

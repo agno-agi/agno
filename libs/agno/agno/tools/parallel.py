@@ -74,16 +74,6 @@ class ParallelTools(Toolkit):
         default_output_schema: Optional[Union[Dict[str, Any], str]] = None,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_search" in kwargs:
-            search = kwargs.pop("enable_search")
-        if "enable_extract" in kwargs:
-            extract = kwargs.pop("enable_extract")
-        if "enable_task" in kwargs:
-            task = kwargs.pop("enable_task")
-        if "enable_monitor" in kwargs:
-            monitor = kwargs.pop("enable_monitor")
-
         self.api_key: Optional[str] = api_key or getenv("PARALLEL_API_KEY")
         if not self.api_key:
             log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")

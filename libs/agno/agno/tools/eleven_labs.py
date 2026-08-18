@@ -46,14 +46,6 @@ class ElevenLabsTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_get_voices" in kwargs:
-            get_voices = kwargs.pop("enable_get_voices")
-        if "enable_generate_sound_effect" in kwargs:
-            generate_sound_effect = kwargs.pop("enable_generate_sound_effect")
-        if "enable_text_to_speech" in kwargs:
-            text_to_speech = kwargs.pop("enable_text_to_speech")
-
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
         if not self.api_key:
             log_error("ELEVEN_LABS_API_KEY not set. Please set the ELEVEN_LABS_API_KEY environment variable.")

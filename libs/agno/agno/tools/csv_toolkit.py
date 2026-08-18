@@ -21,16 +21,6 @@ class CsvTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_read_csv_file" in kwargs:
-            read_csv_file = kwargs.pop("enable_read_csv_file")
-        if "enable_list_csv_files" in kwargs:
-            list_csv_files = kwargs.pop("enable_list_csv_files")
-        if "enable_get_columns" in kwargs:
-            get_columns = kwargs.pop("enable_get_columns")
-        if "enable_query_csv_file" in kwargs:
-            query_csv_file = kwargs.pop("enable_query_csv_file")
-
         self.csvs: List[Path] = []
         if csvs:
             for _csv in csvs:

@@ -45,18 +45,6 @@ class CalComTools(Toolkit):
                 (destructive).
             all: Enable all tools.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_get_available_slots" in kwargs:
-            get_available_slots = kwargs.pop("enable_get_available_slots")
-        if "enable_create_booking" in kwargs:
-            create_booking = kwargs.pop("enable_create_booking")
-        if "enable_get_upcoming_bookings" in kwargs:
-            get_upcoming_bookings = kwargs.pop("enable_get_upcoming_bookings")
-        if "enable_reschedule_booking" in kwargs:
-            reschedule_booking = kwargs.pop("enable_reschedule_booking")
-        if "enable_cancel_booking" in kwargs:
-            cancel_booking = kwargs.pop("enable_cancel_booking")
-
         # Get credentials from environment if not provided
         self.api_key = api_key or getenv("CALCOM_API_KEY")
         event_type_str = getenv("CALCOM_EVENT_TYPE_ID")

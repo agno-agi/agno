@@ -24,12 +24,6 @@ class HackerNewsTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_get_top_stories" in kwargs:
-            get_top_stories = kwargs.pop("enable_get_top_stories")
-        if "enable_get_user_details" in kwargs:
-            get_user_details = kwargs.pop("enable_get_user_details")
-
         tools: List[Callable] = []
         if get_top_stories:
             tools.append(self.get_top_hackernews_stories)

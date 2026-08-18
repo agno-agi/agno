@@ -53,12 +53,6 @@ class WebSearchTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_search" in kwargs:
-            search_web = kwargs.pop("enable_search")
-        if "enable_news" in kwargs:
-            search_news = kwargs.pop("enable_news")
-
         # Validate timelimit parameter
         if timelimit is not None and timelimit not in VALID_TIMELIMITS:
             raise ValueError(

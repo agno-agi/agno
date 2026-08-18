@@ -27,10 +27,6 @@ class GiphyTools(Toolkit):
             limit: Number of GIFs to return. Defaults to 1.
             search_gifs: Whether to enable GIF search functionality. Defaults to True.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_search_gifs" in kwargs:
-            search_gifs = kwargs.pop("enable_search_gifs")
-
         self.api_key = api_key or getenv("GIPHY_API_KEY")
         if not self.api_key:
             log_error("No Giphy API key provided")
