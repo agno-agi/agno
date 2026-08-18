@@ -15,6 +15,9 @@ following scope changes after comparing with PR #9584:
   Agent/Team from_dict key-drop shims, the flat HITL key shim, BrightData output_path)
   are split out so the removal-policy question - runtime-notice-required vs
   changelog-notice-at-a-major - can be decided independently of the uncontested removals.
+- **Google toolkit enable_* aliases (bigquery, sheets): KEPT** per maintainer decision
+  (2026-08-18) - backwards compatibility is wanted for these; only the creds_path /
+  auth_port aliases stay removed (they shipped a log_warning and #9584 removes them too).
 - **RedisDB -> RedisDb, ValkeyDB -> ValkeyDb** renamed to match sibling naming (old names
   kept as deprecated aliases); RedisVectorDb/ValkeyVectorDb restored as non-deprecated
   disambiguation aliases. Mirrors #9584.
