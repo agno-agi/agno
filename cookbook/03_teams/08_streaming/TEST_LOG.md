@@ -1,5 +1,16 @@
 # Validation run 2026-02-15T00:38:25
 
+
+## Verification - 2026-08-18 round 3 (feat/v3.0, base b10e70d5d4)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner with 240s timeout
+
+| File | Status | Note |
+|---|---|---|
+| team_streaming.py | PASS | 227s wall clock in sandbox |
+
+---
+
 ## Pattern Check
 **Status:** PASS
 **Notes:** Passed.

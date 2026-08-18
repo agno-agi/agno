@@ -1,6 +1,20 @@
 # Test Log
 
 
+
+## Verification - 2026-08-18 round 3 (feat/v3.0, base b10e70d5d4)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner with 240s timeout
+
+| File | Status | Note |
+|---|---|---|
+| duckduckgo_tools.py | PASS | batch hit a transient search error; manual rerun clean |
+| yfinance_tools.py | PASS |  |
+| hackernews_tools.py | PASS |  |
+| arxiv_tools.py | PASS | completed with transient retries; `arxiv` package missing from demo_setup (installed manually) |
+
+---
+
 ## Verification - 2026-08-18 (feat/v3.0)
 
 **Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)

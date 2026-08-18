@@ -1,5 +1,17 @@
 # Test Log -- 03_context_management
 
+
+## Verification - 2026-08-18 round 3 (feat/v3.0, base b10e70d5d4)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner with 240s timeout
+
+| File | Status | Note |
+|---|---|---|
+| system_message.py | PASS |  |
+| few_shot_learning.py | PASS |  |
+
+---
+
 **Tested:** 2026-02-13
 **Environment:** .venvs/demo/bin/python, pgvector: running
 

@@ -1,6 +1,18 @@
 # TEST_LOG
 
 
+
+## Verification - 2026-08-18 round 3 (feat/v3.0, base b10e70d5d4)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner with 240s timeout
+
+| File | Status | Note |
+|---|---|---|
+| 01_getting_started/02_agentic_rag.py | PASS |  |
+| 01_getting_started/03_loading_content.py | BLOCKED-ENV | wikipedia.org API returned non-JSON from this sandbox; `wikipedia` package also missing from demo_setup (installed manually) |
+
+---
+
 ## Verification - 2026-08-18 (feat/v3.0)
 
 **Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)

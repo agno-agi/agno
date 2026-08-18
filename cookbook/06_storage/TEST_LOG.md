@@ -1,6 +1,20 @@
 # Test Log: 06_storage
 
 
+
+## Verification - 2026-08-18 round 3 (feat/v3.0, base b10e70d5d4)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner with 240s timeout
+
+| File | Status | Note |
+|---|---|---|
+| 02_session_summary.py | PASS |  |
+| in_memory/in_memory_storage_for_agent.py | PASS |  |
+| json_db/json_for_agent.py | PASS | batch hit a transient model error; manual rerun clean, runs persisted to agno_runs.json |
+| postgres/postgres_for_agent.py | PASS |  |
+
+---
+
 ## Verification - 2026-08-18 (feat/v3.0)
 
 **Environment:** `.venvs/demo/bin/python` | **Base Commit:** `5668fdfaa` (origin/feat/v3.0)

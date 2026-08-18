@@ -1,5 +1,16 @@
 # Test Log: reliability
 
+
+## Verification - 2026-08-18 round 3 (feat/v3.0, base b10e70d5d4)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner with 240s timeout
+
+| File | Status | Note |
+|---|---|---|
+| reliability_async.py | PASS |  |
+
+---
+
 Last run: 2026-07-19, with live `OPENAI_API_KEY`. `ReliabilityEval` matches tool
 executions: expectations are satisfied only by clean tool executions.
 

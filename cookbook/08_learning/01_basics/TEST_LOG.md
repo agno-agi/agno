@@ -1,5 +1,16 @@
 # Test Log: 01_basics
 
+
+## Verification - 2026-08-18 round 3 (feat/v3.0, base b10e70d5d4)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner with 240s timeout
+
+| File | Status | Note |
+|---|---|---|
+| 1a_user_profile_always.py | PASS |  |
+
+---
+
 > 2026-07-25 (feat/entity-memory-revamp): 5a/5b replaced by 5_entity_memory.py -
 > entity memory is AGENTIC-only on the four-tool surface. Ran live against gpt-5.5:
 > PASS (Acme Corp captured with properties + CTO edge in s1; s2 answered from the
