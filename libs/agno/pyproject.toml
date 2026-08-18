@@ -97,7 +97,7 @@ lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
 mistral = ["mistralai>=2.0.0"]
 ollama = ["ollama"]
-openai = ["openai"]
+openai = ["openai>=1.106.0"]  # >=1.106.0: callable api_key (sync+async token provider), openai/openai-python#2588
 portkey = ["portkey-ai"]
 
 # Dependencies for Token Counting
