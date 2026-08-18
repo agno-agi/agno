@@ -181,7 +181,7 @@ def test_other_table_types_are_untouched():
     from agno.db.migrations.versions import v3_0_0
 
     db, _ = _new_db()
-    for table_type in ("memories", "culture", "approvals"):
+    for table_type in ("memories", "approvals"):
         assert v3_0_0.up(db, table_type, EVAL_TABLE) is False
         assert v3_0_0.down(db, table_type, EVAL_TABLE) is False
 

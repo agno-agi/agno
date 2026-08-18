@@ -21,7 +21,7 @@ from agno.registry import Registry
 from agno.session import AgentSession
 from agno.tools.calculator import CalculatorTools
 from agno.tools.function import Function
-from agno.tools.studio import StudioTool, StudioTools
+from agno.tools.studio import StudioTools
 from agno.tools.toolkit import Toolkit
 
 # ----------------------------------------------------------------------
@@ -66,21 +66,6 @@ def _loads(s: str) -> Dict[str, Any]:
 def _tool(toolkit: StudioTools, name: str):
     """The registered entrypoint for a tool -- what an agent actually calls."""
     return toolkit.functions[name].entrypoint
-
-
-# ----------------------------------------------------------------------
-# Backward-compatible alias
-# ----------------------------------------------------------------------
-
-
-class TestStudioToolAlias:
-    def test_singular_alias_resolves_to_canonical_class(self):
-        assert StudioTool is StudioTools
-
-    def test_alias_constructs_a_working_toolkit(self, registry, db):
-        tool = StudioTool(registry=registry, db=db)
-        assert isinstance(tool, StudioTools)
-        assert "create_agent" in tool.functions
 
 
 # ----------------------------------------------------------------------
@@ -481,7 +466,7 @@ class TestToolNameResolution:
 
     def test_two_mcp_toolkits_are_independently_listable(self, mcp_registry, db):
         registry, docs, search = mcp_registry
-        studio = StudioTool(registry=registry, db=db)
+        studio = StudioTools(registry=registry, db=db)
 
         result = _loads(studio.list_tools())
         names = [t["name"] for t in result["tools"]]
@@ -497,7 +482,7 @@ class TestToolNameResolution:
 
     def test_create_agent_selects_the_right_mcp_toolkit_by_name(self, mcp_registry, db):
         registry, docs, search = mcp_registry
-        studio = StudioTool(registry=registry, db=db)
+        studio = StudioTools(registry=registry, db=db)
 
         assert studio._find_tool(docs.name) is docs
         assert studio._find_tool(search.name) is search
@@ -529,7 +514,7 @@ class TestToolNameResolution:
             models=[OpenAIResponses(id="gpt-5.5")],
             dbs=[db],
         )
-        studio = StudioTool(registry=registry, db=db)
+        studio = StudioTools(registry=registry, db=db)
 
         with pytest.raises(ValueError, match="ambiguous"):
             studio._find_tool("dup")
@@ -553,7 +538,7 @@ class TestToolNameResolution:
             models=[OpenAIResponses(id="gpt-5.5")],
             dbs=[db],
         )
-        studio = StudioTool(registry=registry, db=db)
+        studio = StudioTools(registry=registry, db=db)
 
         member = studio._find_tool("read_file")
 
@@ -689,7 +674,7 @@ class TestMCPToolkitPersistence:
 
     def test_create_agent_refuses_unconnected_toolkit(self, db):
         toolkit = Toolkit(name="agno_docs")  # no functions: never connected
-        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+        studio = StudioTools(registry=self._registry(db, toolkit), db=db)
 
         out = _loads(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
 
@@ -699,7 +684,7 @@ class TestMCPToolkitPersistence:
 
     def test_edit_agent_refuses_unconnected_toolkit(self, db):
         toolkit = Toolkit(name="agno_docs")
-        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+        studio = StudioTools(registry=self._registry(db, toolkit), db=db)
         studio.create_agent(name="docs-agent", instructions="i")
 
         out = _loads(studio.edit_agent(agent_id="docs-agent", tool_names=["agno_docs"]))
@@ -710,7 +695,7 @@ class TestMCPToolkitPersistence:
     def test_create_agent_persists_connected_toolkit_functions(self, db):
         toolkit = Toolkit(name="agno_docs")
         self._connect(toolkit)
-        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+        studio = StudioTools(registry=self._registry(db, toolkit), db=db)
 
         out = _loads(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
         assert out["status"] == "created"
@@ -727,7 +712,7 @@ class TestMCPToolkitPersistence:
         entrypoint lookup cache was first built."""
         toolkit = Toolkit(name="agno_docs")
         self._connect(toolkit)
-        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+        studio = StudioTools(registry=self._registry(db, toolkit), db=db)
         studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"])
 
         # Fresh process: new registry, toolkit not yet connected

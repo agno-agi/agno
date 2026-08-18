@@ -31,11 +31,10 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
-from agno.metrics import SessionMetrics
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -345,11 +344,9 @@ class Team:
     metadata: Optional[Dict[str, Any]] = None
 
     # --- Team Reasoning ---
-    reasoning: bool = False
+    # Enable reasoning by providing a reasoning_model (must be a native reasoning model).
     reasoning_model: Optional[Model] = None
     reasoning_agent: Optional[Agent] = None
-    reasoning_min_steps: int = 1
-    reasoning_max_steps: int = 10
 
     # --- Team Followups ---
     # If True, generate followup prompts after the main response
@@ -530,11 +527,8 @@ class Team:
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
-        reasoning_min_steps: int = 1,
-        reasoning_max_steps: int = 10,
         followups: bool = False,
         num_followups: int = 3,
         followup_model: Optional[Union[Model, str]] = None,
@@ -650,11 +644,8 @@ class Team:
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             metadata=metadata,
-            reasoning=reasoning,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,
-            reasoning_min_steps=reasoning_min_steps,
-            reasoning_max_steps=reasoning_max_steps,
             followups=followups,
             num_followups=num_followups,
             followup_model=followup_model,

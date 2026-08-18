@@ -211,6 +211,10 @@ async def agent_resumable_response_streamer(
         ):
             if isinstance(sse_data, str):
                 yield sse_data
+            elif isinstance(sse_data, RunOutput):
+                # Terminal RunOutput is not an SSE event; skip it like the
+                # background producer does
+                continue
             else:
                 # Agents without background support (e.g. external adapters)
                 # ignore background=True and yield raw events: format them so

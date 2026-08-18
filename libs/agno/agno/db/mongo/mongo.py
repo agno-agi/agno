@@ -19,12 +19,9 @@ from agno.db.mongo.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
-    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -72,7 +69,6 @@ class MongoDb(BaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
-        culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
         schedules_collection: Optional[str] = None,
@@ -93,7 +89,6 @@ class MongoDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
-            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
             schedules_collection (Optional[str]): Name of the collection to store schedules.
@@ -118,7 +113,6 @@ class MongoDb(BaseDb):
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
-            culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
             schedules_table=schedules_collection,
@@ -179,7 +173,6 @@ class MongoDb(BaseDb):
             ("metrics", self.metrics_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
-            ("culture", self.culture_table_name),
             ("schedules", self.schedules_table_name),
             ("schedule_runs", self.schedule_runs_table_name),
         ]
@@ -265,17 +258,6 @@ class MongoDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
-
-        if table_type == "culture":
-            if not hasattr(self, "culture_collection"):
-                if self.culture_table_name is None:
-                    raise ValueError("Culture collection was not provided on initialization")
-                self.culture_collection = self._get_or_create_collection(
-                    collection_name=self.culture_table_name,
-                    collection_type="culture",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
-            return self.culture_collection
 
         if table_type == "traces":
             if not hasattr(self, "traces_collection"):
@@ -1678,211 +1660,6 @@ class MongoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception deleting all memories: {str(e)}")
-            raise e
-
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection = self._get_collection(table_type="culture")
-            if collection is None:
-                return
-
-            collection.delete_many({})
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection = self._get_collection(table_type="culture")
-            if collection is None:
-                return
-
-            collection.delete_one({"id": id})
-            log_debug(f"Deleted cultural knowledge with ID: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection = self._get_collection(table_type="culture")
-            if collection is None:
-                return None
-
-            result = collection.find_one({"id": id})
-            if result is None:
-                return None
-
-            # Remove MongoDB's _id field
-            result_filtered = {k: v for k, v in result.items() if k != "_id"}
-
-            if not deserialize:
-                return result_filtered
-
-            return deserialize_cultural_knowledge_from_db(result_filtered)
-
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection = self._get_collection(table_type="culture")
-            if collection is None:
-                if not deserialize:
-                    return [], 0
-                return []
-
-            # Build query
-            query: Dict[str, Any] = {}
-            if agent_id is not None:
-                query["agent_id"] = agent_id
-            if team_id is not None:
-                query["team_id"] = team_id
-            if name is not None:
-                query["name"] = {"$regex": name, "$options": "i"}
-
-            # Get total count for pagination
-            total_count = collection.count_documents(query)
-
-            # Apply sorting
-            sort_criteria = apply_sorting({}, sort_by, sort_order)
-
-            # Apply pagination
-            query_args = apply_pagination({}, limit, page)
-
-            cursor = collection.find(query)
-            if sort_criteria:
-                cursor = cursor.sort(sort_criteria)
-            if query_args.get("skip"):
-                cursor = cursor.skip(query_args["skip"])
-            if query_args.get("limit"):
-                cursor = cursor.limit(query_args["limit"])
-
-            # Remove MongoDB's _id field from all results
-            results_filtered = [{k: v for k, v in item.items() if k != "_id"} for item in cursor]
-
-            if not deserialize:
-                return results_filtered, total_count
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
-
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in MongoDB.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            collection = self._get_collection(table_type="culture", create_collection_if_not_found=True)
-            if collection is None:
-                return None
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the document with serialized content
-            update_doc = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            result = collection.replace_one({"id": cultural_knowledge.id}, update_doc, upsert=True)
-
-            if result.upserted_id:
-                update_doc["_id"] = result.upserted_id
-
-            # Remove MongoDB's _id field
-            doc_filtered = {k: v for k, v in update_doc.items() if k != "_id"}
-
-            if not deserialize:
-                return doc_filtered
-
-            return deserialize_cultural_knowledge_from_db(doc_filtered)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # -- Metrics methods --

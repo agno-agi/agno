@@ -176,6 +176,7 @@ async def handle_workflow_via_websocket(
         session_id = message.get("session_id")
         user_message = message.get("message", "")
         user_id = message.get("user_id")
+        version = message.get("version")
         factory_input = message.get("factory_input")
 
         # Defense-in-depth: if the caller authenticated via JWT, ensure user_id
@@ -239,6 +240,7 @@ async def handle_workflow_via_websocket(
                     workflow_id=workflow_id,
                     workflows=os.workflows,
                     db=os.db,
+                    version=version,
                     registry=os.registry,
                     create_fresh=True,
                     ctx=ctx,
@@ -253,6 +255,7 @@ async def handle_workflow_via_websocket(
                     workflow_id=workflow_id,
                     workflows=os.workflows,
                     db=os.db,
+                    version=version,
                     registry=os.registry,
                     create_fresh=True,
                     user_id=scoped_user_id,

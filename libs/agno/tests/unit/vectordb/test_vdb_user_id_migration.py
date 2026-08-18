@@ -39,7 +39,7 @@ class TestRedisSentinelBackfill:
         return v.decode() if v else None
 
     def test_stamps_shared_on_legacy_and_preserves_owners(self):
-        from agno.vectordb.redis.redisdb import RedisDB
+        from agno.vectordb.redis.redisdb import RedisDb
 
         client = self._client()
         index = "myindex"
@@ -54,11 +54,11 @@ class TestRedisSentinelBackfill:
         mod.migrate_redis_index(index)
 
         for i in range(3):
-            assert self._uid(client, f"{index}:doc{i}") == RedisDB.SHARED_OWNER_TAG
+            assert self._uid(client, f"{index}:doc{i}") == RedisDb.SHARED_OWNER_TAG
         assert self._uid(client, f"{index}:owned") == "alice"
 
     def test_idempotent(self):
-        from agno.vectordb.redis.redisdb import RedisDB
+        from agno.vectordb.redis.redisdb import RedisDb
 
         client = self._client()
         index = "idx"
@@ -69,7 +69,7 @@ class TestRedisSentinelBackfill:
         mod.migrate_redis_index(index)
         mod.migrate_redis_index(index)  # second run must be a no-op
 
-        assert self._uid(client, f"{index}:d1") == RedisDB.SHARED_OWNER_TAG
+        assert self._uid(client, f"{index}:d1") == RedisDb.SHARED_OWNER_TAG
 
     def test_no_vectors_is_safe(self):
         client = self._client()

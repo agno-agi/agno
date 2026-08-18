@@ -128,20 +128,6 @@ METRICS_TABLE_SCHEMA = {
     # alongside the ``id`` primary key (error 1706). ``bulk_upsert_metrics`` enforces the triple instead.
 }
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
-    "name": {"type": lambda: String(255), "nullable": False, "index": True},
-    "summary": {"type": Text, "nullable": True},
-    "content": {"type": JSON, "nullable": True},
-    "metadata": {"type": JSON, "nullable": True},
-    "input": {"type": Text, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_id": {"type": lambda: String(128), "nullable": True},
-    "team_id": {"type": lambda: String(128), "nullable": True},
-}
-
-
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": lambda: String(128), "nullable": False, "primary_key": True},
     "version": {"type": lambda: String(10), "nullable": False},
@@ -229,7 +215,6 @@ def get_table_schema_definition(
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
     }

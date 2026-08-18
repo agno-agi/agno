@@ -493,9 +493,20 @@ asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="metric
 3. **Custom table names**: `PostgresDb`, `AsyncPostgresDb`, `SqliteDb` and
    `AsyncSqliteDb` accept a new `runs_table` argument (defaults to `"agno_runs"`).
 
-Unchanged: `Agent`/`Team`/`Workflow` code, `session.get_messages()`,
-`get_chat_history()`, AgentOS session endpoints, and `db.get_session()` all behave
-as before — runs are reattached to sessions transparently on read.
+4. **Culture feature removed**: The experimental culture feature has been removed
+   entirely. This includes:
+   - `from agno.culture import CultureManager` → `ModuleNotFoundError`
+   - `Agent(culture_manager=..., enable_agentic_culture=..., update_cultural_knowledge=...)` → `TypeError`
+   - `agent.get_culture_knowledge()` / `agent.aget_culture_knowledge()` → `AttributeError`
+   - `db.upsert_cultural_knowledge()` and related DB methods → `AttributeError`
+   - `db = PostgresDb(culture_table=...)` → `TypeError`
+
+   Existing `agno_culture` database tables are orphaned (not dropped). Culture was
+   marked "experimental" from introduction (Oct 2025).
+
+Unchanged: `session.get_messages()`, `get_chat_history()`, AgentOS session endpoints,
+and `db.get_session()` all behave as before — runs are reattached to sessions
+transparently on read.
 
 ## New APIs
 

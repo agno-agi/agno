@@ -2851,8 +2851,3 @@ def _component_to_dict(component: Component, carry: Optional[Dict[str, Any]] = N
         # the edited one and wins.
         config.setdefault(key, value)
     return config
-
-
-# Backward-compatible alias. The toolkit was originally released as ``StudioTool``
-# (singular); ``StudioTools`` is the canonical name. Both refer to the same class.
-StudioTool = StudioTools
