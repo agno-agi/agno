@@ -52,6 +52,15 @@ class Registry:
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
     knowledge: List[Any] = field(default_factory=list)
+    # Names claimed by two distinct knowledge instances: lenient resolution
+    # keeps the first, strict resolution refuses the ambiguity.
+    _ambiguous_knowledge_names: Set[str] = field(default_factory=set, init=False, repr=False)
+    # Knowledge a framework sync mirrored in for name resolution, as opposed to
+    # the user registering it. Kept on the registry, not on the AgentOS that
+    # mirrored, because a registry can be shared: any AgentOS asking must see
+    # every mirror, or one OS's component-private knowledge would look
+    # user-registered to another.
+    _mirrored_knowledge: List[Any] = field(default_factory=list, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
@@ -183,8 +192,14 @@ class Registry:
             and "input_schema" not in func_dict
         )
 
-    def rehydrate_functions(self, func_dicts: List[Dict[str, Any]]) -> List[Union[Function, Dict[str, Any]]]:
+    def rehydrate_functions(
+        self, func_dicts: List[Dict[str, Any]], strict: bool = False
+    ) -> List[Union[Function, Dict[str, Any]]]:
         """Rehydrate a batch of persisted tool dicts, sharing one cache-rebuild budget.
+
+        With strict=True a toolkit-qualified reference resolves only from its
+        own toolkit; the flat-name fallback that may bind a same-named function
+        from a different toolkit is reserved for lenient loads.
 
         A component load rehydrates every tool in its config; one rebuild of the
         entrypoint lookup per batch is enough to pick up late-registered
@@ -205,8 +220,17 @@ class Registry:
                 rehydrated.append(func_dict)
                 continue
             try:
-                rehydrated.append(self._rehydrate_function(func_dict, rebuild_state))
+                rehydrated.append(self._rehydrate_function(func_dict, rebuild_state, strict=strict))
             except ValidationError as e:
+                if strict:
+                    from agno.exceptions import ComponentRehydrationError
+
+                    raise ComponentRehydrationError(
+                        f"Tool dict '{func_dict.get('name')}' is a serialized Function that does "
+                        f"not validate ({e.error_count()} error(s)); the stored config is corrupt. "
+                        "Re-save the component, or pass strict=False to pass the dict through to "
+                        "the model provider unchanged."
+                    ) from e
                 log_warning(
                     f"Registry: tool dict '{func_dict.get('name')}' looks like a serialized "
                     f"Function but does not validate as one ({e.error_count()} error(s)); "
@@ -215,7 +239,9 @@ class Registry:
                 rehydrated.append(func_dict)
         return rehydrated
 
-    def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, Any]) -> Function:
+    def _rehydrate_function(
+        self, func_dict: Dict[str, Any], rebuild_state: Dict[str, Any], strict: bool = False
+    ) -> Function:
         func = Function.from_dict(func_dict)
         toolkit_name = func_dict.get("toolkit")
         if isinstance(toolkit_name, str) and toolkit_name:
@@ -257,7 +283,9 @@ class Registry:
             # toolkit while the right one simply hasn't populated the cache yet.
             source, source_owner = lookup((func.owning_toolkit, func.name))
             resolved_as_recorded = source is not None
-        if source is None:
+        # A strict load keeps a qualified reference bound to its own toolkit:
+        # a same-named function from another toolkit is a different tool.
+        if source is None and (func.owning_toolkit is None or not strict):
             source, source_owner = lookup(func.name)
             if source is not None and func.owning_toolkit is not None:
                 # The recorded toolkit could not be honored, so the flat slot's
@@ -429,6 +457,81 @@ class Registry:
             return
         self.vector_dbs.append(vector_db)
 
+    def add_function(self, func: Any) -> None:
+        """Add a plain callable unless one with the same name is already present.
+
+        Workflow step executors, evaluators, selectors and end conditions
+        resolve by function name at rehydration. The first callable under a
+        name wins; a distinct same-named callable is reported, since it would
+        be shadowed.
+        """
+        if not callable(func) or not getattr(func, "__name__", None):
+            return
+        existing = self.get_function(func.__name__)
+        if existing is not None:
+            if existing is not func:
+                log_warning(
+                    f"Registry: multiple distinct callables share the name '{func.__name__}'; "
+                    "keeping the first. Rename one to avoid it being shadowed."
+                )
+            return
+        self.functions.append(func)
+
+    def add_knowledge(self, knowledge: Any, mirrored: bool = False) -> None:
+        """Add a knowledge instance unless one with the same name is already present.
+
+        Knowledge resolves by name at rehydration, so only named instances are
+        registrable. The first instance under a name wins; a distinct
+        same-named instance is reported, since it would be shadowed.
+
+        ``mirrored`` marks an instance a framework sync added for name
+        resolution rather than the user registering it; mirrored knowledge is
+        not a knowledge-route source on any AgentOS sharing this registry. An
+        explicit (non-mirrored) add of an instance that is already present
+        promotes it to user provenance: the user registering it by hand is the
+        grant a mirror is not.
+        """
+        name = getattr(knowledge, "name", None)
+        if knowledge is None or name is None:
+            return
+        existing = self.get_knowledge(name)
+        if existing is not None:
+            if existing is not knowledge:
+                self._ambiguous_knowledge_names.add(name)
+                log_warning(
+                    f"Registry: multiple distinct knowledge instances share name '{name}'; "
+                    "keeping the first for lenient loads. Strict loads refuse the ambiguity: "
+                    "give the instances distinct names."
+                )
+            elif not mirrored:
+                self._mirrored_knowledge = [kb for kb in self._mirrored_knowledge if kb is not knowledge]
+            return
+        self.knowledge.append(knowledge)
+        if mirrored:
+            self._mirrored_knowledge.append(knowledge)
+
+    def knowledge_is_mirrored(self, knowledge: Any) -> bool:
+        """Whether ``knowledge`` is in the registry only because a sync mirrored it."""
+        return any(knowledge is kb for kb in self._mirrored_knowledge)
+
+    def add_schema(self, schema: Any) -> None:
+        """Add an input/output schema class unless one with the same name is already present.
+
+        Schemas resolve by class name at rehydration. Inline dict schemas are
+        not registrable and ride through serialization on their own.
+        """
+        if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+            return
+        existing = self.get_schema(schema.__name__)
+        if existing is not None:
+            if existing is not schema:
+                log_warning(
+                    f"Registry: multiple distinct schema classes share the name '{schema.__name__}'; "
+                    "keeping the first. Rename one to avoid it being shadowed."
+                )
+            return
+        self.schemas.append(schema)
+
     def get_schema(self, name: str) -> Optional[Type[BaseModel]]:
         """Get a schema by name."""
         if self.schemas:
@@ -475,6 +578,18 @@ class Registry:
 
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
+
+    def knowledge_name_is_ambiguous(self, name: str) -> bool:
+        """Whether two distinct knowledge instances claim ``name``.
+
+        Covers both construction paths: instances handed to the constructor
+        (scanned here) and instances add_knowledge refused to append (recorded
+        in the ambiguity set).
+        """
+        if name in self._ambiguous_knowledge_names:
+            return True
+        matches = [k for k in self.knowledge if getattr(k, "name", None) == name]
+        return len(matches) > 1 and any(match is not matches[0] for match in matches)
 
     def get_knowledge(self, name: str) -> Optional[Any]:
         """Get a knowledge instance by name from the registry."""

@@ -16,9 +16,9 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_error, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import (
     ErrorRequirement,
     HumanReview,
@@ -242,26 +242,41 @@ class Condition:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Condition":
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
         from agno.workflow.steps import Steps
 
-        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+                return Loop.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Parallel":
-                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+                return Parallel.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Steps":
-                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+                return Steps.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Condition":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Router":
-                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
 
         evaluator_data = data.get("evaluator", True)
         evaluator_type = data.get("evaluator_type")
@@ -277,13 +292,21 @@ class Condition:
                 evaluator = evaluator_data
             else:
                 # Function name - look up in registry
-                if registry:
-                    func = registry.get_function(evaluator_data)
-                    if func is None:
-                        raise ValueError(f"Evaluator function '{evaluator_data}' not found in registry")
-                    evaluator = func
-                else:
-                    raise ValueError(f"Registry required to deserialize evaluator function '{evaluator_data}'")
+                func = registry.get_function(evaluator_data) if registry else None
+                if func is None:
+                    if registry:
+                        message = f"Evaluator function '{evaluator_data}' not found in registry"
+                    else:
+                        message = f"Registry required to deserialize evaluator function '{evaluator_data}'"
+                    if strict:
+                        from agno.exceptions import ComponentRehydrationError
+
+                        raise ComponentRehydrationError(message)
+                    from agno.workflow.step import _unresolvable_callable_placeholder
+
+                    log_warning(message)
+                    func = _unresolvable_callable_placeholder("Condition evaluator", evaluator_data)
+                evaluator = func
         else:
             raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
 
@@ -301,7 +324,7 @@ class Condition:
         return cls(
             evaluator=evaluator,
             steps=[deserialize_step(step) for step in data.get("steps", [])],
-            else_steps=[deserialize_step(step) for step in data.get("else_steps", [])],
+            else_steps=[deserialize_step(step, suffix=branch_suffix + "#else") for step in data.get("else_steps", [])],
             name=data.get("name"),
             description=data.get("description"),
             human_review=human_review,
@@ -651,6 +674,10 @@ class Condition:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} failed")
@@ -900,6 +927,10 @@ class Condition:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} streaming failed")
@@ -1091,6 +1122,10 @@ class Condition:
                 )
 
             except RunCancelledException:
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
                 raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
@@ -1341,6 +1376,10 @@ class Condition:
                         )
 
             except RunCancelledException:
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
                 raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")

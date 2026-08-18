@@ -100,6 +100,63 @@ StepExecutor = Callable[
 ]
 
 
+def _is_team_instance(candidate: Any) -> bool:
+    from agno.team.team import Team
+
+    return isinstance(candidate, Team)
+
+
+class UnresolvableCallableError(RuntimeError):
+    """Raised when a lenient-load placeholder for an unresolved callable executes.
+
+    Container evaluators that tolerate ordinary callable failures re-raise
+    this one: running with the reference missing is not a recoverable error.
+    """
+
+
+def _unresolvable_callable_placeholder(kind: str, ref: str) -> Callable[..., Any]:
+    """A constructible stand-in for a callable ref a lenient load could not resolve.
+
+    It keeps the workflow loadable for listings, run history and cancel,
+    refuses loudly when executed, and carries the original name so a round
+    trip re-serializes the reference instead of the placeholder.
+    """
+
+    def _unresolvable(*args: Any, **kwargs: Any) -> Any:
+        raise UnresolvableCallableError(
+            f"{kind} '{ref}' was not resolvable from the registry when this workflow was "
+            "loaded, so it cannot execute. Register the function and reload."
+        )
+
+    _unresolvable.__name__ = ref
+    _unresolvable.__qualname__ = ref
+    return _unresolvable
+
+
+def _unresolvable_ref_placeholder(config: Dict[str, Any], kind: str, ref: Any) -> Callable[[StepInput], StepOutput]:
+    """A constructible stand-in for a step reference a lenient load could not resolve.
+
+    It keeps the degraded step inspectable (listings, run history, cancel) and
+    refuses at execution. to_dict re-emits the original reference keys, so a
+    round trip does not overwrite them with the placeholder.
+    """
+
+    def _unresolvable(step_input: StepInput) -> StepOutput:
+        raise UnresolvableCallableError(
+            f"Step {kind} '{ref}' is not resolvable from the registry or db, so this step "
+            "cannot execute. Restore the reference and reload."
+        )
+
+    # An unnamed Step derives its name from the executor, so the placeholder
+    # must carry the reference's name, not its own.
+    _unresolvable.__name__ = str(ref)
+    _unresolvable.__qualname__ = str(ref)
+    _unresolvable.__agno_unresolved__ = {  # type: ignore[attr-defined]
+        key: config[key] for key in ("agent_id", "team_id", "executor_ref") if config.get(key)
+    }
+    return _unresolvable
+
+
 @dataclass
 class Step:
     """A single unit of work in a workflow pipeline"""
@@ -208,8 +265,10 @@ class Step:
                 if user_input_schema is None and hitl_metadata.get("user_input_schema"):
                     user_input_schema = hitl_metadata["user_input_schema"]
 
-        # Auto-detect name for function executors if not provided
-        if name is None and executor is not None:
+        # Auto-detect name for function executors if not provided. A lenient
+        # placeholder stands in for an unresolved reference; the step must not
+        # take its name, so an unnamed step round-trips as unnamed.
+        if name is None and executor is not None and getattr(executor, "__agno_unresolved__", None) is None:
             name = getattr(executor, "__name__", None)
 
         self.name = name
@@ -296,7 +355,13 @@ class Step:
         if self.workflow is not None:
             result["workflow_id"] = self.workflow.id
         if self.executor is not None:
-            result["executor_ref"] = self.executor.__name__
+            unresolved = getattr(self.executor, "__agno_unresolved__", None)
+            if unresolved is not None:
+                # A lenient load stood in a placeholder for a reference it
+                # could not resolve; a round trip keeps the original keys.
+                result.update(unresolved)
+            else:
+                result["executor_ref"] = self.executor.__name__
 
         return result
 
@@ -307,6 +372,8 @@ class Step:
         registry: Optional[Registry] = None,
         db: Optional["BaseDb"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Step":
         """
         Create a Step from a dictionary.
@@ -315,11 +382,19 @@ class Step:
             data: Dictionary containing step configuration
             registry: Optional registry for rehydrating non-serializable objects
             db: Optional database for loading agents/teams in steps
-            links: Optional links for this step version
+            links: The workflow version's links; step_agent/step_team links
+                carry the child version pinned at save time, and db-backed
+                step members load at that version
+            strict: If True, an unresolvable step agent, team or executor
+                function raises ComponentRehydrationError. If False, the step
+                is built with a placeholder executor that refuses at run time,
+                so degraded workflows stay loadable for reads.
 
         Returns:
             Step: Reconstructed step instance
         """
+        from agno.exceptions import ComponentPinError, ComponentRehydrationError
+
         config = data.copy()
 
         agent = None
@@ -327,63 +402,234 @@ class Step:
         executor = None
         workflow = None
 
+        # A step's own pin is the link whose key is its step_id (or name)
+        # qualified by the branch it sits on: nested else branches accumulate
+        # one '#else' per level, and the exact key wins. Without an exact
+        # match, the child's links may still pin it - but only when they all
+        # agree; picking one of several different pins would silently run the
+        # wrong version, so strict refuses the ambiguity.
+        step_link_key = config.get("step_id") or config.get("name")
+        qualified_link_key = f"{step_link_key}{branch_suffix}" if step_link_key else None
+
+        def _pinned_version(child_id: Optional[str], link_kind: str) -> Optional[int]:
+            child_links = [
+                link
+                for link in links or []
+                if link.get("link_kind") == link_kind and link.get("child_component_id") == child_id
+            ]
+            if not child_links:
+                return None
+            for link in child_links:
+                if qualified_link_key is not None and link.get("link_key") == qualified_link_key:
+                    return link.get("child_version")
+            versions = {link.get("child_version") for link in child_links}
+            if len(versions) == 1:
+                return child_links[0].get("child_version")
+            message = (
+                f"Step '{config.get('name')}' reference '{child_id}' matches no link for its own "
+                f"key '{qualified_link_key}', and the workflow pins that child at multiple versions "
+                f"({sorted(v for v in versions if v is not None)}). Re-save the workflow so every "
+                "step's pin is keyed to it."
+            )
+            if strict:
+                raise ComponentRehydrationError(message)
+            log_warning(message)
+            return None
+
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
             agent_id = config.get("agent_id")
+            pinned = _pinned_version(agent_id, "step_agent")
 
-            # First try registry (code-defined agents)
-            if registry and agent_id:
+            # An explicit pin resolves from the db first: the pin names one
+            # exact stored version, which a code-defined registry agent is not.
+            # Without a pin, code-defined registry agents win as before.
+            if pinned is None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
                 if registry_agent is not None:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
+                        if strict and agent is registry_agent:
+                            raise ComponentRehydrationError(
+                                f"Registry agent '{agent_id}' deep_copy returned the shared "
+                                "instance; a strict load requires an isolated copy."
+                            )
+                        if strict and not isinstance(agent, Agent):
+                            raise ComponentRehydrationError(
+                                f"Registry agent '{agent_id}' deep_copy returned a "
+                                f"{type(agent).__name__}, not an Agent; a strict load refuses it."
+                            )
+                        if strict:
+                            from agno.utils.copies import copy_divergence
+
+                            divergence = copy_divergence(registry_agent, agent)
+                            if divergence is not None:
+                                raise ComponentRehydrationError(
+                                    f"Registry agent '{agent_id}' deep_copy lost state: {divergence}. "
+                                    "A strict load refuses a copy that does not serialize like its "
+                                    "original; give the subclass a faithful deep_copy."
+                                )
+                    except ComponentRehydrationError:
+                        raise
                     except Exception as e:
+                        if strict:
+                            raise ComponentRehydrationError(
+                                f"Registry agent '{agent_id}' could not be copied (deep_copy "
+                                f"failed: {e}); a strict load refuses the shared registry instance."
+                            ) from e
                         log_warning(
                             f"deep_copy() failed for registry agent '{agent_id}', using shared instance: {e}",
                         )
 
                         agent = registry_agent
 
-            # Fall back to database
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
 
-                agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
+                try:
+                    agent = get_agent_by_id(db=db, id=agent_id, version=pinned, registry=registry, strict=strict)
+                except ComponentRehydrationError as step_member_error:
+                    if pinned is not None:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, "
+                            f"which failed to rebuild: {step_member_error} "
+                            "Re-save the workflow to pin the agent's current version."
+                        ) from step_member_error
+                    raise
+                if agent is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "workflow to pin the agent's current version."
+                        )
+                    log_warning(
+                        f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, which "
+                        "was not found in the db; loading the agent's current version instead."
+                    )
+                    agent = get_agent_by_id(db=db, id=agent_id, registry=registry, strict=False)
+
+            # A pinned lenient load may still fall back to a code-defined agent.
+            if agent is None and pinned is not None and registry and agent_id:
+                registry_agent = registry.get_agent(agent_id)
+                if registry_agent is not None:
+                    try:
+                        agent = registry_agent.deep_copy()
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance: {e}",
+                        )
+                        agent = registry_agent
 
             if agent is None and agent_id:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references agent '{agent_id}' which was not "
+                        "found in the registry or db. Restore the agent, or pass strict=False to "
+                        "load the workflow without it."
+                    )
                 log_warning(
                     f"Could not resolve agent_id='{agent_id}' from registry or DB for step '{config.get('name')}'"
                 )
+                executor = _unresolvable_ref_placeholder(config, "agent", agent_id)
 
         # --- Handle Team reconstruction ---
         if "team_id" in config and config["team_id"]:
             team_id = config.get("team_id")
+            pinned = _pinned_version(team_id, "step_team")
 
-            # First try registry (code-defined teams)
-            if registry and team_id:
+            # An explicit pin resolves from the db first: the pin names one
+            # exact stored version, which a code-defined registry team is not.
+            if pinned is None and registry and team_id:
                 registry_team = registry.get_team(team_id)
                 if registry_team is not None:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         team = registry_team.deep_copy()
+                        if strict and team is registry_team:
+                            raise ComponentRehydrationError(
+                                f"Registry team '{team_id}' deep_copy returned the shared "
+                                "instance; a strict load requires an isolated copy."
+                            )
+                        if strict and type(team).__name__ != "Team" and not _is_team_instance(team):
+                            raise ComponentRehydrationError(
+                                f"Registry team '{team_id}' deep_copy returned a "
+                                f"{type(team).__name__}, not a Team; a strict load refuses it."
+                            )
+                        if strict:
+                            from agno.utils.copies import copy_divergence
+
+                            divergence = copy_divergence(registry_team, team)
+                            if divergence is not None:
+                                raise ComponentRehydrationError(
+                                    f"Registry team '{team_id}' deep_copy lost state: {divergence}. "
+                                    "A strict load refuses a copy that does not serialize like its "
+                                    "original; give the subclass a faithful deep_copy."
+                                )
+                    except ComponentRehydrationError:
+                        raise
                     except Exception as e:
+                        if strict:
+                            raise ComponentRehydrationError(
+                                f"Registry team '{team_id}' could not be copied (deep_copy "
+                                f"failed: {e}); a strict load refuses the shared registry instance."
+                            ) from e
                         log_warning(
                             f"deep_copy() failed for registry team '{team_id}', using shared instance: {e}",
                         )
 
                         team = registry_team
 
-            # Fall back to database
             if team is None and db is not None and team_id is not None:
                 from agno.team.team import get_team_by_id
 
-                team = get_team_by_id(db=db, id=team_id, registry=registry)
+                try:
+                    team = get_team_by_id(db=db, id=team_id, version=pinned, registry=registry, strict=strict)
+                except ComponentRehydrationError as step_member_error:
+                    if pinned is not None:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, "
+                            f"which failed to rebuild: {step_member_error} "
+                            "Re-save the workflow to pin the team's current version."
+                        ) from step_member_error
+                    raise
+                if team is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "workflow to pin the team's current version."
+                        )
+                    log_warning(
+                        f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, which "
+                        "was not found in the db; loading the team's current version instead."
+                    )
+                    team = get_team_by_id(db=db, id=team_id, registry=registry, strict=False)
+
+            # A pinned lenient load may still fall back to a code-defined team.
+            if team is None and pinned is not None and registry and team_id:
+                registry_team = registry.get_team(team_id)
+                if registry_team is not None:
+                    try:
+                        team = registry_team.deep_copy()
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry team '{team_id}', using shared instance: {e}",
+                        )
+                        team = registry_team
 
             if team is None and team_id:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references team '{team_id}' which was not "
+                        "found in the registry or db. Restore the team, or pass strict=False to "
+                        "load the workflow without it."
+                    )
                 log_warning(
                     f"Could not resolve team_id='{team_id}' from registry or DB for step '{config.get('name')}'"
                 )
+                executor = _unresolvable_ref_placeholder(config, "team", team_id)
 
         # --- Handle Workflow reconstruction ---
         # TODO: Add workflow support to Registry (get_workflow method) for full reconstruction.
@@ -392,6 +638,12 @@ class Step:
         # paused workflows that contain nested workflow steps.
         if "workflow_id" in config and config["workflow_id"]:
             workflow_id = config.get("workflow_id")
+            if strict:
+                raise ComponentRehydrationError(
+                    f"Step '{config.get('name')}' references nested workflow '{workflow_id}', which "
+                    "cannot be reconstructed yet (the registry does not track workflows). Pass "
+                    "strict=False to load it with a non-executable placeholder."
+                )
             log_warning(
                 f"Cannot reconstruct nested workflow '{workflow_id}' for step '{config.get('name')}' "
                 f"(workflow registry support not yet implemented). "
@@ -401,16 +653,37 @@ class Step:
             # Create a placeholder executor so validation doesn't crash.
             # The step won't be re-executable until Registry supports workflows.
             def _placeholder(step_input: StepInput) -> StepOutput:
-                return StepOutput(
-                    content=f"Nested workflow '{workflow_id}' cannot be re-executed (not yet reconstructable)",
-                    success=False,
+                raise UnresolvableCallableError(
+                    f"Nested workflow '{workflow_id}' cannot be re-executed (not yet "
+                    "reconstructable). Load the parent strictly for a typed refusal instead."
                 )
 
+            _placeholder.__name__ = str(workflow_id)
+            _placeholder.__qualname__ = str(workflow_id)
+            _placeholder.__agno_unresolved__ = {"workflow_id": workflow_id}  # type: ignore[attr-defined]
             executor = _placeholder
 
         # --- Handle Executor reconstruction ---
-        if "executor_ref" in config and config["executor_ref"] and registry:
-            executor = registry.get_function(config["executor_ref"])
+        if "executor_ref" in config and config["executor_ref"]:
+            executor_ref = config["executor_ref"]
+            executor = registry.get_function(executor_ref) if registry else None
+            if executor is None:
+                if strict:
+                    if registry is None:
+                        raise ComponentRehydrationError(
+                            f"Step '{config.get('name')}' references executor function '{executor_ref}' "
+                            "but no registry was provided to resolve it. Provide a registry holding "
+                            "the function, or pass strict=False to load the workflow without it."
+                        )
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references executor function '{executor_ref}' "
+                        "which was not found in the registry. Register the function, or pass "
+                        "strict=False to load the workflow without it."
+                    )
+                log_warning(
+                    f"Could not resolve executor_ref='{executor_ref}' from the registry for step '{config.get('name')}'"
+                )
+                executor = _unresolvable_ref_placeholder(config, "executor function", executor_ref)
 
         # HITL config
         if config.get("human_review"):
@@ -967,6 +1240,10 @@ class Step:
             except RunCancelledException:
                 # Don't retry a cancelled run
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # retrying or skipping it would complete a run that did no work.
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1356,6 +1633,10 @@ class Step:
             except RunCancelledException:
                 # Don't retry a cancelled run
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # retrying or skipping it would complete a run that did no work.
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1640,6 +1921,10 @@ class Step:
 
             except RunCancelledException:
                 # Don't retry a cancelled run
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
                 self.retry_count = attempt + 1
@@ -2003,6 +2288,10 @@ class Step:
 
             except RunCancelledException:
                 # Don't retry a cancelled run
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
                 self.retry_count = attempt + 1

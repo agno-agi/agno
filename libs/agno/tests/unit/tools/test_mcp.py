@@ -1710,3 +1710,69 @@ async def test_agent_refresh_does_not_call_build_tools_after_reconnect():
     # No forced reconnect; build_tools() called to refresh definitions
     assert not any(call.kwargs.get("force") for call in alive_tool.connect.await_args_list)
     alive_tool.build_tools.assert_awaited_once()
+
+
+# =============================================================================
+# Cache identity tests (_agno_run_context channel)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_mcp_cached_results_key_per_user_and_stay_per_run(tmp_path):
+    """MCP entrypoints receive identity via _agno_run_context, so the cache
+    keys per user. The injected object stays in the key material, so an MCP
+    cache entry is scoped to its run: a header provider that reads the agent,
+    the team, or run-context metadata cannot serve one caller's result to
+    another."""
+    from agno.run.base import RunContext
+
+    tool = _make_mcp_tool_mock("get_data")
+    session = _make_session_returning("payload")
+
+    fn = Function(
+        name="get_data",
+        entrypoint=get_entrypoint_for_tool(tool, session),
+        skip_entrypoint_processing=True,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+    )
+
+    fn._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+    await FunctionCall(function=fn).aexecute()
+
+    # A different user must execute again, not be served alice's result
+    fn._run_context = RunContext(run_id="r2", session_id="s2", user_id="bob")
+    await FunctionCall(function=fn).aexecute()
+    assert session.call_tool.await_count == 2
+
+    # A new run executes again: the run's own context is part of the key
+    fn._run_context = RunContext(run_id="r3", session_id="s1", user_id="alice")
+    result = await FunctionCall(function=fn).aexecute()
+    assert session.call_tool.await_count == 3
+    assert result.status == "success"
+
+
+@pytest.mark.asyncio
+async def test_mcp_cached_hit_returns_tool_result(tmp_path):
+    """A cache hit for an MCP tool must return a ToolResult, not the plain
+    dict it was serialized to, so downstream result handling keeps working."""
+    from agno.run.base import RunContext
+
+    tool = _make_mcp_tool_mock("get_data")
+    session = _make_session_returning("payload")
+
+    fn = Function(
+        name="get_data",
+        entrypoint=get_entrypoint_for_tool(tool, session),
+        skip_entrypoint_processing=True,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+    )
+    fn._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+
+    await FunctionCall(function=fn).aexecute()
+    second = await FunctionCall(function=fn).aexecute()
+
+    assert session.call_tool.await_count == 1
+    assert isinstance(second.result, ToolResult)
+    assert second.result.content == "payload"

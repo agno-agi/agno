@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
+from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
@@ -35,6 +36,7 @@ from agno.utils.agent import (
     get_last_run_output_util,
     get_run_output_util,
 )
+from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
@@ -429,6 +431,28 @@ def get_agent_data(agent: Agent) -> Dict[str, Any]:
     return agent_data
 
 
+def _unresolvable_tool_name(entry: Any) -> Optional[str]:
+    """The display name of a tools entry that cannot execute without intervention.
+
+    A rebuilt Function with no entrypoint (and no client-side execution) lost
+    its implementation and needs the registry - or a connected MCP toolkit -
+    to supply one. A dict that is nothing but a name (and provenance) is a
+    bare reference no registry can satisfy (rehydration needs a ``parameters``
+    key), so it needs the component re-saved from code. Any other dict is the
+    provider's to accept or reject and rides through untouched.
+    """
+    if isinstance(entry, Function):
+        if entry.entrypoint is None and not entry.external_execution:
+            return f"{entry.owning_toolkit}.{entry.name}" if entry.owning_toolkit else entry.name
+        return None
+    if isinstance(entry, dict) and entry.get("name") and set(entry.keys()) <= {"name", "description", "toolkit"}:
+        # Positively a reference: nothing but a name (and provenance). Every
+        # provider-native shape carries more - a type, a schema, parameters,
+        # or a provider envelope - and rides through untouched.
+        return str(entry["name"])
+    return None
+
+
 def to_dict(agent: Agent) -> Dict[str, Any]:
     """
     Convert the Agent to a dictionary.
@@ -771,7 +795,9 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     return config
 
 
-def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registry] = None) -> Agent:
+def from_dict(
+    cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False
+) -> Agent:
     """
     Create an agent from a dictionary.
 
@@ -779,11 +805,22 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         cls: The Agent class (or subclass) to instantiate.
         data: Dictionary containing agent configuration
         registry: Optional registry for rehydrating tools and schemas
+        strict: If True, unresolvable registry references (tools,
+            schemas, knowledge) raise ComponentRehydrationError instead of
+            being silently dropped; an unresolvable serialized db config warns
+            and falls back to the caller's db in both modes. Pass False to
+            reconstruct as much as possible, e.g. for listings that must show
+            degraded components.
 
     Returns:
         Agent: Reconstructed agent instance
+
+    Raises:
+        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
     """
     from agno.models.utils import resolve_model
+
+    component_label = f"Agent '{data.get('id') or data.get('name') or '<unknown>'}'"
 
     config = data.copy()
 
@@ -821,10 +858,40 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = registry.rehydrate_functions(config["tools"])
+            rehydrated_tools = registry.rehydrate_functions(config["tools"], strict=strict)
+            unresolved_tools = [
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
+            ]
+            if unresolved_tools and strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} references tools not resolvable from the registry: "
+                    f"{unresolved_tools}. Add missing tools to the registry (and connect MCP "
+                    "toolkits before loading); a bare name-only reference cannot be resolved from "
+                    "a registry and needs the component re-saved from code. Or pass strict=False."
+                )
+            config["tools"] = rehydrated_tools
+        elif strict:
+            # Provider-run dicts and external-execution tools need no registry;
+            # an empty one gives them the same treatment a real one would.
+            rehydrated_tools = Registry().rehydrate_functions(config["tools"], strict=True)
+            unresolved_tools = [
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
+            ]
+            if unresolved_tools:
+                raise ComponentRehydrationError(
+                    f"{component_label} references tools that need a registry to rehydrate: "
+                    f"{unresolved_tools}. Provide a registry, or pass strict=False to load the "
+                    "component without them."
+                )
+            config["tools"] = rehydrated_tools
         else:
-            log_warning("No registry provided, tools will not be rehydrated.")
-            del config["tools"]
+            rehydrated_tools = Registry().rehydrate_functions(config["tools"])
+            unresolved_tools = [
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
+            ]
+            if unresolved_tools:
+                log_warning(f"No registry provided; these tools cannot execute: {unresolved_tools}")
+            config["tools"] = rehydrated_tools
 
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):
@@ -832,6 +899,9 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         if resolved is not None:
             config["db"] = resolved
         else:
+            # Only postgres, sqlite and clickhouse serialize a type; on other
+            # backends the caller's own db is the fallback, in both modes.
+            log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
 
     # --- Handle Schema reconstruction ---
@@ -839,6 +909,12 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         schema_cls = registry.get_schema(config["input_schema"]) if registry else None
         if schema_cls:
             config["input_schema"] = schema_cls
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references input schema '{config['input_schema']}' which was not "
+                "found in the registry. Register the schema, or pass strict=False to load the "
+                "component without it."
+            )
         else:
             log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
             del config["input_schema"]
@@ -847,6 +923,12 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         schema_cls = registry.get_schema(config["output_schema"]) if registry else None
         if schema_cls:
             config["output_schema"] = schema_cls
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references output schema '{config['output_schema']}' which was not "
+                "found in the registry. Register the schema, or pass strict=False to load the "
+                "component without it."
+            )
         else:
             log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
             del config["output_schema"]
@@ -874,9 +956,21 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     # since it holds live db/vector_db connections that cannot be serialized.
     if "knowledge" in config and isinstance(config["knowledge"], dict):
         knowledge_name = config["knowledge"].get("name")
+        if strict and registry and knowledge_name and registry.knowledge_name_is_ambiguous(knowledge_name):
+            raise ComponentRehydrationError(
+                f"{component_label} references knowledge '{knowledge_name}', but two distinct "
+                "knowledge instances share that name, so the reference could bind the wrong "
+                "store. Give the instances distinct names."
+            )
         resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
         if resolved_knowledge is not None:
             config["knowledge"] = resolved_knowledge
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references knowledge '{knowledge_name}' which was not found in "
+                "the registry. Register the knowledge, or pass strict=False to load the component "
+                "without it."
+            )
         else:
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
             del config["knowledge"]
@@ -1085,6 +1179,7 @@ def load(
     registry: Optional[Registry] = None,
     label: Optional[str] = None,
     version: Optional[int] = None,
+    strict: bool = False,
 ) -> Optional[Agent]:
     """
     Load an agent by id.
@@ -1096,6 +1191,8 @@ def load(
         registry: Optional registry for rehydrating tools and schemas.
         label: The label of the agent to load.
         version: The version of the agent to load.
+        strict: If True, unresolvable registry references raise
+            ComponentRehydrationError instead of being silently dropped.
 
     Returns:
         The agent loaded from the database or None if not found.
@@ -1109,12 +1206,14 @@ def load(
     if config is None:
         return None
 
-    agent = cls.from_dict(config, registry=registry)
+    agent = cls.from_dict(config, registry=registry, strict=strict)
     agent.id = id
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names
     # (session_table, memory_table, ...) that were serialized with the agent.
     if agent.db is None:
+        if strict:
+            require_db_fallback_matches(config, db, "agent", id)
         agent.db = db
 
     return agent
