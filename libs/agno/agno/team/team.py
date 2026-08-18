@@ -1565,8 +1565,18 @@ class Team:
         label: Optional[str] = None,
         version: Optional[int] = None,
         strict: bool = False,
+        published_only: bool = False,
     ) -> Optional["Team"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
+        return _storage.load(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            published_only=published_only,
+        )
 
     def delete(
         self,

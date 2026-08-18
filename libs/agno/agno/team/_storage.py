@@ -1533,6 +1533,7 @@ def load(
     label: Optional[str] = None,
     version: Optional[int] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional["Team"]:
     """
     Load a team by id, with hydrated members.
@@ -1548,6 +1549,15 @@ def load(
     Returns:
         The team loaded from the database with hydrated members, or None if not found.
     """
+    if published_only and version is None and label is None:
+        # Dispatch semantics on demand: resolve strictly through the live
+        # pointer instead of the current-or-latest-draft read fallback.
+        component_row = db.get_component(component_id=id)
+        current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+        if current_version is None:
+            return None
+        version = current_version
+
     # Use graph to load team + all members in a single DB call
     graph = db.load_component_graph(id, version=version, label=label)
     if graph is None:

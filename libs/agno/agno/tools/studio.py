@@ -15,6 +15,11 @@ Typical use:
         tools=[StudioTools(registry=registry, db=db)],
     )
 
+Every tool returns a StudioResult envelope EXCEPT run_agent/run_team/
+run_workflow and the mounted schedule-management tools, which return the
+runner's and scheduler's flat payloads (documented on each tool) - a run
+result is the component's output, not a control-plane response.
+
 Lifecycle:
     * create_* writes version 1 as a DRAFT unless publish=True. Drafts are
       readable, editable, and previewable (run_*(version=)), but never serve
@@ -734,6 +739,8 @@ class StudioTools(Toolkit):
         code = self._TYPED_ERROR_CODES.get(type(exc).__name__)
         if code is not None:
             return error_result(code, str(exc), retryable=(code == "version_conflict"))  # type: ignore[arg-type]
+        if isinstance(exc, AmbiguousComponentNameError):
+            return error_result("ambiguous_reference", str(exc), candidates=exc.matches)
         if isinstance(exc, NotImplementedError):
             # An adapter without the component catalog (e.g. Mongo): an honest
             # capability answer, not an internal error.
@@ -904,6 +911,7 @@ class StudioTools(Toolkit):
                     f"A {component_type} named '{name}' already exists as '{existing_by_name}'. "
                     "Edit it, or pass an explicit component_id to create a separate component.",
                     existing_component_id=existing_by_name,
+                    reason="name",
                 )
         if self._component_id_exists(candidate, self.db):
             return None, error_result(
@@ -911,6 +919,7 @@ class StudioTools(Toolkit):
                 f"Component id '{candidate}' is taken. Edit the existing component, or pass a "
                 "different explicit component_id.",
                 existing_component_id=candidate,
+                reason="id",
             )
         return candidate, None
 
@@ -999,6 +1008,54 @@ class StudioTools(Toolkit):
             return None, None, error_result("component_not_found", f"Component not found: {identifier}")
         return row, resolved_id, None
 
+    @classmethod
+    def _step_config_to_spec(cls, step: Dict[str, Any]) -> Dict[str, Any]:
+        """A stored step config rendered in the WorkflowStepSpec shape, nested
+        steps included, so what get_component shows is exactly what a steps
+        edit accepts back. Unknown keys are dropped; unknown types pass
+        through with their name so nothing is silently invisible."""
+        step_type = str(step.get("type", "Step")).lower()
+        spec: Dict[str, Any] = {"type": step_type if step_type != "step" else "step"}
+        if step.get("name"):
+            spec["name"] = step.get("name")
+        if step.get("description"):
+            spec["description"] = step.get("description")
+        for key in ("agent_id", "team_id", "function_name"):
+            if step.get(key):
+                spec[key] = step[key]
+        # Serialized executors may live under nested objects rather than flat ids.
+        agent = step.get("agent")
+        if isinstance(agent, dict) and agent.get("agent_id" if "agent_id" in agent else "id"):
+            spec.setdefault("agent_id", agent.get("agent_id") or agent.get("id"))
+        team = step.get("team")
+        if isinstance(team, dict) and (team.get("team_id") or team.get("id")):
+            spec.setdefault("team_id", team.get("team_id") or team.get("id"))
+        executor = step.get("executor")
+        if isinstance(executor, str) and executor:
+            spec.setdefault("function_name", executor)
+        for list_key in ("steps", "else_steps", "choices"):
+            children = step.get(list_key)
+            if isinstance(children, list) and children:
+                spec[list_key] = [cls._step_config_to_spec(child) for child in children if isinstance(child, dict)]
+        for scalar in (
+            "max_iterations",
+            "end_condition",
+            "end_condition_function",
+            "evaluator",
+            "evaluator_function",
+            "selector",
+            "selector_function",
+        ):
+            value = step.get(scalar)
+            if isinstance(value, (str, int)) and value != "":
+                out_key = {
+                    "end_condition": "end_condition_function",
+                    "evaluator": "evaluator_function",
+                    "selector": "selector_function",
+                }.get(scalar, scalar)
+                spec.setdefault(out_key, value)
+        return spec
+
     def _curated_config_view(self, component_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
         """The stored config, curated for the model: exact stored references,
         no raw blobs. Reads the raw dict so the view never widens a function
@@ -1067,11 +1124,9 @@ class StudioTools(Toolkit):
             view["member_ids"] = [m for m in members if m]
             view["mode"] = config.get("mode")
         if component_type == "workflow":
-            steps = []
-            for step in config.get("steps") or []:
-                if isinstance(step, dict):
-                    steps.append({"type": step.get("type", "Step"), "name": step.get("name")})
-            view["steps"] = steps
+            view["steps"] = [
+                self._step_config_to_spec(step) for step in config.get("steps") or [] if isinstance(step, dict)
+            ]
         metadata = config.get("metadata")
         if isinstance(metadata, dict):
             view["metadata"] = {k: v for k, v in metadata.items() if k != "studio"}
@@ -1109,7 +1164,11 @@ class StudioTools(Toolkit):
                 functions = [
                     {
                         "name": fname,
-                        "description": getattr(fn, "description", None),
+                        # Function.description is only set by entrypoint
+                        # processing; before that, the docstring is the truth.
+                        "description": getattr(fn, "description", None)
+                        or (inspect.getdoc(getattr(fn, "entrypoint", None)) or "").split("\n")[0]
+                        or None,
                         "mutating": getattr(fn, "mutating", None),
                     }
                     for fname, fn in tool.functions.items()
@@ -2679,6 +2738,23 @@ class StudioTools(Toolkit):
     # Run (data plane; preview via explicit version)
     # ------------------------------------------------------------------
 
+    def _pin_allowed(
+        self, component_id: Optional[str], version: Optional[int], row: Optional[Dict[str, Any]], actor: Optional[str]
+    ) -> bool:
+        """Whether a scoped actor may run this exact version. Published pins
+        were always reachable, so any caller who can see the component may
+        pin one - matching the REST preview gate. A draft pin is a
+        control-plane preview and stays owner-only."""
+        if actor is None or component_id is None:
+            return True
+        try:
+            config_row = self.db.get_config(component_id=component_id, version=version) if self.db else None
+        except NotImplementedError:
+            config_row = None
+        if isinstance(config_row, dict) and config_row.get("stage") == "published":
+            return True
+        return (row or {}).get("user_id") == actor
+
     def _run_component(
         self,
         component_type: str,
@@ -2700,7 +2776,7 @@ class StudioTools(Toolkit):
         if err is not None:
             return err
         actor = _actor_id(run_context)
-        if actor is not None and (row or {}).get("user_id") != actor:
+        if not self._pin_allowed(resolved_id, version, row, actor):
             return error_result("component_not_found", f"Component not found: {identifier}")
         loaders = {
             "agent": self._runner_tools._load_agent_from_db,
@@ -2751,7 +2827,7 @@ class StudioTools(Toolkit):
         if err is not None:
             return err
         actor = _actor_id(run_context)
-        if actor is not None and (row or {}).get("user_id") != actor:
+        if not await asyncio.to_thread(self._pin_allowed, resolved_id, version, row, actor):
             return error_result("component_not_found", f"Component not found: {identifier}")
         loaders = {
             "agent": self._runner_tools._load_agent_from_db,
@@ -3334,14 +3410,27 @@ class StudioTools(Toolkit):
                 enabled=schedule.enabled,
                 next_run_at=schedule.next_run_at,
                 runs_as=actor or "the platform (unowned schedule)",
+                target={
+                    "id": component_id,
+                    "type": target_type,
+                    "name": (row or {}).get("name") if isinstance(row, dict) else None,
+                    "source": "db" if isinstance(row, dict) else "code",
+                },
             )
         except ValueError as e:
             if "already exists" in str(e):
+                existing_id = None
+                try:
+                    existing = manager._to_schedule(manager._call("get_schedule_by_name", name, user_id=actor))
+                    existing_id = getattr(existing, "id", None)
+                except Exception:
+                    pass
                 return error_result(
                     "schedule_conflict",
                     f"A schedule named '{name}' already exists. Change its cadence or message with "
                     "update_schedule, or pick a new name.",
                     name=name,
+                    existing_schedule_id=existing_id,
                 )
             return self._error_from_exception(e, "Failed to create schedule")
         except Exception as e:

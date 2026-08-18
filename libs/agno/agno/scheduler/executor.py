@@ -327,7 +327,12 @@ class ScheduleExecutor:
         client = await self._get_client()
 
         if is_run_endpoint and match is not None:
-            form_payload = {k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background")}
+            # "version" is stripped: schedules always fire the live published
+            # version, so a payload-smuggled pin must not turn a schedule into
+            # a draft-preview channel.
+            form_payload = {
+                k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background", "version")
+            }
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
 

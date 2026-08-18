@@ -61,9 +61,17 @@ class SchedulerConsole:
         from rich.table import Table
 
         console = Console()
-        schedules = self.manager.list(enabled=enabled)
-        if user_id is not None:
-            schedules = [s for s in schedules if s.user_id == user_id]
+        # The owner filter is pushed down; pages are walked to the end so a
+        # row beyond the first page is never silently missing from an
+        # operator view.
+        schedules = []
+        page = 1
+        while True:
+            batch = self.manager.list(enabled=enabled, user_id=user_id, limit=100, page=page)
+            schedules.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
         if managed_by is not None:
             schedules = [s for s in schedules if s.managed_by == managed_by]
 

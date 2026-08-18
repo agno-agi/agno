@@ -1313,6 +1313,7 @@ def load(
     label: Optional[str] = None,
     version: Optional[int] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional[Agent]:
     """
     Load an agent by id.
@@ -1330,6 +1331,15 @@ def load(
     Returns:
         The agent loaded from the database or None if not found.
     """
+
+    if published_only and version is None and label is None:
+        # Dispatch semantics on demand: resolve strictly through the live
+        # pointer instead of the current-or-latest-draft read fallback.
+        component_row = db.get_component(component_id=id)
+        current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+        if current_version is None:
+            return None
+        version = current_version
 
     data = db.get_config(component_id=id, label=label, version=version)
     if data is None:

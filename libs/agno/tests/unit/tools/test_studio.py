@@ -1046,13 +1046,24 @@ class TestCompoundWorkflowSteps:
         assert data["steps"] == ["s1", "par", "lp", "cond", "rt"]
 
         view = _data(studio_compound.get_component("compound"))
-        assert view["steps"] == [
-            {"type": "Step", "name": "s1"},
-            {"type": "Parallel", "name": "par"},
-            {"type": "Loop", "name": "lp"},
-            {"type": "Condition", "name": "cond"},
-            {"type": "Router", "name": "rt"},
+        # The view is the full WorkflowStepSpec tree, so a read can feed a
+        # steps edit: executors and nested children included, not just labels.
+        steps_view = view["steps"]
+        assert [(st["type"], st["name"]) for st in steps_view] == [
+            ("step", "s1"),
+            ("parallel", "par"),
+            ("loop", "lp"),
+            ("condition", "cond"),
+            ("router", "rt"),
         ]
+        assert steps_view[0]["agent_id"] == "w"
+        assert steps_view[1]["steps"][0]["agent_id"] == "w"
+        assert steps_view[2]["max_iterations"] == 2
+        assert steps_view[2]["steps"][0]["type"] == "step"
+        assert steps_view[3]["evaluator_function"]
+        assert steps_view[3]["steps"], steps_view[3]
+        assert steps_view[4]["selector_function"]
+        assert steps_view[4]["choices"][0]["agent_id"] == "w"
         assert _data(studio_compound.validate_component("compound"))["valid"] is True
 
     def test_condition_accepts_a_cel_expression(self, studio_compound):
