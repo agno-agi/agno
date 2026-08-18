@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from functools import wraps
-from inspect import iscoroutinefunction, signature
+from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, cast, get_type_hints
 
@@ -32,64 +32,39 @@ from agno.utils.string import generate_id_from_name
 # then calls the original __init__ with the transformed kwargs.
 
 
-def _remap_legacy_kwargs(
-    cls: type,
-    valid_params: frozenset,
-    kwargs: Dict[str, Any],
-) -> Dict[str, Any]:
+def _remap_legacy_kwargs(cls: type, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Transform 2.x constructor kwargs to their 3.0 equivalents.
 
+    Only touches params that start with "enable_" or are in _legacy_param_aliases.
+    Everything else (timeout, api_key, etc.) passes through untouched.
+
     Example:
-        Input:  {"enable_search": True, "enable_news": False, "timeout": 30}
-        Output: {"search_web": True, "search_news": False, "timeout": 30}
-
-    The function iterates kwargs and for each legacy key (enable_*, all, or
-    in _legacy_param_aliases):
-    1. Looks up the new name (from aliases, or by stripping "enable_")
-    2. If the new name is a valid param and wasn't explicitly passed, remaps it
-    3. If the new name was also passed, keeps the new (explicit beats legacy)
-    4. Logs a deprecation warning either way
-
-    Args:
-        cls: The toolkit class (used for warning messages and reading aliases)
-        valid_params: Parameter names that the toolkit's __init__ accepts
-        kwargs: The kwargs dict to transform (not modified; returns a copy)
+        Input:  {"enable_search": True, "timeout": 30}
+        Output: {"search_web": True, "timeout": 30}
     """
     aliases: Dict[str, Optional[str]] = getattr(cls, "_legacy_param_aliases", {})
     result = dict(kwargs)
 
     for key in list(result.keys()):
-        # 1. Skip params that are already valid 3.0 names (e.g. "timeout")
-        if key in valid_params:
-            continue
-
-        # 2. Skip params that aren't legacy patterns we recognize
-        if not (key.startswith("enable_") or key in aliases):
-            continue
-
-        # 3. Determine the new param name
+        # Determine if this is a legacy param and what it maps to
         if key in aliases:
             target = aliases[key]
             if target is None:
-                # None means the subclass handles this kwarg in its own __init__
+                # Explicitly removed, no replacement
                 continue
-        else:
-            # Default: strip "enable_" prefix (enable_send_message → send_message)
+        elif key.startswith("enable_"):
             target = key.removeprefix("enable_")
-
-        # 4. Perform the remap
-        value = result.pop(key)
-        if target not in valid_params:
-            # The target param doesn't exist — this legacy flag was removed entirely
-            log_warning(f"`{key}` is no longer supported by {cls.__name__}.")
-        elif target in result:
-            # User passed both old and new names — keep new, warn about old
-            log_warning(
-                f"Both `{key}` and `{target}` passed to {cls.__name__}; using `{target}`. `{key}` is deprecated."
-            )
         else:
-            # Normal case: remap old name to new name
-            log_warning(f"`{key}` is deprecated for {cls.__name__}; use `{target}`.")
+            # Not a legacy param, leave it alone
+            continue
+
+        # Remap the value
+        value = result.pop(key)
+        if target in result:
+            # User passed both old and new — new wins
+            log_warning(f"Both `{key}` and `{target}` passed; using `{target}`.")
+        else:
+            log_warning(f"`{key}` is deprecated; use `{target}`.")
             result[target] = value
 
     return result
@@ -102,12 +77,10 @@ def _wrap_init_for_legacy_support(cls: type, original_init: Callable) -> Callabl
     The wrapper intercepts kwargs before Python binds them to the function
     signature, transforms legacy names, then calls the original __init__.
     """
-    # Compute valid param names once at class definition time, not per-call
-    valid_params = frozenset(signature(original_init).parameters)
 
     @wraps(original_init)
     def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
-        kwargs = _remap_legacy_kwargs(cls, valid_params, kwargs)
+        kwargs = _remap_legacy_kwargs(cls, kwargs)
         original_init(self, *args, **kwargs)
 
     return wrapped_init
