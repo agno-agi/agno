@@ -1391,9 +1391,10 @@ class StudioTools(Toolkit):
             ("workflow", self._iter_workflows),
         ):
             for component in iterator():
-                if getattr(component, "id", None) == component_id or (
-                    getattr(component, "id", None) is None and getattr(component, "name", None) == component_id
-                ):
+                # A code-defined component resolves by exact id OR exact display
+                # name - the display name works even when the component has an
+                # id, matching _is_code_defined and the runner's name tier.
+                if getattr(component, "id", None) == component_id or getattr(component, "name", None) == component_id:
                     view = self._curated_config_view(type_name, _component_to_dict(component))
                     return ok_result(
                         "read",
