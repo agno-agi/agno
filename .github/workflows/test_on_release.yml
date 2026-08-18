@@ -682,7 +682,6 @@ jobs:
           ./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
           ./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
           ./libs/agno/tests/integration/agent/test_session.py \
-          ./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
           ./libs/agno/tests/integration/agent/test_introduction.py \
           ./libs/agno/tests/integration/agent/test_followups.py \
           ./libs/agno/tests/integration/agent/test_tool_hooks.py \
@@ -728,7 +727,6 @@ jobs:
           --ignore=./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
           --ignore=./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
           --ignore=./libs/agno/tests/integration/agent/test_session.py \
-          --ignore=./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
           --ignore=./libs/agno/tests/integration/agent/test_introduction.py
 
   test-teams-1:
@@ -809,7 +807,6 @@ jobs:
           ./libs/agno/tests/integration/teams/test_session_state.py \
           ./libs/agno/tests/integration/teams/test_storage_and_memory.py \
           ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_tool_hitl.py \
-          ./libs/agno/tests/integration/teams/test_reasoning_content_default_COT.py \
           ./libs/agno/tests/integration/teams/test_filter_tool_calls.py \
           ./libs/agno/tests/integration/teams/test_multimodal.py
 
