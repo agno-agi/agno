@@ -23,10 +23,28 @@ agno adds two things on top of the provider:
   outside authentication where no verified token exists yet.
 """
 
+import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agno.os.middleware.jwt import is_reserved_principal as _is_reserved_principal
 from agno.utils.log import log_warning
+
+
+async def _send_http_forbidden(send: Any, detail: str) -> None:
+    """Send a terminal 403 ASGI response. Used when the bridge must DENY a request
+    outright (a disabled user), rather than pass it through unauthenticated and rely on
+    a downstream tool gate -- custom MCP tools carry no scope gate, so a pass-through
+    would run them with user_id=None instead of denying."""
+    body = json.dumps({"detail": detail}).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 403,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
 
 try:
     from fastmcp.server.auth import AccessToken, AuthProvider, MultiAuth, TokenVerifier
@@ -158,10 +176,28 @@ class MCPIdentityBridgeMiddleware:
     challenge on the MCP path) pass through untouched.
     """
 
-    def __init__(self, app: Any, admin_scope: Optional[str] = None, user_isolation: bool = False) -> None:
+    def __init__(
+        self,
+        app: Any,
+        admin_scope: Optional[str] = None,
+        user_isolation: bool = False,
+        user_store: Any = None,
+        user_auto_provision: bool = False,
+        user_email_claim: str = "email",
+        user_name_claim: str = "name",
+        user_directory_fail_closed: bool = False,
+    ) -> None:
         self.app = app
         self.admin_scope = admin_scope
         self.user_isolation = user_isolation
+        # User directory (no-IdP). mcp_auth exempts /mcp from the parent AuthMiddleware,
+        # so the disabled-user kill-switch that lives there does not run for OAuth'd MCP
+        # traffic unless the bridge re-applies it. Carry the store + policy here.
+        self.user_store = user_store
+        self.user_auto_provision = user_auto_provision
+        self.user_email_claim = user_email_claim
+        self.user_name_claim = user_name_claim
+        self.user_directory_fail_closed = user_directory_fail_closed
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "http":
@@ -189,6 +225,36 @@ class MCPIdentityBridgeMiddleware:
                     log_warning(f"MCP token claims a reserved principal {user_id!r}; refusing to bridge its identity")
                     await self.app(scope, receive, send)
                     return
+                # User directory kill-switch: a disabled user is denied even with a valid
+                # OAuth token. This mirrors the parent AuthMiddleware's gate, which mcp_auth
+                # bypasses (the /mcp mount is exempt from it). Service-account principals
+                # (sa:) are not directory users and are skipped. If the check errors, honour
+                # user_directory_fail_closed. On denial we simply do NOT bridge the identity,
+                # leaving request.state.authenticated unset so the fail-closed tool gate
+                # rejects the call -- same shape as the reserved-principal path above.
+                if self.user_store is not None and user_id and service_account_name is None:
+                    try:
+                        if self.user_auto_provision:
+                            self.user_store.provision_from_claims(
+                                user_id,
+                                claims,
+                                email_claim=self.user_email_claim,
+                                name_claim=self.user_name_claim,
+                            )
+                        disabled = self.user_store.is_disabled(user_id)
+                    except Exception as e:  # directory unreachable: honour the configured policy
+                        disabled = self.user_directory_fail_closed
+                        log_warning(
+                            f"MCP user directory check failed for {user_id!r}: {e} "
+                            f"(failing {'closed' if self.user_directory_fail_closed else 'open'})"
+                        )
+                    if disabled:
+                        # Terminal 403 -- do NOT pass through. A disabled user is revoked;
+                        # passing the request on (unauthenticated) would still reach a custom
+                        # MCP tool, which carries no scope gate, and run it with user_id=None.
+                        log_warning(f"Disabled user denied on MCP endpoint: {user_id!r}")
+                        await _send_http_forbidden(send, "User is disabled")
+                        return
                 # request.state is backed by scope["state"]; the mounted sub-app and the
                 # parent share it, so the tools read these exactly as they do under the
                 # parent AuthMiddleware.
@@ -292,6 +358,10 @@ def _build_jwt_token_verifier(os: "AgentOS") -> Optional[JWTBearerTokenVerifier]
         verification_keys=kwargs["verification_keys"],
         jwks_file=kwargs["jwks_file"],
         algorithm=kwargs["algorithm"],
+        # Thread the issuer pin: without it a token from an untrusted issuer that REST
+        # rejects would still verify on /mcp (the audience is threaded, but issuer was
+        # dropped), so a multi-issuer deployment's pin did not hold on the MCP transport.
+        issuer=kwargs.get("issuer"),
     )
     return JWTBearerTokenVerifier(
         validator,

@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+from agno.os.authz.provider import AuthorizationProvider
 from agno.os.middleware.user_scope import (
     apply_scope_to_kwargs,
     enforce_owner_on_entity,
@@ -44,6 +45,10 @@ def _make_request(
     """
     request = MagicMock()
     request.state = MagicMock()
+    # Represent the default (scope-based) deployment: no provider seeded means the
+    # resolver returns the default ScopeAuthorizationProvider, so a token's admin scope
+    # is authoritative. Tests for a managed-roles/ReBAC plane set a provider explicitly.
+    request.app.state.authorization_provider = None
     request.state.user_isolation_enabled = user_isolation_enabled
     if user_id is not None:
         request.state.user_id = user_id
@@ -83,6 +88,29 @@ class TestGetScopedUserId:
         """Admin scope wins regardless of other scopes present."""
         request = _make_request(user_id="admin-user", scopes=["agents:read", "agent_os:admin", "sessions:read"])
         assert get_scoped_user_id(request) is None
+
+    def test_admin_token_scope_does_not_drop_isolation_under_a_non_scope_plane(self):
+        """Under a managed-roles/ReBAC provider the token's `scopes` claim is not the
+        authority, so a raw JWT `agent_os:admin` must NOT read across users -- it
+        self-scopes like any other identity. A service-account/PAT (always
+        scope-enforced) is the documented exception and still drops isolation."""
+
+        class _NonScopeProvider(AuthorizationProvider):
+            def check(self, ctx):
+                return False
+
+            def accessible_resource_ids(self, ctx):
+                return set()
+
+        request = _make_request(user_id="admin-user", scopes=["agent_os:admin"], user_isolation_enabled=True)
+        request.app.state.authorization_provider = _NonScopeProvider()
+        # raw JWT admin scope is inert under this plane -> self-scopes to its own id
+        assert get_scoped_user_id(request) == "admin-user"
+
+        # a service-account/PAT admin still reads across users (scope-enforced regardless)
+        sa_request = _make_request(user_id="sa:bot", scopes=["agent_os:admin"], user_isolation_enabled=True)
+        sa_request.app.state.authorization_provider = _NonScopeProvider()
+        assert get_scoped_user_id(sa_request) is None
 
     def test_no_user_id_fails_closed(self):
         """An identity-less caller under isolation is denied, not left unscoped."""

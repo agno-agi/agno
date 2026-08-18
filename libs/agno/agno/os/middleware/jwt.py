@@ -6,7 +6,7 @@ import json
 import re
 from enum import Enum
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Union
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -15,9 +15,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
-    check_route_scopes,
+    RouteScopeCheck,
     get_default_scope_mappings,
     get_required_scopes_for_route,
+    get_resource_context_from_path,
     has_required_scopes,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
@@ -84,6 +85,20 @@ def resolve_expected_audience(
     return audience or os_id
 
 
+def _route_action(required_scopes: List[str]) -> Optional[str]:
+    """The single action a route requires (``read`` / ``run`` / ``write`` / ...),
+    or None when the route's required scopes span more than one action.
+
+    Only used to populate ``AuthorizationContext.action`` for providers that decide
+    per-resource (managed roles). The default scope provider's ``authorize_route``
+    ignores ``ctx.action`` and matches against ``required_scopes`` directly, so this
+    can never change the default decision. A resource route in the shipped mappings
+    requires exactly one scope, hence one action; returning None for the ambiguous
+    case makes ``EngineAuthorizationProvider`` fall back to AND-ing every scope."""
+    actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+    return next(iter(actions)) if len(actions) == 1 else None
+
+
 class TokenSource(str, Enum):
     """Enum for JWT token source options."""
 
@@ -133,6 +148,8 @@ class JWTValidator:
         user_id_claim: str = "sub",
         session_id_claim: str = "session_id",
         audience_claim: str = "aud",
+        issuer: Optional[str] = None,
+        issuer_claim: str = "iss",
         leeway: int = 10,
     ):
         """
@@ -149,6 +166,10 @@ class JWTValidator:
             user_id_claim: JWT claim name for user ID (default: "sub").
             session_id_claim: JWT claim name for session ID (default: "session_id").
             audience_claim: JWT claim name for audience (default: "aud").
+            issuer: Expected token issuer. When set, a token whose issuer claim does
+                    not match exactly is rejected. Pin this whenever more than one
+                    IdP can mint tokens your keys verify.
+            issuer_claim: JWT claim name for issuer (default: "iss").
             leeway: Seconds of leeway for clock skew tolerance (default: 10).
         """
         self.algorithm = algorithm
@@ -157,6 +178,8 @@ class JWTValidator:
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
+        self.issuer = issuer
+        self.issuer_claim = issuer_claim
         self.leeway = leeway
 
         # Build list of verification keys
@@ -346,6 +369,21 @@ class JWTValidator:
                     f"Invalid audience. Expected one of: {expected_audiences}, got: {token_audiences}"
                 )
 
+        # Verify the issuer when one is pinned. Signature validity alone does not say
+        # WHO minted the token: a deployment that trusts several keys (multi-IdP, or a
+        # JWKS with more than one signer) will happily verify a token from any of them,
+        # so a caller who can obtain a token from a second trusted issuer could otherwise
+        # present it here. Pinning makes that a hard rejection.
+        if self.issuer:
+            token_issuer = payload.get(self.issuer_claim)
+            if token_issuer is None:
+                raise jwt.InvalidTokenError(
+                    f'Token is missing the "{self.issuer_claim}" claim. '
+                    f"Issuer verification requires this claim to be present in the token."
+                )
+            if token_issuer != self.issuer:
+                raise jwt.InvalidIssuerError(f"Invalid issuer. Expected: {self.issuer}, got: {token_issuer}")
+
         return payload
 
     def extract_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -411,6 +449,7 @@ def build_jwt_middleware_kwargs(
     jwks_file = None
     verify_audience = False
     audience = None
+    issuer = None
     admin_scope: Optional[str] = None
     user_isolation = False
 
@@ -420,6 +459,7 @@ def build_jwt_middleware_kwargs(
         jwks_file = authorization_config.jwks_file
         verify_audience = authorization_config.verify_audience or False
         audience = authorization_config.audience
+        issuer = authorization_config.issuer
         admin_scope = authorization_config.admin_scope
         user_isolation = authorization_config.user_isolation
 
@@ -433,6 +473,8 @@ def build_jwt_middleware_kwargs(
     }
     if audience:
         kwargs["audience"] = audience
+    if issuer:
+        kwargs["issuer"] = issuer
     if admin_scope:
         kwargs["admin_scope"] = admin_scope
     if user_isolation:
@@ -544,6 +586,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         audience_claim: str = "aud",
         audience: Optional[Union[str, Iterable[str]]] = None,
         verify_audience: bool = False,
+        issuer: Optional[str] = None,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
         scope_mappings: Optional[Dict[str, List[str]]] = None,
@@ -641,6 +684,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 user_id_claim=user_id_claim,
                 session_id_claim=session_id_claim,
                 audience_claim=audience_claim,
+                issuer=issuer,
             )
             if self._jwt_configured
             else None
@@ -657,6 +701,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
         self.verify_audience = verify_audience
+        self.issuer = issuer
         self.dependencies_claims: List[str] = dependencies_claims or []
         self.session_state_claims: List[str] = session_state_claims or []
 
@@ -788,6 +833,135 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         return get_required_scopes_for_route(self.scope_mappings, method, path)
 
+    def _authorize_route(
+        self,
+        request: Request,
+        scopes: List[str],
+        mappings: Dict[str, List[str]],
+        method: str,
+        path: str,
+    ) -> "RouteScopeCheck":
+        """Route-level authorization decision, delegated to the configured provider.
+
+        This is the choke point that used to call ``check_route_scopes`` directly. It
+        preserves that function's structure exactly — the route→scope lookup, the
+        resource-context extraction, and the GET-listing filtered-access escape hatch —
+        but routes the two actual *decisions* (allow? and which resource ids for a
+        listing?) through the resolved :class:`AuthorizationProvider`.
+
+        With no provider configured the resolver returns
+        :class:`ScopeAuthorizationProvider`, whose ``authorize_route`` /
+        ``accessible_resource_ids`` are thin wrappers over ``has_required_scopes`` /
+        ``get_accessible_resource_ids`` — the very functions ``check_route_scopes``
+        called — so the result is byte-identical to v2.7. A managed-role / custom
+        provider enforces its own model at the same point instead.
+        """
+        from agno.os.auth import resolve_authorization_provider
+        from agno.os.authz.provider import AuthorizationContext
+
+        required_scopes = get_required_scopes_for_route(mappings, method, path)
+        if not required_scopes:
+            return RouteScopeCheck(allowed=True, required_scopes=required_scopes)
+
+        resource_type, resource_id = get_resource_context_from_path(path)
+
+        provider = resolve_authorization_provider(request)
+        ctx = AuthorizationContext(
+            principal_id=getattr(request.state, "user_id", None),
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None) or {},
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=_route_action(required_scopes),
+            admin_scope=self.admin_scope,
+        )
+        allowed = provider.authorize_route(ctx, required_scopes)
+
+        accessible_resource_ids: Optional[Set[str]] = None
+        first_required = required_scopes[0]
+        required_family = first_required.split(":", 1)[0] if ":" in first_required else None
+        if not allowed and method == "GET" and not resource_id and resource_type and required_family == resource_type:
+            # GET-listing escape hatch, identical to check_route_scopes: a caller
+            # without the collection-wide grant is still allowed through, but the
+            # endpoint is told which ids to expose (possibly none) so it returns a
+            # filtered list instead of a 403. The action comes from the required scope
+            # so the provider only surfaces ids the caller is authorised for under it.
+            required_action: Optional[str] = None
+            if ":" in first_required:
+                required_action = first_required.rsplit(":", 1)[1]
+            listing_ctx = AuthorizationContext(
+                principal_id=ctx.principal_id,
+                scopes=scopes,
+                claims=ctx.claims,
+                resource_type=resource_type,
+                resource_id=None,
+                action=required_action,
+                admin_scope=self.admin_scope,
+            )
+            accessible_resource_ids = provider.accessible_resource_ids(listing_ctx)
+            allowed = True
+
+        return RouteScopeCheck(
+            allowed=allowed,
+            required_scopes=required_scopes,
+            accessible_resource_ids=accessible_resource_ids,
+        )
+
+    def _record_decision(
+        self,
+        request: Request,
+        *,
+        allowed: bool,
+        method: str,
+        path: str,
+        principal: Optional[str],
+        required_scopes: List[str],
+        scopes: List[str],
+        reason: Optional[str] = None,
+    ) -> None:
+        """Record one authorization decision to the audit sink, if one is configured
+        on ``app.state.authz_audit`` (seeded from ``AuthorizationConfig(audit=...)``).
+
+        Captures the principal, route, required scopes, the caller's scopes, and a
+        NON-secret token reference (see :meth:`_token_reference`). Never the token
+        itself, and never raises into the request path — audit must not turn a served
+        request into a 500. No-op when no decision sink is configured, so the default
+        (no audit) path is untouched.
+        """
+        from agno.os.authz.audit import record_decision
+
+        record_decision(
+            request,
+            allowed=allowed,
+            target=f"{method} {path}",
+            principal=principal,
+            required_scopes=required_scopes,
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None),
+            token=self._extract_token(request),
+            reason=reason,
+        )
+
+    @staticmethod
+    def _token_reference(token: Optional[str], claims: Optional[dict]) -> Optional[str]:
+        """A non-secret reference to the presented token, for the decision trail.
+
+        Prefer the token's ``jti`` (RFC 7519 JWT ID): an opaque identifier the issuer
+        already minted, so it correlates to the issuer's own logs and any revocation
+        list. When the token has no ``jti``, fall back to a short SHA-256 of the raw
+        token so two distinct tokens are still distinguishable — without ever storing
+        the credential itself.
+        """
+        if claims:
+            jti = claims.get("jti")
+            if jti:
+                return str(jti)
+        if token:
+            import hashlib
+
+            return hashlib.sha256(token.encode()).hexdigest()[:12]
+        return None
+
     def _check_scopes(
         self,
         request: Request,
@@ -809,7 +983,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             An error response when access is denied, None when access is allowed.
         """
         mappings = scope_mappings if scope_mappings is not None else self.scope_mappings
-        result = check_route_scopes(scopes, mappings, method, path, admin_scope=self.admin_scope)
+        result = self._authorize_route(request, scopes, mappings, method, path)
 
         request.state.required_scopes = result.required_scopes
         if result.accessible_resource_ids is not None:
@@ -818,6 +992,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 log_debug(f"Caller has specific resource scopes. Accessible IDs: {result.accessible_resource_ids}")
             else:
                 log_debug("Caller has no matching resource scopes. Will return empty list.")
+
+        # Decision audit: record the allow/deny with a non-secret token reference, if a
+        # sink is configured. Emitted for EVERY authenticated request that reaches this
+        # gate (including allow-by-default routes with no required scopes) so the trail
+        # is complete. No-op when no decision sink is set, so the default path is untouched.
+        self._record_decision(
+            request,
+            allowed=result.allowed,
+            method=method,
+            path=path,
+            principal=getattr(request.state, "user_id", None),
+            required_scopes=result.required_scopes,
+            scopes=scopes,
+            reason=None if result.required_scopes else "no_scopes_required",
+        )
 
         if not result.allowed:
             log_warning(
@@ -899,7 +1088,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return origin in cors_allowed_origins
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        """Process the request: extract JWT, validate, and check RBAC scopes."""
+        """Process the request: extract JWT, validate, and check RBAC scopes.
+
+        The whole request runs inside an authorization request scope, so the several
+        gates that ask the policy store the same question -- the route gate here, the
+        per-resource gate in the endpoint's dependency, and a list endpoint's accessible
+        and denied id lookups -- resolve it once instead of once each. The scope dies
+        with the request, so nothing is cached across requests or replicas.
+        """
+        from agno.os.authz._request_scope import request_scope
+
+        with request_scope():
+            return await self._dispatch(request, call_next)
+
+    async def _dispatch(self, request: Request, call_next) -> Response:
         import jwt
 
         # Ensure the JWT auth config is accessible on app.state for WebSocket
@@ -977,6 +1179,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.session_id = None
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
+            # Trusted internal caller: mark AFTER the constant-time hmac match above so the
+            # provider-backed per-resource gate (check_resource_access) short-circuits — the
+            # scheduler principal has no role/subject in a managed store. The route gate below
+            # still enforces INTERNAL_SERVICE_SCOPES. Unforgeable: request.state is server-only,
+            # no client input maps onto this attribute.
+            request.state.is_internal_service = True
             request.state.authorization_enabled = self.authorization or False
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
@@ -1059,6 +1267,47 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # to None when this is False, so the DB wrapper and route-level
             # ownership gates stay dormant.
             request.state.user_isolation_enabled = self.user_isolation
+
+            # User directory (no-IdP): optionally auto-provision the subject from
+            # token claims, then enforce the disabled flag. This is the revocation
+            # kill-switch — a disabled user is denied even with a valid token, on
+            # EVERY route (independent of per-route scopes). Identity is still the
+            # app's to assert; we only gate it.
+            user_store = getattr(getattr(request.app, "state", None), "user_store", None)
+            if user_store is not None and user_id:
+                try:
+                    if getattr(request.app.state, "user_auto_provision", False):
+                        user_store.provision_from_claims(
+                            user_id,
+                            payload,
+                            email_claim=getattr(request.app.state, "user_email_claim", "email"),
+                            name_claim=getattr(request.app.state, "user_name_claim", "name"),
+                        )
+                    disabled = user_store.is_disabled(user_id)
+                except Exception as e:  # directory unreachable: honour the configured policy
+                    fail_closed = bool(getattr(request.app.state, "user_directory_fail_closed", False))
+                    log_warning(
+                        f"user directory check failed for {user_id!r}: {e} "
+                        f"(failing {'closed' if fail_closed else 'open'})"
+                    )
+                    if fail_closed:
+                        return self._create_error_response(
+                            503, "User directory unavailable", origin, cors_allowed_origins
+                        )
+                    disabled = False
+                if disabled:
+                    log_warning(f"Disabled user denied: {user_id} for {method} {path}")
+                    self._record_decision(
+                        request,
+                        allowed=False,
+                        method=method,
+                        path=path,
+                        principal=user_id,
+                        required_scopes=[],
+                        scopes=scopes,
+                        reason="user_disabled",
+                    )
+                    return self._create_error_response(403, "User is disabled", origin, cors_allowed_origins)
 
             # Extract dependencies claims
             dependencies = {}

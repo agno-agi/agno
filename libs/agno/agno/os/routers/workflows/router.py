@@ -33,6 +33,7 @@ from agno.os.auth import (
     INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
+    require_approval_resolved,
     require_resource_access,
 )
 from agno.os.event_streams import get_event_stream
@@ -1912,7 +1913,14 @@ def get_workflow_router(
                 "description": "Run is not paused. Only PAUSED runs can be continued.",
             },
         },
-        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
+        dependencies=[
+            Depends(require_resource_access("workflows", "run", "workflow_id")),
+            # Same admin-approval gate agents and teams (and the MCP continue_run tool)
+            # enforce: a run paused on an admin-required approval must not be continued by
+            # its own initiator on `workflows:run` alone -- only a holder of approvals:write
+            # may resolve it. Without this the initiator could self-approve over REST.
+            Depends(require_approval_resolved(os.db)),
+        ],
     )
     async def continue_workflow_run(
         workflow_id: str,
