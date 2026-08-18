@@ -9,10 +9,13 @@ import pytest
 
 from agno.tools.finance import (
     ALL_CAPABILITIES,
+    AnalystRecommendations,
+    CompanyProfile,
     FinanceProvider,
     FinanceProviderError,
     FinanceTools,
-    FinancialDatasetsProvider,
+    FinancialDatasets,
+    KeyMetrics,
     NewsItem,
     NotSupportedError,
     PriceBar,
@@ -105,7 +108,7 @@ def test_registers_only_supported_tools_sync_and_async():
 
 
 def test_default_toggles_register_core_tools_only():
-    tools = FinanceTools(provider=FinancialDatasetsProvider(api_key="k"))
+    tools = FinanceTools(provider=FinancialDatasets(api_key="k"))
 
     # financial_datasets lacks search_symbols / get_analyst_recommendations; long-tail tools are off by default
     assert list(tools.functions) == [
@@ -118,7 +121,7 @@ def test_default_toggles_register_core_tools_only():
 
 
 def test_all_flag_registers_long_tail_tools():
-    tools = FinanceTools(provider=FinancialDatasetsProvider(api_key="k"), all=True)
+    tools = FinanceTools(provider=FinancialDatasets(api_key="k"), all=True)
 
     assert list(tools.functions) == [
         "get_quote",
@@ -144,17 +147,17 @@ def test_toggle_off_removes_tool_and_include_tools_still_works():
 
 
 def test_include_tools_enables_off_by_default_tools():
-    tools = FinanceTools(provider=FinancialDatasetsProvider(api_key="k"), include_tools=["get_quote", "get_financials"])
+    tools = FinanceTools(provider=FinancialDatasets(api_key="k"), include_tools=["get_quote", "get_financials"])
     assert list(tools.functions) == ["get_quote", "get_financials"]
     assert list(tools.async_functions) == ["get_quote", "get_financials"]
 
     # A tool the provider cannot serve still fails the Toolkit include check with a clear message
     with pytest.raises(ValueError, match="Included tool\\(s\\) not present in the toolkit: search_symbols"):
-        FinanceTools(provider=FinancialDatasetsProvider(api_key="k"), include_tools=["search_symbols"])
+        FinanceTools(provider=FinancialDatasets(api_key="k"), include_tools=["search_symbols"])
 
 
 def test_all_capabilities_are_exactly_the_tool_names():
-    tools = FinanceTools(provider=FinancialDatasetsProvider(api_key="k"), all=True)
+    tools = FinanceTools(provider=FinancialDatasets(api_key="k"), all=True)
     # Every capability name must resolve to a method on the toolkit (sync + async)
     for capability in ALL_CAPABILITIES:
         assert callable(getattr(tools, capability))
@@ -200,7 +203,7 @@ def test_repr_names_provider_and_tools():
 def test_string_provider_resolves_via_registry_and_forwards_timeout():
     tools = FinanceTools(provider="financial_datasets", timeout=7, all=True)
 
-    assert isinstance(tools.provider, FinancialDatasetsProvider)
+    assert isinstance(tools.provider, FinancialDatasets)
     assert tools.provider.timeout == 7
     assert "financial_datasets" in registered_providers()
     assert "yfinance" in registered_providers()
@@ -231,7 +234,7 @@ def test_none_provider_falls_back_to_financial_datasets_when_key_set():
     with patch("agno.tools.finance.toolkit._yfinance_importable", return_value=False):
         with patch.dict("os.environ", {"FINANCIAL_DATASETS_API_KEY": "k"}):
             tools = FinanceTools()
-    assert isinstance(tools.provider, FinancialDatasetsProvider)
+    assert isinstance(tools.provider, FinancialDatasets)
 
 
 def test_none_provider_without_any_option_raises_helpful_import_error():
@@ -372,7 +375,7 @@ def test_enum_params_validated_before_provider_call():
 
 
 def test_financials_enum_validation():
-    tools = FinanceTools(provider=FinancialDatasetsProvider(api_key="k"), all=True)
+    tools = FinanceTools(provider=FinancialDatasets(api_key="k"), all=True)
 
     assert json.loads(tools.get_financials("NVDA", statement="revenue"))["error"].startswith("statement must be one of")
     assert json.loads(tools.get_financials("NVDA", period="monthly"))["error"].startswith("period must be one of")
@@ -416,7 +419,7 @@ async def test_async_error_envelope_and_validation():
 
 @pytest.mark.asyncio
 async def test_registered_async_functions_share_schema_with_sync():
-    tools = FinanceTools(provider=FinancialDatasetsProvider(api_key="k"), all=True)
+    tools = FinanceTools(provider=FinancialDatasets(api_key="k"), all=True)
     for name, sync_fn in tools.get_functions().items():
         async_fn = tools.get_async_functions()[name]
         sync_fn.process_entrypoint()
@@ -443,3 +446,182 @@ def test_clean_helper_handles_numpy_like_scalars_and_timestamps():
         "f": [1.2346],
     }
     assert math.isnan(float("nan"))  # sanity: NaN dropped path exercised above via provider
+
+
+# ---------------------------------------------------------------------------
+# Every tool, sync and async, reaches the provider with normalized kwargs
+# ---------------------------------------------------------------------------
+
+
+class RecordingProvider(FinanceProvider):
+    """Serves every capability; records (method, kwargs) so dispatch can be asserted."""
+
+    id = "rec"
+    name = "Recording"
+    capabilities = ALL_CAPABILITIES
+
+    def __init__(self):
+        self.calls: List[tuple] = []
+
+    def _rec(self, name, **kwargs):
+        self.calls.append((name, kwargs))
+
+    def search_symbols(self, query, limit=5):
+        self._rec("search_symbols", query=query, limit=limit)
+        return []
+
+    def get_quote(self, symbol):
+        self._rec("get_quote", symbol=symbol)
+        return Quote(symbol=symbol, price=1.0)
+
+    def get_price_history(self, symbol, period="1mo", interval="1d"):
+        self._rec("get_price_history", symbol=symbol, period=period, interval=interval)
+        return PriceHistory(symbol=symbol, period=period, interval=interval)
+
+    def get_company_profile(self, symbol):
+        self._rec("get_company_profile", symbol=symbol)
+        return CompanyProfile(symbol=symbol, name="X")
+
+    def get_key_metrics(self, symbol):
+        self._rec("get_key_metrics", symbol=symbol)
+        return KeyMetrics(symbol=symbol, pe_ratio=2.0)
+
+    def get_financials(self, symbol, statement="income", period="annual", limit=4):
+        self._rec("get_financials", symbol=symbol, statement=statement, period=period, limit=limit)
+        return []
+
+    def get_news(self, symbol, limit=10):
+        self._rec("get_news", symbol=symbol, limit=limit)
+        return []
+
+    def get_analyst_recommendations(self, symbol):
+        self._rec("get_analyst_recommendations", symbol=symbol)
+        return AnalystRecommendations(symbol=symbol, consensus="buy")
+
+    def get_insider_trades(self, symbol, limit=20):
+        self._rec("get_insider_trades", symbol=symbol, limit=limit)
+        return []
+
+    def get_earnings(self, symbol, limit=8):
+        self._rec("get_earnings", symbol=symbol, limit=limit)
+        return []
+
+    def get_sec_filings(self, symbol, form_type=None, limit=10):
+        self._rec("get_sec_filings", symbol=symbol, form_type=form_type, limit=limit)
+        return []
+
+
+DISPATCH_CASES = [
+    ("search_symbols", {"query": " NVIDIA ", "limit": 3}, ("search_symbols", {"query": "NVIDIA", "limit": 3})),
+    ("get_quote", {"symbol": "nvda"}, ("get_quote", {"symbol": "NVDA"})),
+    (
+        "get_price_history",
+        {"symbol": "nvda", "period": "5d", "interval": "1wk"},
+        ("get_price_history", {"symbol": "NVDA", "period": "5d", "interval": "1wk"}),
+    ),
+    ("get_company_profile", {"symbol": " aapl"}, ("get_company_profile", {"symbol": "AAPL"})),
+    ("get_key_metrics", {"symbol": "aapl "}, ("get_key_metrics", {"symbol": "AAPL"})),
+    (
+        "get_financials",
+        {"symbol": "nvda", "statement": "cash_flow", "period": "ttm", "limit": 2},
+        ("get_financials", {"symbol": "NVDA", "statement": "cash_flow", "period": "ttm", "limit": 2}),
+    ),
+    ("get_news", {"symbol": "nvda", "limit": 3}, ("get_news", {"symbol": "NVDA", "limit": 3})),
+    ("get_analyst_recommendations", {"symbol": "nvda"}, ("get_analyst_recommendations", {"symbol": "NVDA"})),
+    ("get_insider_trades", {"symbol": "nvda", "limit": 500}, ("get_insider_trades", {"symbol": "NVDA", "limit": 100})),
+    ("get_earnings", {"symbol": "nvda", "limit": 0}, ("get_earnings", {"symbol": "NVDA", "limit": 1})),
+    (
+        "get_sec_filings",
+        {"symbol": "nvda", "form_type": " 10-k ", "limit": 5},
+        ("get_sec_filings", {"symbol": "NVDA", "form_type": "10-K", "limit": 5}),
+    ),
+]
+
+
+@pytest.mark.parametrize("tool,kwargs,expected", DISPATCH_CASES, ids=[c[0] for c in DISPATCH_CASES])
+def test_every_tool_dispatches_sync(tool, kwargs, expected):
+    provider = RecordingProvider()
+    tools = FinanceTools(provider=provider, all=True)
+
+    payload = json.loads(getattr(tools, tool)(**kwargs))
+
+    assert provider.calls == [expected]
+    assert payload["provider"] == "rec" and "error" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool,kwargs,expected", DISPATCH_CASES, ids=[c[0] for c in DISPATCH_CASES])
+async def test_every_tool_dispatches_async(tool, kwargs, expected):
+    provider = RecordingProvider()
+    tools = FinanceTools(provider=provider, all=True)
+
+    payload = json.loads(await getattr(tools, f"a{tool}")(**kwargs))
+
+    # Default async variants run the sync provider method in a thread
+    assert provider.calls == [expected]
+    assert payload["provider"] == "rec" and "error" not in payload
+    assert tool in tools.get_async_functions()
+
+
+# ---------------------------------------------------------------------------
+# include/exclude vs instructions, cache scoping, rounding, provider status
+# ---------------------------------------------------------------------------
+
+
+def test_instructions_and_registered_tools_respect_include_and_exclude():
+    only_quote = FinanceTools(provider=RecordingProvider(), include_tools=["get_quote"])
+    assert only_quote.registered_tools == ["get_quote"]
+    assert list(only_quote.functions) == ["get_quote"]
+    assert only_quote.instructions is not None
+    assert "`get_quote`" in only_quote.instructions
+    assert "search_symbols" not in only_quote.instructions  # neither the tool line nor the guideline
+    assert "get_news" not in only_quote.instructions
+    assert "tools=['get_quote']" in repr(only_quote)
+
+    no_news = FinanceTools(provider=RecordingProvider(), exclude_tools=["get_news", "search_symbols"])
+    assert "get_news" not in no_news.registered_tools and "search_symbols" not in no_news.registered_tools
+    assert "get_news" not in (no_news.instructions or "")
+    assert "Work with ticker symbols (e.g. NVIDIA -> NVDA)." in (no_news.instructions or "")
+
+
+def test_cache_results_is_scoped_per_provider(tmp_path):
+    a = FinanceTools(provider=RecordingProvider(), cache_results=True)
+    b = FinanceTools(provider=FakeProvider(), cache_results=True)
+    assert a.cache_dir != b.cache_dir
+    assert a.cache_dir.endswith("rec") and b.cache_dir.endswith("fake")
+    assert a.get_functions()["get_quote"].cache_dir == a.cache_dir
+
+    explicit = FinanceTools(provider=RecordingProvider(), cache_results=True, cache_dir=str(tmp_path))
+    assert explicit.cache_dir == str(tmp_path)
+    assert FinanceTools(provider=RecordingProvider()).cache_dir is None
+
+
+def test_small_numbers_survive_rounding():
+    from agno.tools.finance.toolkit import _clean
+
+    class Tiny(FinanceProvider):
+        id = "tiny"
+        name = "Tiny"
+        capabilities = frozenset({"get_quote"})
+
+        def get_quote(self, symbol):
+            return Quote(
+                symbol=symbol, price=4.44e-06, previous_close=4.47e-06, change=-3e-08, change_percent=-0.6711409
+            )
+
+    payload = json.loads(FinanceTools(provider=Tiny()).get_quote("SHIB-USD"))
+    assert payload["price"] == 4.44e-06 and payload["previous_close"] == 4.47e-06
+    assert payload["change"] == -3e-08 and payload["change_percent"] == -0.6711
+    assert _clean({"p": 225.0123456, "q": 0.001234567, "r": 0.0}) == {"p": 225.0123, "q": 0.001235, "r": 0.0}
+
+
+def test_yfinance_status_without_the_package(monkeypatch):
+    from agno.tools.finance.providers import YFinance
+    from agno.tools.finance.providers import yfinance as yf_module
+
+    def _missing():
+        raise ImportError("`yfinance` not installed. Please install using `pip install yfinance`.")
+
+    monkeypatch.setattr(yf_module, "_yf", _missing)
+    status = YFinance().status()
+    assert status.ok is False and "pip install yfinance" in status.detail

@@ -16,8 +16,11 @@ agent.print_response("Give me a market brief on NVIDIA", stream=True)
 Swap the provider without touching the agent:
 
 ```python
-FinanceTools(provider="financial_datasets")               # financialdatasets.ai, FINANCIAL_DATASETS_API_KEY
-FinanceTools(provider=YFinanceProvider(session=session))   # any FinanceProvider instance
+from agno.tools.finance.providers import FinancialDatasets, YFinance
+
+FinanceTools(provider=FinancialDatasets())                # financialdatasets.ai, FINANCIAL_DATASETS_API_KEY
+FinanceTools(provider=YFinance(session=session))          # a configured provider instance
+FinanceTools(provider="financial_datasets")               # registered id (shorthand)
 ```
 """
 
@@ -25,6 +28,8 @@ import json
 import math
 from dataclasses import asdict, is_dataclass
 from os import getenv
+from pathlib import Path
+from tempfile import gettempdir
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools.finance.base import (
@@ -100,18 +105,18 @@ def _register_builtin_providers() -> None:
     if _get_registered_provider("yfinance") is None:
 
         def _yfinance(**kwargs: Any) -> FinanceProvider:
-            from agno.tools.finance.yfinance import YFinanceProvider
+            from agno.tools.finance.providers.yfinance import YFinance
 
-            return YFinanceProvider(**kwargs)
+            return YFinance(**kwargs)
 
         register_provider("yfinance", _yfinance)
 
     if _get_registered_provider("financial_datasets") is None:
 
         def _financial_datasets(**kwargs: Any) -> FinanceProvider:
-            from agno.tools.finance.financial_datasets import FinancialDatasetsProvider
+            from agno.tools.finance.providers.financial_datasets import FinancialDatasets
 
-            return FinancialDatasetsProvider(**kwargs)
+            return FinancialDatasets(**kwargs)
 
         register_provider("financial_datasets", _financial_datasets)
 
@@ -209,16 +214,13 @@ class FinanceTools(Toolkit):
             tools.append(getattr(self, tool_name))
             async_tools.append((getattr(self, f"a{tool_name}"), tool_name))
             registered.append(tool_name)
-        self._registered_tools: List[str] = registered
 
-        if not registered:
-            log_warning(
-                f"FinanceTools: no tools registered for provider '{self.provider.id}' "
-                f"(supports: {sorted(self.provider.capabilities)})"
-            )
-
-        if instructions is None:
-            instructions = self._build_instructions(registered)
+        # cache_results: Function cache keys are `<tool name>:<args>` in a
+        # process-wide directory, and every provider serves the same tool names.
+        # Scope the cache to the provider so two toolkits with different
+        # providers never hand each other's payloads back.
+        if kwargs.get("cache_results") and not kwargs.get("cache_dir"):
+            kwargs["cache_dir"] = str(Path(gettempdir()) / "agno_cache" / "finance" / self.provider.id)
 
         name = kwargs.pop("name", "finance_tools")
         super().__init__(
@@ -229,6 +231,19 @@ class FinanceTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
+
+        # What actually got registered, after the Toolkit include/exclude
+        # filters. Instructions are built from this list so the model is never
+        # told about a tool it does not have.
+        self._registered_tools: List[str] = [name for name in _TOOL_ORDER if name in self.functions]
+        if instructions is None:
+            self.instructions = self._build_instructions(self._registered_tools) or None
+
+        if not self._registered_tools:
+            log_warning(
+                f"FinanceTools: no tools registered for provider '{self.provider.id}' "
+                f"(supports: {sorted(self.provider.capabilities)})"
+            )
 
     # ------------------------------------------------------------------
     # Provider resolution
@@ -685,6 +700,15 @@ class FinanceTools(Toolkit):
 # ---------------------------------------------------------------------------
 
 
+def _round(value: float) -> float:
+    """Round for token economy without destroying small numbers: 4 decimals for
+    ordinary magnitudes, 4 significant digits below 0.01 (sub-penny prices,
+    tiny ratios) so 4.44e-06 does not become 0.0."""
+    if abs(value) >= 0.01:
+        return round(value, 4)
+    return float(f"{value:.4g}")
+
+
 def _clean(value: Any) -> Any:
     """Make a payload compact and JSON-safe: drop None, round floats, NaN -> None,
     numpy scalars -> Python, timestamps -> ISO strings."""
@@ -704,7 +728,7 @@ def _clean(value: Any) -> Any:
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
             return None
-        return round(value, 4)
+        return _round(value)
     if isinstance(value, (int, str)) or value is None:
         return value
     if hasattr(value, "isoformat"):

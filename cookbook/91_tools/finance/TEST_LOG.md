@@ -16,11 +16,11 @@ Environment: `.venvs/demo` (yfinance 1.6.0), `openai:gpt-5.6`, no `FINANCIAL_DAT
 
 ### 02_financial_datasets.py
 
-**Status:** PASS (no-key path) / NOT RUN (live)
+**Status:** PASS (live)
 
-**Description:** `FinanceTools(provider="financial_datasets", all=True)`; 9 tools registered (no `search_symbols`, no `get_analyst_recommendations`).
+**Description:** `FinanceTools(provider=FinancialDatasets(), all=True)`; 9 tools registered (no `search_symbols`, no `get_analyst_recommendations`). Prompt asks for a market brief on NVIDIA including last quarter's revenue and net margin.
 
-**Result:** Without a key, every tool returned `{"error": "FINANCIAL_DATASETS_API_KEY not configured", ...}` and the agent reported N/A for every figure plus "API key not configured" - no hallucinated data. Against the real API with an invalid key the provider rendered `HTTP 401 (invalid API key): Invalid API key`. Request/response normalization is covered by 27 mocked unit tests built from the 2026-08-18 OpenAPI spec (`libs/agno/tests/unit/tools/test_finance_financial_datasets_provider.py`). A live pass with a real key is still owed.
+**Result:** Without a key, every tool returned `{"error": "FINANCIAL_DATASETS_API_KEY not configured", ...}` and the agent reported N/A for every figure plus "API key not configured" - no hallucinated data. With an invalid key the real API returned 401, rendered as `HTTP 401 (invalid API key): Invalid API key`. With a real key (fresh account, no credits) every endpoint - including NVDA - returned `HTTP 402 (payment required: no credits or plan does not cover this request): Insufficient credits`, and a bogus ticker returned `HTTP 400 (bad request): Invalid ticker`; both rendered cleanly through the envelope, sync and async, in 4.8 s for the whole sweep. That confirms auth header, every endpoint path and every query-param set are accepted by the server; response normalization on 200 payloads is covered by 28 mocked unit tests built from the 2026-08-18 OpenAPI spec (`libs/agno/tests/unit/tools/test_finance_financial_datasets_provider.py`). Once credits were added to the account, a raw sweep of all 9 tools returned real normalized payloads sync and async in 15 s (quote 220.64 USD as of 2026-08-18T11:38:07Z; 5d/1d bars; company facts with CIK; metrics snapshot with market cap 5.44T, P/E 34.4; quarterly income statement for 2027-Q1 with revenue 81.6B; annual balance sheet; ttm cash flow; news with URLs; insider grants; earnings tied to 8-K/10-Q filing URLs; 10-Q filings with accession numbers). The agent run then produced the brief with those figures and closed with "Data provider: Financial Datasets (financialdatasets.ai)". Observation: `/earnings` returns one record per source filing (8-K and 10-Q for the same quarter), so the same report period can appear twice with different filing URLs.
 
 ---
 
@@ -68,4 +68,4 @@ Environment: `.venvs/demo` (yfinance 1.6.0), `openai:gpt-5.6`, no `FINANCIAL_DAT
 
 **Status:** PASS
 
-**Result:** `pytest libs/agno/tests/unit/tools/test_finance*.py` - 61 passed, 1 skipped in `.venv` (yfinance provider tests skip without yfinance); 84 passed in `.venvs/demo`.
+**Result:** `pytest libs/agno/tests/unit/tools/test_finance*.py` - 116 passed, 1 skipped in `.venv` (yfinance provider tests skip without yfinance); 149 passed in `.venvs/demo`. Includes every tool sync + async through the toolkit, financialdatasets pagination and sync/async request parity, and yfinance normalizers against 1.6.0-shaped objects.

@@ -16,6 +16,14 @@ agent = Agent(
 agent.print_response("Give me a market brief on NVIDIA", stream=True)
 ```
 
+Swap the data provider with one argument:
+
+```python
+from agno.tools.finance.providers import FinancialDatasets
+
+agent = Agent(model="openai:gpt-5.6", tools=[FinanceTools(provider=FinancialDatasets())])
+```
+
 ## Overview
 
 Tools (frozen names; every tool has a sync and an async variant):
@@ -40,11 +48,11 @@ Every payload carries `provider` (which data source answered) and, where availab
 
 | Provider | `provider=` | Key | Serves | Notes |
 |----------|-------------|-----|--------|-------|
-| Yahoo Finance (`yfinance`) | default / `"yfinance"` / `YFinanceProvider()` | none | all 11 tools | `pip install yfinance`. Unofficial, rate-limited under load, personal-use terms. |
-| financialdatasets.ai | `"financial_datasets"` / `FinancialDatasetsProvider()` | `FINANCIAL_DATASETS_API_KEY` | 9 tools (no `search_symbols`, no `get_analyst_recommendations`) | Structured, real-time, commercial use on all plans. Free keys cover AAPL, GOOGL, NVDA, TSLA. No extra dependency. |
+| Yahoo Finance (`yfinance`) | `YFinance()` (default) or `"yfinance"` | none | all 11 tools | `pip install yfinance`. Unofficial, rate-limited under load, personal-use terms. |
+| financialdatasets.ai | `FinancialDatasets()` or `"financial_datasets"` | `FINANCIAL_DATASETS_API_KEY` | 9 tools (no `search_symbols`, no `get_analyst_recommendations`) | Structured, real-time, commercial use on all plans. Requests cost credits (see financialdatasets.ai/pricing). No extra dependency. |
 | Your own | `FinanceProvider` subclass | - | whatever it declares | See `06_custom_provider.py`. |
 
-The toolkit registers only the tools the selected provider declares, so the model never sees a tool it cannot use.
+Providers live in `agno.tools.finance.providers` and are re-exported from `agno.tools.finance`. Pass an instance (recommended: constructor kwargs like `api_key`, `timeout`, `session` are explicit) or a registered id string (handy for env/config-driven setups). The toolkit registers only the tools the selected provider declares, so the model never sees a tool it cannot use.
 
 ## Examples
 
@@ -61,7 +69,7 @@ The toolkit registers only the tools the selected provider declares, so the mode
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `provider` | `FinanceProvider \| str \| None` | `None` | Provider instance, registered id, or None (`yfinance` if installed, else `financial_datasets` if its key is set) |
+| `provider` | `FinanceProvider \| str \| None` | `None` | Provider instance (e.g. `FinancialDatasets()`), registered id (`"financial_datasets"`), or None (`YFinance()` if `yfinance` is installed, else `FinancialDatasets()` if its key is set) |
 | `search_symbols`, `quote`, `price_history`, `company_profile`, `key_metrics`, `news`, `analyst_recommendations` | `bool` | `True` | Market-brief tools |
 | `financials`, `insider_trades`, `earnings`, `sec_filings` | `bool` | `False` | Analyst tools (larger payloads) |
 | `all` | `bool` | `False` | Register every tool the provider supports |
@@ -74,9 +82,9 @@ The toolkit registers only the tools the selected provider declares, so the mode
 Providers are usable without an agent and return typed dataclasses:
 
 ```python
-from agno.tools.finance import YFinanceProvider
+from agno.tools.finance.providers import YFinance
 
-quote = YFinanceProvider().get_quote("NVDA")
+quote = YFinance().get_quote("NVDA")
 print(quote.price, quote.currency, quote.as_of)
 ```
 

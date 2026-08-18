@@ -4,14 +4,16 @@ agno.tools.finance — one finance toolkit, swappable data providers.
 ```python
 from agno.agent import Agent
 from agno.tools.finance import FinanceTools
+from agno.tools.finance.providers import FinancialDatasets
 
-agent = Agent(model="openai:gpt-5.6", tools=[FinanceTools()])
+agent = Agent(model="openai:gpt-5.6", tools=[FinanceTools()])                       # Yahoo Finance, no key
+agent = Agent(model="openai:gpt-5.6", tools=[FinanceTools(provider=FinancialDatasets())])
 agent.print_response("Give me a market brief on NVIDIA", stream=True)
 ```
 
-Providers: `YFinanceProvider` (default, no key), `FinancialDatasetsProvider`
-(financialdatasets.ai, `FINANCIAL_DATASETS_API_KEY`). Bring your own by
-subclassing `FinanceProvider`.
+Providers live in `agno.tools.finance.providers` (`YFinance`, `FinancialDatasets`)
+and are re-exported here for one-line imports. Bring your own by subclassing
+`FinanceProvider`.
 """
 
 from agno.tools.finance.base import (
@@ -35,9 +37,8 @@ from agno.tools.finance.base import (
     register_provider,
     registered_providers,
 )
-from agno.tools.finance.financial_datasets import FinancialDatasetsProvider
+from agno.tools.finance.providers import FinancialDatasets, YFinance
 from agno.tools.finance.toolkit import FinanceTools
-from agno.tools.finance.yfinance import YFinanceProvider
 
 __all__ = [
     "ALL_CAPABILITIES",
@@ -48,7 +49,7 @@ __all__ = [
     "FinanceProvider",
     "FinanceProviderError",
     "FinanceTools",
-    "FinancialDatasetsProvider",
+    "FinancialDatasets",
     "FinancialStatement",
     "InsiderTrade",
     "KeyMetrics",
@@ -59,7 +60,7 @@ __all__ = [
     "ProviderStatus",
     "Quote",
     "SymbolMatch",
-    "YFinanceProvider",
+    "YFinance",
     "register_provider",
     "registered_providers",
 ]

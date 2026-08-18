@@ -10,7 +10,7 @@ dataclasses to JSON, and turns any `FinanceProviderError` into a clean
 This example wraps an internal price table (a dict here; a database, a
 data lake or a broker API in real life). It serves `get_quote` and
 `search_symbols` only, and registers itself under the id "internal" so it
-can also be selected with `FinanceTools(provider="internal")`.
+can also be selected by id with `FinanceTools(provider="internal")`.
 """
 
 from typing import List
@@ -35,7 +35,7 @@ PRICES = {
 }
 
 
-class InternalPricesProvider(FinanceProvider):
+class InternalPrices(FinanceProvider):
     id = "internal"
     name = "Internal price table"
     capabilities = frozenset({"get_quote", "search_symbols"})
@@ -71,7 +71,7 @@ class InternalPricesProvider(FinanceProvider):
         )
 
 
-register_provider("internal", InternalPricesProvider)
+register_provider("internal", InternalPrices)
 
 # ---------------------------------------------------------------------------
 # Create the Agent
@@ -79,7 +79,7 @@ register_provider("internal", InternalPricesProvider)
 agent = Agent(
     name="Desk Agent",
     model="openai:gpt-5.6",
-    tools=[FinanceTools(provider="internal")],
+    tools=[FinanceTools(provider=InternalPrices())],
     instructions="Answer from the internal price table only. If a symbol is unknown, say so.",
     markdown=True,
 )

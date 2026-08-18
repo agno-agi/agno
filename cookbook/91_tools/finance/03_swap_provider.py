@@ -5,9 +5,9 @@ The point of FinanceTools: the agent is written once against a fixed tool
 surface, and the data provider is a configuration choice.
 
 Three ways to pick a provider:
-1. `FinanceTools()`                                     -> yfinance (default, no key)
-2. `FinanceTools(provider="financial_datasets")`        -> by registered id
-3. `FinanceTools(provider=YFinanceProvider(session=s))` -> a configured instance
+1. `FinanceTools()`                                 -> YFinance() (default, no key)
+2. `FinanceTools(provider=FinancialDatasets())`     -> a provider instance (recommended)
+3. `FinanceTools(provider="financial_datasets")`    -> registered id, for env/config-driven setups
 
 This example builds the same agent for each configured provider and runs the
 same prompt, so you can compare answers side by side.
@@ -20,14 +20,15 @@ Run:
 from os import getenv
 
 from agno.agent import Agent
-from agno.tools.finance import FinanceTools, FinancialDatasetsProvider, YFinanceProvider
+from agno.tools.finance import FinanceTools
+from agno.tools.finance.providers import FinancialDatasets, YFinance
 
 # ---------------------------------------------------------------------------
 # Providers to compare (financialdatasets.ai only when a key is present)
 # ---------------------------------------------------------------------------
-providers = [YFinanceProvider()]
+providers = [YFinance()]
 if getenv("FINANCIAL_DATASETS_API_KEY"):
-    providers.append(FinancialDatasetsProvider())
+    providers.append(FinancialDatasets())
 
 INSTRUCTIONS = [
     "Lead with the answer, then show the evidence.",

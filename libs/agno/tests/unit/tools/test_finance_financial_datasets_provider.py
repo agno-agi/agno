@@ -1,13 +1,14 @@
-"""FinancialDatasetsProvider: request shaping and normalization against OpenAPI-shaped payloads (httpx mocked)."""
+"""FinancialDatasets: request shaping and normalization against OpenAPI-shaped payloads (httpx mocked)."""
 
 import json
-from datetime import date
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from agno.tools.finance import FinanceProviderError, FinanceTools, FinancialDatasetsProvider
+from agno.tools.finance import FinanceProviderError, FinanceTools, FinancialDatasets
+from agno.tools.finance.providers import financial_datasets as fd_module
 
 BASE = "https://api.financialdatasets.ai"
 
@@ -20,13 +21,13 @@ def _response(status_code: int = 200, payload=None, text: str = "") -> httpx.Res
 
 
 @pytest.fixture
-def provider() -> FinancialDatasetsProvider:
-    return FinancialDatasetsProvider(api_key="test-key", timeout=5)
+def provider() -> FinancialDatasets:
+    return FinancialDatasets(api_key="test-key", timeout=5)
 
 
 @pytest.fixture
 def client():
-    with patch("agno.tools.finance.financial_datasets.httpx.Client") as client_cls:
+    with patch("agno.tools.finance.providers.financial_datasets.httpx.Client") as client_cls:
         yield client_cls.return_value.__enter__.return_value
 
 
@@ -37,7 +38,7 @@ def client():
 
 def test_reads_key_from_env_and_reports_status():
     with patch.dict("os.environ", {"FINANCIAL_DATASETS_API_KEY": "env-key"}):
-        p = FinancialDatasetsProvider()
+        p = FinancialDatasets()
     assert p.api_key == "env-key"
     assert p.status().ok is True
     assert p.capabilities and "search_symbols" not in p.capabilities
@@ -49,7 +50,7 @@ def test_missing_key_is_soft_until_a_call(client):
         import os
 
         os.environ.pop("FINANCIAL_DATASETS_API_KEY", None)
-        p = FinancialDatasetsProvider()
+        p = FinancialDatasets()
     assert p.status().ok is False
     with pytest.raises(FinanceProviderError, match="FINANCIAL_DATASETS_API_KEY not configured"):
         p.get_quote("NVDA")
@@ -85,7 +86,23 @@ def test_quote_request_and_normalization(provider, client):
     assert quote.as_of == "2026-08-18T15:59:00Z" and quote.currency == "USD"
 
 
-def test_price_history_maps_period_and_interval(provider, client):
+class _FrozenDatetime(datetime):
+    """datetime stand-in whose now() is fixed to a UTC instant."""
+
+    frozen = datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[override]
+        return cls.frozen if tz is None else cls.frozen.astimezone(tz)
+
+
+@pytest.fixture
+def frozen_today(monkeypatch):
+    monkeypatch.setattr(fd_module, "datetime", _FrozenDatetime)
+    return _FrozenDatetime.frozen.date()
+
+
+def test_price_history_maps_interval_and_pages(provider, client, frozen_today):
     client.get.return_value = _response(
         payload={
             "ticker": "NVDA",
@@ -98,10 +115,42 @@ def test_price_history_maps_period_and_interval(provider, client):
     params = client.get.call_args.kwargs["params"]
     assert client.get.call_args.args[0] == f"{BASE}/prices"
     assert params["ticker"] == "NVDA" and params["interval"] == "week" and params["interval_multiplier"] == 1
-    assert params["start_date"] == f"{date.today().year}-01-01"
-    assert params["end_date"] == date.today().isoformat()
+    assert params["start_date"] == "2026-01-01" and params["end_date"] == "2026-08-18"
     assert history.bars[0].close == 2 and history.bars[0].date == "2026-08-17T00:00:00Z"
-    assert history.period == "ytd" and history.interval == "1wk"
+    assert history.period == "ytd" and history.interval == "1wk" and history.currency == "USD"
+
+
+@pytest.mark.parametrize("period,days", [(p, d) for p, d in fd_module._PERIOD_DAYS.items() if d is not None])
+def test_price_history_window_for_every_period(provider, client, frozen_today, period, days):
+    client.get.return_value = _response(payload={"prices": [{"close": 1, "time": "t"}]})
+    provider.get_price_history("NVDA", period=period)
+    params = client.get.call_args.kwargs["params"]
+    assert params["start_date"] == (frozen_today - timedelta(days=days)).isoformat()
+    assert params["end_date"] == frozen_today.isoformat()
+
+
+@pytest.mark.parametrize("interval,api_interval", list(fd_module._INTERVAL_MAP.items()))
+def test_price_history_interval_mapping(provider, client, frozen_today, interval, api_interval):
+    client.get.return_value = _response(payload={"prices": [{"close": 1, "time": "t"}]})
+    provider.get_price_history("NVDA", interval=interval)
+    assert client.get.call_args.kwargs["params"]["interval"] == api_interval
+
+
+def test_short_periods_widen_the_window_and_trim_to_last_bars(provider, client, frozen_today):
+    # 1d asks for a week (weekends/holidays would otherwise return nothing) and keeps the last bar only
+    bars = [{"close": i, "time": f"2026-08-1{i}"} for i in range(1, 8)]
+    client.get.return_value = _response(payload={"prices": bars})
+
+    one_day = provider.get_price_history("NVDA", period="1d")
+    assert client.get.call_args.kwargs["params"]["start_date"] == (frozen_today - timedelta(days=7)).isoformat()
+    assert [b.close for b in one_day.bars] == [7]
+
+    five_day = provider.get_price_history("NVDA", period="5d")
+    assert client.get.call_args.kwargs["params"]["start_date"] == (frozen_today - timedelta(days=12)).isoformat()
+    assert [b.close for b in five_day.bars] == [3, 4, 5, 6, 7]
+
+    one_month = provider.get_price_history("NVDA", period="1mo")
+    assert len(one_month.bars) == 7  # no trimming outside the short periods
 
 
 def test_price_history_rejects_bad_period_before_request(provider, client):
@@ -307,20 +356,33 @@ def test_sec_filings_with_and_without_form_type(provider, client):
 @pytest.mark.parametrize(
     "status,hint",
     [
+        (400, "bad request"),
         (401, "invalid API key"),
-        (402, "plan does not cover"),
+        (402, "payment required"),
         (404, "no data"),
         (429, "rate limited"),
         (500, "request failed"),
     ],
 )
 def test_http_errors_become_clean_provider_errors(provider, client, status, hint):
-    client.get.return_value = _response(status_code=status, payload={"detail": "because"})
+    # Spec error shape: {"error": "<short label>", "message": "<detail>"} — the detail must win
+    client.get.return_value = _response(
+        status_code=status, payload={"error": "Label", "message": "Ticker XXXX not found"}
+    )
     with pytest.raises(FinanceProviderError) as exc:
         provider.get_quote("NVDA")
     message = str(exc.value)
-    assert f"HTTP {status}" in message and hint in message and "because" in message
-    assert "test-key" not in message
+    assert f"HTTP {status}" in message and hint in message and "Ticker XXXX not found" in message
+    assert "Label" not in message and "test-key" not in message
+
+
+def test_http_error_falls_back_to_error_label_and_text(provider, client):
+    client.get.return_value = _response(status_code=402, payload={"error": "Insufficient credits"})
+    with pytest.raises(FinanceProviderError, match="Insufficient credits"):
+        provider.get_quote("NVDA")
+    client.get.return_value = _response(status_code=500, text="upstream exploded")
+    with pytest.raises(FinanceProviderError, match="upstream exploded"):
+        provider.get_quote("NVDA")
 
 
 def test_transport_error_is_wrapped(provider, client):
@@ -350,7 +412,7 @@ def test_invalid_json_and_missing_snapshot(provider, client):
 
 @pytest.mark.asyncio
 async def test_async_quote_uses_async_client(provider):
-    with patch("agno.tools.finance.financial_datasets.httpx.AsyncClient") as async_cls:
+    with patch("agno.tools.finance.providers.financial_datasets.httpx.AsyncClient") as async_cls:
         aclient = async_cls.return_value.__aenter__.return_value
         aclient.get = AsyncMock(return_value=_response(payload={"snapshot": {"price": 1.5, "ticker": "NVDA"}}))
         quote = await provider.aget_quote("NVDA")
@@ -362,7 +424,7 @@ async def test_async_quote_uses_async_client(provider):
 
 @pytest.mark.asyncio
 async def test_async_error_status_raises(provider):
-    with patch("agno.tools.finance.financial_datasets.httpx.AsyncClient") as async_cls:
+    with patch("agno.tools.finance.providers.financial_datasets.httpx.AsyncClient") as async_cls:
         aclient = async_cls.return_value.__aenter__.return_value
         aclient.get = AsyncMock(return_value=_response(status_code=402, payload={"detail": "upgrade"}))
         with pytest.raises(FinanceProviderError, match="HTTP 402"):
@@ -400,3 +462,122 @@ def test_magicmock_response_is_not_required():
     # Guard: the parser must accept a real httpx.Response, not only MagicMocks
     assert isinstance(_response(payload={}), httpx.Response)
     assert MagicMock is not None
+
+
+# ---------------------------------------------------------------------------
+# Pagination (list endpoints page at 10 records, /prices at 100)
+# ---------------------------------------------------------------------------
+
+
+def _page(items_key, items, next_url=None):
+    payload = {items_key: items}
+    if next_url:
+        payload["next_page_url"] = next_url
+    return _response(payload=payload)
+
+
+def test_pages_are_followed_until_limit(provider, client):
+    client.get.side_effect = [
+        _page("insider_trades", [{"name": f"p{i}"} for i in range(10)], f"{BASE}/insider-trades?cursor=abc"),
+        _page("insider_trades", [{"name": f"p{i}"} for i in range(10, 20)], f"{BASE}/insider-trades?cursor=def"),
+        _page("insider_trades", [{"name": f"p{i}"} for i in range(20, 30)]),
+    ]
+
+    trades = provider.get_insider_trades("NVDA", limit=25)
+
+    assert [t.insider for t in trades] == [f"p{i}" for i in range(25)]  # merged and truncated to limit
+    assert client.get.call_count == 3
+    first, second, third = client.get.call_args_list
+    assert first.args[0] == f"{BASE}/insider-trades" and first.kwargs["params"] == {"ticker": "NVDA", "limit": 25}
+    # next pages: GET next_page_url as-is, same auth header, no params
+    assert second.args[0] == f"{BASE}/insider-trades?cursor=abc" and second.kwargs == {
+        "headers": {"X-API-KEY": "test-key"}
+    }
+    assert third.args[0] == f"{BASE}/insider-trades?cursor=def"
+
+
+def test_paging_stops_when_limit_is_reached_on_first_page(provider, client):
+    client.get.side_effect = [_page("filings", [{"filing_type": "8-K"}] * 10, f"{BASE}/filings?cursor=x")]
+    filings = provider.get_sec_filings("NVDA", limit=10)
+    assert len(filings) == 10 and client.get.call_count == 1
+
+
+def test_price_history_follows_all_pages_up_to_cap(provider, client, frozen_today, monkeypatch):
+    monkeypatch.setattr(fd_module, "_MAX_PAGES", 3)
+    client.get.side_effect = [
+        _page("prices", [{"close": i, "time": f"d{i}"} for i in range(100)], f"{BASE}/prices?cursor=1"),
+        _page("prices", [{"close": i, "time": f"d{i}"} for i in range(100, 200)], f"{BASE}/prices?cursor=2"),
+        _page("prices", [{"close": i, "time": f"d{i}"} for i in range(200, 300)], f"{BASE}/prices?cursor=3"),
+        _page("prices", [{"close": 999, "time": "never"}]),
+    ]
+    with patch("agno.tools.finance.providers.financial_datasets.log_warning") as warn:
+        history = provider.get_price_history("NVDA", period="5y")
+    assert len(history.bars) == 300 and history.bars[-1].close == 299
+    assert client.get.call_count == 3  # capped, and the truncation is logged
+    assert warn.called
+
+
+@pytest.mark.asyncio
+async def test_async_pages_are_followed(provider):
+    with patch("agno.tools.finance.providers.financial_datasets.httpx.AsyncClient") as async_cls:
+        aclient = async_cls.return_value.__aenter__.return_value
+        aclient.get = AsyncMock(
+            side_effect=[
+                _page("news", [{"title": f"n{i}"} for i in range(10)], f"{BASE}/news?cursor=1"),
+                _page("news", [{"title": f"n{i}"} for i in range(10, 20)]),
+            ]
+        )
+        # news limit is clamped to the API max of 10, so only one page is fetched
+        news = await provider.aget_news("NVDA", limit=50)
+        assert len(news) == 10 and aclient.get.await_count == 1
+
+        aclient.get = AsyncMock(
+            side_effect=[
+                _page("earnings", [{"report_period": f"r{i}"} for i in range(10)], f"{BASE}/earnings?cursor=1"),
+                _page("earnings", [{"report_period": f"r{i}"} for i in range(10, 20)]),
+            ]
+        )
+        earnings = await provider.aget_earnings("NVDA", limit=15)
+        assert [e.report_period for e in earnings] == [f"r{i}" for i in range(15)]
+        assert aclient.get.await_count == 2
+        assert aclient.get.await_args_list[1].args[0] == f"{BASE}/earnings?cursor=1"
+
+
+# ---------------------------------------------------------------------------
+# Sync / async parity: every capability shapes the identical request
+# ---------------------------------------------------------------------------
+
+PARITY_CASES = [
+    ("get_quote", {"symbol": "NVDA"}, "snapshot", {"price": 1.0, "ticker": "NVDA"}),
+    ("get_price_history", {"symbol": "NVDA", "period": "1mo", "interval": "1d"}, "prices", [{"close": 1, "time": "t"}]),
+    ("get_company_profile", {"symbol": "NVDA"}, "company_facts", {"ticker": "NVDA", "name": "N"}),
+    ("get_key_metrics", {"symbol": "NVDA"}, "snapshot", {"ticker": "NVDA", "market_cap": 1}),
+    (
+        "get_financials",
+        {"symbol": "NVDA", "statement": "balance_sheet", "period": "quarterly", "limit": 2},
+        "balance_sheets",
+        [{"total_assets": 1}],
+    ),
+    ("get_news", {"symbol": "NVDA", "limit": 4}, "news", [{"title": "t"}]),
+    ("get_insider_trades", {"symbol": "NVDA", "limit": 3}, "insider_trades", [{"name": "x"}]),
+    ("get_earnings", {"symbol": "NVDA", "limit": 2}, "earnings", [{"report_period": "r"}]),
+    ("get_sec_filings", {"symbol": "NVDA", "form_type": "10-K", "limit": 6}, "filings", [{"filing_type": "10-K"}]),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,kwargs,key,body", PARITY_CASES, ids=[c[0] for c in PARITY_CASES])
+async def test_sync_and_async_shape_the_same_request(provider, client, frozen_today, method, kwargs, key, body):
+    client.get.return_value = _response(payload={key: body})
+    getattr(provider, method)(**kwargs)
+    sync_call = client.get.call_args
+
+    with patch("agno.tools.finance.providers.financial_datasets.httpx.AsyncClient") as async_cls:
+        aclient = async_cls.return_value.__aenter__.return_value
+        aclient.get = AsyncMock(return_value=_response(payload={key: body}))
+        await getattr(provider, f"a{method}")(**kwargs)
+        async_call = aclient.get.await_args
+
+    assert async_call.args == sync_call.args
+    assert async_call.kwargs == sync_call.kwargs
+    assert sync_call.kwargs["headers"] == {"X-API-KEY": "test-key"}

@@ -1,5 +1,5 @@
 """
-YFinanceProvider — Yahoo Finance via the `yfinance` package.
+YFinance — Yahoo Finance data provider via the `yfinance` package.
 
 The default provider for `FinanceTools`: no API key, covers every capability.
 Caveats: unofficial (scrapes Yahoo), rate-limited under load, and Yahoo's
@@ -49,7 +49,7 @@ def _yf() -> Any:
     return yfinance
 
 
-class YFinanceProvider(FinanceProvider):
+class YFinance(FinanceProvider):
     """Yahoo Finance data through `yfinance`.
 
     Args:
@@ -131,13 +131,18 @@ class YFinanceProvider(FinanceProvider):
             raise FinanceProviderError(f"No quote data for symbol {symbol}: {e}") from e
         if price is None:
             raise FinanceProviderError(f"No quote data for symbol {symbol}; check the ticker")
-        previous_close = _num(_get(fast, "previousClose"))
+        # regularMarketPreviousClose is the prior regular-session close (what
+        # Yahoo shows); previousClose is the last extended-hours print of the
+        # previous calendar day. Prefer the regular one, fall back to the other.
+        previous_close = _num(_get(fast, "regularMarketPreviousClose"))
+        if previous_close is None:
+            previous_close = _num(_get(fast, "previousClose"))
         change: Optional[float] = None
         change_percent: Optional[float] = None
         if previous_close is not None:
-            change = round(price - previous_close, 4)
+            change = price - previous_close
             if previous_close != 0:
-                change_percent = round(change / previous_close * 100, 4)
+                change_percent = change / previous_close * 100
         return Quote(
             symbol=symbol,
             price=price,
@@ -162,7 +167,10 @@ class YFinanceProvider(FinanceProvider):
         if interval not in INTERVALS:
             raise FinanceProviderError(f"interval must be one of {', '.join(INTERVALS)}")
         ticker = self._ticker(symbol)
-        kwargs: Dict[str, Any] = {"period": period, "interval": interval, "auto_adjust": True}
+        # auto_adjust=False: Yahoo's raw OHLC is already split-adjusted, and
+        # auto_adjust=True multiplies O/H/L/C by Adj Close/Close, which is NaN
+        # for the latest session while Yahoo's adjclose lags -> a NaN bar.
+        kwargs: Dict[str, Any] = {"period": period, "interval": interval, "auto_adjust": False}
         if self.timeout is not None:
             kwargs["timeout"] = self.timeout
         try:
@@ -174,16 +182,22 @@ class YFinanceProvider(FinanceProvider):
 
         bars: List[PriceBar] = []
         for row in frame.itertuples():
+            close = _num(getattr(row, "Close", None))
+            if close is None:
+                # Volume-only rows (Yahoo has not published the session's close yet) are not bars.
+                continue
             bars.append(
                 PriceBar(
                     date=_date(row.Index) or str(row.Index),
                     open=_num(getattr(row, "Open", None)),
                     high=_num(getattr(row, "High", None)),
                     low=_num(getattr(row, "Low", None)),
-                    close=_num(getattr(row, "Close", None)),
+                    close=close,
                     volume=_num(getattr(row, "Volume", None)),
                 )
             )
+        if not bars:
+            raise FinanceProviderError(f"No price history for symbol {symbol} (period={period}, interval={interval})")
         currency: Optional[str] = None
         try:
             currency = _get(ticker.fast_info, "currency")
@@ -223,7 +237,10 @@ class YFinanceProvider(FinanceProvider):
             price_to_sales=_num(info.get("priceToSalesTrailing12Months")),
             ev_to_ebitda=_num(info.get("enterpriseToEbitda")),
             eps=_num(info.get("trailingEps")),
-            dividend_yield=_num(info.get("dividendYield")),
+            # Yahoo reports dividendYield and debtToEquity in percent (0.35 == 0.35%,
+            # 78.4 == 0.78x) while margins/growth/ROE are fractions. KeyMetrics uses
+            # fractions throughout, so scale those two.
+            dividend_yield=_pct_to_fraction(info.get("trailingAnnualDividendYield"), info.get("dividendYield")),
             beta=_num(info.get("beta")),
             gross_margin=_num(info.get("grossMargins")),
             operating_margin=_num(info.get("operatingMargins")),
@@ -232,7 +249,7 @@ class YFinanceProvider(FinanceProvider):
             return_on_assets=_num(info.get("returnOnAssets")),
             revenue_growth=_num(info.get("revenueGrowth")),
             earnings_growth=_num(info.get("earningsGrowth")),
-            debt_to_equity=_num(info.get("debtToEquity")),
+            debt_to_equity=_div100(info.get("debtToEquity")),
             current_ratio=_num(info.get("currentRatio")),
             free_cash_flow=_num(info.get("freeCashflow")),
             revenue=_num(info.get("totalRevenue")),
@@ -398,7 +415,8 @@ class YFinanceProvider(FinanceProvider):
                 reports.append(
                     EarningsReport(
                         symbol=symbol,
-                        report_period=_date(row.get(date_key)) if date_key else None,
+                        # Yahoo's earnings calendar is keyed by announcement time, not fiscal period end.
+                        announced_at=_date(row.get(date_key)) if date_key else None,
                         eps=_num(row.get("Reported EPS")),
                         eps_estimate=_num(row.get("EPS Estimate")),
                         surprise_percent=_num(row.get("Surprise(%)")),
@@ -499,6 +517,19 @@ def _num(value: Any) -> Optional[float]:
     return None
 
 
+def _div100(value: Any) -> Optional[float]:
+    number = _num(value)
+    return number / 100 if number is not None else None
+
+
+def _pct_to_fraction(fraction_value: Any, percent_value: Any) -> Optional[float]:
+    """Prefer a field Yahoo already reports as a fraction, else scale the percent one."""
+    fraction = _num(fraction_value)
+    if fraction is not None:
+        return fraction
+    return _div100(percent_value)
+
+
 def _int(value: Any) -> Optional[int]:
     number = _num(value)
     return int(number) if number is not None else None
@@ -578,4 +609,4 @@ def _news_item(entry: Any) -> Optional[NewsItem]:
     )
 
 
-__all__ = ["YFinanceProvider"]
+__all__ = ["YFinance"]

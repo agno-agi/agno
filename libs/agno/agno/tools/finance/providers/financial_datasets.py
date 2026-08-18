@@ -1,10 +1,11 @@
 """
-FinancialDatasetsProvider — financialdatasets.ai REST API.
+FinancialDatasets — financialdatasets.ai data provider (REST API).
 
 Structured, real-time market data built for agents: prices, company facts,
 financial statements, metrics, news, insider trades, earnings, SEC filings.
 Commercial use is allowed on every plan. Needs `FINANCIAL_DATASETS_API_KEY`
-(free keys cover AAPL, GOOGL, NVDA and TSLA). No extra dependency: uses `httpx`.
+(every request costs credits; see https://financialdatasets.ai/pricing). No extra
+dependency: uses `httpx`.
 
 Not served by this provider (absent from the API): `search_symbols` and
 `get_analyst_recommendations` — `FinanceTools` simply does not register those
@@ -16,7 +17,7 @@ https://www.financialdatasets.ai/openapi.json (fetched 2026-08-18).
 
 from datetime import date, datetime, timedelta, timezone
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -48,16 +49,18 @@ from agno.tools.finance.base import (
     ProviderStatus,
     Quote,
 )
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 _ENV_KEY = "FINANCIAL_DATASETS_API_KEY"
 _DEFAULT_BASE_URL = "https://api.financialdatasets.ai"
 _NEWS_MAX = 10  # API maximum per request
 
 # `get_price_history` period -> look-back window
+# Short windows are widened so weekends/holidays never yield an empty EOD range;
+# `_TRIM_BARS` then keeps only the last N bars for those periods.
 _PERIOD_DAYS: Dict[str, Optional[int]] = {
-    "1d": 1,
-    "5d": 7,
+    "1d": 7,
+    "5d": 12,
     "1mo": 31,
     "3mo": 92,
     "6mo": 183,
@@ -67,7 +70,9 @@ _PERIOD_DAYS: Dict[str, Optional[int]] = {
     "ytd": None,  # computed from Jan 1
     "max": 365 * 40,
 }
+_TRIM_BARS: Dict[str, int] = {"1d": 1, "5d": 5}
 _INTERVAL_MAP: Dict[str, str] = {"1d": "day", "1wk": "week", "1mo": "month"}
+_MAX_PAGES = 30  # /prices pages hold 100 bars, list endpoints 10 records; hard stop against runaway paging
 
 _STATEMENT_ENDPOINTS: Dict[str, str] = {
     "income": "financials/income-statements",
@@ -97,7 +102,7 @@ _STATEMENT_META = frozenset(
 )
 
 
-class FinancialDatasetsProvider(FinanceProvider):
+class FinancialDatasets(FinanceProvider):
     """financialdatasets.ai data provider.
 
     Args:
@@ -162,23 +167,71 @@ class FinancialDatasetsProvider(FinanceProvider):
     def _params(params: Dict[str, Any]) -> Dict[str, Any]:
         return {k: v for k, v in params.items() if v is not None}
 
-    def _get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _get(self, path: str, params: Optional[Dict[str, Any]] = None, url: Optional[str] = None) -> Dict[str, Any]:
+        """GET one page. `url` (a `next_page_url`) overrides path+params."""
         headers = self._headers()
         try:
             with httpx.Client(timeout=self.timeout) as client:
-                response = client.get(self._url(path), headers=headers, params=self._params(params))
+                if url:
+                    response = client.get(url, headers=headers)
+                else:
+                    response = client.get(self._url(path), headers=headers, params=self._params(params or {}))
         except httpx.RequestError as e:
             raise FinanceProviderError(f"Request to financialdatasets.ai failed: {e}") from e
         return self._parse(response, path)
 
-    async def _aget(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _aget(
+        self, path: str, params: Optional[Dict[str, Any]] = None, url: Optional[str] = None
+    ) -> Dict[str, Any]:
         headers = self._headers()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(self._url(path), headers=headers, params=self._params(params))
+                if url:
+                    response = await client.get(url, headers=headers)
+                else:
+                    response = await client.get(self._url(path), headers=headers, params=self._params(params or {}))
         except httpx.RequestError as e:
             raise FinanceProviderError(f"Request to financialdatasets.ai failed: {e}") from e
         return self._parse(response, path)
+
+    def _get_pages(self, path: str, params: Dict[str, Any], key: str, limit: Optional[int]) -> Dict[str, Any]:
+        """GET and follow `next_page_url` until `key` holds `limit` records (or all
+        pages up to `_MAX_PAGES` when limit is None). List endpoints page at 10
+        records and /prices at 100, so a single request would silently truncate."""
+        data = self._get(path, params)
+        items = _list(data, key)
+        pages = 1
+        while self._more_pages(data, items, limit, pages):
+            data_next = self._get(path, url=data["next_page_url"])
+            items.extend(_list(data_next, key))
+            data = data_next
+            pages += 1
+        return self._merged(data, key, items, limit, pages)
+
+    async def _aget_pages(self, path: str, params: Dict[str, Any], key: str, limit: Optional[int]) -> Dict[str, Any]:
+        data = await self._aget(path, params)
+        items = _list(data, key)
+        pages = 1
+        while self._more_pages(data, items, limit, pages):
+            data_next = await self._aget(path, url=data["next_page_url"])
+            items.extend(_list(data_next, key))
+            data = data_next
+            pages += 1
+        return self._merged(data, key, items, limit, pages)
+
+    @staticmethod
+    def _more_pages(data: Dict[str, Any], items: List[Any], limit: Optional[int], pages: int) -> bool:
+        if not data.get("next_page_url") or pages >= _MAX_PAGES:
+            return False
+        return limit is None or len(items) < limit
+
+    @staticmethod
+    def _merged(data: Dict[str, Any], key: str, items: List[Any], limit: Optional[int], pages: int) -> Dict[str, Any]:
+        if data.get("next_page_url") and pages >= _MAX_PAGES:
+            log_warning(f"financialdatasets.ai {key}: stopped after {_MAX_PAGES} pages; result is truncated")
+        merged = dict(data)
+        merged[key] = items[:limit] if limit is not None else items
+        return merged
 
     @staticmethod
     def _parse(response: httpx.Response, path: str) -> Dict[str, Any]:
@@ -187,12 +240,14 @@ class FinancialDatasetsProvider(FinanceProvider):
             try:
                 body = response.json()
                 if isinstance(body, dict):
-                    detail = str(body.get("detail") or body.get("error") or body.get("message") or "")
+                    # Spec: {"error": "<short label>", "message": "<detail>"}; prefer the detail.
+                    detail = str(body.get("message") or body.get("detail") or body.get("error") or "")
             except ValueError:
                 detail = response.text[:200]
             hint = {
+                400: "bad request",
                 401: "invalid API key",
-                402: "plan does not cover this request (free keys cover AAPL, GOOGL, NVDA, TSLA)",
+                402: "payment required: no credits or plan does not cover this request",
                 404: "no data for this request",
                 429: "rate limited",
             }.get(response.status_code, "request failed")
@@ -210,91 +265,16 @@ class FinancialDatasetsProvider(FinanceProvider):
         return data
 
     # ------------------------------------------------------------------
-    # Capabilities — sync
-    # ------------------------------------------------------------------
-
-    def get_quote(self, symbol: str) -> Quote:
-        return self._quote(symbol, self._get("prices/snapshot", {"ticker": symbol}))
-
-    def get_price_history(self, symbol: str, period: str = "1mo", interval: str = "1d") -> PriceHistory:
-        params = self._history_params(symbol, period, interval)
-        return self._history(symbol, period, interval, self._get("prices", params))
-
-    def get_company_profile(self, symbol: str) -> CompanyProfile:
-        return self._profile(symbol, self._get("company/facts", {"ticker": symbol}))
-
-    def get_key_metrics(self, symbol: str) -> KeyMetrics:
-        return self._metrics(symbol, self._get("financial-metrics/snapshot", {"ticker": symbol}))
-
-    def get_financials(
-        self, symbol: str, statement: str = "income", period: str = "annual", limit: int = 4
-    ) -> List[FinancialStatement]:
-        endpoint = self._statement_endpoint(statement, period)
-        data = self._get(endpoint, {"ticker": symbol, "period": period, "limit": limit})
-        return self._statements(symbol, statement, period, data)
-
-    def get_news(self, symbol: str, limit: int = 10) -> List[NewsItem]:
-        data = self._get("news", {"ticker": symbol, "limit": min(max(limit, 1), _NEWS_MAX)})
-        return self._news(data)
-
-    def get_insider_trades(self, symbol: str, limit: int = 20) -> List[InsiderTrade]:
-        return self._insider_trades(symbol, self._get("insider-trades", {"ticker": symbol, "limit": limit}))
-
-    def get_earnings(self, symbol: str, limit: int = 8) -> List[EarningsReport]:
-        return self._earnings(symbol, self._get("earnings", {"ticker": symbol, "limit": limit}))
-
-    def get_sec_filings(self, symbol: str, form_type: Optional[str] = None, limit: int = 10) -> List[Filing]:
-        params: Dict[str, Any] = {"ticker": symbol, "limit": limit}
-        if form_type:
-            params["filing_type"] = form_type
-        return self._filings(symbol, self._get("filings", params))
-
-    # ------------------------------------------------------------------
-    # Capabilities — async (native httpx)
-    # ------------------------------------------------------------------
-
-    async def aget_quote(self, symbol: str) -> Quote:
-        return self._quote(symbol, await self._aget("prices/snapshot", {"ticker": symbol}))
-
-    async def aget_price_history(self, symbol: str, period: str = "1mo", interval: str = "1d") -> PriceHistory:
-        params = self._history_params(symbol, period, interval)
-        return self._history(symbol, period, interval, await self._aget("prices", params))
-
-    async def aget_company_profile(self, symbol: str) -> CompanyProfile:
-        return self._profile(symbol, await self._aget("company/facts", {"ticker": symbol}))
-
-    async def aget_key_metrics(self, symbol: str) -> KeyMetrics:
-        return self._metrics(symbol, await self._aget("financial-metrics/snapshot", {"ticker": symbol}))
-
-    async def aget_financials(
-        self, symbol: str, statement: str = "income", period: str = "annual", limit: int = 4
-    ) -> List[FinancialStatement]:
-        endpoint = self._statement_endpoint(statement, period)
-        data = await self._aget(endpoint, {"ticker": symbol, "period": period, "limit": limit})
-        return self._statements(symbol, statement, period, data)
-
-    async def aget_news(self, symbol: str, limit: int = 10) -> List[NewsItem]:
-        data = await self._aget("news", {"ticker": symbol, "limit": min(max(limit, 1), _NEWS_MAX)})
-        return self._news(data)
-
-    async def aget_insider_trades(self, symbol: str, limit: int = 20) -> List[InsiderTrade]:
-        return self._insider_trades(symbol, await self._aget("insider-trades", {"ticker": symbol, "limit": limit}))
-
-    async def aget_earnings(self, symbol: str, limit: int = 8) -> List[EarningsReport]:
-        return self._earnings(symbol, await self._aget("earnings", {"ticker": symbol, "limit": limit}))
-
-    async def aget_sec_filings(self, symbol: str, form_type: Optional[str] = None, limit: int = 10) -> List[Filing]:
-        params: Dict[str, Any] = {"ticker": symbol, "limit": limit}
-        if form_type:
-            params["filing_type"] = form_type
-        return self._filings(symbol, await self._aget("filings", params))
-
-    # ------------------------------------------------------------------
-    # Request shaping
+    # Request shaping — one builder per capability, shared by the sync and
+    # async paths so they cannot drift. Each returns (path, params, list_key).
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _history_params(symbol: str, period: str, interval: str) -> Dict[str, Any]:
+    def _quote_request(symbol: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        return "prices/snapshot", {"ticker": symbol}, None
+
+    @staticmethod
+    def _history_request(symbol: str, period: str, interval: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
         if period not in PERIODS:
             raise FinanceProviderError(f"period must be one of {', '.join(PERIODS)}")
         if interval not in INTERVALS:
@@ -302,21 +282,141 @@ class FinancialDatasetsProvider(FinanceProvider):
         today = datetime.now(timezone.utc).date()
         days = _PERIOD_DAYS[period]
         start = date(today.year, 1, 1) if days is None else today - timedelta(days=days)
-        return {
+        params = {
             "ticker": symbol,
             "interval": _INTERVAL_MAP[interval],
             "interval_multiplier": 1,
             "start_date": start.isoformat(),
             "end_date": today.isoformat(),
         }
+        return "prices", params, "prices"
 
     @staticmethod
-    def _statement_endpoint(statement: str, period: str) -> str:
+    def _profile_request(symbol: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        return "company/facts", {"ticker": symbol}, None
+
+    @staticmethod
+    def _metrics_request(symbol: str) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        return "financial-metrics/snapshot", {"ticker": symbol}, None
+
+    @staticmethod
+    def _financials_request(
+        symbol: str, statement: str, period: str, limit: int
+    ) -> Tuple[str, Dict[str, Any], Optional[str]]:
         if statement not in STATEMENTS:
             raise FinanceProviderError(f"statement must be one of {', '.join(STATEMENTS)}")
         if period not in STATEMENT_PERIODS:
             raise FinanceProviderError(f"period must be one of {', '.join(STATEMENT_PERIODS)}")
-        return _STATEMENT_ENDPOINTS[statement]
+        return (
+            _STATEMENT_ENDPOINTS[statement],
+            {"ticker": symbol, "period": period, "limit": limit},
+            _STATEMENT_KEYS[statement],
+        )
+
+    @staticmethod
+    def _news_request(symbol: str, limit: int) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        return "news", {"ticker": symbol, "limit": min(max(limit, 1), _NEWS_MAX)}, "news"
+
+    @staticmethod
+    def _insider_trades_request(symbol: str, limit: int) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        return "insider-trades", {"ticker": symbol, "limit": limit}, "insider_trades"
+
+    @staticmethod
+    def _earnings_request(symbol: str, limit: int) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        return "earnings", {"ticker": symbol, "limit": limit}, "earnings"
+
+    @staticmethod
+    def _filings_request(
+        symbol: str, form_type: Optional[str], limit: int
+    ) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        params: Dict[str, Any] = {"ticker": symbol, "limit": limit}
+        if form_type:
+            params["filing_type"] = form_type
+        return "filings", params, "filings"
+
+    # ------------------------------------------------------------------
+    # Capabilities — sync
+    # ------------------------------------------------------------------
+
+    def get_quote(self, symbol: str) -> Quote:
+        path, params, _ = self._quote_request(symbol)
+        return self._quote(symbol, self._get(path, params))
+
+    def get_price_history(self, symbol: str, period: str = "1mo", interval: str = "1d") -> PriceHistory:
+        path, params, key = self._history_request(symbol, period, interval)
+        return self._history(symbol, period, interval, self._get_pages(path, params, key or "prices", None))
+
+    def get_company_profile(self, symbol: str) -> CompanyProfile:
+        path, params, _ = self._profile_request(symbol)
+        return self._profile(symbol, self._get(path, params))
+
+    def get_key_metrics(self, symbol: str) -> KeyMetrics:
+        path, params, _ = self._metrics_request(symbol)
+        return self._metrics(symbol, self._get(path, params))
+
+    def get_financials(
+        self, symbol: str, statement: str = "income", period: str = "annual", limit: int = 4
+    ) -> List[FinancialStatement]:
+        path, params, key = self._financials_request(symbol, statement, period, limit)
+        return self._statements(symbol, statement, period, self._get_pages(path, params, key or "", limit))
+
+    def get_news(self, symbol: str, limit: int = 10) -> List[NewsItem]:
+        path, params, key = self._news_request(symbol, limit)
+        return self._news(self._get_pages(path, params, key or "news", params["limit"]))
+
+    def get_insider_trades(self, symbol: str, limit: int = 20) -> List[InsiderTrade]:
+        path, params, key = self._insider_trades_request(symbol, limit)
+        return self._insider_trades(symbol, self._get_pages(path, params, key or "insider_trades", limit))
+
+    def get_earnings(self, symbol: str, limit: int = 8) -> List[EarningsReport]:
+        path, params, key = self._earnings_request(symbol, limit)
+        return self._earnings(symbol, self._get_pages(path, params, key or "earnings", limit))
+
+    def get_sec_filings(self, symbol: str, form_type: Optional[str] = None, limit: int = 10) -> List[Filing]:
+        path, params, key = self._filings_request(symbol, form_type, limit)
+        return self._filings(symbol, self._get_pages(path, params, key or "filings", limit))
+
+    # ------------------------------------------------------------------
+    # Capabilities — async (native httpx.AsyncClient)
+    # ------------------------------------------------------------------
+
+    async def aget_quote(self, symbol: str) -> Quote:
+        path, params, _ = self._quote_request(symbol)
+        return self._quote(symbol, await self._aget(path, params))
+
+    async def aget_price_history(self, symbol: str, period: str = "1mo", interval: str = "1d") -> PriceHistory:
+        path, params, key = self._history_request(symbol, period, interval)
+        return self._history(symbol, period, interval, await self._aget_pages(path, params, key or "prices", None))
+
+    async def aget_company_profile(self, symbol: str) -> CompanyProfile:
+        path, params, _ = self._profile_request(symbol)
+        return self._profile(symbol, await self._aget(path, params))
+
+    async def aget_key_metrics(self, symbol: str) -> KeyMetrics:
+        path, params, _ = self._metrics_request(symbol)
+        return self._metrics(symbol, await self._aget(path, params))
+
+    async def aget_financials(
+        self, symbol: str, statement: str = "income", period: str = "annual", limit: int = 4
+    ) -> List[FinancialStatement]:
+        path, params, key = self._financials_request(symbol, statement, period, limit)
+        return self._statements(symbol, statement, period, await self._aget_pages(path, params, key or "", limit))
+
+    async def aget_news(self, symbol: str, limit: int = 10) -> List[NewsItem]:
+        path, params, key = self._news_request(symbol, limit)
+        return self._news(await self._aget_pages(path, params, key or "news", params["limit"]))
+
+    async def aget_insider_trades(self, symbol: str, limit: int = 20) -> List[InsiderTrade]:
+        path, params, key = self._insider_trades_request(symbol, limit)
+        return self._insider_trades(symbol, await self._aget_pages(path, params, key or "insider_trades", limit))
+
+    async def aget_earnings(self, symbol: str, limit: int = 8) -> List[EarningsReport]:
+        path, params, key = self._earnings_request(symbol, limit)
+        return self._earnings(symbol, await self._aget_pages(path, params, key or "earnings", limit))
+
+    async def aget_sec_filings(self, symbol: str, form_type: Optional[str] = None, limit: int = 10) -> List[Filing]:
+        path, params, key = self._filings_request(symbol, form_type, limit)
+        return self._filings(symbol, await self._aget_pages(path, params, key or "filings", limit))
 
     # ------------------------------------------------------------------
     # Normalizers (pure; unit-tested against OpenAPI-shaped fixtures)
@@ -353,6 +453,10 @@ class FinancialDatasetsProvider(FinanceProvider):
             for p in prices
             if isinstance(p, dict)
         ]
+        # Bars come back oldest first; short periods requested a wider window, keep the tail.
+        trim = _TRIM_BARS.get(period)
+        if trim is not None and len(bars) > trim:
+            bars = bars[-trim:]
         return PriceHistory(symbol=symbol, period=period, interval=interval, currency="USD", bars=bars)
 
     @staticmethod
@@ -516,6 +620,11 @@ class FinancialDatasetsProvider(FinanceProvider):
 # ---------------------------------------------------------------------------
 
 
+def _list(data: Dict[str, Any], key: str) -> List[Any]:
+    value = data.get(key)
+    return list(value) if isinstance(value, list) else []
+
+
 def _num(value: Any) -> Optional[float]:
     if value is None or isinstance(value, bool):
         return None
@@ -545,4 +654,4 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-__all__ = ["FinancialDatasetsProvider"]
+__all__ = ["FinancialDatasets"]

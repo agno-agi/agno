@@ -159,6 +159,9 @@ class CompanyProfile:
 
 @dataclass
 class KeyMetrics:
+    """Ratios, margins, growth rates and yields are fractions (0.05 == 5%); money in the
+    reporting currency."""
+
     symbol: str
     currency: Optional[str] = None
     market_cap: Optional[float] = None
@@ -247,9 +250,13 @@ class InsiderTrade:
 
 @dataclass
 class EarningsReport:
+    """`report_period` is the fiscal period end the numbers cover; `announced_at`
+    is when results were (or will be) reported; `filing_date` is the SEC filing date."""
+
     symbol: str
     report_period: Optional[str] = None
     fiscal_period: Optional[str] = None
+    announced_at: Optional[str] = None
     eps: Optional[float] = None
     eps_estimate: Optional[float] = None
     surprise_percent: Optional[float] = None

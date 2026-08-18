@@ -1,4 +1,4 @@
-"""YFinanceProvider normalizers against yfinance-shaped objects (Ticker/Search patched, no network).
+"""YFinance normalizers against yfinance-shaped objects (Ticker/Search patched, no network).
 
 Skipped when `yfinance` (and therefore pandas) is not installed; run in `.venvs/demo`.
 """
@@ -12,8 +12,8 @@ import pytest
 yf = pytest.importorskip("yfinance")
 pd = pytest.importorskip("pandas")
 
-from agno.tools.finance import FinanceProviderError, FinanceTools, YFinanceProvider  # noqa: E402
-from agno.tools.finance.yfinance import _date, _news_item, _num, _snake  # noqa: E402
+from agno.tools.finance import FinanceProviderError, FinanceTools, YFinance  # noqa: E402
+from agno.tools.finance.providers.yfinance import _date, _news_item, _num, _snake  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures shaped like yfinance 1.x
@@ -21,7 +21,8 @@ from agno.tools.finance.yfinance import _date, _news_item, _num, _snake  # noqa:
 
 FAST_INFO = {
     "lastPrice": 225.01,
-    "previousClose": 225.15,
+    "previousClose": 225.15,  # last extended-hours print of the previous calendar day
+    "regularMarketPreviousClose": 225.16,  # prior regular-session close (what Yahoo shows)
     "open": 226.02,
     "dayHigh": 227.92,
     "dayLow": 224.86,
@@ -56,7 +57,8 @@ INFO = {
     "priceToSalesTrailing12Months": 21.4996,
     "enterpriseToEbitda": 32.655,
     "trailingEps": 6.53,
-    "dividendYield": 0.44,
+    "dividendYield": 0.35,  # Yahoo reports this in percent (0.35 == 0.35%)
+    "trailingAnnualDividendYield": 0.0034,  # ...and this one as a fraction
     "beta": 2.215,
     "grossMargins": 0.74144995,
     "operatingMargins": 0.65596,
@@ -65,7 +67,7 @@ INFO = {
     "returnOnAssets": 0.5273,
     "revenueGrowth": 0.852,
     "earningsGrowth": 2.145,
-    "debtToEquity": 6.555,
+    "debtToEquity": 78.445,  # percent: 78.445 == 0.78x
     "currentRatio": 3.441,
     "freeCashflow": 46335873024,
     "totalRevenue": 253491003392,
@@ -134,6 +136,11 @@ def _income_frame() -> Any:
         },
         index=["Total Revenue", "Net Income", "Tax Effect Of Unusual Items"],
     )
+
+
+def _tagged_frame(tag: str) -> Any:
+    """A one-column statement frame whose only line item names the attribute it came from."""
+    return pd.DataFrame({pd.Timestamp("2026-01-31"): [1.0]}, index=[tag])
 
 
 def _recs_frame() -> Any:
@@ -207,6 +214,7 @@ class FakeTicker:
     calls: List[tuple] = []
 
     def __init__(self, symbol: str, session: Any = None, **overrides: Any) -> None:
+        FakeTicker.calls.append(("Ticker", symbol, session))
         self.symbol = symbol
         self.session = session
         self.fast_info: Dict[str, Any] = dict(FAST_INFO)
@@ -223,10 +231,13 @@ class FakeTicker:
         self.insider_transactions = _insider_frame()
         self.sec_filings = SEC_FILINGS
         self.income_stmt = _income_frame()
-        self.quarterly_income_stmt = _income_frame()
-        self.ttm_income_stmt = _income_frame()
-        self.balance_sheet = _income_frame()
-        self.cash_flow = _income_frame()
+        self.quarterly_income_stmt = _tagged_frame("quarterly_income_stmt")
+        self.ttm_income_stmt = _tagged_frame("ttm_income_stmt")
+        self.balance_sheet = _tagged_frame("balance_sheet")
+        self.quarterly_balance_sheet = _tagged_frame("quarterly_balance_sheet")
+        self.cash_flow = _tagged_frame("cash_flow")
+        self.quarterly_cash_flow = _tagged_frame("quarterly_cash_flow")
+        self.ttm_cash_flow = _tagged_frame("ttm_cash_flow")
         self.earnings_history = _earnings_history_frame()
         self._earnings_dates: Optional[Any] = _earnings_dates_frame()
         self.history_frame = _history_frame()
@@ -265,10 +276,10 @@ class FakeSearch:
 
 
 @pytest.fixture
-def provider() -> YFinanceProvider:
+def provider() -> YFinance:
     FakeTicker.calls = []
     with patch.object(yf, "Ticker", FakeTicker), patch.object(yf, "Search", FakeSearch):
-        yield YFinanceProvider()
+        yield YFinance()
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +288,7 @@ def provider() -> YFinanceProvider:
 
 
 def test_status_does_not_hit_network():
-    status = YFinanceProvider().status()
+    status = YFinance().status()
     assert status.ok is True and "yfinance" in status.detail
 
 
@@ -290,11 +301,18 @@ def test_search_symbols(provider):
 
 def test_quote_from_fast_info(provider):
     quote = provider.get_quote("NVDA")
-    assert quote.price == 225.01 and quote.previous_close == 225.15
-    assert quote.change == round(225.01 - 225.15, 4)
-    assert quote.change_percent == round((225.01 - 225.15) / 225.15 * 100, 4)
+    assert quote.price == 225.01 and quote.previous_close == 225.16  # regular-session close preferred
+    assert quote.change == 225.01 - 225.16
+    assert quote.change_percent == (225.01 - 225.16) / 225.16 * 100
     assert quote.market_cap == 5449967210000.0 and quote.fifty_two_week_high == 236.54
     assert quote.currency == "USD" and quote.exchange == "NMS" and quote.as_of
+
+
+def test_quote_falls_back_to_previous_close(provider):
+    fast = {k: v for k, v in FAST_INFO.items() if k != "regularMarketPreviousClose"}
+    with patch.object(yf, "Ticker", lambda s, session=None: FakeTicker(s, fast_info=fast)):
+        quote = provider.get_quote("NVDA")
+    assert quote.previous_close == 225.15
 
 
 def test_quote_missing_price_raises(provider):
@@ -308,7 +326,21 @@ def test_price_history_bars_and_kwargs(provider):
     assert history.currency == "USD" and history.period == "5d"
     assert [b.date for b in history.bars] == ["2026-08-11", "2026-08-12"]
     assert history.bars[1].close == 224.09 and history.bars[0].volume == 101273100
-    assert FakeTicker.calls[0] == ("history", "NVDA", {"period": "5d", "interval": "1d", "auto_adjust": True})
+    assert ("history", "NVDA", {"period": "5d", "interval": "1d", "auto_adjust": False}) in FakeTicker.calls
+
+
+def test_price_history_skips_bars_without_a_close(provider):
+    frame = _history_frame()
+    frame.loc[frame.index[-1], ["Open", "High", "Low", "Close"]] = float("nan")  # Yahoo lag: volume-only latest row
+    with patch.object(yf, "Ticker", lambda s, session=None: FakeTicker(s, history_frame=frame)):
+        history = provider.get_price_history("NVDA", period="5d")
+    assert [b.date for b in history.bars] == ["2026-08-11"]
+
+    all_nan = _history_frame()
+    all_nan[["Open", "High", "Low", "Close"]] = float("nan")
+    with patch.object(yf, "Ticker", lambda s, session=None: FakeTicker(s, history_frame=all_nan)):
+        with pytest.raises(FinanceProviderError, match="No price history"):
+            provider.get_price_history("NVDA")
 
 
 def test_price_history_validates_and_handles_empty(provider):
@@ -337,6 +369,20 @@ def test_key_metrics(provider):
     assert m.pe_ratio == 34.457886 and m.forward_pe == 17.532349 and m.peg_ratio == 0.6201
     assert m.gross_margin == 0.74144995 and m.free_cash_flow == 46335873024 and m.ebitda == 165514002432
     assert m.fifty_two_week_low == 164.07 and m.currency == "USD" and m.as_of
+    # Yahoo's percent-scaled fields are normalized to fractions like the rest of KeyMetrics
+    assert m.dividend_yield == 0.0034  # trailingAnnualDividendYield preferred (already a fraction)
+    assert m.debt_to_equity == pytest.approx(0.78445)
+
+
+def test_key_metrics_dividend_yield_falls_back_to_percent_field(provider):
+    info = {k: v for k, v in INFO.items() if k != "trailingAnnualDividendYield"}
+    with patch.object(yf, "Ticker", lambda s, session=None: FakeTicker(s, info=info)):
+        m = provider.get_key_metrics("NVDA")
+    assert m.dividend_yield == pytest.approx(0.0035)  # 0.35% -> 0.0035
+    info_none = {k: v for k, v in info.items() if k not in ("dividendYield", "debtToEquity")}
+    with patch.object(yf, "Ticker", lambda s, session=None: FakeTicker(s, info=info_none)):
+        m = provider.get_key_metrics("NVDA")
+    assert m.dividend_yield is None and m.debt_to_equity is None
 
 
 def test_financials_snake_case_items_nan_dropped_and_limit(provider):
@@ -346,6 +392,24 @@ def test_financials_snake_case_items_nan_dropped_and_limit(provider):
     assert first.report_period == "2026-01-31" and first.currency == "USD" and first.statement == "income"
     assert first.items == {"total_revenue": 253491000000.0, "net_income": 120067000000.0}  # NaN item dropped
     assert statements[1].items["tax_effect_of_unusual_items"] == 1.0
+
+
+@pytest.mark.parametrize(
+    "statement,period,attr",
+    [
+        ("income", "quarterly", "quarterly_income_stmt"),
+        ("income", "ttm", "ttm_income_stmt"),
+        ("balance_sheet", "annual", "balance_sheet"),
+        ("balance_sheet", "quarterly", "quarterly_balance_sheet"),
+        ("cash_flow", "annual", "cash_flow"),
+        ("cash_flow", "quarterly", "quarterly_cash_flow"),
+        ("cash_flow", "ttm", "ttm_cash_flow"),
+    ],
+)
+def test_financials_reads_the_right_yfinance_attribute(provider, statement, period, attr):
+    statements = provider.get_financials("NVDA", statement=statement, period=period, limit=1)
+    assert list(statements[0].items) == [attr]
+    assert statements[0].statement == statement and statements[0].period == period
 
 
 def test_financials_ttm_balance_sheet_not_available(provider):
@@ -365,7 +429,7 @@ def test_news_new_shape_and_limit(provider):
         and n.published_at == "2026-08-17T13:29:45Z"
         and n.summary == "Coverage for the week."
     )
-    assert FakeTicker.calls[0] == ("get_news", "NVDA", 5)
+    assert ("get_news", "NVDA", 5) in FakeTicker.calls
 
 
 def test_news_legacy_shape():
@@ -420,14 +484,16 @@ def test_earnings_prefers_dates_frame_including_upcoming(provider):
     reports = provider.get_earnings("NVDA", limit=2)
     assert len(reports) == 2
     assert reports[0].eps is None and reports[0].eps_estimate == 2.08  # upcoming
-    assert reports[0].report_period.startswith("2026-08-26T16:00:00")
+    # Yahoo's calendar is keyed by announcement time -> announced_at, not report_period
+    assert reports[0].announced_at.startswith("2026-08-26T16:00:00") and reports[0].report_period is None
     assert reports[1].eps == 1.87 and reports[1].surprise_percent == 5.54
 
 
 def test_earnings_falls_back_to_history_when_scrape_fails(provider):
     with patch.object(yf, "Ticker", lambda s, session=None: FakeTicker(s, _earnings_dates=None)):
         reports = provider.get_earnings("NVDA", limit=5)
-    assert [r.report_period for r in reports] == ["2026-04-30", "2026-01-31"]  # most recent first
+    assert [r.report_period for r in reports] == ["2026-04-30", "2026-01-31"]  # fiscal quarter end, most recent first
+    assert reports[0].announced_at is None
     assert reports[0].eps == 1.87 and reports[0].surprise_percent == 5.54  # fraction -> percent
 
 
@@ -450,11 +516,14 @@ def test_session_and_timeout_are_forwarded():
             super().__init__(query, **kwargs)
 
     with patch.object(yf, "Ticker", FakeTicker), patch.object(yf, "Search", RecordingSearch):
-        p = YFinanceProvider(session=sentinel, timeout=9)
+        FakeTicker.calls = []
+        p = YFinance(session=sentinel, timeout=9)
         p.search_symbols("x")
         assert seen["session"] is sentinel and seen["timeout"] == 9
         p.get_price_history("NVDA")
-    assert FakeTicker.calls[-1][2]["timeout"] == 9
+    assert ("Ticker", "NVDA", sentinel) in FakeTicker.calls  # session reaches yfinance.Ticker
+    history_call = next(c for c in FakeTicker.calls if c[0] == "history")
+    assert history_call[2]["timeout"] == 9
 
 
 def test_helpers():
