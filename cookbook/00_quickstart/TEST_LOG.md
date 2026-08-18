@@ -1,5 +1,30 @@
 # Test Log: cookbook/00_quickstart
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `5668fdfaa` (origin/feat/v3.0)
+
+### agent_with_tools.py
+
+**Status:** PASS
+
+**Description:** Gemini + YFinance market brief.
+
+**Result:** Tool calls executed, full market brief rendered.
+
+---
+
+### agent_with_storage.py
+
+**Status:** PASS
+
+**Description:** Storage-backed agent, multi-turn comparison prompt.
+
+**Result:** Session persisted and follow-up used prior context.
+
+---
+
 ## Latest Verification — 2026-07-23
 
 **Environment:** `.venvs/quickstart/bin/python` (Python 3.12.8)

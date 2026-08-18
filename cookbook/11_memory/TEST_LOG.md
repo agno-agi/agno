@@ -1,5 +1,20 @@
 # Test Log: 11_memory
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `5668fdfaa` (origin/feat/v3.0)
+
+### 01_agent_with_memory.py
+
+**Status:** PASS
+
+**Description:** User memory creation and update across runs.
+
+**Result:** Memory created, then updated when the user's preference changed.
+
+---
+
 > Tests not yet run. Run each file and update this log.
 
 ### 01_agent_with_memory.py

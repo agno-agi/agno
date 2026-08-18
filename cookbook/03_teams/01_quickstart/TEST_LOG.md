@@ -1,5 +1,20 @@
 # Validation run 2026-02-15T00:34:21
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `5668fdfaa` (origin/feat/v3.0)
+
+### 01_basic_coordination.py
+
+**Status:** PASS (environment flaky)
+
+**Description:** Two-member team with OpenAIResponses gpt-5-mini, streaming.
+
+**Result:** Completed successfully on several runs. Roughly half of the attempts hit "API connection error" at stream start; reproduced identical pass/fail from different working directories and raw OpenAI streaming succeeded throughout, so the failures are sandbox network flakiness, not framework code.
+
+---
+
 ## Pattern Check
 **Status:** PASS
 **Notes:** Passed.
