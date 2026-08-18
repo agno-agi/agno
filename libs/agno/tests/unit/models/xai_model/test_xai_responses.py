@@ -59,7 +59,8 @@ def test_sync_client_receives_token_provider():
     model = xAIResponses(token_provider=provider)
     client = model.get_client()
 
-    # The openai SDK stores a callable api_key on _api_key_provider (2.45.0 seam)
+    # The openai SDK stores a callable api_key on the private _api_key_provider
+    # attribute (verified in the installed 2.45.0; revisit if the SDK moves it)
     assert client._api_key_provider is provider
     assert calls == []  # never invoked at build
 
@@ -294,6 +295,23 @@ def test_second_401_propagates():
     assert exc_info.value is second  # propagates untouched
     assert parent.call_count == 2
     assert manager.force_refresh.call_count == 1
+
+
+def test_403_after_401_retry_is_decorated():
+    manager = MagicMock()
+    first = ModelProviderError("unauthorized", status_code=401)
+    second = ModelProviderError("Tier does not allow this model", status_code=403)
+    parent = MagicMock(side_effect=[first, second])
+
+    with patch.object(OpenAIResponses, "invoke", parent):
+        model = xAIResponses(token_manager=manager)
+        with pytest.raises(ModelProviderError) as exc_info:
+            model.invoke(messages=_messages(), assistant_message=_assistant())
+
+    assert parent.call_count == 2
+    assert manager.force_refresh.call_count == 1
+    assert exc_info.value.status_code == 403
+    assert "X Premium does not include xAI API access" in exc_info.value.message
 
 
 def test_401_api_key_mode_not_retried():

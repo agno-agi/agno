@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from os import getenv
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -23,8 +23,6 @@ XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"  # shared public Gr
 XAI_OAUTH_SCOPE = "openid profile email offline_access grok-cli:access api:access"
 REFRESH_MARGIN_SECONDS = 300  # fixed margin against the measured 21600s token lifetime
 
-_DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
-
 _EXPIRED_LOGIN_MESSAGE = "The SuperGrok sign-in code expired (30 minutes). Start the login again."
 _INVALID_GRANT_MESSAGE = (
     "SuperGrok session expired or was revoked. Sign in again (run the device login), "
@@ -32,6 +30,10 @@ _INVALID_GRANT_MESSAGE = (
 )
 _NO_TOKEN_MESSAGE = (
     "No SuperGrok token found. Sign in with the device login, or set XAI_API_KEY to use pay-per-token access."
+)
+_SYNC_PATH_ASYNC_DB_WARNING = (
+    "Async database backends need the async token methods (apoll_for_token / aget_access_token). "
+    "Falling back to file storage."
 )
 
 # Cache for SuperGrok access tokens: {(provider, user_id, service): (access_token, expires_at)}
@@ -58,6 +60,11 @@ def _get_async_cache_lock() -> asyncio.Lock:
     return _async_cache_lock
 
 
+async def _maybe_await(result: Any) -> Any:
+    """DB adapters ship in sync and async flavors; await only the async ones."""
+    return await result if isawaitable(result) else result
+
+
 @dataclass
 class DeviceLoginInfo:
     """The values a user needs to complete a SuperGrok device sign-in."""
@@ -66,8 +73,8 @@ class DeviceLoginInfo:
     user_code: str
     verification_uri: str
     verification_uri_complete: str
-    expires_in: int = 1800
-    interval: int = 5
+    expires_in: int
+    interval: int
 
 
 @dataclass
@@ -93,7 +100,9 @@ class XAITokenManager:
 
     _memory_row: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
-    # PR 1 uses the empty-string single-user slot; per-user resolution lands in a later PR.
+    # PR 1 uses the empty-string single-user slot; per-user resolution lands in a
+    # later PR. The module-level token cache is keyed on this same triple, so it is
+    # process-global: every manager in the process shares the one slot.
     @staticmethod
     def _store_key() -> Tuple[str, str, str]:
         return ("xai", "", "supergrok")
@@ -144,7 +153,11 @@ class XAITokenManager:
 
     @staticmethod
     def _poll_form(device_code: str) -> Dict[str, str]:
-        return {"grant_type": _DEVICE_GRANT_TYPE, "device_code": device_code, "client_id": XAI_OAUTH_CLIENT_ID}
+        return {
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+            "client_id": XAI_OAUTH_CLIENT_ID,
+        }
 
     @staticmethod
     def _parse_device_response(response: httpx.Response) -> DeviceLoginInfo:
@@ -178,7 +191,7 @@ class XAITokenManager:
     def _error_code(response: httpx.Response) -> Optional[str]:
         try:
             body = response.json()
-        except (json.JSONDecodeError, ValueError):
+        except ValueError:
             return None
         return body.get("error") if isinstance(body, dict) else None
 
@@ -196,7 +209,7 @@ class XAITokenManager:
             if cached is not None:
                 return cached
             token_data = self._load()
-            if token_data is not None and self._is_fresh(token_data):
+            if token_data is not None and self._is_fresh(token_data.get("expires_at")):
                 # Another process refreshed already: adopt the stored token
                 self._memory_row = token_data
                 self._cache_put(token_data)
@@ -213,7 +226,7 @@ class XAITokenManager:
             if cached is not None:
                 return cached
             token_data = await self._aload()
-            if token_data is not None and self._is_fresh(token_data):
+            if token_data is not None and self._is_fresh(token_data.get("expires_at")):
                 # Another process refreshed already: adopt the stored token
                 self._memory_row = token_data
                 self._cache_put(token_data)
@@ -280,14 +293,14 @@ class XAITokenManager:
             "token_endpoint": XAI_TOKEN_URL,
         }
 
-    def _is_fresh(self, token_data: Dict[str, Any]) -> bool:
-        return float(token_data.get("expires_at") or 0) - self.now_fn() > REFRESH_MARGIN_SECONDS
+    def _is_fresh(self, expires_at: Any) -> bool:
+        return float(expires_at or 0) - self.now_fn() > REFRESH_MARGIN_SECONDS
 
     def _cached_token(self) -> Optional[str]:
         cached = _token_cache.get(self._store_key())
         if cached is not None:
             access_token, expires_at = cached
-            if expires_at - self.now_fn() > REFRESH_MARGIN_SECONDS:
+            if self._is_fresh(expires_at):
                 return access_token
         return None
 
@@ -305,14 +318,21 @@ class XAITokenManager:
         if payload is None:
             return
         if self.db is not None:
-            try:
-                self.db.upsert_auth_token(self._db_row(token_data, payload))
-                return
-            except NotImplementedError:
-                log_warning("Database does not support auth token storage")
-            except Exception as e:
-                log_debug(f"Could not save token to DB: {e}")
-                return
+            if iscoroutinefunction(self.db.upsert_auth_token):
+                log_warning(_SYNC_PATH_ASYNC_DB_WARNING)
+            else:
+                try:
+                    # Adapters swallow their own errors and signal failure by returning None
+                    if self.db.upsert_auth_token(self._db_row(token_data, payload)) is None:
+                        log_warning("Could not persist SuperGrok token to the database; token kept in memory only")
+                    return
+                except NotImplementedError:
+                    # An unsupported backend falls through to the file store;
+                    # a real DB error does not (the row may still exist).
+                    log_warning("Database does not support auth token storage")
+                except Exception as e:
+                    log_debug(f"Could not save token to DB: {e}")
+                    return
         self._write_file(payload)
 
     async def _asave(self, token_data: Dict[str, Any]) -> None:
@@ -323,10 +343,9 @@ class XAITokenManager:
             return
         if self.db is not None:
             try:
-                if iscoroutinefunction(self.db.upsert_auth_token):
-                    await self.db.upsert_auth_token(self._db_row(token_data, payload))
-                else:
-                    self.db.upsert_auth_token(self._db_row(token_data, payload))
+                # Adapters swallow their own errors and signal failure by returning None
+                if await _maybe_await(self.db.upsert_auth_token(self._db_row(token_data, payload))) is None:
+                    log_warning("Could not persist SuperGrok token to the database; token kept in memory only")
                 return
             except NotImplementedError:
                 log_warning("Database does not support auth token storage")
@@ -349,23 +368,23 @@ class XAITokenManager:
 
     def _read_store(self) -> Optional[Dict[str, Any]]:
         if self.db is not None:
-            try:
-                row = self.db.get_auth_token("xai", "", "supergrok")
-                return row.get("token_data") if row else None
-            except NotImplementedError:
-                log_warning("Database does not support auth token storage")
-            except Exception as e:
-                log_debug(f"Could not load token from DB: {e}")
-                return None
+            if iscoroutinefunction(self.db.get_auth_token):
+                log_warning(_SYNC_PATH_ASYNC_DB_WARNING)
+            else:
+                try:
+                    row = self.db.get_auth_token(*self._store_key())
+                    return row.get("token_data") if row else None
+                except NotImplementedError:
+                    log_warning("Database does not support auth token storage")
+                except Exception as e:
+                    log_debug(f"Could not load token from DB: {e}")
+                    return None
         return self._read_file()
 
     async def _aread_store(self) -> Optional[Dict[str, Any]]:
         if self.db is not None:
             try:
-                if iscoroutinefunction(self.db.get_auth_token):
-                    row = await self.db.get_auth_token("xai", "", "supergrok")
-                else:
-                    row = self.db.get_auth_token("xai", "", "supergrok")
+                row = await _maybe_await(self.db.get_auth_token(*self._store_key()))
                 return row.get("token_data") if row else None
             except NotImplementedError:
                 log_warning("Database does not support auth token storage")
@@ -379,6 +398,11 @@ class XAITokenManager:
 
         if not is_encrypted(payload):
             return payload
+        if not self.encryption_key:
+            # No AGNO_ENCRYPTION_KEY fallback on read either: decrypt_dict would fall
+            # back to it when handed key=None (see the encryption_key field comment).
+            log_warning("Could not decrypt stored SuperGrok token: XAI_TOKEN_ENCRYPTION_KEY is not set")
+            return None
         try:
             return decrypt_dict(payload, key=self.encryption_key)
         except ValueError as e:
@@ -402,10 +426,11 @@ class XAITokenManager:
         return encrypt_dict(token_data, key=self.encryption_key)
 
     def _db_row(self, token_data: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+        provider, user_id, service = self._store_key()
         return {
-            "provider": "xai",
-            "user_id": "",  # Empty string for single-user mode
-            "service": "supergrok",
+            "provider": provider,
+            "user_id": user_id,
+            "service": service,
             "token_data": payload,
             "granted_scopes": (token_data.get("scope") or "").split(),
         }
@@ -429,6 +454,7 @@ class XAITokenManager:
             fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w") as handle:
                 json.dump(payload, handle)
+            # O_CREAT's mode only applies to newly created files; enforce 0600 on overwrite too
             os.chmod(path, 0o600)
         except OSError as e:
             log_warning(f"Could not persist SuperGrok token to {path}: {e}. Token kept in memory only.")
@@ -437,14 +463,18 @@ class XAITokenManager:
         self._memory_row = None
         _token_cache.pop(self._store_key(), None)
         if self.db is not None:
-            try:
-                self.db.delete_auth_token("xai", "", "supergrok")
-                return
-            except NotImplementedError:
-                log_warning("Database does not support auth token deletion")
-            except Exception as e:
-                log_debug(f"Could not delete token from DB: {e}")
-                return
+            if iscoroutinefunction(self.db.delete_auth_token):
+                log_warning(_SYNC_PATH_ASYNC_DB_WARNING)
+            else:
+                try:
+                    if not self.db.delete_auth_token(*self._store_key()):
+                        log_debug("No SuperGrok token row deleted")
+                    return
+                except NotImplementedError:
+                    log_warning("Database does not support auth token deletion")
+                except Exception as e:
+                    log_debug(f"Could not delete token from DB: {e}")
+                    return
         try:
             self._token_file().unlink(missing_ok=True)
         except OSError as e:
@@ -455,10 +485,8 @@ class XAITokenManager:
         _token_cache.pop(self._store_key(), None)
         if self.db is not None:
             try:
-                if iscoroutinefunction(self.db.delete_auth_token):
-                    await self.db.delete_auth_token("xai", "", "supergrok")
-                else:
-                    self.db.delete_auth_token("xai", "", "supergrok")
+                if not await _maybe_await(self.db.delete_auth_token(*self._store_key())):
+                    log_debug("No SuperGrok token row deleted")
                 return
             except NotImplementedError:
                 log_warning("Database does not support auth token deletion")

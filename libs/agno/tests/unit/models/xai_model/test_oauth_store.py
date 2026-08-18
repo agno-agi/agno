@@ -133,6 +133,65 @@ def test_decrypt_failure_warns_not_debug(sqlite_db, encryption_key, token_endpoi
     assert not any("decrypt" in str(call).lower() for call in mock_debug.call_args_list)
 
 
+def test_upsert_returning_none_warns_and_keeps_memory(token_endpoint, encryption_key, fake_clock):
+    # Adapters swallow their own errors and signal a failed write by returning None;
+    # losing a rotated refresh token silently would strand the session
+    db = MagicMock()
+    db.get_auth_token.return_value = None
+    db.upsert_auth_token.return_value = None
+    manager = _sync_manager(token_endpoint, db=db, encryption_key=encryption_key, now_fn=fake_clock)
+
+    with patch("agno.models.xai.oauth.log_warning") as mock_warning:
+        manager.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
+
+    assert any("kept in memory" in str(call) for call in mock_warning.call_args_list)
+    assert manager.get_access_token() == "access-token-1"
+
+
+def test_no_decrypt_fallback_to_agno_key(sqlite_db, token_endpoint, fake_clock, monkeypatch):
+    # The dedicated-key design: an encrypted row is never decrypted with
+    # AGNO_ENCRYPTION_KEY, even when that key would work
+    key = generate_encryption_key()
+    sqlite_db.upsert_auth_token(
+        {
+            "provider": "xai",
+            "user_id": "",
+            "service": "supergrok",
+            "token_data": encrypt_dict(
+                {"access_token": "access-token-1", "refresh_token": "refresh-token-1", "expires_at": 2_000_000},
+                key=key,
+            ),
+            "granted_scopes": XAI_OAUTH_SCOPE.split(),
+        }
+    )
+    monkeypatch.delenv("XAI_TOKEN_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("AGNO_ENCRYPTION_KEY", key)
+    manager = _sync_manager(token_endpoint, db=sqlite_db, now_fn=fake_clock)
+
+    with patch("agno.models.xai.oauth.log_warning") as mock_warning:
+        with pytest.raises(ModelAuthenticationError):
+            manager.get_access_token()
+
+    assert any("XAI_TOKEN_ENCRYPTION_KEY" in str(call) for call in mock_warning.call_args_list)
+
+
+def test_sync_path_with_async_db_warns_and_uses_file(
+    async_sqlite_db, tmp_path, encryption_key, token_endpoint, fake_clock
+):
+    # An async backend on the sync path must degrade loudly, never fire-and-forget a coroutine
+    token_file = tmp_path / "xai_token.json"
+    manager = _sync_manager(
+        token_endpoint, db=async_sqlite_db, token_path=str(token_file), encryption_key=encryption_key, now_fn=fake_clock
+    )
+
+    with patch("agno.models.xai.oauth.log_warning") as mock_warning:
+        manager.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
+
+    assert any("async token methods" in str(call) for call in mock_warning.call_args_list)
+    assert token_file.exists()
+    assert manager.get_access_token() == "access-token-1"
+
+
 def test_not_implemented_backend_falls_back_to_file(tmp_path, encryption_key, token_endpoint, fake_clock):
     db = MagicMock()
     db.get_auth_token.side_effect = NotImplementedError

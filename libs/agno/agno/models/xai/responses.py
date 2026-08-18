@@ -17,12 +17,6 @@ try:
 except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
-_SYNC_CLIENT_MISMATCH_MESSAGE = (
-    "async_token_provider cannot be used with the sync client: a sync request path cannot "
-    "await it (the openai SDK would send the coroutine object as the bearer). "
-    "Pass token_provider (sync), or use arun()/aprint_response()."
-)
-
 
 def _check_openai_version() -> None:
     """SuperGrok OAuth rides on the SDK's callable api_key support, added in 1.106.0."""
@@ -73,6 +67,9 @@ class xAIResponses(OpenResponses):
     token_provider: Optional[Callable[[], str]] = None
     async_token_provider: Optional[Callable[[], Awaitable[str]]] = None
     token_manager: Optional[XAITokenManager] = None
+
+    # No role_map override: system messages go to the wire as role "developer",
+    # the base class's default map [ASSUMPTION A1].
 
     # Feature flag for include: ["reasoning.encrypted_content"]; default off
     # because the upstream contract for encrypted reasoning replay is unstable.
@@ -134,6 +131,8 @@ class xAIResponses(OpenResponses):
         Raises:
             ModelAuthenticationError: If no credential source is configured.
         """
+        # Cannot delegate to super()._get_client_params(): the base raises on a
+        # missing OPENAI_API_KEY, which is the normal state in OAuth mode.
         if not self.api_key and not self._using_oauth():
             self.api_key = getenv("XAI_API_KEY")
             if not self.api_key:
@@ -173,7 +172,14 @@ class xAIResponses(OpenResponses):
             # Derived here, never in __post_init__: credentials stay plain fields,
             # which keeps deep-copy and dict round-trips correct.
             return self.token_manager.get_access_token
-        raise ModelAuthenticationError(message=_SYNC_CLIENT_MISMATCH_MESSAGE, model_name=self.name)
+        raise ModelAuthenticationError(
+            message=(
+                "async_token_provider cannot be used with the sync client: a sync request path cannot "
+                "await it (the openai SDK would send the coroutine object as the bearer). "
+                "Pass token_provider (sync), or use arun()/aprint_response()."
+            ),
+            model_name=self.name,
+        )
 
     def _async_token_callable(self) -> Callable[[], Awaitable[str]]:
         """The awaitable callable for the async client; auto-shims a sync-only provider."""
@@ -241,13 +247,17 @@ class xAIResponses(OpenResponses):
                 "xAI rejected this request (403). When signed in with SuperGrok this usually means "
                 "the subscription tier does not include this model or API access, the subscription "
                 "is inactive, or its quota is exhausted — note X Premium does not include xAI API "
-                f"access. Retrying or re-logging-in will not help. To use pay-per-token access "
+                "access. Retrying or re-logging-in will not help. To use pay-per-token access "
                 f"instead, set XAI_API_KEY. Provider message: {exc.message}"
             ),
             status_code=403,
             model_name=self.name,
             model_id=self.id,
         )
+
+    def _should_decorate_403(self, exc: ModelProviderError) -> bool:
+        """OAuth-mode 403s get subscription guidance; API-key mode passes through untouched."""
+        return self._using_oauth() and exc.status_code == 403
 
     def _should_retry_401(self, exc: ModelProviderError) -> bool:
         """The 401 one-shot leg applies in OAuth mode with a manager to refresh through [A2]."""
@@ -278,14 +288,19 @@ class xAIResponses(OpenResponses):
         try:
             return super().invoke(**call_kwargs)
         except ModelProviderError as exc:
-            if self._using_oauth() and exc.status_code == 403:
+            if self._should_decorate_403(exc):
                 raise self._decorated_403(exc) from exc
             if not self._should_retry_401(exc):
                 raise
             # One-shot 401 recovery: refresh, rebuild the client, retry exactly once
             self.token_manager.force_refresh()  # type: ignore[union-attr]
             self.client = None  # the rebuild re-inserts the token callable
-            return super().invoke(**call_kwargs)
+            try:
+                return super().invoke(**call_kwargs)
+            except ModelProviderError as retry_exc:
+                if self._should_decorate_403(retry_exc):
+                    raise self._decorated_403(retry_exc) from retry_exc
+                raise
 
     async def ainvoke(
         self,
@@ -312,14 +327,19 @@ class xAIResponses(OpenResponses):
         try:
             return await super().ainvoke(**call_kwargs)
         except ModelProviderError as exc:
-            if self._using_oauth() and exc.status_code == 403:
+            if self._should_decorate_403(exc):
                 raise self._decorated_403(exc) from exc
             if not self._should_retry_401(exc):
                 raise
             # One-shot 401 recovery: refresh, rebuild the client, retry exactly once
             await self.token_manager.aforce_refresh()  # type: ignore[union-attr]
             self.async_client = None  # the rebuild re-inserts the token callable
-            return await super().ainvoke(**call_kwargs)
+            try:
+                return await super().ainvoke(**call_kwargs)
+            except ModelProviderError as retry_exc:
+                if self._should_decorate_403(retry_exc):
+                    raise self._decorated_403(retry_exc) from retry_exc
+                raise
 
     def invoke_stream(
         self,
@@ -350,14 +370,19 @@ class xAIResponses(OpenResponses):
                 yield chunk
             return
         except ModelProviderError as exc:
-            if self._using_oauth() and exc.status_code == 403:
+            if self._should_decorate_403(exc):
                 raise self._decorated_403(exc) from exc
             # Retry only if nothing was yielded yet: deltas must not replay
             if yielded_anything or not self._should_retry_401(exc):
                 raise
         self.token_manager.force_refresh()  # type: ignore[union-attr]
         self.client = None  # the rebuild re-inserts the token callable
-        yield from super().invoke_stream(**call_kwargs)
+        try:
+            yield from super().invoke_stream(**call_kwargs)
+        except ModelProviderError as retry_exc:
+            if self._should_decorate_403(retry_exc):
+                raise self._decorated_403(retry_exc) from retry_exc
+            raise
 
     async def ainvoke_stream(
         self,
@@ -388,12 +413,17 @@ class xAIResponses(OpenResponses):
                 yield chunk
             return
         except ModelProviderError as exc:
-            if self._using_oauth() and exc.status_code == 403:
+            if self._should_decorate_403(exc):
                 raise self._decorated_403(exc) from exc
             # Retry only if nothing was yielded yet: deltas must not replay
             if yielded_anything or not self._should_retry_401(exc):
                 raise
         await self.token_manager.aforce_refresh()  # type: ignore[union-attr]
         self.async_client = None  # the rebuild re-inserts the token callable
-        async for chunk in super().ainvoke_stream(**call_kwargs):
-            yield chunk
+        try:
+            async for chunk in super().ainvoke_stream(**call_kwargs):
+                yield chunk
+        except ModelProviderError as retry_exc:
+            if self._should_decorate_403(retry_exc):
+                raise self._decorated_403(retry_exc) from retry_exc
+            raise
