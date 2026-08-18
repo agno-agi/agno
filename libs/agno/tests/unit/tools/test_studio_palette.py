@@ -15,6 +15,7 @@ from typing import Any, Dict
 import pytest
 
 from agno.agent import Agent
+from agno.team import Team
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
@@ -167,6 +168,62 @@ class TestSelfCompositionGuard:
         studio.create_team(name="Crew", instructions="i", member_ids=["plain-member"])
 
         error = _error(studio.edit_team("crew", member_ids=["builder"]))
+        assert error["code"] == "tool_not_allowed"
+
+    def test_display_name_reference_is_refused(self, registry, db, builder_agent):
+        # The guard runs after resolution, so the builder's display name is as
+        # blocked as its id.
+        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[builder_agent])
+        error = _error(studio.create_team(name="Meta", instructions="i", member_ids=["Builder"]))
+        assert error["code"] == "tool_not_allowed"
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [
+            lambda inner: {"type": "parallel", "name": "p", "steps": [inner]},
+            lambda inner: {"type": "loop", "name": "l", "max_iterations": 2, "steps": [inner]},
+            lambda inner: {"type": "steps", "name": "g", "steps": [inner]},
+            lambda inner: {
+                "type": "condition",
+                "name": "c",
+                "evaluator_function": "1 > 0",
+                "steps": [inner],
+                "else_steps": [inner],
+            },
+            lambda inner: {"type": "router", "name": "r", "selector_function": "'x'", "choices": [inner]},
+        ],
+        ids=["parallel", "loop", "steps", "condition", "router"],
+    )
+    def test_builder_nested_in_compound_steps_is_refused(self, registry, db, builder_agent, wrap):
+        studio = StudioTools(registry=registry, db=db, workflows=True, agents_list=[builder_agent])
+        inner = {"name": "leaf", "agent_id": "builder"}
+        error = _error(studio.create_workflow(name="Nested Meta", steps=[wrap(inner)]))
+        assert error["code"] == "tool_not_allowed"
+
+    def test_team_containing_the_builder_is_refused(self, registry, db, builder_agent):
+        # Privilege is recursive: a team is privileged when any member is.
+        crew = Team(
+            id="builder-crew", name="Builder Crew", members=[builder_agent], model=OpenAIResponses(id="gpt-5.5")
+        )
+        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[builder_agent], teams_list=[crew])
+        error = _error(studio.create_team(name="Meta", instructions="i", member_ids=["builder-crew"]))
+        assert error["code"] == "tool_not_allowed"
+
+    def test_stored_component_with_rehydrated_studio_tools_is_refused(self, registry, db):
+        # A DB-stored agent whose config carries the studio toolkit rehydrates
+        # to member Functions bound to a StudioTools instance; the guard reads
+        # the bound entrypoint, not just isinstance on the toolkit object.
+        studio_toolkit = StudioTools(registry=registry, db=db)
+        registry.add_tool(studio_toolkit, source="folded")
+        stored_builder = Agent(
+            id="stored-builder",
+            name="Stored Builder",
+            model=OpenAIResponses(id="gpt-5.5"),
+            tools=[studio_toolkit],
+        )
+        stored_builder.save(db=db)
+        studio = StudioTools(registry=registry, db=db, teams=True)
+        error = _error(studio.create_team(name="Meta", instructions="i", member_ids=["stored-builder"]))
         assert error["code"] == "tool_not_allowed"
 
     def test_members_without_studio_tools_are_untouched(self, registry, db):

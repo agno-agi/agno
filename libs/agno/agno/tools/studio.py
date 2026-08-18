@@ -801,6 +801,62 @@ class StudioTools(Toolkit):
             )
         return None
 
+    @staticmethod
+    def _carries_studio_toolkit(component: Any) -> bool:
+        """Whether the component's own tools include the Studio control plane.
+
+        A live component holds the StudioTools instance itself; a rehydrated
+        one holds the toolkit's member Functions, whose bound entrypoints name
+        the owning instance."""
+        for tool in getattr(component, "tools", None) or []:
+            if isinstance(tool, StudioTools):
+                return True
+            owner = getattr(getattr(tool, "entrypoint", None), "__self__", None)
+            if isinstance(owner, StudioTools):
+                return True
+        return False
+
+    def _component_is_privileged(self, component: Any, seen: Optional[Set[str]] = None) -> bool:
+        """Privileged = carries StudioTools itself, or (for a team) any member
+        does, recursively. Resolved objects only: raw identifiers cannot answer
+        this, which is why the guard runs after resolution."""
+        seen = seen if seen is not None else set()
+        component_id = getattr(component, "id", None)
+        if isinstance(component_id, str):
+            if component_id in seen:
+                return False
+            seen.add(component_id)
+        if self._carries_studio_toolkit(component):
+            return True
+        for member in getattr(component, "members", None) or []:
+            if self._component_is_privileged(member, seen):
+                return True
+        return False
+
+    def _refuse_privileged_resolved(self, components: List[Any]) -> Optional[str]:
+        """Post-resolution self-composition guard.
+
+        Runs over resolved objects so display names, nested compound steps,
+        teams that merely contain the builder, and stored components whose
+        rehydrated tools carry the control plane are all covered - the raw
+        identifier check alone sees none of those."""
+        blocked = sorted(
+            {
+                str(getattr(component, "id", None) or getattr(component, "name", ""))
+                for component in components
+                if self._component_is_privileged(component)
+                and getattr(component, "id", None) not in self._buildable_tools
+            }
+        )
+        if blocked:
+            return error_result(
+                "tool_not_allowed",
+                f"Refusing to compose {blocked}: these components carry the Studio control plane "
+                "(self-composition). A deployer allows one by listing its id in buildable_tools.",
+                blocked=blocked,
+            )
+        return None
+
     def _mint_component_id(self, name: str, component_id: Optional[str], component_type: str) -> tuple:
         """(id, error): strict mint from the name, or the validated explicit id.
 
@@ -1598,6 +1654,9 @@ class StudioTools(Toolkit):
             members, missing = self._resolve_members(member_ids, actor=_actor_id(_agno_run_context))
             if missing:
                 return error_result("component_not_found", f"Members not found: {missing}", missing=missing)
+            member_err = self._refuse_privileged_resolved(members)
+            if member_err is not None:
+                return member_err
             assert self.db is not None
             members, member_pins = self._bind_members_to_target_db(
                 members, self.db, require_published=publish, actor=_actor_id(_agno_run_context)
@@ -1691,6 +1750,15 @@ class StudioTools(Toolkit):
             built_steps, build_err = self._build_steps_from_specs(steps, actor=_actor_id(_agno_run_context))
             if build_err is not None:
                 return build_err
+            step_executors = [
+                child
+                for leaf in self._iter_leaf_steps(built_steps)
+                for child in (getattr(leaf, "agent", None), getattr(leaf, "team", None))
+                if child is not None
+            ]
+            member_err = self._refuse_privileged_resolved(step_executors)
+            if member_err is not None:
+                return member_err
             workflow_id, mint_err = self._mint_component_id(name, component_id, "workflow")
             if mint_err is not None:
                 return mint_err
@@ -2131,6 +2199,9 @@ class StudioTools(Toolkit):
                 members, missing = self._resolve_members(member_ids, actor=_actor_id(_agno_run_context))
                 if missing:
                     return error_result("component_not_found", f"Members not found: {missing}", missing=missing), None
+                member_err = self._refuse_privileged_resolved(members)
+                if member_err is not None:
+                    return member_err, None
                 assert self.db is not None
                 members, pinned = self._bind_members_to_target_db(
                     members,
@@ -2206,6 +2277,15 @@ class StudioTools(Toolkit):
                 built, build_err = self._build_steps_from_specs(coerced, actor=_actor_id(_agno_run_context))
                 if build_err is not None:
                     return build_err, None
+                step_executors = [
+                    child
+                    for leaf in self._iter_leaf_steps(built)
+                    for child in (getattr(leaf, "agent", None), getattr(leaf, "team", None))
+                    if child is not None
+                ]
+                member_err = self._refuse_privileged_resolved(step_executors)
+                if member_err is not None:
+                    return member_err, None
                 if self.db is not None:
                     pinned = self._bind_steps_to_target_db(
                         built,
