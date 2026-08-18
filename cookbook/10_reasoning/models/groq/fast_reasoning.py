@@ -21,7 +21,7 @@ task = "What is 23 x 47? Show your step-by-step reasoning."
 
 # Fast agent - no reasoning model
 fast_agent = Agent(
-    model=Groq(id="qwen/qwen3.6-27b"),
+    model=Groq(id="openai/gpt-oss-120b"),
     markdown=True,
 )
 
