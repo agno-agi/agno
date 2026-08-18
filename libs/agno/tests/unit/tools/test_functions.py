@@ -1744,6 +1744,27 @@ def test_strict_processing_does_not_require_an_injected_parameter():
     assert func.parameters["required"] == ["query"]
 
 
+def test_strict_processing_excludes_framework_typed_renamed_parameter():
+    """A param the framework claims by annotation (renamed from the reserved names)
+    must not be forced into strict-mode `required`. Issue #9454."""
+
+    def probe(query: str, ctx: RunContext = None) -> str:
+        return query
+
+    func = Function(
+        name="probe",
+        entrypoint=probe,
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "ctx": {"type": "object"}},
+            "required": ["query"],
+        },
+    )
+    func.process_entrypoint(strict=True)
+    assert func._framework_params == {"ctx"}
+    assert func.parameters["required"] == ["query"]
+
+
 # ----------------------------------------------------------------------
 # Regression: the guard must also engage on the from_callable path
 # (Agent(tools=[fn]) registers plain callables without process_entrypoint)
