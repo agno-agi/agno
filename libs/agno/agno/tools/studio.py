@@ -4396,9 +4396,8 @@ def _persist_only(
     component_id = getattr(component, "id", None)
     if component_id is None:
         raise ValueError("Component has no id")
-    from agno.db.base import ComponentType
-
     from agno.db.base import ComponentArchivedError as _ComponentArchivedError
+    from agno.db.base import ComponentType
 
     resolved_config = config if config is not None else _component_to_dict(component)
     if db.get_component(component_id) is None:

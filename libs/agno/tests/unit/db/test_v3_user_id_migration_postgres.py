@@ -141,5 +141,3 @@ async def test_async_postgres_schedules_migration_adds_provenance_columns(schema
         assert created["id"] == "sched-after-migration"
     finally:
         await db.db_engine.dispose()
-
-
