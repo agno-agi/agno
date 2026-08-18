@@ -451,14 +451,19 @@ def test_redis_create_warns_only_on_conclusive_legacy_verdict(caplog):
         db.index.info.side_effect = info
         return db
 
-    with caplog.at_level(logging.WARNING):
-        _db_with_info([RuntimeError("cannot inspect")]).create()
-    assert "was created without" not in caplog.text, "an uninspectable index must not be mis-warned as legacy"
+    agno_logger = logging.getLogger("agno")
+    agno_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            _db_with_info([RuntimeError("cannot inspect")]).create()
+        assert "was created without" not in caplog.text, "an uninspectable index must not be mis-warned as legacy"
 
-    caplog.clear()
-    with caplog.at_level(logging.WARNING):
-        _db_with_info([{"attributes": []}]).create()
-    assert "was created without" in caplog.text, "a conclusive legacy verdict must warn"
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            _db_with_info([{"attributes": []}]).create()
+        assert "was created without" in caplog.text, "a conclusive legacy verdict must warn"
+    finally:
+        agno_logger.removeHandler(caplog.handler)
 
 
 def test_weaviate_probe_blip_is_not_cached():
