@@ -124,12 +124,12 @@ class TestMigrateDynamodbPropagates:
 
         with patch("agno.db.migrations.versions.v3_0_0.time.sleep"):
             with pytest.raises(_ClientError):
-                _migrate_dynamodb(db, "agno_sessions")
+                _migrate_dynamodb(db, "sessions", "agno_sessions")
 
     def test_successful_run_is_migrated(self):
         client = _make_client()
         client.scan.return_value = {"Items": [self._session_item_with_one_run()]}
         db = self._make_db(client)
 
-        assert _migrate_dynamodb(db, "agno_sessions") is True
+        assert _migrate_dynamodb(db, "sessions", "agno_sessions") is True
         assert client.put_item.call_count == 1

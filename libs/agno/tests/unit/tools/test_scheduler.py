@@ -258,14 +258,14 @@ class TestListSchedules:
 
         tools.list_schedules(enabled_only=True)
 
-        tools.manager.list.assert_called_once_with(enabled=True)
+        tools.manager.list.assert_called_once_with(enabled=True, user_id=None)
 
     def test_list_all_no_filter(self, tools):
         tools.manager.list.return_value = []
 
         tools.list_schedules(enabled_only=False)
 
-        tools.manager.list.assert_called_once_with(enabled=None)
+        tools.manager.list.assert_called_once_with(enabled=None, user_id=None)
 
     def test_list_exception(self, tools):
         tools.manager.list.side_effect = RuntimeError("DB error")
@@ -388,7 +388,7 @@ class TestGetScheduleRuns:
 
         tools.get_schedule_runs("sched-001", limit=5)
 
-        tools.manager.get_runs.assert_called_once_with("sched-001", limit=5)
+        tools.manager.get_runs.assert_called_once_with("sched-001", limit=5, user_id=None)
 
     def test_get_runs_exception(self, tools):
         tools.manager.get_runs.side_effect = RuntimeError("DB error")

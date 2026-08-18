@@ -1725,7 +1725,6 @@ class AgentOS:
         """Get the table names for a database"""
         table_names = {
             "session_table_name": db.session_table_name,
-            "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
             "learnings_table_name": db.learnings_table_name,
             "metrics_table_name": db.metrics_table_name,

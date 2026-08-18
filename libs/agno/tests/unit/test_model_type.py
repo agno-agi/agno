@@ -35,7 +35,6 @@ class TestModelTypeEnum:
         assert ModelType.MEMORY_MODEL.value == "memory_model"
         assert ModelType.REASONING_MODEL.value == "reasoning_model"
         assert ModelType.SESSION_SUMMARY_MODEL.value == "session_summary_model"
-        assert ModelType.CULTURE_MODEL.value == "culture_model"
         assert ModelType.LEARNING_MODEL.value == "learning_model"
         assert ModelType.COMPRESSION_MODEL.value == "compression_model"
 

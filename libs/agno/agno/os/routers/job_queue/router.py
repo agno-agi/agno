@@ -6,16 +6,20 @@ queue depth - depth trending up is the early-warning signal the queue exists
 to provide.
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.schemas.jobs import JOB_STATUSES
 from agno.os.auth import get_authentication_dependency
+from agno.os.routers.job_queue.schema import QueueJobSchema
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
+    SortOrder,
     UnauthenticatedResponse,
 )
 from agno.os.settings import AgnoAPISettings
@@ -80,18 +84,47 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         "/jobs",
         operation_id="list_queue_jobs",
         summary="List Queue Jobs",
-        description="List job queue jobs, optionally filtered by status (e.g. status=failed for the dead-letter list).",
+        response_model=PaginatedResponse[QueueJobSchema],
+        description=(
+            "List job queue jobs, optionally filtered by status. Repeat the status param to "
+            "match any of several (e.g. status=failed&status=cancelled for the requeueable "
+            "set; status=failed alone is the dead-letter list). Useful sort_by fields: "
+            "created_at (default), updated_at, completed_at, status, attempt, component_type, "
+            "component_id, user_id. Unknown sort fields are ignored."
+        ),
     )
-    async def list_jobs(request: Request, status: Optional[str] = None, limit: int = 50):
-        if status is not None and status not in JOB_STATUSES:
-            raise HTTPException(status_code=400, detail=f"Invalid status; expected one of {JOB_STATUSES}")
+    async def list_jobs(
+        request: Request,
+        status: Optional[List[str]] = Query(
+            default=None, description="Status filter; repeatable to match any of several statuses"
+        ),
+        limit: int = Query(default=20, description="Number of jobs to return per page", ge=1, le=1000),
+        page: int = Query(default=1, description="Page number for pagination", ge=1),
+        sort_by: str = Query(default="created_at", description="Field to sort jobs by"),
+        sort_order: SortOrder = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
+    ) -> PaginatedResponse[QueueJobSchema]:
+        for s in status or []:
+            if s not in JOB_STATUSES:
+                raise HTTPException(status_code=400, detail=f"Invalid status {s!r}; expected one of {JOB_STATUSES}")
         store = _get_store(request)
-        return {"jobs": await store.list_jobs(status=status, limit=min(limit, 200))}
+        jobs, total_count = await store.list_jobs(
+            status=status or None, limit=limit, page=page, sort_by=sort_by, sort_order=sort_order.value
+        )
+        return PaginatedResponse(
+            data=[QueueJobSchema(**job) for job in jobs],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=(total_count + limit - 1) // limit,
+                total_count=total_count,
+            ),
+        )
 
     @router.get(
         "/jobs/{job_id}",
         operation_id="get_queue_job",
         summary="Get Queue Job",
+        response_model=QueueJobSchema,
     )
     async def get_job(request: Request, job_id: str):
         store = _get_store(request)
@@ -104,6 +137,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         "/jobs/{job_id}/requeue",
         operation_id="requeue_queue_job",
         summary="Requeue Failed Queue Job",
+        response_model=QueueJobSchema,
         description=(
             "Requeue a terminally failed or cancelled job for one more execution "
             "(raises its attempt budget by one). The operator remedy for crashed runs "

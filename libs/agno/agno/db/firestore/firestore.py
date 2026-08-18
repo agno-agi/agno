@@ -10,18 +10,13 @@ if TYPE_CHECKING:
 from agno.db.base import BaseDb, SessionType
 from agno.db.firestore.utils import (
     apply_pagination,
-    apply_pagination_to_records,
     apply_sorting,
-    apply_sorting_to_records,
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
-    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -31,8 +26,10 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -65,7 +62,6 @@ class FirestoreDb(BaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
-        culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
         id: Optional[str] = None,
@@ -82,7 +78,6 @@ class FirestoreDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
-            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
             id (Optional[str]): ID of the database.
@@ -102,7 +97,6 @@ class FirestoreDb(BaseDb):
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
-            culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
         )
@@ -198,16 +192,6 @@ class FirestoreDb(BaseDb):
                 create_collection_if_not_found=create_collection_if_not_found,
             )
             return self.knowledge_collection
-
-        if table_type == "culture":
-            if self.culture_table_name is None:
-                raise ValueError("Culture collection was not provided on initialization")
-            self.culture_collection = self._get_or_create_collection(
-                collection_name=self.culture_table_name,
-                collection_type="culture",
-                create_collection_if_not_found=create_collection_if_not_found,
-            )
-            return self.culture_collection
 
         if table_type == "traces":
             if self.trace_table_name is None:
@@ -1554,213 +1538,6 @@ class FirestoreDb(BaseDb):
             log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection_ref = self._get_collection(table_type="culture")
-
-            # Get all documents in the collection
-            docs = collection_ref.stream()
-
-            # Delete all documents in batches
-            batch = self.db_client.batch()
-            batch_count = 0
-
-            for doc in docs:
-                batch.delete(doc.reference)
-                batch_count += 1
-
-                # Firestore batch has a limit of 500 operations
-                if batch_count >= 500:
-                    batch.commit()
-                    batch = self.db_client.batch()
-                    batch_count = 0
-
-            # Commit remaining operations
-            if batch_count > 0:
-                batch.commit()
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection_ref = self._get_collection(table_type="culture")
-            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
-
-            for doc in docs:
-                doc.reference.delete()
-                log_debug(f"Deleted cultural knowledge with ID: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection_ref = self._get_collection(table_type="culture")
-            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).limit(1).stream()
-
-            for doc in docs:
-                result = doc.to_dict()
-                if not deserialize:
-                    return result
-                return deserialize_cultural_knowledge_from_db(result)
-
-            return None
-
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection_ref = self._get_collection(table_type="culture")
-
-            # Build query with filters
-            query = collection_ref
-            if agent_id is not None:
-                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
-            if team_id is not None:
-                query = query.where(filter=FieldFilter("team_id", "==", team_id))
-
-            # Get all matching documents
-            docs = query.stream()
-            results = [doc.to_dict() for doc in docs]
-
-            # Apply name filter (Firestore doesn't support regex in queries)
-            if name is not None:
-                results = [r for r in results if name.lower() in r.get("name", "").lower()]
-
-            total_count = len(results)
-
-            # Apply sorting and pagination to in-memory results
-            sorted_results = apply_sorting_to_records(records=results, sort_by=sort_by, sort_order=sort_order)
-            paginated_results = apply_pagination_to_records(records=sorted_results, limit=limit, page=page)
-
-            if not deserialize:
-                return paginated_results, total_count
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_results]
-
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in Firestore.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            collection_ref = self._get_collection(table_type="culture", create_collection_if_not_found=True)
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the update document with serialized content
-            update_doc = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            # Find and update or create new document
-            docs = collection_ref.where(filter=FieldFilter("id", "==", cultural_knowledge.id)).limit(1).stream()
-
-            doc_found = False
-            for doc in docs:
-                doc.reference.set(update_doc)
-                doc_found = True
-                break
-
-            if not doc_found:
-                collection_ref.add(update_doc)
-
-            if not deserialize:
-                return update_doc
-
-            return deserialize_cultural_knowledge_from_db(update_doc)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
-
     # -- Metrics methods --
 
     def _get_all_sessions_for_metrics_calculation(
@@ -1769,7 +1546,7 @@ class FirestoreDb(BaseDb):
         """Get all sessions of all types for metrics calculation."""
         try:
             collection_ref = self._get_collection(table_type="sessions")
-            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=True)
 
             query = collection_ref
             if start_timestamp is not None:
@@ -1828,16 +1605,13 @@ class FirestoreDb(BaseDb):
     def _get_metrics_calculation_starting_date(self, collection_ref) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
         try:
-            query = collection_ref.order_by("date", direction="DESCENDING").limit(1)
-            docs = query.stream()
+            # Only the two fields the rule reads, and no filter on completed: pairing it with
+            # date would need a composite index that may not be built yet
+            docs = collection_ref.select(["date", "completed"]).stream()
 
-            for doc in docs:
-                data = doc.to_dict()
-                result_date = datetime.strptime(data["date"], "%Y-%m-%d").date()
-                if data.get("completed"):
-                    return result_date + timedelta(days=1)
-                else:
-                    return result_date
+            resume_date = metrics_starting_date_from_records([doc.to_dict() for doc in docs])
+            if resume_date is not None:
+                return resume_date
 
             # No metrics records. Return the date of the first recorded session.
             first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1872,9 +1646,13 @@ class FirestoreDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1898,8 +1676,8 @@ class FirestoreDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per distinct user_id, plus the empty-string bucket for unowned sessions.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 results = bulk_upsert_metrics(collection_ref, metrics_records)
@@ -1916,8 +1694,15 @@ class FirestoreDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): If set, only return that user's bucket. ``None`` returns every bucket.
+        """
         try:
             collection_ref = self._get_collection(table_type="metrics")
             if collection_ref is None:
@@ -1928,13 +1713,22 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
             if ending_date:
                 query = query.where(filter=FieldFilter("date", "<=", ending_date.isoformat()))
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
 
-            docs = query.stream()
+            docs = [doc.to_dict() for doc in query.stream()]
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                docs = drop_legacy_metrics(docs)
+
             records = []
             latest_updated_at = 0
 
-            for doc in docs:
-                data = doc.to_dict()
+            for data in docs:
+                # Map the sentinel empty-string user_id back to None.
+                if data.get("user_id") == "":
+                    data["user_id"] = None
                 records.append(data)
                 updated_at = data.get("updated_at", 0)
                 if updated_at > latest_updated_at:
@@ -1951,31 +1745,45 @@ class FirestoreDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    # Firestore has no OR predicate, so ``user_id == X OR user_id IS NULL`` is post-filtered in Python.
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): If set, only delete rows owned by this user; unowned rows are shared.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
-            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
+            docs = list(collection_ref.where(filter=FieldFilter("id", "==", id)).stream())
 
             for doc in docs:
+                if user_id is not None:
+                    data = doc.to_dict() or {}
+                    if data.get("user_id") != user_id:
+                        continue
                 doc.reference.delete()
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1989,7 +1797,10 @@ class FirestoreDb(BaseDb):
 
             for doc in docs:
                 data = doc.to_dict()
-                return KnowledgeRow.model_validate(data)
+                row = KnowledgeRow.model_validate(data)
+                if not self._knowledge_row_is_visible(row, user_id):
+                    return None
+                return row
 
             return None
 
@@ -2004,6 +1815,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2013,6 +1825,7 @@ class FirestoreDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): If set, only return rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2034,8 +1847,9 @@ class FirestoreDb(BaseDb):
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
 
-            # Apply pagination
-            query = apply_pagination(query, limit, page)
+            # Owner scoping is post-filtered in memory, so defer pagination or it slices the unfiltered set.
+            if user_id is None:
+                query = apply_pagination(query, limit, page)
 
             docs = query.stream()
             records = []
@@ -2043,7 +1857,14 @@ class FirestoreDb(BaseDb):
                 records.append(doc.to_dict())
 
             knowledge_rows = [KnowledgeRow.model_validate(record) for record in records]
-            total_count = len(knowledge_rows)  # Simplified count
+            if user_id is not None:
+                knowledge_rows = [r for r in knowledge_rows if self._knowledge_row_is_visible(r, user_id)]
+                total_count = len(knowledge_rows)
+                if limit:
+                    start = (page - 1) * limit if (page and page > 1) else 0
+                    knowledge_rows = knowledge_rows[start : start + limit]
+            else:
+                total_count = len(knowledge_rows)
 
             return knowledge_rows, total_count
 
@@ -2069,10 +1890,14 @@ class FirestoreDb(BaseDb):
 
             # Find existing document or create new one
             docs = collection_ref.where(filter=FieldFilter("id", "==", knowledge_row.id)).stream()
-            doc_ref = next((doc.reference for doc in docs), None)
+            existing = next((doc for doc in docs), None)
 
-            if doc_ref is None:
-                doc_ref = collection_ref.document()
+            # A scoped write must not overwrite a doc it does not own
+            if existing is not None and knowledge_row.user_id is not None:
+                if (existing.to_dict() or {}).get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
+            doc_ref = existing.reference if existing is not None else collection_ref.document()
 
             doc_ref.set(update_doc, merge=True)
 

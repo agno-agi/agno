@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 import inspect
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
@@ -405,9 +405,17 @@ class Step:
 
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
+                from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    agent = get_agent_by_id(db=db, id=agent_id, version=pinned, registry=registry, strict=strict)
+                    agent = get_agent_by_id(
+                        db=db,
+                        id=agent_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
                         raise ComponentPinError(
@@ -427,7 +435,9 @@ class Step:
                         f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, which "
                         "was not found in the db; loading the agent's current version instead."
                     )
-                    agent = get_agent_by_id(db=db, id=agent_id, registry=registry, strict=False)
+                    agent = get_agent_by_id(
+                        db=db, id=agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
 
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:
@@ -502,9 +512,17 @@ class Step:
 
             if team is None and db is not None and team_id is not None:
                 from agno.team.team import get_team_by_id
+                from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    team = get_team_by_id(db=db, id=team_id, version=pinned, registry=registry, strict=strict)
+                    team = get_team_by_id(
+                        db=db,
+                        id=team_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
                         raise ComponentPinError(
@@ -524,7 +542,9 @@ class Step:
                         f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, which "
                         "was not found in the db; loading the team's current version instead."
                     )
-                    team = get_team_by_id(db=db, id=team_id, registry=registry, strict=False)
+                    team = get_team_by_id(
+                        db=db, id=team_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
 
             # A pinned lenient load may still fall back to a code-defined team.
             if team is None and pinned is not None and registry and team_id:
@@ -925,6 +945,9 @@ class Step:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
 
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
+
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
@@ -1088,7 +1111,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
                             run_id=executor_run_id,
@@ -1119,7 +1142,8 @@ class Step:
                         response = self._execute_nested_workflow(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
@@ -1238,6 +1262,9 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
+
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -1414,7 +1441,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_events=stream_events,
@@ -1466,7 +1493,8 @@ class Step:
                         for event in self._execute_nested_workflow_stream(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
@@ -1561,6 +1589,9 @@ class Step:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
+
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -1753,7 +1784,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
                             run_id=executor_run_id,
@@ -1784,7 +1815,8 @@ class Step:
                         response = await self._aexecute_nested_workflow(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
@@ -1844,6 +1876,9 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
+
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -2062,7 +2097,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,
                             stream=True,
                             stream_events=stream_events,
@@ -2114,7 +2149,8 @@ class Step:
                         async for event in self._aexecute_nested_workflow_stream(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,

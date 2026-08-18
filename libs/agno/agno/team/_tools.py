@@ -142,6 +142,7 @@ def _determine_tools_for_model(
         _read_past_session_function,
         _search_past_sessions_function,
         _update_session_state_tool,
+        create_add_to_knowledge_tool,
         create_knowledge_search_tool,
     )
     from agno.team._init import _connect_connectable_tools
@@ -243,7 +244,7 @@ def _determine_tools_for_model(
         )
 
     if resolved_knowledge is not None and team.update_knowledge:
-        _tools.append(team.add_to_knowledge)
+        _tools.append(create_add_to_knowledge_tool(team, run_context=run_context))
 
     # Add tools for accessing skills
     if team.skills is not None:
@@ -264,7 +265,8 @@ def _determine_tools_for_model(
             run_context=run_context,
             session=session,
             team_run_context=team_run_context,
-            user_id=user_id,
+            # Members run as the user_id resolved on run_context, not the caller's argument
+            user_id=run_context.user_id if run_context else user_id,
             stream=stream or False,
             stream_events=stream_events or False,
             async_mode=async_mode,
@@ -303,7 +305,8 @@ def _determine_tools_for_model(
             session=session,
             team_run_context=team_run_context,
             input=user_message_content,
-            user_id=user_id,
+            # Members run as the user_id resolved on run_context, not the caller's argument
+            user_id=run_context.user_id if run_context else user_id,
             stream=stream or False,
             stream_events=stream_events or False,
             async_mode=async_mode,

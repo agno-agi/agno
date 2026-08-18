@@ -181,9 +181,6 @@ def get_tools(
         )
         agent_tools.extend(learning_tools)
 
-    if agent.enable_agentic_culture:
-        agent_tools.append(_default_tools.get_update_cultural_knowledge_function(agent, async_mode=False))
-
     if agent.enable_agentic_state:
         agent_tools.append(
             Function(
@@ -208,7 +205,7 @@ def get_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -312,9 +309,6 @@ async def aget_tools(
         )
         agent_tools.extend(learning_tools)
 
-    if agent.enable_agentic_culture:
-        agent_tools.append(_default_tools.get_update_cultural_knowledge_function(agent, async_mode=True))
-
     if agent.enable_agentic_state:
         agent_tools.append(
             Function(
@@ -339,7 +333,7 @@ async def aget_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:

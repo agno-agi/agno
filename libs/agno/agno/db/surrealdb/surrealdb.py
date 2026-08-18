@@ -11,20 +11,19 @@ from agno.db.postgres.utils import (
     get_dates_to_calculate_metrics_for,
 )
 from agno.db.schemas import UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.metrics import (
     bulk_upsert_metrics,
     calculate_date_metrics,
+    desurrealize_metric,
     fetch_all_sessions_data,
     get_all_sessions_for_metrics_calculation,
     get_metrics_calculation_starting_date,
 )
 from agno.db.surrealdb.models import (
     TableType,
-    deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
     deserialize_user_memories,
@@ -35,7 +34,6 @@ from agno.db.surrealdb.models import (
     desurrealize_user_memory,
     get_schema,
     get_session_type,
-    serialize_cultural_knowledge,
     serialize_eval_run_record,
     serialize_knowledge_row,
     serialize_run_row,
@@ -50,6 +48,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
@@ -81,7 +80,6 @@ class SurrealDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         id: Optional[str] = None,
@@ -100,7 +98,6 @@ class SurrealDb(BaseDb):
             metrics_table: The name of the metrics table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
-            culture_table: The name of the culture table.
             traces_table: The name of the traces table.
             spans_table: The name of the spans table.
             id: The ID of the database.
@@ -118,7 +115,6 @@ class SurrealDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
         )
@@ -142,7 +138,6 @@ class SurrealDb(BaseDb):
     def table_names(self) -> dict[TableType, str]:
         return {
             "agents": self._agents_table_name,
-            "culture": self.culture_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
             "memories": self.memory_table_name,
@@ -182,8 +177,6 @@ class SurrealDb(BaseDb):
             table_name = self.memory_table_name
         elif table_type == "knowledge":
             table_name = self.knowledge_table_name
-        elif table_type == "culture":
-            table_name = self.culture_table_name
         elif table_type == "users":
             table_name = self._users_table_name
         elif table_type == "agents":
@@ -953,152 +946,6 @@ class SurrealDb(BaseDb):
         table = self._get_table("memories")
         _ = self.client.delete(table)
 
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        table = self._get_table("culture")
-        _ = self.client.delete(table)
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        table = self._get_table("culture")
-        rec_id = RecordID(table, id)
-        self.client.delete(rec_id)
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        table = self._get_table("culture")
-        rec_id = RecordID(table, id)
-        result = self.client.select(rec_id)
-
-        if result is None:
-            return None
-
-        if not deserialize:
-            return result  # type: ignore
-
-        return deserialize_cultural_knowledge(result)  # type: ignore
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        table = self._get_table("culture")
-
-        # Build where clauses
-        where_clauses: List[WhereClause] = []
-        if agent_id is not None:
-            agent_rec_id = RecordID(self._get_table("agents"), agent_id)
-            where_clauses.append(("agent", "=", agent_rec_id))  # type: ignore
-        if team_id is not None:
-            team_rec_id = RecordID(self._get_table("teams"), team_id)
-            where_clauses.append(("team", "=", team_rec_id))  # type: ignore
-        if name is not None:
-            where_clauses.append(("string::lowercase(name)", "CONTAINS", name.lower()))  # type: ignore
-
-        # Build query for total count
-        count_query = COUNT_QUERY.format(
-            table=table,
-            where=""
-            if not where_clauses
-            else f"WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}",  # type: ignore
-        )
-        params = {chr(97 + i): w[2] for i, w in enumerate(where_clauses)}  # type: ignore
-        total_count = self._query_one(count_query, params, int) or 0
-
-        # Build main query
-        order_limit = order_limit_start(sort_by, sort_order, limit, page)
-        query = f"SELECT * FROM {table}"
-        if where_clauses:
-            query += f" WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}"  # type: ignore
-        query += order_limit
-
-        results = self._query(query, params, list) or []
-
-        if not deserialize:
-            return results, total_count  # type: ignore
-
-        return [deserialize_cultural_knowledge(r) for r in results]  # type: ignore
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in SurrealDB.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        table = self._get_table("culture", create_table_if_not_found=True)
-        serialized = serialize_cultural_knowledge(cultural_knowledge, table)
-
-        result = self.client.upsert(serialized["id"], serialized)
-
-        if result is None:
-            return None
-
-        if not deserialize:
-            return result  # type: ignore
-
-        return deserialize_cultural_knowledge(result)  # type: ignore
-
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """Delete a user memory from the database.
 
@@ -1437,12 +1284,15 @@ class SurrealDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): If set, only return this user's bucket. Defaults to None (all
+                buckets, including the unowned one).
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1464,6 +1314,9 @@ class SurrealDb(BaseDb):
             ending_datetime = datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc)
             where = where.and_("date", ending_datetime, "<=")
 
+        if user_id is not None:
+            where = where.and_("user_id", user_id)
+
         where_clause, where_vars = where.build()
 
         # Query
@@ -1475,6 +1328,10 @@ class SurrealDb(BaseDb):
         """)
 
         results = self._query(query, where_vars, dict)
+        # Records written before ownership existed hold a whole day, and only an
+        # unscoped read sees them: an owner filter excludes them already
+        if user_id is None:
+            results = drop_legacy_metrics(results)
 
         # Get the latest updated_at from all results
         latest_update = None
@@ -1482,28 +1339,7 @@ class SurrealDb(BaseDb):
             # Find the maximum updated_at timestamp
             latest_update = max(int(r["updated_at"].timestamp()) for r in results)
 
-            # Transform results to match expected format
-            transformed_results = []
-            for r in results:
-                transformed = dict(r)
-
-                # Convert RecordID to string
-                if hasattr(transformed.get("id"), "id"):
-                    transformed["id"] = transformed["id"].id
-                elif isinstance(transformed.get("id"), RecordID):
-                    transformed["id"] = str(transformed["id"].id)
-
-                # Convert datetime objects to Unix timestamps
-                if isinstance(transformed.get("created_at"), datetime):
-                    transformed["created_at"] = int(transformed["created_at"].timestamp())
-                if isinstance(transformed.get("updated_at"), datetime):
-                    transformed["updated_at"] = int(transformed["updated_at"].timestamp())
-                if isinstance(transformed.get("date"), datetime):
-                    transformed["date"] = int(transformed["date"].timestamp())
-
-                transformed_results.append(transformed)
-
-            return transformed_results, latest_update
+            return [desurrealize_metric(r) for r in results], latest_update
 
         return [], latest_update
 
@@ -1570,12 +1406,12 @@ class SurrealDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per user_id, plus the empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             results = []  # Initialize before the if block
             if metrics_records:
-                results = bulk_upsert_metrics(self.client, table, metrics_records)
+                results = [desurrealize_metric(r) for r in bulk_upsert_metrics(self.client, table, metrics_records)]
 
             log_debug("Updated metrics calculations")
             return results
@@ -1594,27 +1430,47 @@ class SurrealDb(BaseDb):
         table = self._get_table("knowledge")
         _ = self.client.delete(table)
 
-    def delete_knowledge_content(self, id: str):
+    # Unowned knowledge rows have no user_id field at all, so owner scoping tests ``user_id IS NONE``.
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): If set, only delete the row if owned by this user. Unowned rows
+                are shared content.
         """
         table = self._get_table("knowledge")
-        self.client.delete(RecordID(table, id))
+        if user_id is None:
+            self.client.delete(RecordID(table, id))
+            return
+        res = self.client.query(
+            f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
+            {"record": RecordID(table, id), "user_id": user_id},
+        )
+        if not (isinstance(res, list) and len(res) > 0):
+            log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
         table = self._get_table("knowledge")
         record_id = RecordID(table, id)
-        raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+        if user_id is None:
+            raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+            return deserialize_knowledge_row(raw) if raw else None
+        raw = self._query_one(
+            "SELECT * FROM ONLY $record_id WHERE user_id = $user_id OR user_id IS NONE",
+            {"record_id": record_id, "user_id": user_id},
+            dict,
+        )
         return deserialize_knowledge_row(raw) if raw else None
 
     def get_knowledge_contents(
@@ -1624,6 +1480,7 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1633,6 +1490,7 @@ class SurrealDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): If set, only return rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1648,6 +1506,15 @@ class SurrealDb(BaseDb):
             where.and_("linked_to", linked_to)
 
         where_clause, where_vars = where.build()
+
+        # WhereClause only chains AND, so the owner scope is appended raw
+        if user_id is not None:
+            scope_predicate = "(user_id = $user_id OR user_id IS NONE)"
+            if where_clause:
+                where_clause = f"{where_clause} AND {scope_predicate}"
+            else:
+                where_clause = f"WHERE {scope_predicate}"
+            where_vars["user_id"] = user_id
 
         # Total count
         total_count = self._count(table, where_clause, where_vars)
@@ -1674,6 +1541,13 @@ class SurrealDb(BaseDb):
         """
         knowledge_table_name = self._get_table("knowledge")
         record = RecordID(knowledge_table_name, knowledge_row.id)
+
+        # A scoped write must not overwrite a record it does not own
+        if knowledge_row.user_id is not None:
+            stored = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+            if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
         query = "UPSERT ONLY $record CONTENT $content"
         result = self._query_one(
             query, {"record": record, "content": serialize_knowledge_row(knowledge_row, knowledge_table_name)}, dict

@@ -36,7 +36,6 @@ from agno.db.clickhouse.utils import (
     trace_to_row,
 )
 from agno.db.filter_converter import TRACE_COLUMNS as TRACE_FILTER_COLUMNS
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.utils.log import log_debug, log_error
@@ -718,6 +717,7 @@ class ClickhouseDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         return [], None
 
@@ -725,10 +725,10 @@ class ClickhouseDb(BaseDb):
         return None
 
     # --- Knowledge ---
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         return None
 
     def get_knowledge_contents(self, *args, **kwargs):  # type: ignore[override]
@@ -754,22 +754,6 @@ class ClickhouseDb(BaseDb):
     def rename_eval_run(self, *args, **kwargs):  # type: ignore[override]
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
-    # --- Cultural Knowledge ---
-    def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError(_TRACES_ONLY_ERROR)
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError(_TRACES_ONLY_ERROR)
-
-    def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
-        return None
-
-    def get_all_cultural_knowledge(self, *args, **kwargs):  # type: ignore[override]
-        return []
-
-    def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
-        raise NotImplementedError(_TRACES_ONLY_ERROR)
-
     # --- Learnings ---
     def get_learning(self, *args, **kwargs):  # type: ignore[override]
         return None
@@ -788,6 +772,7 @@ class ClickhouseDb(BaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         return None
 

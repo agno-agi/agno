@@ -130,7 +130,7 @@ def test_mongo_update_schedule_updates_and_returns_schedule(monkeypatch: pytest.
     update_result.matched_count = 1
     collection.update_one.return_value = update_result
     monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
-    monkeypatch.setattr(db, "get_schedule", lambda schedule_id: {"id": schedule_id, "name": "Updated"})
+    monkeypatch.setattr(db, "get_schedule", lambda schedule_id, user_id=None: {"id": schedule_id, "name": "Updated"})
 
     result = db.update_schedule("sched-1", name="Updated")
 
@@ -222,7 +222,7 @@ def test_mongo_update_schedule_run_updates_and_returns_run(monkeypatch: pytest.M
     update_result.matched_count = 1
     collection.update_one.return_value = update_result
     monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
-    monkeypatch.setattr(db, "get_schedule_run", lambda run_id: {"id": run_id, "status": "success"})
+    monkeypatch.setattr(db, "get_schedule_run", lambda run_id, user_id=None: {"id": run_id, "status": "success"})
 
     result = db.update_schedule_run("run-1", status="success")
 
@@ -308,9 +308,12 @@ def test_scheduler_index_schemas_registered():
     schedule_runs_indexes = get_collection_indexes("schedule_runs")
 
     assert any(i.get("key") == "id" and i.get("unique") for i in schedules_indexes)
-    assert any(i.get("key") == "name" and i.get("unique") for i in schedules_indexes)
+    # ``name`` is indexed but not unique — schedule names are unique per owner, not globally
+    assert any(i.get("key") == "name" and not i.get("unique") for i in schedules_indexes)
+    assert any(i.get("key") == "user_id" for i in schedules_indexes)
     assert any(i.get("key") == "id" and i.get("unique") for i in schedule_runs_indexes)
     assert any(i.get("key") == "schedule_id" for i in schedule_runs_indexes)
+    assert any(i.get("key") == "user_id" for i in schedule_runs_indexes)
 
 
 def test_async_mongo_constructor_maps_scheduler_collections():
