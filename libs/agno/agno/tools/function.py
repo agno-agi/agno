@@ -759,6 +759,9 @@ RUNTIME_ONLY_FIELDS = (
     "cache_results",
     "cache_dir",
     "cache_ttl",
+    # A code-declared trait consumed by the Studio palette policy; the live
+    # registry Function owns it, not the persisted config.
+    "mutating",
 )
 
 

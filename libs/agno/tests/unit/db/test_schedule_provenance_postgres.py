@@ -21,14 +21,32 @@ from agno.db.postgres import PostgresDb  # noqa: E402
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 
-@pytest.fixture
-def db():
-    schema = f"sched_prov_{uuid.uuid4().hex[:8]}"
+def _server_reachable() -> bool:
+    # A raw probe, not an adapter call: adapter methods catch and log
+    # connection errors, so they cannot signal an absent server.
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(DB_URL)
     try:
-        database = PostgresDb(db_url=DB_URL, db_schema=schema)
-        database.get_schedules(limit=1)
+        with engine.connect() as conn:
+            conn.execute(text("select 1"))
+        return True
     except Exception:
-        pytest.skip("Postgres is not reachable on localhost:5532")
+        return False
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture(scope="module")
+def _postgres_server():
+    if not _server_reachable():
+        pytest.skip(f"Postgres server not reachable at {DB_URL}")
+
+
+@pytest.fixture
+def db(_postgres_server):
+    schema = f"sched_prov_{uuid.uuid4().hex[:8]}"
+    database = PostgresDb(db_url=DB_URL, db_schema=schema)
     yield database
     with database.Session() as sess, sess.begin():
         from sqlalchemy import text
