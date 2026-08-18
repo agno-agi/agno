@@ -34,7 +34,7 @@ VALID_SEVERITIES = {"minor", "major", "critical", "maintenance"}
 
 
 class OutageDeckTools(Toolkit):
-    """Toolkit for checking live operational status through OutageDeck.
+    """Toolkit for checking vendor-published operational status through OutageDeck.
 
     Args:
         timeout (float): Per-request HTTP timeout in seconds. Default is 20.
