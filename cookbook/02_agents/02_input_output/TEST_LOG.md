@@ -1,5 +1,20 @@
 # Test Log -- 02_input_output
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)
+
+### output_schema.py
+
+**Status:** PASS
+
+**Description:** Structured output via output_schema.
+
+**Result:** Valid typed object returned and pretty-printed.
+
+---
+
 **Tested:** 2026-02-13
 **Environment:** .venvs/demo/bin/python, pgvector: running
 

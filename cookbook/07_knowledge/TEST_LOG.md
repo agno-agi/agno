@@ -1,5 +1,20 @@
 # TEST_LOG
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)
+
+### 01_getting_started/01_basic_rag.py
+
+**Status:** PASS (after dependency install)
+
+**Description:** Basic RAG over the recipes PDF with Qdrant hybrid search.
+
+**Result:** Content loaded and the agent answered from the knowledge base. Required manual `pip install qdrant-client fastembed` plus `./cookbook/scripts/run_qdrant.sh` - neither package is installed by demo_setup.sh even though the getting-started READMEs standardize on Qdrant.
+
+---
+
 ## 07_knowledge
 
 No tests recorded yet.

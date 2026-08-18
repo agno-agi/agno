@@ -1,5 +1,22 @@
 # Test Log
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)
+
+### calculator_tools.py
+
+**Status:** PASS
+
+**Description:** Calculator toolkit invocation.
+
+**Result:** Correct arithmetic through tool calls.
+
+Note: arxiv_tools.py is not runnable in the demo venv - the `arxiv` package is not installed by demo_setup.sh.
+
+---
+
 ### smallest_tools.py (switch to Gemini for audio-input support)
 
 **Status:** PASS

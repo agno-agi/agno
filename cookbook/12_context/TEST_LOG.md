@@ -1,5 +1,20 @@
 # Context Cookbook Test Log
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)
+
+### 00_filesystem.py
+
+**Status:** PASS
+
+**Description:** Filesystem context provider browsing the cookbook directory. Directly exercises the FileTools enable_-param fix from this branch.
+
+**Result:** Provider instantiated (previously raised TypeError), agent listed and read files, answered from directory contents.
+
+---
+
 All end-to-end runs used the demo venv (`.venvs/demo/bin/python`)
 against real OpenAI (`gpt-5.4` / `gpt-5.4-mini`).
 

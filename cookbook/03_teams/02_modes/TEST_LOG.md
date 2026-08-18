@@ -1,5 +1,20 @@
 # Validation run 2026-02-15T00:51:48
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)
+
+### route/01_basic.py
+
+**Status:** PASS
+
+**Description:** Router team delegating to a language specialist.
+
+**Result:** Question routed correctly; member answered in French as designed.
+
+---
+
 ### Pattern Check
 
 **Status:** PASS

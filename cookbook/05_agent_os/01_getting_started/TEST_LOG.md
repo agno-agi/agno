@@ -1,5 +1,20 @@
 # Test Log: 01_getting_started
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)
+
+### full_os.py
+
+**Status:** PASS
+
+**Description:** Served AgentOS over HTTP and exercised it with curl.
+
+**Result:** /health ok, /agents listed the agent, POST /agents/{id}/runs returned the completed run, and the run row landed in agno_runs with status COMPLETED (v3 per-run write path).
+
+---
+
 Tested on 2026-07-24 against Agno source commit
 `64129408633bb3f4837b2a09a0eb087eddbed86a`.
 

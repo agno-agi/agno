@@ -1,5 +1,20 @@
 # Test Log -- 05_state_and_session
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)
+
+### persistent_session.py
+
+**Status:** PASS
+
+**Description:** Session persistence across runs.
+
+**Result:** Second run continued the session with prior context.
+
+---
+
 **Tested:** 2026-02-13
 **Environment:** .venvs/demo/bin/python, pgvector: running
 

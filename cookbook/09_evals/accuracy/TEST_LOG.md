@@ -1,5 +1,20 @@
 # Test Log: accuracy
 
+
+## Verification - 2026-08-18 (feat/v3.0)
+
+**Environment:** `.venvs/demo/bin/python` | **Base Commit:** `b10e70d5d4` (feat/v3.0 merged)
+
+### accuracy_basic.py
+
+**Status:** PASS
+
+**Description:** Basic accuracy eval.
+
+**Result:** Score 10.0/10, evaluation persisted and finished cleanly.
+
+---
+
 > Tests not yet run. Run each file and update this log.
 
 ### accuracy_basic.py
