@@ -277,7 +277,6 @@ class TestSelfCompositionGuardRobustness:
         assert data["member_ids"] == ["plain-member"]
 
     def test_team_with_members_factory_composes_as_member(self, registry, db):
-        from agno.agent import Agent
         from agno.team import Team
 
         def member_factory(team):
