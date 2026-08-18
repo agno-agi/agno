@@ -177,11 +177,20 @@ an unmigrated database:
   the legacy `runs` column (by `run_id`). The runs table is the source of truth on
   conflicts; runs that only exist in the blob are still returned. This means you
   never lose history, even in partial-migration states.
-- **The first save** of any session moves its remaining legacy runs into the runs
-  table and clears the legacy column for that session.
+- **New runs** are written to the runs table as they happen. Legacy runs stay in
+  the blob (which is never modified) until you run the explicit migration; session
+  reads keep merging the two, so nothing is lost either way.
 
-This means active sessions self-migrate. The explicit migration is recommended for
-dormant sessions and for reclaiming storage in bulk.
+Session history therefore keeps working without the migration, indefinitely. The
+explicit migration is what actually moves legacy runs into the runs table — run it
+to make the runs table complete and to prepare for reclaiming the blob storage.
+
+Note: this lazy path covers **sessions only**. The metrics and eval runs tables
+gain a `user_id` column in v3.0 and fail schema validation until the migration
+runs (see "Metrics: per-user buckets" below) — `GET /metrics` answers HTTP 500
+and eval listings raise. Run `MigrationManager(db).up()` (or
+`POST /databases/all/migrate` on AgentOS) to restore them; this works on a live
+process without a restart.
 
 ### Step 3: Drop the legacy column when you're ready
 
@@ -521,20 +530,23 @@ db.cleanup_legacy_runs_column()
 
 ## How writes work now (for the curious)
 
-On `db.upsert_session(session)`:
+Runs and sessions are persisted independently:
 
-1. The session row is upserted without any run data.
-2. Every run on the in-memory session is upserted into the runs table (`ON CONFLICT
-   DO UPDATE` on `run_id`).
-3. If the sessions table still has a legacy `runs` column, that column is set to
-   `NULL` for the session — so the runs table is the only source of truth going
-   forward for that session.
+1. `db.upsert_session(session)` writes **only the session row** — no run data.
+2. Each run is written via `db.upsert_run(run, session_id=..., ...)` as it is
+   created or changes state (`ON CONFLICT DO UPDATE` on `run_id`). The agent,
+   team and workflow classes do this automatically after every run.
+3. The legacy `runs` column is never touched by either write — it stays as a
+   frozen backup until you drop it with `cleanup_legacy_runs_column()`.
 
-So a session with 500 runs writes 500 run rows when you save (each one is small and
-indexed, vs the old approach of one growing blob). For most workloads this is a
-clear win over the v2.x O(N²) write amplification; if you have a hot path that
-writes many times without changing runs, you can optimize further by skipping
-sessions you didn't touch.
+**Breaking change for custom persistence code**: in v2.x, `upsert_session`
+serialized `session.runs` into the session row, so it was enough on its own. In
+v3.0 it is not — code that saves sessions directly must also call `upsert_run`
+for each new run, or the run history will not be persisted.
+
+So a session with 500 runs writes one small indexed row per new run instead of
+rewriting one growing blob on every save — this removes the v2.x O(N²) write
+amplification.
 
 ## Storage comparison
 
