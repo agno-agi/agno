@@ -740,3 +740,54 @@ class TestWorkflowPinGuards:
             db.restore_component(cid)
         assert db.restore_component(f"{cid}-child") is True
         assert db.restore_component(cid) is True
+
+
+class TestDeterministicCASInterleaving:
+    """Deterministic (non-probabilistic) proof that each guard rides the write:
+    a competing write commits BETWEEN a caller's read and its guarded op, so
+    the guarded op sees a stale expected value and MUST conflict. A
+    check-then-write mutation (guard on a pre-read, not the write) passes the
+    happy path but fails here every time - no flake."""
+
+    def _comp(self, db, cid="cas", versions=2):
+        from agno.db.base import ComponentType
+
+        db.create_component_with_config(
+            component_id=cid,
+            component_type=ComponentType.AGENT,
+            name=cid,
+            config={"name": cid, "v": 1},
+            stage="published",
+        )
+        for i in range(2, versions + 1):
+            db.upsert_config(cid, config={"name": cid, "v": i}, stage="draft")
+            db.upsert_config(cid, version=i, stage="published")
+        return cid
+
+    def test_set_current_conflicts_after_a_competing_move(self, db):
+        from agno.db.base import ComponentVersionConflictError
+
+        cid = self._comp(db, versions=3)  # current = 3
+        # Reader A intends expected_current_version=3. A competing writer moves
+        # the pointer to 1 first; A's guarded op must now conflict.
+        assert db.set_current_version(cid, 2, expected_current_version=3) is True  # competitor -> current 2
+        with pytest.raises(ComponentVersionConflictError):
+            db.set_current_version(cid, 1, expected_current_version=3)
+        assert db.get_component(cid)["current_version"] == 2
+
+    def test_guarded_append_conflicts_after_a_competing_append(self, db):
+        from agno.db.base import ComponentVersionConflictError
+
+        cid = self._comp(db, versions=2)  # latest visible = 2
+        db.upsert_config(cid, config={"name": cid, "v": 3}, stage="draft", expected_latest_version=2)  # competitor -> 3
+        with pytest.raises(ComponentVersionConflictError):
+            db.upsert_config(cid, config={"name": cid, "v": 99}, stage="draft", expected_latest_version=2)
+
+    def test_archive_conflicts_after_a_competing_pointer_move(self, db):
+        from agno.db.base import ComponentVersionConflictError
+
+        cid = self._comp(db, versions=3)  # current = 3
+        db.set_current_version(cid, 2, expected_current_version=3)  # competitor -> current 2
+        with pytest.raises(ComponentVersionConflictError):
+            db.delete_component(cid, hard_delete=False, expected_current_version=3)
+        assert db.get_component(cid) is not None  # not archived

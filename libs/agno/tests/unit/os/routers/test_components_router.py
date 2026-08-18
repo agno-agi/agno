@@ -1256,3 +1256,40 @@ class TestGuardHalfRejection:
         )
         assert response.status_code == 400
         assert "guard.current_version" in response.json()["detail"]
+
+
+class TestGuardHalfRejectionAllRoutes:
+    """The guard-half rejection must fire at all four guard-bearing routes,
+    not just the two previously covered."""
+
+    @pytest.fixture
+    def gr_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="ghr-all", db_file=str(tmp_path / "ghr.db"))
+        db.create_component_with_config(
+            component_id="c1",
+            component_type=ComponentType.AGENT,
+            name="c1",
+            config={"name": "c1"},
+            stage="published",
+        )
+        return db
+
+    @pytest.fixture
+    def gr_client(self, gr_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=gr_db, settings=settings))
+        return TestClient(app)
+
+    def test_patch_component_rejects_latest_version_guard(self, gr_client):
+        r = gr_client.patch("/components/c1", json={"description": "x", "guard": {"latest_version": 1}})
+        assert r.status_code == 400
+        assert "guard.current_version" in r.json()["detail"]
+
+    def test_patch_config_rejects_current_version_guard(self, gr_client):
+        r = gr_client.patch(
+            "/components/c1/configs/1", json={"config": {"name": "c1"}, "guard": {"current_version": 1}}
+        )
+        assert r.status_code == 400
+        assert "guard.latest_version" in r.json()["detail"]

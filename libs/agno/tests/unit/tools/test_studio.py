@@ -3001,6 +3001,27 @@ class TestTemplateContract:
     signature change that breaks the deployed template must break here first,
     not on Railway."""
 
+    def test_default_confirmation_set_covers_the_deletion_shaped_tools(self, registry, db):
+        studio = StudioTools(
+            registry=registry, db=db, agents=True, teams=True, workflows=True, versions=True, schedules=True
+        )
+        confirm = set(getattr(studio, "requires_confirmation_tools", []) or [])
+        assert {"archive_component", "delete_version", "delete_schedule"} <= confirm
+        # and NOT the additive, reversible operations
+        assert "create_agent" not in confirm
+        assert "publish_component" not in confirm
+
+    def test_confirmation_default_only_includes_registered_tools(self, registry, db):
+        # Without schedules, delete_schedule is not registered, so it must not
+        # appear in the default confirmation set.
+        studio = StudioTools(registry=registry, db=db, schedules=False)
+        confirm = set(getattr(studio, "requires_confirmation_tools", []) or [])
+        assert "delete_schedule" not in confirm
+
+    def test_consumer_can_clear_the_confirmation_set(self, registry, db):
+        studio = StudioTools(registry=registry, db=db, requires_confirmation_tools=[])
+        assert list(getattr(studio, "requires_confirmation_tools", []) or []) == []
+
     def test_template_studio_tools_construction(self, registry, db):
         studio = StudioTools(
             registry=registry,

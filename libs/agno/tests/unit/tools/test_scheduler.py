@@ -760,3 +760,55 @@ class TestAsyncDbCallsRunOffThread:
 
         assert gaps, "the heartbeat never ran: the loop was blocked for the whole query"
         assert max(gaps) < 0.2
+
+
+class TestManagerProvenanceContract:
+    """create/acreate accept only the provenance allow-list and carry it in
+    the single insert, so a managed schedule is never observable as unmanaged."""
+
+    def _mgr(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.scheduler.manager import ScheduleManager
+
+        return ScheduleManager(db=SqliteDb(id="prov", db_file=str(tmp_path / "prov.db")))
+
+    def test_create_carries_provenance_in_one_write(self, tmp_path):
+        mgr = self._mgr(tmp_path)
+        sched = mgr.create(
+            name="p1",
+            cron="0 9 * * *",
+            endpoint="/agents/a/runs",
+            provenance={"managed_by": "studio", "target_type": "agent", "target_id": "a"},
+        )
+        row = mgr.db.get_schedule(sched.id)
+        assert row["managed_by"] == "studio" and row["target_type"] == "agent" and row["target_id"] == "a"
+
+    def test_create_rejects_out_of_allowlist_provenance(self, tmp_path):
+        mgr = self._mgr(tmp_path)
+        with pytest.raises(ValueError, match="provenance may only carry"):
+            mgr.create(name="p2", cron="0 9 * * *", endpoint="/agents/a/runs", provenance={"enabled": False})
+
+    @pytest.mark.asyncio
+    async def test_acreate_carries_provenance(self, tmp_path):
+        from agno.db.sqlite import AsyncSqliteDb
+        from agno.scheduler.manager import ScheduleManager
+
+        db = AsyncSqliteDb(id="aprov", db_file=str(tmp_path / "aprov.db"))
+        mgr = ScheduleManager(db=db)
+        sched = await mgr.acreate(
+            name="ap1",
+            cron="0 9 * * *",
+            endpoint="/agents/a/runs",
+            provenance={"managed_by": "studio", "target_type": "agent", "target_id": "a"},
+        )
+        row = await db.get_schedule(sched.id)
+        assert row["managed_by"] == "studio"
+
+    @pytest.mark.asyncio
+    async def test_acreate_rejects_out_of_allowlist(self, tmp_path):
+        from agno.db.sqlite import AsyncSqliteDb
+        from agno.scheduler.manager import ScheduleManager
+
+        mgr = ScheduleManager(db=AsyncSqliteDb(id="aprov2", db_file=str(tmp_path / "aprov2.db")))
+        with pytest.raises(ValueError, match="provenance may only carry"):
+            await mgr.acreate(name="ap2", cron="0 9 * * *", endpoint="/agents/a/runs", provenance={"user_id": "x"})

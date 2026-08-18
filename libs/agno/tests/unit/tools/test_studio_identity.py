@@ -557,3 +557,83 @@ class TestRoundThreeTenancy:
         assert out["error"]["code"] == "component_not_found"
         # the owner still may
         assert _loads(studio.delete_version("alice-a", 2, _agno_run_context=ALICE))["ok"]
+
+
+class TestDispatchVisibilityAllSurfaces:
+    """Mutation-killers: the actor visibility gate must hold on EVERY run and
+    list surface, not just run_agent. A leak here passed the prior suite."""
+
+    def _alice_private(self, studio, kind="agent"):
+        if kind == "agent":
+            return _data(
+                studio.create_agent(
+                    name="Sec A", component_id="sec-a", instructions="ALICE", publish=True, _agno_run_context=ALICE
+                )
+            )["id"]
+        member = _data(
+            studio.create_agent(
+                name="Sec M", component_id="sec-m", instructions="m", publish=True, _agno_run_context=ALICE
+            )
+        )["id"]
+        if kind == "team":
+            return _data(
+                studio.create_team(
+                    name="Sec T",
+                    component_id="sec-t",
+                    instructions="i",
+                    member_ids=[member],
+                    publish=True,
+                    _agno_run_context=ALICE,
+                )
+            )["id"]
+        return _data(
+            studio.create_workflow(
+                name="Sec W",
+                component_id="sec-w",
+                steps=[{"name": "s", "agent_id": member}],
+                publish=True,
+                _agno_run_context=ALICE,
+            )
+        )["id"]
+
+    def test_run_team_gated_for_foreign_owner(self, studio):
+        tid = self._alice_private(studio, "team")
+        assert _loads(studio.run_team(tid, "hi", _agno_run_context=BOB))["error"] == f"Team not found: {tid}"
+
+    def test_run_workflow_gated_for_foreign_owner(self, studio):
+        wid = self._alice_private(studio, "workflow")
+        assert _loads(studio.run_workflow(wid, "hi", _agno_run_context=BOB))["error"] == f"Workflow not found: {wid}"
+
+    @pytest.mark.asyncio
+    async def test_async_run_team_and_workflow_gated(self, studio):
+        tid = self._alice_private(studio, "team")
+        out = _loads(await studio.arun_team(tid, "hi", _agno_run_context=BOB))
+        assert out["error"] == f"Team not found: {tid}"
+
+    def test_list_teams_and_workflows_scoped(self, studio):
+        tid = self._alice_private(studio, "team")
+        listed = _loads(studio._runner_tools.list_teams(_agno_run_context=BOB))
+        assert all(row["id"] != tid for row in listed["teams"])
+
+    def test_edit_workflow_with_foreign_step_member_not_found(self, studio):
+        member = _data(
+            studio.create_agent(
+                name="Priv Step", component_id="priv-step", instructions="i", publish=True, _agno_run_context=ALICE
+            )
+        )["id"]
+        own = _data(
+            studio.create_agent(
+                name="Bob Step", component_id="bob-step", instructions="i", publish=True, _agno_run_context=BOB
+            )
+        )["id"]
+        wf = _data(
+            studio.create_workflow(
+                name="Bob WF",
+                component_id="bob-wf",
+                steps=[{"name": "s", "agent_id": own}],
+                publish=True,
+                _agno_run_context=BOB,
+            )
+        )["id"]
+        out = _loads(studio.edit_workflow(wf, steps=[{"name": "s", "agent_id": member}], _agno_run_context=BOB))
+        assert out["error"]["code"] == "component_not_found"
