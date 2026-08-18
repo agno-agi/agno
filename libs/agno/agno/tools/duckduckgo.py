@@ -4,29 +4,25 @@ from agno.tools.websearch import WebSearchTools
 
 
 class DuckDuckGoTools(WebSearchTools):
-    """
-    DuckDuckGoTools is a convenience wrapper around WebSearchTools with the backend
-    defaulting to "duckduckgo".
+    """DuckDuckGoTools is a convenience wrapper around WebSearchTools with backend="duckduckgo".
 
     Args:
-        enable_search (bool): Enable web search function.
-        enable_news (bool): Enable news search function.
-        modifier (Optional[str]): A modifier to be prepended to search queries.
-        fixed_max_results (Optional[int]): A fixed number of maximum results.
-        proxy (Optional[str]): Proxy to be used for requests.
-        timeout (Optional[int]): The maximum number of seconds to wait for a response.
-        verify_ssl (bool): Whether to verify SSL certificates.
-        timelimit (Optional[str]): Time limit for search results. Valid values:
-            "d" (day), "w" (week), "m" (month), "y" (year).
-        region (Optional[str]): Region for search results (e.g., "us-en", "uk-en", "ru-ru").
-        backend (Optional[str]): Backend to use for searching (e.g., "api", "html", "lite").
-            Defaults to "duckduckgo".
+        search_web: Enable web search function. Defaults to True.
+        search_news: Enable news search function. Defaults to True.
+        modifier: A modifier to be prepended to search queries.
+        fixed_max_results: A fixed number of maximum results.
+        proxy: Proxy to be used for requests.
+        timeout: The maximum number of seconds to wait for a response.
+        verify_ssl: Whether to verify SSL certificates.
+        timelimit: Time limit for search results ("d", "w", "m", "y").
+        region: Region for search results (e.g., "us-en", "uk-en", "ru-ru").
+        backend: Backend to use for searching. Defaults to "duckduckgo".
     """
 
     def __init__(
         self,
-        enable_search: bool = True,
-        enable_news: bool = True,
+        search_web: bool = True,
+        search_news: bool = True,
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         proxy: Optional[str] = None,
@@ -38,8 +34,8 @@ class DuckDuckGoTools(WebSearchTools):
         **kwargs,
     ):
         super().__init__(
-            search_web=enable_search,
-            search_news=enable_news,
+            search_web=search_web,
+            search_news=search_news,
             backend=backend or "duckduckgo",
             modifier=modifier,
             fixed_max_results=fixed_max_results,
