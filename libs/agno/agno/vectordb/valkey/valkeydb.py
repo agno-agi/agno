@@ -85,7 +85,7 @@ def _decode_value(val: Any) -> str:
     return str(val) if val is not None else ""
 
 
-class ValkeyDB(VectorDb):
+class ValkeyDb(VectorDb):
     """
     Valkey class for managing vector operations with Valkey and valkey-search.
 
@@ -131,7 +131,7 @@ class ValkeyDB(VectorDb):
         description: Optional[str] = None,
     ):
         """
-        Initialize the ValkeyDB instance.
+        Initialize the ValkeyDb instance.
 
         Args:
             index_name (str): Name of the Valkey index to store vector data.
@@ -203,7 +203,7 @@ class ValkeyDB(VectorDb):
         # Whether the live index schema has the owner field; resolved lazily and cached
         self._owner_field_exists: Optional[bool] = None
 
-        log_debug(f"Initialized ValkeyDB with index '{self.index_name}'")
+        log_debug(f"Initialized ValkeyDb with index '{self.index_name}'")
 
     def _get_client(self) -> GlideClient:
         """Get or create the GlideClient."""
@@ -458,7 +458,7 @@ class ValkeyDB(VectorDb):
             f"user_id={user_id!r} was passed but Valkey index '{self.index_name}' has no "
             f"'{self.USER_ID_FIELD}' field, so a scoped search cannot match anything. Agno always "
             "creates the field, so this index was created elsewhere — drop it with FT.DROPINDEX "
-            "(without DD, which keeps the stored vectors) and let ValkeyDB.create() rebuild it."
+            "(without DD, which keeps the stored vectors) and let ValkeyDb.create() rebuild it."
         )
 
     def create(self) -> None:
@@ -482,7 +482,7 @@ class ValkeyDB(VectorDb):
                         f"'{self.USER_ID_FIELD}' field; per-user scoped searches will not match. "
                         "Agno always creates the field, so this index was created elsewhere. Drop "
                         "it with FT.DROPINDEX (without DD, which keeps the stored vectors) and let "
-                        "ValkeyDB.create() rebuild it. Do not call drop() — it deletes the vectors "
+                        "ValkeyDb.create() rebuild it. Do not call drop() — it deletes the vectors "
                         "along with the index."
                     )
         except Exception as e:

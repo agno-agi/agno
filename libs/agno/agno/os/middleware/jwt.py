@@ -381,12 +381,7 @@ def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
     WebSocket config resolution) must use this predicate to tell a JWT-validating
     instance from the plain auth layer, so the two checks cannot drift.
     """
-    return bool(
-        kwargs.get("verification_keys")
-        or kwargs.get("jwks_file")
-        or kwargs.get("secret_key")
-        or kwargs.get("validate") is False
-    )
+    return bool(kwargs.get("verification_keys") or kwargs.get("jwks_file") or kwargs.get("validate") is False)
 
 
 def build_jwt_middleware_kwargs(
