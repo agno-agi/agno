@@ -76,6 +76,10 @@ class WebSearchTools(Toolkit):
 
         super().__init__(name="websearch", tools=tools, **kwargs)
 
+        # Backwards compat: old method names
+        self.web_search = self.search_web
+        self.search_news = self.web_search_news
+
     def search_web(self, query: str, max_results: int = 5) -> str:
         """Search the web for a query.
 
