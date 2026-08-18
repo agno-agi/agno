@@ -1975,9 +1975,13 @@ class StudioRunnerTools(Toolkit):
             return []
 
     def _list_db_component_rows(
-        self, component_type: str, limit: Optional[int] = None
+        self, component_type: str, limit: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Thin DB component summaries ({id, name, description}) plus the total count."""
+        """Thin DB component summaries ({id, name, description}) plus the total count.
+
+        ``user_id`` scopes the listing to that owner's components plus shared
+        (unowned) rows -- the same visibility the REST router gives a scoped
+        caller. ``None`` lists everything."""
         if self.db is None:
             return [], 0
         from agno.db.base import ComponentType
@@ -1986,6 +1990,7 @@ class StudioRunnerTools(Toolkit):
             rows, total = self.db.list_components(
                 component_type=ComponentType(component_type),
                 limit=limit if limit is not None else self.list_limit,
+                user_id=user_id,
             )
         except NotImplementedError:
             # Not every db adapter implements component storage; degrade to an
