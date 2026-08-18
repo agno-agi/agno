@@ -4219,7 +4219,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         )
                         .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
                     )
-            return int(result.rowcount or 0)
+            return int(getattr(result, "rowcount", 0) or 0)
         except Exception as e:
             log_error(f"Error disabling schedules for target: {e}")
             raise
@@ -4249,7 +4249,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         .where(table.c.id == schedule_id)
                         .values(updated_at=int(time.time()), **provenance)
                     )
-            return result.rowcount > 0
+            return getattr(result, "rowcount", 0) > 0
         except Exception as e:
             log_error(f"Error stamping schedule provenance: {e}")
             raise

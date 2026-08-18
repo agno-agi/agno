@@ -72,9 +72,9 @@ from agno.run import RunContext
 from agno.tools.function import Function
 from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools, _slugify
 from agno.tools.studio_schema import WorkflowStepSpec, error_result, ok_result
-from agno.utils.string import generate_component_id_from_name, validate_component_id
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
+from agno.utils.string import generate_component_id_from_name, validate_component_id
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
