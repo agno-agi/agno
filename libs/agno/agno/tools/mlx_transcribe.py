@@ -29,6 +29,11 @@ except ImportError:
 
 
 class MLXTranscribeTools(Toolkit):
+    # 2.x param names mapped to 3.0 names
+    _legacy_param_aliases = {
+        "enable_read_files_in_base_dir": "read_files",
+    }
+
     def __init__(
         self,
         base_dir: Optional[Path] = None,

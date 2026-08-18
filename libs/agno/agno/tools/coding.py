@@ -29,6 +29,13 @@ class CodingTools(Toolkit):
     tools is more powerful than many specialized ones.
     """
 
+    # 2.x param names mapped to 3.0 names
+    _legacy_param_aliases = {
+        "enable_grep": "run_grep",
+        "enable_find": "run_find",
+        "enable_ls": "run_ls",
+    }
+
     DEFAULT_ALLOWED_COMMANDS: List[str] = [
         "python",
         "python3",

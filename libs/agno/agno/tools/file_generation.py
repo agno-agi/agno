@@ -91,6 +91,17 @@ CODE_LANGUAGE_MAP: Dict[str, Tuple[str, str]] = {
 
 
 class FileGenerationTools(Toolkit):
+    # 2.x param names mapped to 3.0 names
+    _legacy_param_aliases = {
+        "enable_json_generation": "generate_json",
+        "enable_csv_generation": "generate_csv",
+        "enable_pdf_generation": "generate_pdf",
+        "enable_docx_generation": "generate_docx",
+        "enable_txt_generation": "generate_txt",
+        "enable_html_generation": "generate_html",
+        "enable_code_generation": "generate_code",
+    }
+
     def __init__(
         self,
         generate_json: bool = False,

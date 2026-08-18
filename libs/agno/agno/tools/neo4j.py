@@ -12,6 +12,12 @@ from agno.utils.log import log_debug, logger
 
 
 class Neo4jTools(Toolkit):
+    # 2.x param names mapped to 3.0 names
+    _legacy_param_aliases = {
+        "enable_list_relationships": "list_relationship_types",
+        "enable_run_cypher": "run_cypher_query",
+    }
+
     def __init__(
         self,
         uri: Optional[str] = None,

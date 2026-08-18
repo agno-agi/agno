@@ -12,6 +12,14 @@ except ImportError:
 
 
 class OpenWeatherTools(Toolkit):
+    # 2.x param names mapped to 3.0 names
+    _legacy_param_aliases = {
+        "enable_current_weather": "get_current_weather",
+        "enable_forecast": "get_forecast",
+        "enable_air_pollution": "get_air_pollution",
+        "enable_geocoding": "geocode_location",
+    }
+
     def __init__(
         self,
         api_key: Optional[str] = None,

@@ -41,6 +41,13 @@ class OpenAITools(Toolkit):
         image_style: Style setting for image generation.
     """
 
+    # 2.x param names mapped to 3.0 names
+    _legacy_param_aliases = {
+        "enable_transcription": "transcribe_audio",
+        "enable_image_generation": "generate_image",
+        "enable_text_to_speech": "generate_speech",
+    }
+
     def __init__(
         self,
         api_key: Optional[str] = None,

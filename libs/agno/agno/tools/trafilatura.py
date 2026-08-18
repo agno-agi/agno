@@ -27,6 +27,14 @@ except ImportError:
 
 
 class TrafilaturaTools(Toolkit):
+    # 2.x param names mapped to 3.0 names
+    _legacy_param_aliases = {
+        "enable_extract_text": "scrape",
+        "enable_extract_metadata_only": "get_metadata",
+        "enable_html_to_text": "convert_html",
+        "enable_extract_batch": "scrape_batch",
+        "enable_crawl_website": "crawl",
+    }
     """Toolkit for web scraping and text extraction using Trafilatura.
 
     Args:

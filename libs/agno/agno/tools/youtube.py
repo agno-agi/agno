@@ -26,6 +26,13 @@ class YouTubeTools(Toolkit):
         timeout: Request timeout in seconds. Defaults to 30.
     """
 
+    # 2.x param names mapped to 3.0 names
+    _legacy_param_aliases = {
+        "enable_get_video_captions": "get_transcript",
+        "enable_get_video_metadata": "get_metadata",
+        "enable_get_video_timestamps": "get_timestamps",
+    }
+
     def __init__(
         self,
         get_transcript: bool = False,
