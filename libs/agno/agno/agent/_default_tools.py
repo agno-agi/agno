@@ -16,7 +16,6 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.culture.manager import CultureManager
 from agno.db.base import BaseDb, SessionType
 from agno.filters import FilterExpr
 from agno.knowledge.types import KnowledgeFilter
@@ -73,31 +72,6 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
         update_user_memory_function = update_user_memory  # type: ignore
 
     return Function.from_callable(update_user_memory_function, name="update_user_memory")
-
-
-def get_update_cultural_knowledge_function(agent: Agent, async_mode: bool = False) -> Function:
-    def update_cultural_knowledge(task: str) -> str:
-        """Use this function to update a cultural knowledge."""
-        agent.culture_manager = cast(CultureManager, agent.culture_manager)
-        response = agent.culture_manager.update_culture_task(task=task)
-
-        return response
-
-    async def aupdate_cultural_knowledge(task: str) -> str:
-        """Use this function to update a cultural knowledge asynchronously."""
-        agent.culture_manager = cast(CultureManager, agent.culture_manager)
-        response = await agent.culture_manager.aupdate_culture_task(task=task)
-        return response
-
-    if async_mode:
-        update_cultural_knowledge_function = aupdate_cultural_knowledge
-    else:
-        update_cultural_knowledge_function = update_cultural_knowledge  # type: ignore
-
-    return Function.from_callable(
-        update_cultural_knowledge_function,
-        name="create_or_update_cultural_knowledge",
-    )
 
 
 def create_knowledge_search_tool(

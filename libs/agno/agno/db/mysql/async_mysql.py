@@ -17,12 +17,9 @@ from agno.db.mysql.utils import (
     ais_valid_table,
     apply_sorting,
     calculate_date_metrics,
-    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -70,7 +67,6 @@ class AsyncMySQLDb(AsyncBaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
@@ -95,7 +91,6 @@ class AsyncMySQLDb(AsyncBaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
-            culture_table (Optional[str]): Name of the table to store cultural knowledge.
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
@@ -120,7 +115,6 @@ class AsyncMySQLDb(AsyncBaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
@@ -312,7 +306,6 @@ class AsyncMySQLDb(AsyncBaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
-            (self.culture_table_name, "culture"),
             (self.trace_table_name, "traces"),
             (self.span_table_name, "spans"),
             (self.versions_table_name, "versions"),
@@ -371,14 +364,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
-
-        if table_type == "culture":
-            self.culture_table = await self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.culture_table
 
         if table_type == "versions":
             self.versions_table = await self._get_or_create_table(
@@ -1698,227 +1683,6 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         except Exception as e:
             log_warning(f"Exception deleting all memories: {str(e)}")
-
-    # -- Cultural Knowledge methods --
-    async def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-
-            async with self.async_session_factory() as sess, sess.begin():
-                await sess.execute(table.delete())
-
-        except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
-
-    async def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-
-            async with self.async_session_factory() as sess, sess.begin():
-                stmt = table.delete().where(table.c.id == id)
-                await sess.execute(stmt)
-
-        except Exception as e:
-            log_warning(f"Exception deleting cultural knowledge: {str(e)}")
-            raise e
-
-    async def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-
-            async with self.async_session_factory() as sess:
-                stmt = select(table).where(table.c.id == id)
-                result = await sess.execute(stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-                db_row = dict(row._mapping)
-
-                if not deserialize:
-                    return db_row
-
-                return deserialize_cultural_knowledge_from_db(db_row)
-
-        except Exception as e:
-            log_warning(f"Exception reading cultural knowledge: {str(e)}")
-            raise e
-
-    async def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        validate_pagination(limit, page)
-        try:
-            table = await self._get_table(table_type="culture")
-
-            async with self.async_session_factory() as sess:
-                # Build query with filters
-                stmt = select(table)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-                if name is not None:
-                    stmt = stmt.where(table.c.name.ilike(f"%{name}%"))
-
-                # Get total count
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count_result = await sess.execute(count_stmt)
-                total_count = total_count_result.scalar() or 0
-
-                # Apply sorting
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-
-                # Apply pagination
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                # Execute query
-                result = await sess.execute(stmt)
-                rows = result.fetchall()
-
-                db_rows = [dict(row._mapping) for row in rows]
-
-                if not deserialize:
-                    return db_rows, total_count
-
-                return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
-
-        except Exception as e:
-            log_warning(f"Exception reading all cultural knowledge: {str(e)}")
-            raise e
-
-    async def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in the database.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-
-            # Generate ID if not present
-            if cultural_knowledge.id is None:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            async with self.async_session_factory() as sess, sess.begin():
-                # Use MySQL-specific insert with on_duplicate_key_update
-                insert_stmt = mysql.insert(table).values(
-                    id=cultural_knowledge.id,
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
-                    content=content_dict if content_dict else None,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-
-                # Update all fields except id on conflict
-                upsert_stmt = insert_stmt.on_duplicate_key_update(
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
-                    content=content_dict if content_dict else None,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-
-                await sess.execute(upsert_stmt)
-
-                # Fetch the inserted/updated row
-                select_stmt = select(table).where(table.c.id == cultural_knowledge.id)
-                result = await sess.execute(select_stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-                db_row = dict(row._mapping)
-
-            if not deserialize:
-                return db_row
-
-            # Deserialize from DB format to model format
-            return deserialize_cultural_knowledge_from_db(db_row)
-
-        except Exception as e:
-            log_warning(f"Exception upserting cultural knowledge: {str(e)}")
-            raise e
 
     async def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None

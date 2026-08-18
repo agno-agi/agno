@@ -756,8 +756,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     #     config["compression_manager"] = team.compression_manager.to_dict()
 
     # --- Reasoning settings ---
-    if team.reasoning:
-        config["reasoning"] = team.reasoning
     if team.reasoning_model is not None:
         # Mirrors the agent side. from_dict does not read this back yet
         # (#9452), so it is not round-tripped -- but without it the field is
@@ -767,10 +765,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
             config["reasoning_model"] = team.reasoning_model.to_dict()
         else:
             config["reasoning_model"] = str(team.reasoning_model)
-    if team.reasoning_min_steps != 1:  # default is 1
-        config["reasoning_min_steps"] = team.reasoning_min_steps
-    if team.reasoning_max_steps != 10:  # default is 10
-        config["reasoning_max_steps"] = team.reasoning_max_steps
 
     # --- Streaming settings ---
     if team.stream is not None:
@@ -1336,10 +1330,7 @@ def from_dict(
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO
             # --- Reasoning settings ---
-            reasoning=config.get("reasoning", False),
             # reasoning_model=config.get("reasoning_model"),  # TODO
-            reasoning_min_steps=config.get("reasoning_min_steps", 1),
-            reasoning_max_steps=config.get("reasoning_max_steps", 10),
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),
