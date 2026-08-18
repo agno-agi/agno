@@ -2801,3 +2801,86 @@ class TestResolutionPrecedence:
         )
 
         assert "Publish the child first" in error["message"]
+
+
+# ----------------------------------------------------------------------
+# Published parents pin published children (enforced at the promote gate)
+# ----------------------------------------------------------------------
+
+
+class TestPublishedParentsPinPublishedChildren:
+    """A draft child can change in place under a published parent's pin, so
+    every surface that promotes a parent must refuse while a pinned member or
+    step child is a draft. The gate lives in the adapters' upsert_config
+    promote transition, so Studio publish, edit+publish, and REST PATCH all
+    hit it; the create-time binder additionally refuses nested drafts."""
+
+    @pytest.fixture
+    def studio3(self, registry, db):
+        return StudioTools(registry=registry, db=db, teams=True, workflows=True)
+
+    def _draft_agent(self, studio, name="pinned-child"):
+        return _data(studio.create_agent(name=name, instructions="i", model_id="gpt-5.4"))["id"]
+
+    def test_publish_component_refuses_draft_member(self, studio3):
+        child = self._draft_agent(studio3)
+        team = _data(studio3.create_team(name="pin-team", instructions="i", member_ids=[child]))
+        out = _loads(studio3.publish_component(team["id"]))
+        assert out["error"]["code"] == "dependency_conflict", out
+        assert child in out["error"]["message"]
+
+    def test_edit_publish_refuses_untouched_draft_member(self, studio3):
+        child = self._draft_agent(studio3)
+        team = _data(studio3.create_team(name="pin-team-2", instructions="i", member_ids=[child]))
+        out = _loads(studio3.edit_team(team["id"], instructions="new", publish=True))
+        assert out["error"]["code"] == "dependency_conflict", out
+
+    def test_publish_succeeds_after_child_publishes(self, studio3):
+        child = self._draft_agent(studio3)
+        team = _data(studio3.create_team(name="pin-team-3", instructions="i", member_ids=[child]))
+        assert _loads(studio3.publish_component(child))["ok"]
+        assert _loads(studio3.publish_component(team["id"]))["ok"]
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [
+            lambda inner: {"type": "parallel", "name": "p", "steps": [inner]},
+            lambda inner: {"type": "loop", "name": "l", "max_iterations": 2, "steps": [inner]},
+            lambda inner: {"type": "steps", "name": "g", "steps": [inner]},
+            lambda inner: {
+                "type": "condition",
+                "name": "c",
+                "evaluator_function": "1 > 0",
+                "steps": [{"name": "main-leaf", "agent_id": "__OK__"}],
+                "else_steps": [inner],
+            },
+            lambda inner: {
+                "type": "router",
+                "name": "r",
+                "selector_function": "'x'",
+                "choices": [inner],
+            },
+        ],
+        ids=["parallel", "loop", "steps", "condition-else", "router-choice"],
+    )
+    def test_nested_draft_child_refused_in_every_compound_type(self, studio3, wrap):
+        child = self._draft_agent(studio3)
+        ok_child = self._draft_agent(studio3, name="ok-leaf-agent")
+        assert _loads(studio3.publish_component(ok_child))["ok"]
+        inner = {"name": "leaf", "agent_id": child}
+        spec = json.loads(json.dumps(wrap(inner)).replace("__OK__", ok_child))
+        out = _loads(studio3.create_workflow(name="nested-wf", steps=[spec], publish=True))
+        assert not out["ok"], out
+        assert child in out["error"]["message"]
+
+    def test_nested_published_child_passes(self, studio3):
+        child = self._draft_agent(studio3, name="published-leaf")
+        assert _loads(studio3.publish_component(child))["ok"]
+        out = _loads(
+            studio3.create_workflow(
+                name="nested-ok-wf",
+                steps=[{"type": "loop", "name": "l", "max_iterations": 2, "steps": [{"name": "s", "agent_id": child}]}],
+                publish=True,
+            )
+        )
+        assert out["ok"], out

@@ -3493,11 +3493,33 @@ class StudioTools(Toolkit):
                 pins[rebound.id] = version
         return bound, pins
 
+    @staticmethod
+    def _iter_leaf_steps(steps: List[Any]) -> List[Any]:
+        """Every plain step in a workflow step tree, however deeply nested.
+
+        Compound containers (Parallel, Loop, Steps, Condition, Router) carry
+        children under .steps, .else_steps, or .choices; a node holding its
+        own .agent/.team executor is a leaf. Without the recursion, a leaf
+        inside a compound step would bypass the require-published check, the
+        code-vs-db id-claim check, and the exact-version rebind.
+        """
+        leaves: List[Any] = []
+        stack = list(steps or [])
+        while stack:
+            node = stack.pop()
+            for attr in ("steps", "else_steps", "choices"):
+                children = getattr(node, attr, None)
+                if isinstance(children, list):
+                    stack.extend(children)
+            if getattr(node, "agent", None) is not None or getattr(node, "team", None) is not None:
+                leaves.append(node)
+        return leaves
+
     def _bind_steps_to_target_db(
         self, steps: List[Any], target_db: "BaseDb", require_published: bool = True, actor: Optional[str] = None
     ) -> Dict[str, int]:
         pins: Dict[str, int] = {}
-        for step in steps:
+        for step in self._iter_leaf_steps(steps):
             for attr, noun in (("agent", "Step agent"), ("team", "Step team")):
                 child = getattr(step, attr, None)
                 if child is None:

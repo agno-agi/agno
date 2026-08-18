@@ -3980,6 +3980,23 @@ class SqliteDb(BaseDb):
                     if description is not None:
                         updates["description"] = description
                     if current_version is not None:
+                        # The current pointer must never name a tombstoned
+                        # version: every read would then diverge between the
+                        # pointer and the visible history. Stage rules beyond
+                        # that (published-only) are enforced by
+                        # set_current_version, the intended pointer-move API.
+                        configs_table = self._get_table(table_type="component_configs")
+                        if configs_table is not None:
+                            target_stage = sess.execute(
+                                select(configs_table.c.stage).where(
+                                    configs_table.c.component_id == component_id,
+                                    configs_table.c.version == current_version,
+                                )
+                            ).scalar()
+                            if target_stage == DELETED_CONFIG_STAGE:
+                                raise ValueError(
+                                    f"Cannot set deleted config {component_id} v{current_version} as current"
+                                )
                         updates["current_version"] = current_version
                     if metadata is not None:
                         updates["metadata"] = metadata
@@ -4384,10 +4401,14 @@ class SqliteDb(BaseDb):
                         configs_table.c.stage != DELETED_CONFIG_STAGE,
                     )
                 elif current_version is not None:
-                    # Use the current published version
+                    # Use the current published version. The stage filter keeps
+                    # a corrupted pointer (naming a tombstoned version) from
+                    # serving the dead payload; the read returns None instead,
+                    # matching get_current_config.
                     stmt = select(configs_table).where(
                         configs_table.c.component_id == component_id,
                         configs_table.c.version == current_version,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
                     )
                 else:
                     # No current_version set (draft only) - get the latest visible version
@@ -4526,8 +4547,8 @@ class SqliteDb(BaseDb):
                         )
 
                 # Links must point at real, unarchived children and must not
-                # close a cycle. Stage rules (published parents pin published
-                # children) belong to the control plane, not the adapter.
+                # close a cycle. The published-parents-pin-published-children
+                # rule is enforced below, at the promote transition.
                 if links:
                     self._validate_links_in_session(sess, component_id, links, components_table, links_table)
 
@@ -4649,6 +4670,38 @@ class SqliteDb(BaseDb):
                 final_stage = stage if stage is not None else (existing.stage if version is not None else "draft")
 
                 if final_stage == "published":
+                    # A published parent pins published children: a draft child
+                    # can change in place under the pin. One gate here covers
+                    # every promote surface (Studio publish, edit+publish, REST
+                    # PATCH stage). Only member/step links carry rebuild pins;
+                    # other link kinds pass through.
+                    if links_table is not None:
+                        link_rows = sess.execute(
+                            select(
+                                links_table.c.child_component_id,
+                                links_table.c.child_version,
+                                links_table.c.link_kind,
+                            ).where(
+                                links_table.c.parent_component_id == component_id,
+                                links_table.c.parent_version == final_version,
+                            )
+                        ).fetchall()
+                        for link_row in link_rows:
+                            if link_row.link_kind not in ("member", "step"):
+                                continue
+                            child_stage = sess.execute(
+                                select(configs_table.c.stage).where(
+                                    configs_table.c.component_id == link_row.child_component_id,
+                                    configs_table.c.version == link_row.child_version,
+                                )
+                            ).scalar()
+                            if child_stage != "published":
+                                raise ComponentDependencyError(
+                                    f"Cannot publish {component_id} v{final_version}: pinned "
+                                    f"{link_row.link_kind} '{link_row.child_component_id}' "
+                                    f"v{link_row.child_version} is {child_stage or 'missing'}; "
+                                    "publish the child first."
+                                )
                     # Publishing moves the pointer and re-projects the config's
                     # denormalized identity onto the row in one transaction, so
                     # listings never show a stale name for the live version.
