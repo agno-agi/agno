@@ -18,7 +18,7 @@ agent = Agent(
     instructions=[
         "Always use OutageDeck before making claims about current provider or service status.",
         "Summarize active incidents with severity, state, and last update time.",
-        "Include the OutageDeck URL returned by the tool so the reader can inspect the live status page.",
+        "Include the OutageDeck URL returned by the tool so the reader can inspect the provider status page.",
     ],
     markdown=True,
 )
