@@ -39,7 +39,7 @@ def _remap_legacy_kwargs(cls: type, valid_params: frozenset, kwargs: Dict[str, A
         if target in result:
             log_warning(f"Both `{key}` and `{target}` passed; using `{target}`.")
         else:
-            log_warning(f"`{key}` is deprecated; use `{target}`.")
+            log_warning(f"`{key}` will be deprecated soon; use `{target}`.")
             result[target] = value
 
     return result
