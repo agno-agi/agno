@@ -529,3 +529,31 @@ class TestDisclosureOracles:
         out = _loads(studio.get_component("Same Name", _agno_run_context=BOB))
         assert out["error"]["code"] == "ambiguous_reference", out
         assert "alices-hidden" not in out["error"].get("details", {}).get("candidates", [])
+
+
+class TestRoundThreeTenancy:
+    def test_scoped_owner_edits_own_component_by_name(self, studio):
+        # B5: two owners, same display name; each resolves their OWN by name.
+        _data(
+            studio.create_agent(name="Report Bot", component_id="alice-bot", instructions="i", _agno_run_context=ALICE)
+        )
+        _data(studio.create_agent(name="Report Bot", component_id="bob-bot", instructions="i", _agno_run_context=BOB))
+        out = _loads(studio.edit_agent("Report Bot", description="mine", _agno_run_context=ALICE))
+        assert out["ok"], out
+        assert out["data"]["id"] == "alice-bot"
+        other = _loads(studio.edit_agent("Report Bot", description="hers", _agno_run_context=BOB))
+        assert other["data"]["id"] == "bob-bot"
+
+    def test_delete_version_cannot_touch_foreign_draft_under_archive(self, studio):
+        # B6: an archived component's owner check must still fire.
+        _data(
+            studio.create_agent(
+                name="a", component_id="alice-a", instructions="i", publish=True, _agno_run_context=ALICE
+            )
+        )
+        _data(studio.edit_agent("alice-a", instructions="v2", _agno_run_context=ALICE))
+        _data(studio.archive_component("alice-a", _agno_run_context=ALICE))
+        out = _loads(studio.delete_version("alice-a", 2, _agno_run_context=BOB))
+        assert out["error"]["code"] == "component_not_found"
+        # the owner still may
+        assert _loads(studio.delete_version("alice-a", 2, _agno_run_context=ALICE))["ok"]

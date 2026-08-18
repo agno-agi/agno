@@ -46,6 +46,27 @@ logger = logging.getLogger(__name__)
 # Typed catalog errors that map to 409 Conflict. They are ValueError
 # subclasses, so routes must catch them before any generic ValueError clause
 # or they would surface with the wrong status code.
+def _conflict_detail(db: Any, component_id: str, scoped_user_id: Optional[str], exc: Exception) -> str:
+    """409 detail for a conflict, with a scoped caller's foreign dependents
+    redacted to a count. A ComponentDependencyError embeds the parent ids in
+    its message; a scoped caller must not learn another owner's ids from it."""
+    if not isinstance(exc, ComponentDependencyError) or scoped_user_id is None:
+        return str(exc)
+    try:
+        links = db.get_dependents(component_id) or []
+    except Exception:
+        return f"Cannot modify {component_id}: it is referenced by other components."
+    parent_ids = sorted({str(link.get("parent_component_id")) for link in links if link.get("parent_component_id")})
+    visible = [pid for pid in parent_ids if db.get_component(pid, user_id=scoped_user_id) is not None]
+    hidden = len(parent_ids) - len(visible)
+    parts = []
+    if visible:
+        parts.append(f"referenced by {', '.join(visible)}")
+    if hidden:
+        parts.append(f"and {hidden} other component(s)" if visible else f"referenced by {hidden} component(s)")
+    return f"Cannot modify {component_id}: {' '.join(parts) or 'it is referenced by other components'}."
+
+
 def _reject_unsupported_guard(guard: Any, supported: str) -> None:
     """400 when the request carries a guard half this route does not check.
 
@@ -419,7 +440,7 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
@@ -521,7 +542,7 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
@@ -583,7 +604,7 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -623,7 +644,7 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
@@ -706,7 +727,7 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
@@ -766,7 +787,7 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
@@ -856,7 +877,7 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
@@ -908,7 +929,7 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:

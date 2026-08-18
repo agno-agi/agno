@@ -255,3 +255,55 @@ class TestMutatingFlag:
         assert row["functions"] == [
             {"name": "delete_everything", "description": "Deletes everything.", "mutating": True}
         ]
+
+
+class TestSelfCompositionGuardRobustness:
+    """A callable tools/members attribute (per-run factory - a documented
+    pattern) is not statically inspectable; the guard must skip it, not turn
+    every compose call into internal_error."""
+
+    def test_registry_agent_with_tools_factory_does_not_break_compose(self, registry, db):
+        from agno.agent import Agent
+
+        def dynamic_tools(agent):
+            return []
+
+        factory_agent = Agent(
+            id="factory-agent", name="Factory", model=OpenAIResponses(id="gpt-5.5"), tools=dynamic_tools
+        )
+        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[factory_agent])
+        studio.create_agent(name="plain-member", instructions="i", publish=True)
+        data = _data(studio.create_team(name="Crew", instructions="i", member_ids=["plain-member"]))
+        assert data["member_ids"] == ["plain-member"]
+
+    def test_team_with_members_factory_composes_as_member(self, registry, db):
+        from agno.agent import Agent
+        from agno.team import Team
+
+        def member_factory(team):
+            return []
+
+        crew = Team(id="factory-crew", name="Factory Crew", model=OpenAIResponses(id="gpt-5.5"), members=member_factory)
+        studio = StudioTools(registry=registry, db=db, teams=True, teams_list=[crew])
+        data = _data(studio.create_team(name="Outer", instructions="i", member_ids=["factory-crew"]))
+        assert data["member_ids"] == ["factory-crew"]
+
+    def test_builder_with_real_studio_tools_still_refused_despite_factory_neighbor(self, registry, db):
+        # The factory neighbor must not mask a genuine privileged component.
+        from agno.agent import Agent
+
+        def dynamic_tools(agent):
+            return []
+
+        builder_agent = Agent(
+            id="builder",
+            name="Builder",
+            model=OpenAIResponses(id="gpt-5.5"),
+            tools=[StudioTools(registry=registry, db=db)],
+        )
+        factory_agent = Agent(
+            id="factory-agent", name="Factory", model=OpenAIResponses(id="gpt-5.5"), tools=dynamic_tools
+        )
+        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[builder_agent, factory_agent])
+        error = _error(studio.create_team(name="Meta", instructions="i", member_ids=["builder"]))
+        assert error["code"] == "tool_not_allowed"

@@ -496,35 +496,35 @@ class StudioTools(Toolkit):
     # draft when versioning is enabled, so successive partial edits accumulate
     # instead of each resetting to the published config.
 
-    def _find_agent_for_edit(self, agent_id: str) -> Optional["Agent"]:
+    def _find_agent_for_edit(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
         for a in self._iter_agents():
             if getattr(a, "id", None) == agent_id:
                 return a
-        if self._runner_tools._db_component_exists("agent", agent_id):
+        if self._runner_tools._db_component_exists("agent", agent_id, actor=actor):
             return self._load_agent_from_db(agent_id, version=self._edit_base_version(agent_id))
-        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
+        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id, actor=actor)
         if resolved is None:
             return None
         return self._load_agent_from_db(resolved, version=self._edit_base_version(resolved))
 
-    def _find_team_for_edit(self, team_id: str) -> Optional["Team"]:
+    def _find_team_for_edit(self, team_id: str, actor: Optional[str] = None) -> Optional["Team"]:
         for t in self._iter_teams():
             if getattr(t, "id", None) == team_id:
                 return t
-        if self._runner_tools._db_component_exists("team", team_id):
+        if self._runner_tools._db_component_exists("team", team_id, actor=actor):
             return self._load_team_from_db(team_id, version=self._edit_base_version(team_id))
-        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
+        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id, actor=actor)
         if resolved is None:
             return None
         return self._load_team_from_db(resolved, version=self._edit_base_version(resolved))
 
-    def _find_workflow_for_edit(self, workflow_id: str) -> Optional["Workflow"]:
+    def _find_workflow_for_edit(self, workflow_id: str, actor: Optional[str] = None) -> Optional["Workflow"]:
         for w in self._iter_workflows():
             if getattr(w, "id", None) == workflow_id:
                 return w
-        if self._runner_tools._db_component_exists("workflow", workflow_id):
+        if self._runner_tools._db_component_exists("workflow", workflow_id, actor=actor):
             return self._load_workflow_from_db(workflow_id, version=self._edit_base_version(workflow_id))
-        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
+        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id, actor=actor)
         if resolved is None:
             return None
         return self._load_workflow_from_db(resolved, version=self._edit_base_version(resolved))
@@ -555,19 +555,19 @@ class StudioTools(Toolkit):
         rolled-back content: after set_current_version(1) with a published v2,
         an edit would produce a v3 carrying v1's fields while the guard
         (checked against latest) still passes."""
-        if not self.enable_versions:
+        if not self.enable_versions or self.db is None:
             return None
-        draft = self._latest_draft_version(component_id)
-        if draft is not None:
-            return draft
-        if self.db is None:
-            return None
+        # The latest VISIBLE version (max over non-tombstoned configs). A draft
+        # is accumulated on only when it is that latest; a draft stranded below
+        # a newer published version (edit -> draft v2, edit(publish) -> v3) is
+        # stale, and basing on it would resurrect rolled-back fields while the
+        # expected_version=latest guard still passes.
         try:
-            latest_row = self.db.get_latest_config(component_id)
+            configs = self.db.list_configs(component_id, include_config=False)
         except NotImplementedError:
             return None
-        version = (latest_row or {}).get("version")
-        return version if isinstance(version, int) else None
+        versions = [c["version"] for c in configs if isinstance(c.get("version"), int)]
+        return max(versions) if versions else None
 
     def _latest_draft_version(self, component_id: str) -> Optional[int]:
         if self.db is None:
@@ -618,7 +618,11 @@ class StudioTools(Toolkit):
         """
         if self.db is None or actor is None:
             return None
-        row = self.db.get_component(component_id)
+        # include_deleted: an archived row must still be ownership-checked, or
+        # another owner's draft under an archived component could be tombstoned
+        # by delete_version (get_component without include_deleted reads the
+        # archived row as absent, skipping the owner check).
+        row = self.db.get_component(component_id, include_deleted=True)
         if row is None:
             return None  # No row: creates proceed; other paths produce their own not-found.
         owner = row.get("user_id")
@@ -803,19 +807,37 @@ class StudioTools(Toolkit):
             )
         return None
 
+    @staticmethod
+    def _iterable_attr(component: Any, name: str) -> List[Any]:
+        """A list view of an attribute that may be a list OR a callable factory.
+
+        ``tools`` and ``members`` accept callables (per-run factories); those
+        are not statically inspectable, so the palette treats them as empty
+        here rather than crashing the whole compose call on a TypeError."""
+        value = getattr(component, name, None)
+        if value is None or callable(value):
+            return []
+        try:
+            return list(value)
+        except TypeError:
+            return []
+
     def _privileged_component_ids(self) -> Set[str]:
         """Components whose own tools include a StudioTools instance.
 
         Composing one into a team or workflow hands the built component the
-        whole control plane; the palette refuses unless explicitly allowed."""
+        whole control plane; the palette refuses unless explicitly allowed.
+        One odd registry object must not break every compose call, so each
+        component is inspected under its own try/except."""
         privileged: Set[str] = set()
         for component in [*self._iter_agents(), *self._iter_teams()]:
-            for tool in getattr(component, "tools", None) or []:
-                if isinstance(tool, StudioTools):
+            try:
+                if self._carries_studio_toolkit(component):
                     component_id = getattr(component, "id", None)
                     if component_id:
                         privileged.add(component_id)
-                    break
+            except Exception:
+                logger.debug("StudioTools: skipping un-inspectable component in privilege scan", exc_info=True)
         return privileged
 
     def _check_member_policy(self, member_ids: List[str]) -> Optional[str]:
@@ -837,7 +859,7 @@ class StudioTools(Toolkit):
         A live component holds the StudioTools instance itself; a rehydrated
         one holds the toolkit's member Functions, whose bound entrypoints name
         the owning instance."""
-        for tool in getattr(component, "tools", None) or []:
+        for tool in StudioTools._iterable_attr(component, "tools"):
             if isinstance(tool, StudioTools):
                 return True
             owner = getattr(getattr(tool, "entrypoint", None), "__self__", None)
@@ -857,7 +879,7 @@ class StudioTools(Toolkit):
             seen.add(component_id)
         if self._carries_studio_toolkit(component):
             return True
-        for member in getattr(component, "members", None) or []:
+        for member in self._iterable_attr(component, "members"):
             if self._component_is_privileged(member, seen):
                 return True
         return False
@@ -1023,6 +1045,11 @@ class StudioTools(Toolkit):
         for key in ("agent_id", "team_id", "function_name"):
             if step.get(key):
                 spec[key] = step[key]
+        # A function step serializes its executor under "executor_ref"
+        # (Step._config_to_dict); the spec shape names it "function_name".
+        executor_ref = step.get("executor_ref")
+        if isinstance(executor_ref, str) and executor_ref:
+            spec.setdefault("function_name", executor_ref)
         # Serialized executors may live under nested objects rather than flat ids.
         agent = step.get("agent")
         if isinstance(agent, dict) and agent.get("agent_id" if "agent_id" in agent else "id"):
@@ -1062,23 +1089,40 @@ class StudioTools(Toolkit):
         selection to its whole toolkit."""
 
         def tool_names(entries: Any) -> List[str]:
-            names: List[str] = []
+            # Each stored entry carries the toolkit that owns it, so members are
+            # grouped by their OWN attribution - never by a same-named function
+            # from a different toolkit, and never registry-order dependent. An
+            # entry with no toolkit key (a standalone Function) is passed through
+            # exact and never folded.
+            standalone: List[str] = []
+            by_toolkit: Dict[str, List[str]] = {}
             for entry in entries or []:
-                if isinstance(entry, dict):
-                    name = entry.get("name") or (entry.get("function") or {}).get("name")
-                    if name:
-                        names.append(name)
-            # Collapse a COMPLETE toolkit selection back to its toolkit name;
-            # a partial selection stays exact function names, so the
-            # read-then-edit loop can never widen it to the whole toolkit.
-            collapsed: List[str] = list(names)
-            for tool in self.registry.tools:
-                if not isinstance(tool, Toolkit) or not tool.functions:
+                if not isinstance(entry, dict):
                     continue
-                member_names = set(tool.functions.keys())
-                if member_names and member_names <= set(collapsed):
-                    collapsed = [n for n in collapsed if n not in member_names]
-                    collapsed.append(tool.name)
+                name = entry.get("name") or (entry.get("function") or {}).get("name")
+                if not name:
+                    continue
+                toolkit = entry.get("toolkit")
+                if isinstance(toolkit, str) and toolkit:
+                    by_toolkit.setdefault(toolkit, []).append(name)
+                else:
+                    standalone.append(name)
+
+            collapsed: List[str] = list(standalone)
+            # A COMPLETE selection of a toolkit's members collapses to the
+            # toolkit name; a partial selection stays exact function names, so
+            # the read-then-edit loop can never widen it to the whole toolkit.
+            registry_toolkits = {
+                tool.name: set(tool.functions.keys())
+                for tool in self.registry.tools
+                if isinstance(tool, Toolkit) and tool.functions
+            }
+            for toolkit, selected in by_toolkit.items():
+                member_names = registry_toolkits.get(toolkit)
+                if member_names and member_names <= set(selected):
+                    collapsed.append(toolkit)
+                else:
+                    collapsed.extend(selected)
             return collapsed
 
         view: Dict[str, Any] = {
@@ -1751,7 +1795,10 @@ class StudioTools(Toolkit):
                 return member_err
             assert self.db is not None
             members, member_pins = self._bind_members_to_target_db(
-                members, self.db, require_published=publish, actor=_actor_id(_agno_run_context)
+                members,
+                self.db,
+                require_published=publish or not self.enable_versions,
+                actor=_actor_id(_agno_run_context),
             )
             team = Team(
                 id=team_id,
@@ -1858,7 +1905,10 @@ class StudioTools(Toolkit):
                 return mint_err
             assert self.db is not None
             step_pins = self._bind_steps_to_target_db(
-                built_steps, self.db, require_published=publish, actor=_actor_id(_agno_run_context)
+                built_steps,
+                self.db,
+                require_published=publish or not self.enable_versions,
+                actor=_actor_id(_agno_run_context),
             )
             workflow = Workflow(
                 id=workflow_id,
@@ -2056,11 +2106,14 @@ class StudioTools(Toolkit):
             "workflow": (self._iter_workflows, self._find_workflow_for_edit),
         }
         iterator, finder = finders[component_type]
+        actor = _actor_id(run_context)
         try:
             if self._is_code_defined(identifier, iterator(), component_type):
                 hint = ""
                 try:
-                    shadowed = self._runner_tools._resolve_db_id_by_name_or_slug(component_type, identifier)
+                    shadowed = self._runner_tools._resolve_db_id_by_name_or_slug(
+                        component_type, identifier, actor=actor
+                    )
                     if shadowed is not None:
                         hint = f" A stored {component_type} with this name exists: use its exact id '{shadowed}'."
                 except AmbiguousComponentNameError:
@@ -2070,7 +2123,7 @@ class StudioTools(Toolkit):
                     f"Cannot edit code-defined {component_type}: {identifier}. "
                     f"Only stored components are editable.{hint}",
                 )
-            component = finder(identifier)
+            component = finder(identifier, actor=actor)
         except StudioRunnerError as e:
             return error_result("invalid_request", str(e))
         except Exception as e:
@@ -2505,6 +2558,32 @@ class StudioTools(Toolkit):
         except Exception as e:
             return self._error_from_exception(e, "Failed to set current version")
 
+    def _redact_dependents(self, component_id: str, actor: Optional[str], verb: str) -> str:
+        """A dependency_conflict envelope naming only the dependents ``actor``
+        can see, counting the rest, so a scoped caller never learns another
+        owner's ids from the refusal."""
+        assert self.db is not None
+        try:
+            links = self.db.get_dependents(component_id) or []
+        except NotImplementedError:
+            links = []
+        parent_ids = sorted({str(link.get("parent_component_id")) for link in links if link.get("parent_component_id")})
+        if actor is None:
+            visible, hidden = parent_ids, 0
+        else:
+            visible = [pid for pid in parent_ids if self.db.get_component(pid, user_id=actor) is not None]
+            hidden = len(parent_ids) - len(visible)
+        parts: List[str] = []
+        if visible:
+            parts.append(f"referenced by {', '.join(visible)}")
+        if hidden:
+            parts.append(f"and {hidden} other component(s)" if visible else f"referenced by {hidden} component(s)")
+        detail = " ".join(parts) or "referenced by other components"
+        return error_result(
+            "dependency_conflict",
+            f"Cannot {verb} {component_id}: {detail}. Archive or edit the dependents first.",
+        )
+
     def delete_version(self, component_id: str, version: int, _agno_run_context: Optional[RunContext] = None) -> str:
         """Delete a draft version. Published versions are immutable history and
         the version number is never reused.
@@ -2529,6 +2608,10 @@ class StudioTools(Toolkit):
                 return error_result("version_not_found", f"Version not found: {component_id} v{version}")
             return ok_result("deleted", id=component_id, version=version)
         except Exception as e:
+            from agno.db.base import ComponentDependencyError
+
+            if isinstance(e, ComponentDependencyError):
+                return self._redact_dependents(component_id, _actor_id(_agno_run_context), "delete a version of")
             return self._error_from_exception(e, "Failed to delete version")
 
     def archive_component(
@@ -2619,31 +2702,8 @@ class StudioTools(Toolkit):
             from agno.db.base import ComponentDependencyError
 
             actor = _actor_id(_agno_run_context)
-            if isinstance(e, ComponentDependencyError) and actor is not None:
-                # A scoped archiver must not learn other owners' component ids
-                # from the refusal: name only the dependents it can see and
-                # count the rest.
-                try:
-                    links = self.db.get_dependents(component_id) or []
-                except NotImplementedError:
-                    links = []
-                parent_ids = sorted(
-                    {str(link.get("parent_component_id")) for link in links if link.get("parent_component_id")}
-                )
-                visible = [pid for pid in parent_ids if self.db.get_component(pid, user_id=actor) is not None]
-                hidden = len(parent_ids) - len(visible)
-                parts: List[str] = []
-                if visible:
-                    parts.append(f"referenced by {', '.join(visible)}")
-                if hidden:
-                    parts.append(
-                        f"and {hidden} other component(s)" if visible else f"referenced by {hidden} component(s)"
-                    )
-                detail = " ".join(parts) or "referenced by other components"
-                return error_result(
-                    "dependency_conflict",
-                    f"Cannot archive {component_id}: {detail}. Archive or edit the dependents first.",
-                )
+            if isinstance(e, ComponentDependencyError):
+                return self._redact_dependents(component_id, actor, "archive")
             return self._error_from_exception(e, "Failed to archive component")
 
     def restore_component(self, component_id: str, _agno_run_context: Optional[RunContext] = None) -> str:
@@ -4337,8 +4397,22 @@ def _persist_only(
         raise ValueError("Component has no id")
     from agno.db.base import ComponentType
 
+    from agno.db.base import ComponentArchivedError as _ComponentArchivedError
+
     resolved_config = config if config is not None else _component_to_dict(component)
     if db.get_component(component_id) is None:
+        # An id that resolves only with include_deleted is a tombstone: answer
+        # the archived error + restore hint the create tool maps, instead of
+        # falling into create_component_with_config and getting a generic
+        # "not available".
+        try:
+            if db.get_component(component_id, include_deleted=True) is not None:
+                raise _ComponentArchivedError(
+                    f"Component '{component_id}' is archived. Restore it (restore_component) "
+                    "before writing to it, or choose a different id."
+                )
+        except NotImplementedError:
+            pass
         # First write: one atomic transaction, so a failed config write can
         # never leave an active component with zero configs whose id and name
         # then block the retry with a strict-mint conflict.
@@ -4357,14 +4431,33 @@ def _persist_only(
             return config_row.get("version")
         except NotImplementedError:
             pass  # Adapter without the atomic path: fall through to two writes.
-    db.upsert_component(
-        component_id=component_id,
-        component_type=_component_type(component),
-        name=getattr(component, "name", component_id),
-        description=getattr(component, "description", None),
-        metadata=getattr(component, "metadata", None),
-        user_id=user_id,
-    )
+
+    identity = {
+        "component_id": component_id,
+        "component_type": _component_type(component),
+        "name": getattr(component, "name", component_id),
+        "description": getattr(component, "description", None),
+        "metadata": getattr(component, "metadata", None),
+        "user_id": user_id,
+    }
+    if db.get_component(component_id) is not None:
+        # Existing component (edit/publish): the GUARDED config write goes
+        # first, so a refused write (CAS conflict) raises before the identity
+        # projection is touched - otherwise the row would carry the loser's
+        # name while the live config keeps the winner's.
+        result = db.upsert_config(
+            component_id=component_id,
+            config=resolved_config,
+            stage=stage,
+            links=links,
+            expected_latest_version=expected_latest_version,
+        )
+        db.upsert_component(**identity)
+        return result.get("version")
+
+    # Create fallback (the atomic path was unavailable): the component does
+    # not exist yet, so identity must be written first for the config to attach.
+    db.upsert_component(**identity)
     result = db.upsert_config(
         component_id=component_id,
         config=resolved_config,

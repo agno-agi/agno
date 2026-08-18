@@ -4336,6 +4336,29 @@ class SqliteDb(BaseDb):
                 if links:
                     self._validate_links_in_session(sess, component_id, links, components_table, links_table)
 
+                if stage == "published" and links:
+                    # A published component pins published children (PIN_LINK_KINDS);
+                    # a draft child can change in place under the pin. The versioned
+                    # edit paths bind children with require_published, but a direct
+                    # create_component_with_config (and versions=False creates) reach
+                    # here without that check.
+                    for link in links:
+                        if link.get("link_kind") not in PIN_LINK_KINDS:
+                            continue
+                        child_stage = sess.execute(
+                            select(configs_table.c.stage).where(
+                                configs_table.c.component_id == link["child_component_id"],
+                                configs_table.c.version == link["child_version"],
+                            )
+                        ).scalar()
+                        if child_stage != "published":
+                            raise ComponentDependencyError(
+                                f"Cannot create {component_id} as published: pinned "
+                                f"{link['link_kind']} '{link['child_component_id']}' "
+                                f"v{link['child_version']} is {child_stage or 'missing'}; "
+                                "publish the child first."
+                            )
+
                 # Check label uniqueness
                 if label is not None:
                     existing_label = sess.execute(

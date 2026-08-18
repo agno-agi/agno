@@ -3042,3 +3042,71 @@ class TestTemplateContract:
         )
         assert second.id == first.id
         assert second.cron_expr == "0 9 * * *"
+
+
+class TestRoundThreeStudioFixes:
+    """Round-three fix brief: mediums that survived the previous rounds."""
+
+    def test_edit_base_ignores_stale_draft_below_newer_published(self, studio):
+        # B1: edit -> draft v2, edit(publish) -> v3; a later edit must base on
+        # v3, not the stranded v2 draft, or it resurrects rolled-back fields.
+        _data(studio.create_agent(name="rb", instructions="v1", model_id="gpt-5.4", publish=True))
+        _data(studio.edit_agent("rb", instructions="v2-draft"))
+        _data(studio.edit_agent("rb", instructions="v3-pub", publish=True))
+        out = _loads(studio.edit_agent("rb", description="d", expected_version=3))
+        assert out["ok"], out
+        v4 = studio.db.get_config(component_id="rb", version=4)["config"]
+        assert v4["instructions"] == "v3-pub"
+
+    def test_function_step_round_trips_through_view(self, db, registry):
+        studio_workflows = StudioTools(registry=registry, db=db, workflows=True)
+
+        # B8: a function-executor step serializes under executor_ref; the view
+        # must surface it as function_name so read->edit works.
+        def check_prime(n: int) -> bool:
+            return n > 1
+
+        registry.add_function(check_prime)
+        _data(studio_workflows.create_agent(name="a", instructions="i", model_id="gpt-5.4", publish=True))
+        _data(
+            studio_workflows.create_workflow(
+                name="wf",
+                steps=[{"name": "s1", "agent_id": "a"}, {"name": "s2", "function_name": "check_prime"}],
+                publish=True,
+            )
+        )
+        view = _data(studio_workflows.get_component("wf"))
+        fn_step = [s for s in view["steps"] if s.get("function_name")]
+        assert fn_step and fn_step[0]["function_name"] == "check_prime"
+        assert _loads(studio_workflows.edit_workflow("wf", steps=view["steps"]))["ok"]
+
+    def test_create_over_archived_id_answers_component_archived(self, studio):
+        # B10.
+        _data(studio.create_agent(name="arch", instructions="i", model_id="gpt-5.4", publish=True))
+        _data(studio.archive_component("arch"))
+        out = _loads(studio.create_agent(name="arch2", component_id="arch", instructions="i", model_id="gpt-5.4"))
+        assert out["error"]["code"] == "component_archived"
+        assert "restore" in out["error"]["message"].lower()
+
+    def test_full_toolkit_collapses_partial_stays_exact(self, db, registry):
+        # B7: collapse keys on (name, toolkit) attribution.
+        studio = StudioTools(registry=registry, db=db)
+        _data(
+            studio.create_agent(
+                name="full", instructions="i", model_id="gpt-5.5", tool_names=["calculator"], publish=True
+            )
+        )
+        assert _data(studio.get_component("full"))["tools"] == ["calculator"]
+        _data(
+            studio.create_agent(
+                name="part", instructions="i", model_id="gpt-5.5", tool_names=["add", "subtract"], publish=True
+            )
+        )
+        assert sorted(_data(studio.get_component("part"))["tools"]) == ["add", "subtract"]
+
+    def test_refused_publish_edit_does_not_clobber_identity(self, studio):
+        # B4.
+        _data(studio.create_agent(name="Winner", component_id="w", instructions="v1", model_id="gpt-5.4", publish=True))
+        out = _loads(studio.edit_agent("w", name="Loser", instructions="v2", publish=True, expected_version=99))
+        assert out["error"]["code"] == "version_conflict"
+        assert studio.db.get_component("w")["name"] == "Winner"

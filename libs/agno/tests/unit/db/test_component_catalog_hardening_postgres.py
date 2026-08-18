@@ -262,12 +262,14 @@ class TestTombstones:
 
     def test_pinned_version_is_undeletable(self, db):
         self._stack(db)
+        # A DRAFT parent may pin a draft child (only PUBLISHED parents require
+        # published children); deleting the pinned draft is still refused.
         db.create_component_with_config(
             component_id="pinner",
             component_type=ComponentType.TEAM,
             name="pinner",
             config={"name": "pinner"},
-            stage="published",
+            stage="draft",
             links=[
                 {
                     "link_kind": "member",
