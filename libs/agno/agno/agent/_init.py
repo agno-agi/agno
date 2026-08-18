@@ -292,10 +292,10 @@ async def connect_mcp_tools(agent: Agent) -> None:
     """Connect the MCP tools to the agent."""
     if agent.tools and isinstance(agent.tools, list):
         for tool in agent.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             if (
                 hasattr(type(tool), "__mro__")
-                and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
                 and not tool.initialized  # type: ignore
             ):
                 try:

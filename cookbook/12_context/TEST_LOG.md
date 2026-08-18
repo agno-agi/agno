@@ -218,7 +218,7 @@ correctly; `aclose()` closed cleanly.
 
 **Status:** PASS
 
-**Description:** `GDriveContextProvider` against a real service
+**Description:** `GoogleDriveContextProvider` against a real service
 account. Exercises `AllDrivesGoogleDriveTools` for shared-folder /
 Shared-Drive coverage.
 

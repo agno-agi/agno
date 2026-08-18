@@ -19,9 +19,9 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
@@ -252,10 +252,8 @@ async def aget_tools(
     # Add provided tools
     if resolved_tools is not None:
         for tool in resolved_tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            )
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            is_mcp_tool = hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
 
             if is_mcp_tool:
                 if tool.refresh_connection:  # type: ignore

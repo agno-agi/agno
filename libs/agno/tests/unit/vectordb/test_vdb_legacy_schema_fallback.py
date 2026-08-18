@@ -73,9 +73,9 @@ def _make_lancedb(tmp_path):
 
 def _make_redis():
     pytest.importorskip("redisvl")
-    from agno.vectordb.redis import RedisDB
+    from agno.vectordb.redis import RedisDb
 
-    db = RedisDB(index_name="t", redis_url="redis://localhost:1", embedder=StubEmbedder())
+    db = RedisDb(index_name="t", redis_url="redis://localhost:1", embedder=StubEmbedder())
     return db, "_user_id_field_exists", db._require_owner_field
 
 
@@ -426,9 +426,9 @@ def test_clickhouse_probe_blip_is_not_cached():
 
 def test_redis_probe_blip_is_not_cached():
     pytest.importorskip("redisvl")
-    from agno.vectordb.redis import RedisDB
+    from agno.vectordb.redis import RedisDb
 
-    db = RedisDB(index_name="t", redis_url="redis://localhost:1", embedder=StubEmbedder())
+    db = RedisDb(index_name="t", redis_url="redis://localhost:1", embedder=StubEmbedder())
     db.index = MagicMock()
     db.index.info.side_effect = [RuntimeError("transient blip"), {"attributes": []}]
 
@@ -442,10 +442,10 @@ def test_redis_create_warns_only_on_conclusive_legacy_verdict(caplog):
     pytest.importorskip("redisvl")
     import logging
 
-    from agno.vectordb.redis import RedisDB
+    from agno.vectordb.redis import RedisDb
 
     def _db_with_info(info):
-        db = RedisDB(index_name="t", redis_url="redis://localhost:1", embedder=StubEmbedder())
+        db = RedisDb(index_name="t", redis_url="redis://localhost:1", embedder=StubEmbedder())
         db.index = MagicMock()
         db.index.exists.return_value = True
         db.index.info.side_effect = info

@@ -4072,8 +4072,3 @@ def _mirror_async_docstrings() -> None:
 
 
 _mirror_async_docstrings()
-
-
-# Backward-compatible alias. The toolkit was originally released as ``StudioTool``
-# (singular); ``StudioTools`` is the canonical name. Both refer to the same class.
-StudioTool = StudioTools
