@@ -28,7 +28,6 @@ from agno.workflow.types import (
     StepOutput,
     StepRequirement,
     StepType,
-    warn_session_state_param_deprecated,
 )
 
 # Constants for condition branch identifiers
@@ -392,9 +391,6 @@ class Condition:
             kwargs: Dict[str, Any] = {}
             if run_context is not None and self._evaluator_has_run_context_param():
                 kwargs["run_context"] = run_context
-            if session_state is not None and self._evaluator_has_session_state_param():
-                kwargs["session_state"] = session_state
-                warn_session_state_param_deprecated(self.evaluator, "Condition evaluator functions")
 
             result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
 
@@ -438,9 +434,6 @@ class Condition:
             kwargs: Dict[str, Any] = {}
             if run_context is not None and self._evaluator_has_run_context_param():
                 kwargs["run_context"] = run_context
-            if session_state is not None and self._evaluator_has_session_state_param():
-                kwargs["session_state"] = session_state
-                warn_session_state_param_deprecated(self.evaluator, "Condition evaluator functions")
 
             if inspect.iscoroutinefunction(self.evaluator):
                 result = await self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
@@ -454,17 +447,6 @@ class Condition:
                 return False
 
         return False
-
-    def _evaluator_has_session_state_param(self) -> bool:
-        """Check if the evaluator function has a session_state parameter"""
-        if not callable(self.evaluator):
-            return False
-
-        try:
-            sig = inspect.signature(self.evaluator)
-            return "session_state" in sig.parameters
-        except Exception:
-            return False
 
     def _evaluator_has_run_context_param(self) -> bool:
         """Check if the evaluator function has a run_context parameter"""
