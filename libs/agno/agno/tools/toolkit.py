@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from functools import wraps
-from inspect import iscoroutinefunction
+from inspect import iscoroutinefunction, signature
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, cast, get_type_hints
 
@@ -14,12 +14,16 @@ from agno.utils.string import generate_id_from_name
 # Custom mappings go in _legacy_param_aliases on the toolkit class.
 
 
-def _remap_legacy_kwargs(cls: type, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+def _remap_legacy_kwargs(cls: type, valid_params: frozenset, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Remap 2.x enable_* kwargs to 3.0 names. Non-legacy params pass through."""
     aliases: Dict[str, Optional[str]] = getattr(cls, "_legacy_param_aliases", {})
     result = dict(kwargs)
 
     for key in list(result.keys()):
+        # Skip if this class accepts the param directly (e.g. DuckDuckGoTools.enable_search)
+        if key in valid_params:
+            continue
+
         # 1. Find target name (from aliases or by stripping enable_)
         if key in aliases:
             target = aliases[key]
@@ -43,10 +47,11 @@ def _remap_legacy_kwargs(cls: type, kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
 def _wrap_init_for_legacy_support(cls: type, original_init: Callable) -> Callable:
     """Wrap __init__ to remap legacy kwargs before calling original."""
+    valid_params = frozenset(signature(original_init).parameters)
 
     @wraps(original_init)
     def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
-        kwargs = _remap_legacy_kwargs(cls, kwargs)
+        kwargs = _remap_legacy_kwargs(cls, valid_params, kwargs)
         original_init(self, *args, **kwargs)
 
     return wrapped_init
