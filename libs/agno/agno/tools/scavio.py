@@ -61,7 +61,18 @@ class ScavioTools(Toolkit):
     LIST_INSTAGRAM_FOLLOWERS = "list_instagram_followers"
     LIST_INSTAGRAM_FOLLOWINGS = "list_instagram_followings"
 
-    # Backwards compat: map old enable_X flags to tool groups
+    # Tell the centralized shim to skip these - we handle them inline in __init__
+    _legacy_param_aliases = {
+        "enable_google": None,
+        "enable_amazon": None,
+        "enable_walmart": None,
+        "enable_youtube": None,
+        "enable_reddit": None,
+        "enable_tiktok": None,
+        "enable_instagram": None,
+    }
+
+    # Map platform names to their tool groups (for inline backcompat handling)
     _PLATFORM_TOOLS = {
         "google": [SEARCH_GOOGLE],
         "amazon": [SEARCH_AMAZON, GET_AMAZON_PRODUCT],

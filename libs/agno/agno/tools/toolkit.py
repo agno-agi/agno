@@ -51,7 +51,8 @@ def _wrap_init_for_legacy_support(cls: type, original_init: Callable) -> Callabl
 
     @wraps(original_init)
     def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
-        kwargs = _remap_legacy_kwargs(cls, valid_params, kwargs)
+        # Use type(self) to get subclass aliases, not the captured cls
+        kwargs = _remap_legacy_kwargs(type(self), valid_params, kwargs)
         original_init(self, *args, **kwargs)
 
     return wrapped_init
