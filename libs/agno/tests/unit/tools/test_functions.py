@@ -1822,6 +1822,35 @@ def test_strict_processing_visits_anyof_branches():
     assert inline["additionalProperties"] is False
 
 
+def test_strict_processing_leaves_literal_values_untouched():
+    """enum/examples/default hold instance values, not schemas: strict processing
+    must not rewrite them even when a literal happens to look like a schema."""
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "preset": {
+                "type": "object",
+                "enum": [
+                    {"type": "object", "properties": {"a": {"type": "string"}}},
+                    {"type": "object", "properties": {"b": {"type": "string"}}},
+                ],
+                "default": {"type": "object", "properties": {"c": {"type": "string"}}},
+            }
+        },
+        "required": ["preset"],
+    }
+    func = Function(name="f", parameters=schema)
+    func.process_schema_for_strict()
+
+    preset = func.parameters["properties"]["preset"]
+    assert preset["enum"] == [
+        {"type": "object", "properties": {"a": {"type": "string"}}},
+        {"type": "object", "properties": {"b": {"type": "string"}}},
+    ]
+    assert preset["default"] == {"type": "object", "properties": {"c": {"type": "string"}}}
+
+
 # ----------------------------------------------------------------------
 # Regression: the guard must also engage on the from_callable path
 # (Agent(tools=[fn]) registers plain callables without process_entrypoint)

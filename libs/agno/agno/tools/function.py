@@ -1418,18 +1418,33 @@ class Function(BaseModel):
                 ):
                     result["type"] = "string"
 
-            # Recursively process nested schemas
+            # Recursively process nested schemas. Only schema-bearing keys are
+            # walked: properties, items (single or tuple-form), the composition
+            # lists, and $defs. Literal-value keys -- enum, examples, default,
+            # const -- hold instance data, not schemas, and must stay untouched
+            # even when a literal happens to look like a schema.
             for key, value in result.items():
                 if key == "properties" and isinstance(value, dict):
                     result[key] = {k: make_nested_strict(v) for k, v in value.items()}
-                elif isinstance(value, list):
-                    # anyOf/oneOf/allOf branches, and tuple-form items
+                elif key == "items":
+                    if isinstance(value, dict):
+                        result[key] = make_nested_strict(value)
+                    elif isinstance(value, list):
+                        # tuple-form items: each element is a schema
+                        result[key] = [
+                            make_nested_strict(item) if isinstance(item, dict) else item
+                            for item in value
+                        ]
+                elif key in ("anyOf", "oneOf", "allOf", "prefixItems") and isinstance(value, list):
                     result[key] = [
                         make_nested_strict(item) if isinstance(item, dict) else item
                         for item in value
                     ]
-                elif isinstance(value, dict):
-                    result[key] = make_nested_strict(value)
+                elif key in ("$defs", "definitions", "additionalProperties") and isinstance(value, dict):
+                    if key == "additionalProperties":
+                        result[key] = make_nested_strict(value)
+                    else:
+                        result[key] = {k: make_nested_strict(v) for k, v in value.items()}
 
             return result
 
