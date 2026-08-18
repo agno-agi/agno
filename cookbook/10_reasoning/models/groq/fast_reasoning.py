@@ -2,18 +2,18 @@
 Fast Reasoning
 ==============
 
-Compares Groq speed with and without a reasoning model.
+Demonstrates this reasoning cookbook example.
 """
 
 import time
 
 from agno.agent import Agent
-from agno.models.deepseek import DeepSeek
 from agno.models.groq import Groq
 from rich.console import Console
 
+
 # ---------------------------------------------------------------------------
-# Create Agents
+# Create Example
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     console = Console()
@@ -36,7 +36,8 @@ def run_example() -> None:
         response = agent_deepseek.run(task, stream=False)
         end = time.time()
 
-task = "What is 23 x 47? Show your step-by-step reasoning."
+        console.print(response.content)
+        console.print(f"\n[dim]Response time: {end - start:.2f}s[/dim]")
 
         if response.reasoning_content:
             reasoning_len = len(response.reasoning_content.split())
@@ -60,25 +61,9 @@ task = "What is 23 x 47? Show your step-by-step reasoning."
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
 
-# Reasoning agent - uses DeepSeek for thinking
-reasoning_agent = Agent(
-    model=Groq(id="qwen/qwen3.6-27b"),
-    reasoning_model=DeepSeek(id="deepseek-reasoner"),
-    markdown=True,
-)
 
 # ---------------------------------------------------------------------------
-# Run Agents
+# Run Example
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    console.rule("[bold cyan]Groq Fast Reasoning Demo[/bold cyan]")
-
-    console.rule("[bold green]Fast Agent (No Reasoning)[/bold green]")
-    start = time.time()
-    fast_agent.print_response(task, stream=True)
-    console.print(f"\n[dim]Response time: {time.time() - start:.2f}s[/dim]")
-
-    console.rule("[bold blue]Reasoning Agent (DeepSeek)[/bold blue]")
-    start = time.time()
-    reasoning_agent.print_response(task, stream=True, show_full_reasoning=True)
-    console.print(f"\n[dim]Response time: {time.time() - start:.2f}s[/dim]")
+    run_example()
