@@ -841,10 +841,13 @@ class AwsBedrock(Model):
         metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.get("inputTokens", 0) or 0
-        metrics.output_tokens = response_usage.get("outputTokens", 0) or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
-
         metrics.cache_read_tokens = response_usage.get("cacheReadInputTokens", 0) or 0
         metrics.cache_write_tokens = response_usage.get("cacheWriteInputTokens", 0) or 0
+        # Bedrock passes through Anthropic's accounting: `inputTokens` is net of the
+        # cache and cache reads/writes are billed on top. Gross input_tokens so
+        # `total_tokens` covers everything billed. No-op when there is no cache usage.
+        metrics.input_tokens += metrics.cache_read_tokens + metrics.cache_write_tokens
+        metrics.output_tokens = response_usage.get("outputTokens", 0) or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         return metrics
