@@ -9,7 +9,18 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db import mcp_oauth_store
-from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.db.base import (
+    DELETED_CONFIG_STAGE,
+    BaseDb,
+    ComponentArchivedError,
+    ComponentCycleError,
+    ComponentDependencyError,
+    ComponentDraftRequiredError,
+    ComponentLastConfigError,
+    ComponentType,
+    ComponentVersionConflictError,
+    SessionType,
+)
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -63,6 +74,7 @@ try:
     from sqlalchemy import Column, MetaData, String, Table, and_, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import ForeignKey, Index, UniqueConstraint
 except ImportError:
@@ -3848,6 +3860,7 @@ class SqliteDb(BaseDb):
         component_id: str,
         component_type: Optional[ComponentType] = None,
         user_id: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a component by ID.
 
@@ -3855,6 +3868,7 @@ class SqliteDb(BaseDb):
             component_id: The component ID.
             component_type: Optional type filter (agent|team|workflow).
             user_id: If set, return the component only if owned by this user or shared.
+            include_deleted: Also return an archived (soft-deleted) row.
 
         Returns:
             Component dictionary or None if not found.
@@ -3865,10 +3879,9 @@ class SqliteDb(BaseDb):
                 return None
 
             with self.Session() as sess:
-                stmt = select(table).where(
-                    table.c.component_id == component_id,
-                    table.c.deleted_at.is_(None),
-                )
+                stmt = select(table).where(table.c.component_id == component_id)
+                if not include_deleted:
+                    stmt = stmt.where(table.c.deleted_at.is_(None))
                 if component_type is not None:
                     stmt = stmt.where(table.c.component_type == component_type.value)
                 if user_id is not None:
@@ -3948,24 +3961,12 @@ class SqliteDb(BaseDb):
                     log_debug(f"Created component {component_id}")
 
                 elif existing.deleted_at is not None:
-                    # Reactivate soft-deleted
-                    if component_type is None:
-                        raise ValueError("component_type is required when reactivating a deleted component")
-
-                    sess.execute(
-                        table.update()
-                        .where(table.c.component_id == component_id)
-                        .values(
-                            component_type=component_type.value if hasattr(component_type, "value") else component_type,
-                            name=name or component_id,
-                            description=description,
-                            current_version=None,
-                            metadata=metadata,
-                            updated_at=int(time.time()),
-                            deleted_at=None,
-                        )
+                    # Archived ids are reserved and their rows immutable. The old
+                    # implicit reactivation let a create silently inherit a dead
+                    # component's history; restore is explicit now.
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
                     )
-                    log_debug(f"Reactivated component {component_id}")
 
                 else:
                     # Update existing
@@ -4000,13 +4001,17 @@ class SqliteDb(BaseDb):
         component_id: str,
         hard_delete: bool = False,
         user_id: Optional[str] = None,
+        expected_current_version: Optional[int] = None,
+        require_no_dependents: bool = True,
     ) -> bool:
-        """Delete a component and all its configs/links.
+        """Delete a component. Soft delete archives it; the id stays reserved.
 
         Args:
             component_id: The component ID.
-            hard_delete: If True, permanently delete. Otherwise soft-delete.
+            hard_delete: If True, permanently delete rows and links. Otherwise archive.
             user_id: If set, only delete the component if owned by this user.
+            expected_current_version: Optional CAS guard on current_version.
+            require_no_dependents: Refuse when other components pin this one.
 
         Returns:
             True if deleted, False if not found.
@@ -4022,11 +4027,34 @@ class SqliteDb(BaseDb):
             # Scope to owner: a non-owner must not delete the component or its configs/links.
             if user_id is not None:
                 # Reads treat unowned as shared, but delete stays strict: only the owner (or admin) removes it
-                component = self.get_component(component_id, user_id=user_id)
+                component = self.get_component(component_id, user_id=user_id, include_deleted=hard_delete)
                 if component is None or component.get("user_id") != user_id:
                     return False
 
+            if require_no_dependents:
+                # An archive breaks only live parents; a hard delete breaks even an
+                # archived parent's history, so it checks every link.
+                dependents = self.get_dependents(component_id, active_parents_only=not hard_delete)
+                if dependents:
+                    parents = sorted({d.get("parent_component_id") for d in dependents if d.get("parent_component_id")})
+                    raise ComponentDependencyError(
+                        f"Cannot delete {component_id}: referenced by {', '.join(str(x) for x in parents)}"
+                    )
+
             with self.Session() as sess, sess.begin():
+                if expected_current_version is not None:
+                    row = sess.execute(
+                        select(components_table.c.current_version).where(
+                            components_table.c.component_id == component_id
+                        )
+                    ).fetchone()
+                    if row is None:
+                        return False
+                    if row.current_version != expected_current_version:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version is {row.current_version}, "
+                            f"expected {expected_current_version}"
+                        )
                 if hard_delete:
                     # Delete links where this component is parent or child
                     if links_table is not None:
@@ -4040,18 +4068,53 @@ class SqliteDb(BaseDb):
                         components_table.delete().where(components_table.c.component_id == component_id)
                     )
                 else:
-                    # Soft delete
+                    # Archive: stamp deleted_at on a live row only, so the call is
+                    # idempotent-visible (a second archive returns False).
                     now = int(time.time())
                     result = sess.execute(
                         components_table.update()
-                        .where(components_table.c.component_id == component_id)
-                        .values(deleted_at=now)
+                        .where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
+                        .values(deleted_at=now, updated_at=now)
                     )
 
             return result.rowcount > 0
 
         except Exception as e:
             log_error(f"Error deleting component: {str(e)}")
+            raise
+
+    def restore_component(
+        self,
+        component_id: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Restore an archived component: clear deleted_at, keep every version."""
+        try:
+            components_table = self._get_table(table_type="components")
+            if components_table is None:
+                return False
+
+            if user_id is not None:
+                component = self.get_component(component_id, user_id=user_id, include_deleted=True)
+                if component is None or component.get("user_id") != user_id:
+                    return False
+
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    components_table.update()
+                    .where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_not(None),
+                    )
+                    .values(deleted_at=None, updated_at=int(time.time()))
+                )
+            return result.rowcount > 0
+
+        except Exception as e:
+            log_error(f"Error restoring component: {str(e)}")
             raise
 
     def list_components(
@@ -4185,6 +4248,9 @@ class SqliteDb(BaseDb):
                     # Generic wording: must not confirm another user's component exists
                     raise ValueError(f"Component ID {component_id} is not available")
 
+                if links:
+                    self._validate_links_in_session(sess, component_id, links, components_table, links_table)
+
                 # Check label uniqueness
                 if label is not None:
                     existing_label = sess.execute(
@@ -4264,6 +4330,7 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
 
@@ -4271,6 +4338,7 @@ class SqliteDb(BaseDb):
             component_id: The component ID.
             version: Specific version number. If None, uses current or latest draft.
             label: Config label to lookup. Ignored if version is provided.
+            include_deleted: Also return a tombstoned version (explicit version only).
 
         Returns:
             Config dictionary or None if not found.
@@ -4305,10 +4373,13 @@ class SqliteDb(BaseDb):
                         configs_table.c.component_id == component_id,
                         configs_table.c.version == version,
                     )
+                    if not include_deleted:
+                        stmt = stmt.where(configs_table.c.stage != DELETED_CONFIG_STAGE)
                 elif label is not None:
                     stmt = select(configs_table).where(
                         configs_table.c.component_id == component_id,
                         configs_table.c.label == label,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
                     )
                 elif current_version is not None:
                     # Use the current published version
@@ -4317,10 +4388,13 @@ class SqliteDb(BaseDb):
                         configs_table.c.version == current_version,
                     )
                 else:
-                    # No current_version set (draft only) - get the latest version
+                    # No current_version set (draft only) - get the latest visible version
                     stmt = (
                         select(configs_table)
-                        .where(configs_table.c.component_id == component_id)
+                        .where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.stage != DELETED_CONFIG_STAGE,
+                        )
                         .order_by(configs_table.c.version.desc())
                         .limit(1)
                     )
@@ -4332,6 +4406,43 @@ class SqliteDb(BaseDb):
             log_error(f"Error getting config: {str(e)}")
             raise
 
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """The current published config, or None when nothing is published."""
+        component = self.get_component(component_id)
+        if component is None or component.get("current_version") is None:
+            return None
+        return self.get_config(component_id, version=component["current_version"])
+
+    def get_latest_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """The latest visible (non-tombstoned) config version, draft or published."""
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+            if configs_table is None or components_table is None:
+                return None
+            with self.Session() as sess:
+                exists = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+                if exists is None:
+                    return None
+                result = sess.execute(
+                    select(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                    .order_by(configs_table.c.version.desc())
+                    .limit(1)
+                ).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting latest config: {str(e)}")
+            raise
+
     def upsert_config(
         self,
         component_id: str,
@@ -4341,6 +4452,7 @@ class SqliteDb(BaseDb):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        expected_latest_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
@@ -4379,22 +4491,50 @@ class SqliteDb(BaseDb):
                 raise ValueError("Component configs table not found")
 
             with self.Session() as sess, sess.begin():
-                # Verify component exists and is not deleted
+                # Verify component exists and is not archived
                 component = sess.execute(
-                    select(components_table.c.component_id).where(
-                        components_table.c.component_id == component_id,
-                        components_table.c.deleted_at.is_(None),
+                    select(components_table.c.component_id, components_table.c.deleted_at).where(
+                        components_table.c.component_id == component_id
                     )
                 ).fetchone()
 
                 if component is None:
                     raise ValueError(f"Component {component_id} not found")
+                if component.deleted_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
 
-                # Label uniqueness check
+                # Optional compare-and-set against the latest VISIBLE version:
+                # a mismatch means someone else wrote since the caller read.
+                if expected_latest_version is not None:
+                    latest_visible = sess.execute(
+                        select(configs_table.c.version)
+                        .where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.stage != DELETED_CONFIG_STAGE,
+                        )
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
+                    ).scalar()
+                    if latest_visible != expected_latest_version:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} latest version is {latest_visible}, "
+                            f"expected {expected_latest_version}"
+                        )
+
+                # Links must point at real, unarchived children and must not
+                # close a cycle. Stage rules (published parents pin published
+                # children) belong to the control plane, not the adapter.
+                if links:
+                    self._validate_links_in_session(sess, component_id, links, components_table, links_table)
+
+                # Label uniqueness check (a tombstoned version frees its label)
                 if label is not None:
                     label_query = select(configs_table.c.version).where(
                         configs_table.c.component_id == component_id,
                         configs_table.c.label == label,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
                     )
                     if version is not None:
                         label_query = label_query.where(configs_table.c.version != version)
@@ -4416,6 +4556,8 @@ class SqliteDb(BaseDb):
                     if stage is None:
                         stage = "draft"
 
+                    # High-water over EVERY row including tombstones: numbers are
+                    # never recycled into a history someone may still cite.
                     max_version = sess.execute(
                         select(configs_table.c.version)
                         .where(configs_table.c.component_id == component_id)
@@ -4425,17 +4567,24 @@ class SqliteDb(BaseDb):
 
                     final_version = (max_version or 0) + 1
 
-                    sess.execute(
-                        configs_table.insert().values(
-                            component_id=component_id,
-                            version=final_version,
-                            label=label,
-                            stage=stage,
-                            config=config,
-                            notes=notes,
-                            created_at=int(time.time()),
+                    try:
+                        sess.execute(
+                            configs_table.insert().values(
+                                component_id=component_id,
+                                version=final_version,
+                                label=label,
+                                stage=stage,
+                                config=config,
+                                notes=notes,
+                                created_at=int(time.time()),
+                            )
                         )
-                    )
+                    except IntegrityError as exc:
+                        # Two appends raced for one number; the (component_id,
+                        # version) primary key is the backstop.
+                        raise ComponentVersionConflictError(
+                            f"Concurrent append on {component_id}: version {final_version} was taken"
+                        ) from exc
                 else:
                     existing = sess.execute(
                         select(configs_table.c.version, configs_table.c.stage).where(
@@ -4444,7 +4593,7 @@ class SqliteDb(BaseDb):
                         )
                     ).fetchone()
 
-                    if existing is None:
+                    if existing is None or existing.stage == DELETED_CONFIG_STAGE:
                         raise ValueError(f"Config {component_id} v{version} not found")
 
                     # Published configs are immutable
@@ -4498,10 +4647,30 @@ class SqliteDb(BaseDb):
                 final_stage = stage if stage is not None else (existing.stage if version is not None else "draft")
 
                 if final_stage == "published":
+                    # Publishing moves the pointer and re-projects the config's
+                    # denormalized identity onto the row in one transaction, so
+                    # listings never show a stale name for the live version.
+                    projection: Dict[str, Any] = {"current_version": final_version, "updated_at": int(time.time())}
+                    published_config = config
+                    if published_config is None and version is not None:
+                        stored = sess.execute(
+                            select(configs_table.c.config).where(
+                                configs_table.c.component_id == component_id,
+                                configs_table.c.version == final_version,
+                            )
+                        ).scalar()
+                        published_config = stored if isinstance(stored, dict) else None
+                    if isinstance(published_config, dict):
+                        if published_config.get("name") is not None:
+                            projection["name"] = published_config["name"]
+                        if "description" in published_config:
+                            projection["description"] = published_config.get("description")
+                        if published_config.get("metadata") is not None:
+                            projection["metadata"] = published_config.get("metadata")
                     sess.execute(
                         components_table.update()
                         .where(components_table.c.component_id == component_id)
-                        .values(current_version=final_version, updated_at=int(time.time()))
+                        .values(**projection)
                     )
 
             result = self.get_config(component_id, version=final_version)
@@ -4550,8 +4719,13 @@ class SqliteDb(BaseDb):
                     )
                 ).fetchone()
 
-                if config_row is None:
+                if config_row is None or config_row.stage == DELETED_CONFIG_STAGE:
                     return False
+
+                if config_row.stage == "published":
+                    raise ComponentDraftRequiredError(
+                        f"Cannot delete published config {component_id} v{version}; only drafts are deletable"
+                    )
 
                 # Check if it's current version
                 current = sess.execute(
@@ -4561,7 +4735,34 @@ class SqliteDb(BaseDb):
                 if current and current.current_version == version:
                     raise ValueError(f"Cannot delete current config {component_id} v{version}")
 
-                # Delete associated links
+                # A component keeps at least one visible version
+                visible = sess.execute(
+                    select(func.count())
+                    .select_from(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                ).scalar()
+                if (visible or 0) <= 1:
+                    raise ComponentLastConfigError(f"Cannot delete the last visible config of {component_id}")
+
+                # Another component may pin this exact version
+                if links_table is not None:
+                    pinned_by = sess.execute(
+                        select(links_table.c.parent_component_id).where(
+                            links_table.c.child_component_id == component_id,
+                            links_table.c.child_version == version,
+                        )
+                    ).fetchall()
+                    if pinned_by:
+                        parents = sorted({r.parent_component_id for r in pinned_by})
+                        raise ComponentDependencyError(
+                            f"Cannot delete {component_id} v{version}: pinned by {', '.join(parents)}"
+                        )
+
+                # Tombstone: keep the row so the version number is never reused,
+                # free its label, drop its outgoing links.
                 if links_table is not None:
                     sess.execute(
                         links_table.delete().where(
@@ -4569,13 +4770,13 @@ class SqliteDb(BaseDb):
                             links_table.c.parent_version == version,
                         )
                     )
-
-                # Delete the config
                 sess.execute(
-                    configs_table.delete().where(
+                    configs_table.update()
+                    .where(
                         configs_table.c.component_id == component_id,
                         configs_table.c.version == version,
                     )
+                    .values(stage=DELETED_CONFIG_STAGE, label=None, updated_at=int(time.time()))
                 )
 
             return True
@@ -4588,6 +4789,7 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         include_config: bool = False,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """List all config versions for a component.
 
@@ -4632,7 +4834,10 @@ class SqliteDb(BaseDb):
                         configs_table.c.updated_at,
                     )
 
-                stmt = stmt.where(configs_table.c.component_id == component_id).order_by(configs_table.c.version.desc())
+                stmt = stmt.where(configs_table.c.component_id == component_id)
+                if not include_deleted:
+                    stmt = stmt.where(configs_table.c.stage != DELETED_CONFIG_STAGE)
+                stmt = stmt.order_by(configs_table.c.version.desc())
 
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]
@@ -4645,6 +4850,7 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: int,
+        expected_current_version: Optional[int] = None,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -4698,6 +4904,18 @@ class SqliteDb(BaseDb):
                         f"Cannot set draft config {component_id} v{version} as current. "
                         "Only published configs can be current."
                     )
+
+                if expected_current_version is not None:
+                    pointer = sess.execute(
+                        select(components_table.c.current_version).where(
+                            components_table.c.component_id == component_id
+                        )
+                    ).scalar()
+                    if pointer != expected_current_version:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version is {pointer}, "
+                            f"expected {expected_current_version}"
+                        )
 
                 # Update pointer
                 sess.execute(
@@ -4758,12 +4976,15 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
+        active_parents_only: bool = False,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
         Args:
             component_id: The component ID to find dependents of.
             version: Optional specific version. If None, finds links to any version.
+            active_parents_only: Only count links whose parent component is not
+                archived and whose parent version is not tombstoned.
 
         Returns:
             List of link dictionaries showing what depends on this component.
@@ -4772,18 +4993,105 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="component_links")
             if table is None:
                 return []
+            components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs")
 
             with self.Session() as sess:
                 stmt = select(table).where(table.c.child_component_id == component_id)
                 if version is not None:
                     stmt = stmt.where(table.c.child_version == version)
+                if active_parents_only and components_table is not None and configs_table is not None:
+                    stmt = (
+                        stmt.join(
+                            components_table,
+                            components_table.c.component_id == table.c.parent_component_id,
+                        )
+                        .join(
+                            configs_table,
+                            and_(
+                                configs_table.c.component_id == table.c.parent_component_id,
+                                configs_table.c.version == table.c.parent_version,
+                            ),
+                        )
+                        .where(
+                            components_table.c.deleted_at.is_(None),
+                            configs_table.c.stage != DELETED_CONFIG_STAGE,
+                        )
+                    )
 
                 results = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in results]
+                # The join widens the row; keep only the link columns.
+                return [{k: v for k, v in row._mapping.items() if k in table.c.keys()} for row in results]
 
         except Exception as e:
             log_error(f"Error getting dependents: {str(e)}")
             raise
+
+    def _validate_links_in_session(
+        self,
+        sess,
+        parent_component_id: str,
+        links: List[Dict[str, Any]],
+        components_table,
+        links_table,
+    ) -> None:
+        """Backstop validation for links being written under one parent.
+
+        Checks that every child exists and is not archived, and that the new
+        edges do not close a cycle through the existing active links. Stage
+        rules (published parents pin published children) and link-kind typing
+        stay at the control plane; unknown link kinds (for example a future
+        "prompt" kind) pass through untouched.
+
+        The tables are passed in because the caller holds an open transaction
+        on this scoped session; _get_table would try to begin a second one.
+        """
+        if components_table is None:
+            return
+
+        child_ids = {link["child_component_id"] for link in links if link.get("child_component_id")}
+        # Self-links are the smallest cycle.
+        if parent_component_id in child_ids:
+            raise ComponentCycleError(f"Component {parent_component_id} cannot reference itself")
+
+        if child_ids:
+            rows = sess.execute(
+                select(components_table.c.component_id, components_table.c.deleted_at).where(
+                    components_table.c.component_id.in_(child_ids)
+                )
+            ).fetchall()
+            found = {r.component_id: r.deleted_at for r in rows}
+            for child_id in sorted(child_ids):
+                if child_id not in found:
+                    # A code-defined child has no row; the control plane decides
+                    # whether that is allowed, so absence is not an error here.
+                    continue
+                if found[child_id] is not None:
+                    raise ComponentArchivedError(f"Cannot link {parent_component_id} to archived component {child_id}")
+
+        # Cycle check: DFS from the new children through the existing links.
+        # Only the new edges can introduce a cycle, so the walk starts there
+        # instead of loading the whole table.
+        if links_table is None or not child_ids:
+            return
+        visited: set = set()
+        frontier = list(child_ids)
+        while frontier:
+            current = frontier.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            rows = sess.execute(
+                select(links_table.c.child_component_id).where(links_table.c.parent_component_id == current)
+            ).fetchall()
+            for row in rows:
+                nxt = row.child_component_id
+                if nxt == parent_component_id:
+                    raise ComponentCycleError(
+                        f"Linking {parent_component_id} -> {current} would close a reference cycle"
+                    )
+                if nxt not in visited:
+                    frontier.append(nxt)
 
     def resolve_version(
         self,
@@ -4822,8 +5130,13 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        _visited: Optional[Set[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
+
+        Tracks the ACTIVE recursion path, not every node seen, so a shared
+        child in a valid DAG loads normally while a true cycle returns a stub
+        with cycle_detected=True instead of recursing forever.
 
         Args:
             component_id: The component ID.
@@ -4834,6 +5147,18 @@ class SqliteDb(BaseDb):
             Dictionary with component, config, links, and resolved children.
         """
         try:
+            if _visited is None:
+                _visited = set()
+            if component_id in _visited:
+                return {
+                    "component": {"component_id": component_id},
+                    "config": None,
+                    "children": [],
+                    "resolved_versions": {},
+                    "cycle_detected": True,
+                }
+            _visited = _visited | {component_id}
+
             # Get component
             component = self.get_component(component_id)
             if component is None:
@@ -4866,6 +5191,7 @@ class SqliteDb(BaseDb):
                 child_graph = self.load_component_graph(
                     link["child_component_id"],
                     version=child_version,
+                    _visited=_visited,
                 )
 
                 if child_graph:

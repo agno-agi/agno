@@ -2851,10 +2851,12 @@ class StudioTools(Toolkit):
                 user_id=user_id,
             )
 
-        # Reuse an existing draft if there is one; otherwise create a new draft version.
+        # Every edit appends a new immutable draft. The old in-place reuse made
+        # two builders (or a builder and the UI) silently overwrite each other;
+        # with append-only history both edits survive and publish takes the
+        # latest by default.
         result = self.db.upsert_config(
             component_id=component_id,
-            version=self._latest_draft_version(component_id),
             config=config if config is not None else _component_to_dict(component),
             stage="draft",
             links=links,

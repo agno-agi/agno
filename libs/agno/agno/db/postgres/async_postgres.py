@@ -1,13 +1,13 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
     from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import AsyncBaseDb, ComponentType, SessionType
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
@@ -3939,125 +3939,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error getting learning user stats: {e}")
             raise e
 
-    # --- Components (Not yet supported for async) ---
-    def get_component(
-        self,
-        component_id: str,
-        component_type: Optional[ComponentType] = None,
-        user_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def upsert_component(
-        self,
-        component_id: str,
-        component_type: Optional[ComponentType] = None,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def delete_component(
-        self,
-        component_id: str,
-        hard_delete: bool = False,
-        user_id: Optional[str] = None,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def list_components(
-        self,
-        component_type: Optional[ComponentType] = None,
-        include_deleted: bool = False,
-        limit: int = 20,
-        offset: int = 0,
-        exclude_component_ids: Optional[Set[str]] = None,
-        user_id: Optional[str] = None,
-        name: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def create_component_with_config(
-        self,
-        component_id: str,
-        component_type: ComponentType,
-        name: Optional[str],
-        config: Dict[str, Any],
-        description: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        label: Optional[str] = None,
-        stage: str = "draft",
-        notes: Optional[str] = None,
-        links: Optional[List[Dict[str, Any]]] = None,
-        user_id: Optional[str] = None,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_config(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def upsert_config(
-        self,
-        component_id: str,
-        config: Optional[Dict[str, Any]] = None,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-        stage: Optional[str] = None,
-        notes: Optional[str] = None,
-        links: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def delete_config(
-        self,
-        component_id: str,
-        version: int,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def list_configs(
-        self,
-        component_id: str,
-        include_config: bool = False,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def set_current_version(
-        self,
-        component_id: str,
-        version: int,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_links(
-        self,
-        component_id: str,
-        version: int,
-        link_kind: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_dependents(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def load_component_graph(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
+    # --- Components (Not supported for async) ---
+    # The plain-def stubs raising NotImplementedError are inherited from AsyncBaseDb.
 
     # -- Schedule methods --
     # ``claim_due_schedule`` / ``release_schedule`` take no user_id: the poller fires schedules for all users.

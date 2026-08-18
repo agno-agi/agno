@@ -142,6 +142,23 @@ def sample_team_config() -> Dict[str, Any]:
 # =============================================================================
 
 
+def _force_delete_config(db, component_id: str, version: int) -> None:
+    """Simulate a corrupt/legacy catalog by removing a config row directly.
+
+    The hardened delete_config (studio-3.0 spec section 3.2) refuses to break
+    a pin, so the broken state these tests exercise can only arrive from
+    outside the API - which is exactly what this raw delete reproduces.
+    """
+    table = db._get_table(table_type="component_configs")
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            table.delete().where(
+                table.c.component_id == component_id,
+                table.c.version == version,
+            )
+        )
+
+
 class TestTeamToDict:
     """Tests for Team.to_dict() method."""
 
@@ -1344,7 +1361,7 @@ class TestMemberPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="pm-team", version=1)
         pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
-        assert db.delete_config(component_id="pm-member", version=pinned)
+        _force_delete_config(db, "pm-member", pinned)
 
         with pytest.raises(ComponentRehydrationError, match=f"pins member agent 'pm-member' at version {pinned}"):
             get_team_by_id(db=db, id="pm-team", strict=True)
@@ -1361,7 +1378,7 @@ class TestMemberPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="ps-team", version=1)
         pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
-        assert db.delete_config(component_id="ps-member", version=pinned)
+        _force_delete_config(db, "ps-member", pinned)
         registry = Registry(agents=[Agent(id="ps-member", name="Code Member")])
 
         with pytest.raises(ComponentRehydrationError, match="pins member agent 'ps-member'"):

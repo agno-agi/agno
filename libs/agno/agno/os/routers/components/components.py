@@ -4,7 +4,16 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
-from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.base import (
+    AsyncBaseDb,
+    BaseDb,
+    ComponentArchivedError,
+    ComponentCycleError,
+    ComponentDependencyError,
+    ComponentDraftRequiredError,
+    ComponentLastConfigError,
+    ComponentVersionConflictError,
+)
 from agno.db.base import ComponentType as DbComponentType
 from agno.db.utils import DB_TABLE_NAME_KEYS
 from agno.os.auth import get_authentication_dependency
@@ -22,6 +31,7 @@ from agno.os.schema import (
     NotFoundResponse,
     PaginatedResponse,
     PaginationInfo,
+    SetCurrentRequest,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -31,6 +41,17 @@ from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id_from_name, hash_string_sha256
 
 logger = logging.getLogger(__name__)
+
+# Typed catalog errors that map to 409 Conflict. They are ValueError
+# subclasses, so routes must catch them before any generic ValueError clause
+# or they would surface with the wrong status code.
+_CONFLICT_ERRORS = (
+    ComponentVersionConflictError,
+    ComponentArchivedError,
+    ComponentDependencyError,
+    ComponentCycleError,
+    ComponentLastConfigError,
+)
 
 
 def _resolve_db_in_config(
@@ -380,6 +401,10 @@ def attach_routes(
             return ComponentResponse(**component)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -433,6 +458,19 @@ def attach_routes(
             if scoped_user_id is not None and existing.get("user_id") is None:
                 raise HTTPException(status_code=403, detail="Cannot modify shared component")
 
+            # upsert_component has no CAS parameter; the guard is enforced as a
+            # pre-check against the row that was just read.
+            if body.guard is not None and body.guard.current_version is not None:
+                actual_current = existing.get("current_version")
+                if actual_current != body.guard.current_version:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Component {component_id} current version is {actual_current}, "
+                            f"expected {body.guard.current_version}"
+                        ),
+                    )
+
             update_kwargs: Dict[str, Any] = {"component_id": component_id}
             if body.name is not None:
                 update_kwargs["name"] = body.name
@@ -449,6 +487,10 @@ def attach_routes(
             return ComponentResponse(**component)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -465,6 +507,9 @@ def attach_routes(
     async def delete_component(
         request: Request,
         component_id: str = Path(description="Component ID"),
+        expected_current_version: Optional[int] = Query(
+            None, description="Optional compare-and-set guard on the current version"
+        ),
     ) -> None:
         try:
             scoped_user_id = get_scoped_user_id(request)
@@ -474,13 +519,61 @@ def attach_routes(
             # Non-admins can read shared (unowned) components but not delete them.
             if scoped_user_id is not None and existing.get("user_id") is None:
                 raise HTTPException(status_code=403, detail="Cannot delete shared component")
-            deleted = db.delete_component(component_id, user_id=scoped_user_id)
+            deleted = db.delete_component(
+                component_id, user_id=scoped_user_id, expected_current_version=expected_current_version
+            )
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error deleting component: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.post(
+        "/components/{component_id}/restore",
+        response_model=ComponentResponse,
+        response_model_exclude_none=True,
+        status_code=200,
+        operation_id="restore_component",
+        summary="Restore Component",
+        description="Restore an archived (soft-deleted) component by ID.",
+    )
+    async def restore_component(
+        request: Request,
+        component_id: str = Path(description="Component ID"),
+    ) -> ComponentResponse:
+        try:
+            scoped_user_id = get_scoped_user_id(request)
+            restored = db.restore_component(component_id, user_id=scoped_user_id)
+            if not restored:
+                existing = db.get_component(component_id, user_id=scoped_user_id, include_deleted=True)
+                if existing is None:
+                    raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+                if existing.get("deleted_at") is None:
+                    raise HTTPException(status_code=409, detail="Component is not archived")
+                # Archived but not restorable by this caller: the row is shared
+                # (unowned) and the caller is scoped.
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+
+            component = db.get_component(component_id, user_id=scoped_user_id)
+            if component is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            return ComponentResponse(**component)
+        except HTTPException:
+            raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            log_error(f"Error restoring component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -550,10 +643,15 @@ def attach_routes(
                 stage=body.stage,
                 notes=body.notes,
                 links=body.links,
+                expected_latest_version=body.guard.latest_version if body.guard else None,
             )
             return ComponentConfigResponse(**config)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -604,10 +702,15 @@ def attach_routes(
                 stage=body.stage,
                 notes=body.notes,
                 links=body.links,
+                expected_latest_version=body.guard.latest_version if body.guard else None,
             )
             return ComponentConfigResponse(**config)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -694,6 +797,10 @@ def attach_routes(
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -713,6 +820,7 @@ def attach_routes(
         request: Request,
         component_id: str = Path(description="Component ID"),
         version: int = Path(description="Version number"),
+        body: Optional[SetCurrentRequest] = Body(None, description="Optional guard; an empty POST keeps working"),
     ) -> ComponentResponse:
         try:
             scoped_user_id = get_scoped_user_id(request)
@@ -722,7 +830,11 @@ def attach_routes(
             # Non-admins can read shared (unowned) components but not modify them.
             if scoped_user_id is not None and existing.get("user_id") is None:
                 raise HTTPException(status_code=403, detail="Cannot modify shared component")
-            success = db.set_current_version(component_id, version=version)
+            success = db.set_current_version(
+                component_id,
+                version=version,
+                expected_current_version=body.guard.current_version if body and body.guard else None,
+            )
             if not success:
                 raise HTTPException(
                     status_code=404, detail=f"Component {component_id} or config version {version} not found"
@@ -736,6 +848,10 @@ def attach_routes(
             return ComponentResponse(**component)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:

@@ -908,15 +908,18 @@ class TestEditAgent:
         assert out["stage"] == "draft"
         assert out["draft_version"] == 2
 
-    def test_second_edit_updates_same_draft_in_place(self, studio_versioned):
+    def test_second_edit_appends_a_new_draft(self, studio_versioned):
+        # Append-only history (studio-3.0 spec section 3.2): the old in-place
+        # draft reuse let two editors silently overwrite each other; now both
+        # edits survive as versions and publish takes the latest by default.
         self._create(studio_versioned)
         studio_versioned.edit_agent(agent_id="tutor", instructions="updated once")
         out = _loads(studio_versioned.edit_agent(agent_id="tutor", instructions="updated twice"))
-        assert out["draft_version"] == 2  # same draft, no new version
+        assert out["draft_version"] == 3
 
         versions = _loads(studio_versioned.list_versions("tutor"))
         stages = [v["stage"] for v in versions["versions"]]
-        assert stages.count("draft") == 1
+        assert stages.count("draft") == 2
         assert stages.count("published") == 1
 
     def test_successive_partial_edits_accumulate_in_draft(self, studio_versioned):
@@ -1670,16 +1673,16 @@ class TestLifecycle:
         )
         assert out["db_version"] == 1
 
-        # Edit twice — should collapse into one draft
+        # Edit twice — append-only history keeps both drafts
         studio_versioned.edit_agent(agent_id="lc", instructions="edit1")
         studio_versioned.edit_agent(agent_id="lc", instructions="edit2")
 
         versions: list[Dict[str, Any]] = _loads(studio_versioned.list_versions("lc"))["versions"]
-        assert len(versions) == 2
+        assert len(versions) == 3
 
-        # Publish draft
+        # Publish promotes the latest draft
         pub = _loads(studio_versioned.publish_component("lc"))
-        assert pub["version"] == 2
+        assert pub["version"] == 3
 
         # Rollback
         rb = _loads(studio_versioned.set_current_version("lc", 1))

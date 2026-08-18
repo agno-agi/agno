@@ -95,6 +95,23 @@ def sample_workflow_config() -> Dict[str, Any]:
 # =============================================================================
 
 
+def _force_delete_config(db, component_id: str, version: int) -> None:
+    """Simulate a corrupt/legacy catalog by removing a config row directly.
+
+    The hardened delete_config (studio-3.0 spec section 3.2) refuses to break
+    a pin, so the broken state these tests exercise can only arrive from
+    outside the API - which is exactly what this raw delete reproduces.
+    """
+    table = db._get_table(table_type="component_configs")
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            table.delete().where(
+                table.c.component_id == component_id,
+                table.c.version == version,
+            )
+        )
+
+
 class TestWorkflowToDict:
     """Tests for Workflow.to_dict() method."""
 
@@ -817,7 +834,7 @@ class TestStepPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="dp-wf", version=1)
         pinned = next(link for link in links if link["link_kind"] == "step_agent")["child_version"]
-        assert db.delete_config(component_id="dp-agent", version=pinned)
+        _force_delete_config(db, "dp-agent", pinned)
 
         lenient = get_workflow_by_id(db=db, id="dp-wf", strict=False)
         assert lenient is not None
@@ -878,7 +895,9 @@ class TestWritePathFidelity:
 
         db = SqliteDb(db_file=str(tmp_path / "noname.db"))
         Workflow(id="nn-wf", name="WF", steps=[Step(agent=Agent(id="nn-agent", name="A"))]).save(db=db)
-        db.delete_component("nn-agent", hard_delete=True)
+        # The hardened delete refuses to break nn-wf's pin; the degraded state
+        # this test exercises arrives from outside the API (spec section 3.2).
+        db.delete_component("nn-agent", hard_delete=True, require_no_dependents=False)
 
         loaded = Workflow.load(id="nn-wf", db=db, strict=False)
 

@@ -14,6 +14,8 @@ Tests cover:
 - PATCH /components/{component_id}/configs/{version} - Update config
 - DELETE /components/{component_id}/configs/{version} - Delete config
 - POST /components/{component_id}/configs/{version}/set-current - Set current version
+- POST /components/{component_id}/restore - Restore archived component
+- Optional guard bodies (compare-and-set) and typed catalog error mappings
 """
 
 from unittest.mock import MagicMock
@@ -22,7 +24,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agno.db.base import BaseDb, ComponentType
+from agno.db.base import (
+    BaseDb,
+    ComponentArchivedError,
+    ComponentDependencyError,
+    ComponentDraftRequiredError,
+    ComponentType,
+    ComponentVersionConflictError,
+)
 from agno.os.routers.components import get_components_router
 from agno.os.settings import AgnoAPISettings
 
@@ -57,6 +66,7 @@ def mock_db():
     db.upsert_config = MagicMock()
     db.delete_config = MagicMock()
     db.set_current_version = MagicMock()
+    db.restore_component = MagicMock()
     db.to_dict = MagicMock(return_value={"type": "postgres", "id": "test-db"})
     return db
 
@@ -646,6 +656,249 @@ class TestSetCurrentConfig:
         response = client.post("/components/agent-1/configs/1/set-current")
 
         assert response.status_code == 400
+
+
+# =============================================================================
+# Guard (compare-and-set) Tests
+# =============================================================================
+
+
+class TestComponentGuards:
+    """Tests for the optional guard bodies and typed catalog error mappings."""
+
+    _config_row = {
+        "component_id": "agent-1",
+        "version": 4,
+        "config": {"name": "Agent"},
+        "stage": "draft",
+        "created_at": 1234567890,
+    }
+
+    def test_create_config_with_guard_threads_expected_latest_version(self, client, mock_db):
+        """POST configs with a guard passes expected_latest_version to upsert_config."""
+        mock_db.upsert_config.return_value = self._config_row
+
+        response = client.post(
+            "/components/agent-1/configs",
+            json={"config": {"name": "Agent"}, "guard": {"latest_version": 3}},
+        )
+
+        assert response.status_code == 201
+        assert mock_db.upsert_config.call_args.kwargs["expected_latest_version"] == 3
+
+    def test_create_config_without_guard_passes_none(self, client, mock_db):
+        """The pre-guard UI shape (stage, set_current, config) still works unguarded."""
+        mock_db.upsert_config.return_value = self._config_row
+
+        response = client.post(
+            "/components/agent-1/configs",
+            json={"config": {"name": "Agent"}, "stage": "draft", "set_current": True},
+        )
+
+        assert response.status_code == 201
+        assert mock_db.upsert_config.call_args.kwargs["expected_latest_version"] is None
+
+    def test_update_config_with_guard_threads_expected_latest_version(self, client, mock_db):
+        """PATCH configs/{version} with a guard passes expected_latest_version."""
+        mock_db.upsert_config.return_value = self._config_row
+
+        response = client.patch(
+            "/components/agent-1/configs/4",
+            json={"config": {"name": "Agent"}, "guard": {"latest_version": 4}},
+        )
+
+        assert response.status_code == 200
+        assert mock_db.upsert_config.call_args.kwargs["expected_latest_version"] == 4
+
+    def test_update_config_without_guard_passes_none(self, client, mock_db):
+        """PATCH configs/{version} without a guard stays last-writer-wins."""
+        mock_db.upsert_config.return_value = self._config_row
+
+        response = client.patch(
+            "/components/agent-1/configs/4",
+            json={"config": {"name": "Agent"}},
+        )
+
+        assert response.status_code == 200
+        assert mock_db.upsert_config.call_args.kwargs["expected_latest_version"] is None
+
+    def test_set_current_with_guard_threads_expected_current_version(self, client, mock_db):
+        """set-current with a guard passes expected_current_version."""
+        mock_db.set_current_version.return_value = True
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 3,
+            "created_at": 1234567890,
+        }
+
+        response = client.post(
+            "/components/agent-1/configs/3/set-current",
+            json={"guard": {"current_version": 2}},
+        )
+
+        assert response.status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["expected_current_version"] == 2
+
+    def test_set_current_empty_body_still_works(self, client, mock_db):
+        """set-current with no body (the UI shape) skips the guard."""
+        mock_db.set_current_version.return_value = True
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 3,
+            "created_at": 1234567890,
+        }
+
+        response = client.post("/components/agent-1/configs/3/set-current")
+
+        assert response.status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["expected_current_version"] is None
+
+    def test_update_component_guard_mismatch_returns_409(self, client, mock_db):
+        """PATCH component with a stale guard.current_version is rejected before writing."""
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 5,
+            "created_at": 1234567890,
+        }
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": 2}},
+        )
+
+        assert response.status_code == 409
+        mock_db.upsert_component.assert_not_called()
+
+    def test_update_component_guard_match_succeeds(self, client, mock_db):
+        """PATCH component with a matching guard.current_version writes normally."""
+        component = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 5,
+            "created_at": 1234567890,
+        }
+        mock_db.get_component.return_value = component
+        mock_db.upsert_component.return_value = {**component, "name": "New Name"}
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": 5}},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["name"] == "New Name"
+
+    def test_create_config_version_conflict_returns_409(self, client, mock_db):
+        """ComponentVersionConflictError maps to 409, not the generic 400."""
+        mock_db.upsert_config.side_effect = ComponentVersionConflictError("version conflict")
+
+        response = client.post("/components/agent-1/configs", json={"config": {}})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "version conflict"
+
+    def test_create_config_archived_returns_409(self, client, mock_db):
+        """ComponentArchivedError maps to 409."""
+        mock_db.upsert_config.side_effect = ComponentArchivedError("component is archived")
+
+        response = client.post("/components/agent-1/configs", json={"config": {}})
+
+        assert response.status_code == 409
+
+    def test_create_config_draft_required_returns_400(self, client, mock_db):
+        """ComponentDraftRequiredError maps to 400."""
+        mock_db.upsert_config.side_effect = ComponentDraftRequiredError("draft required")
+
+        response = client.post("/components/agent-1/configs", json={"config": {}})
+
+        assert response.status_code == 400
+
+    def test_delete_component_dependency_returns_409(self, client, mock_db):
+        """DELETE component refused by dependents maps to 409 listing the parents."""
+        mock_db.delete_component.side_effect = ComponentDependencyError("Cannot delete agent-1: referenced by team-1")
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 409
+        assert "team-1" in response.json()["detail"]
+
+    def test_delete_component_forwards_expected_current_version_query(self, client, mock_db):
+        """DELETE component forwards the optional expected_current_version query guard."""
+        mock_db.delete_component.return_value = True
+
+        response = client.delete("/components/agent-1?expected_current_version=3")
+
+        assert response.status_code == 204
+        assert mock_db.delete_component.call_args.kwargs["expected_current_version"] == 3
+
+    def test_delete_component_without_query_guard_passes_none(self, client, mock_db):
+        """DELETE component without the query guard stays unguarded."""
+        mock_db.delete_component.return_value = True
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 204
+        assert mock_db.delete_component.call_args.kwargs["expected_current_version"] is None
+
+
+# =============================================================================
+# Restore Component Tests
+# =============================================================================
+
+
+class TestRestoreComponent:
+    """Tests for POST /components/{component_id}/restore endpoint."""
+
+    def test_restore_component_success(self, client, mock_db):
+        """Restore returns the restored component."""
+        mock_db.restore_component.return_value = True
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 2,
+            "created_at": 1234567890,
+        }
+
+        response = client.post("/components/agent-1/restore")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["component_id"] == "agent-1"
+        assert data["current_version"] == 2
+        assert mock_db.restore_component.call_args.kwargs["user_id"] is None
+
+    def test_restore_component_not_found(self, client, mock_db):
+        """Restore of a component that does not exist at all returns 404."""
+        mock_db.restore_component.return_value = False
+        mock_db.get_component.return_value = None
+
+        response = client.post("/components/nonexistent/restore")
+
+        assert response.status_code == 404
+
+    def test_restore_component_not_archived_returns_409(self, client, mock_db):
+        """Restore of a live (not archived) component returns 409."""
+        mock_db.restore_component.return_value = False
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "created_at": 1234567890,
+            "deleted_at": None,
+        }
+
+        response = client.post("/components/agent-1/restore")
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Component is not archived"
 
 
 # =============================================================================
