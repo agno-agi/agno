@@ -123,6 +123,7 @@ elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py>=2.0.0"]
 fal = ["fal_client"]
+finance = ["yfinance"]  # default FinanceTools provider; financialdatasets.ai needs only httpx (core)
 firecrawl = ["firecrawl-py==3.4.0"]
 github = ["PyGithub"]
 gitlab = ["python-gitlab", "httpx"]
@@ -273,6 +274,7 @@ tools = [
   "agno[evm]",
   "agno[exa]",
   "agno[fal]",
+  "agno[finance]",
   "agno[firecrawl]",
   "agno[github]",
   "agno[gitlab]",
