@@ -115,7 +115,21 @@ def _db_epoch() -> Any:
     return sa_cast(func.floor(func.extract("epoch", func.now())), BigInteger)
 
 
+# The six authz tables, resolved many times per request; their resolved Table objects are
+# cached (see _get_or_create_table) to skip a re-existence-check + reflection on every call.
+_AUTHZ_TABLE_TYPES = frozenset(AUTHZ_TABLE_NAME_ATTRS)
+
+
 class PostgresDb(BaseDb):
+    @property
+    def _authz_table_cache(self) -> Dict[str, Any]:
+        """Per-instance cache of resolved authz Table objects (lazy so __init__ is untouched)."""
+        cache = getattr(self, "_authz_table_cache_store", None)
+        if cache is None:
+            cache = {}
+            self._authz_table_cache_store = cache
+        return cache
+
     def __init__(
         self,
         db_url: Optional[str] = None,
@@ -760,6 +774,17 @@ class PostgresDb(BaseDb):
         Returns:
             Optional[Table]: SQLAlchemy Table object representing the schema.
         """
+        # The authz tables are hit multiple times per request (the disabled check, the
+        # subject->roles->policies resolution, the decision audit), and each call otherwise
+        # re-runs an existence query + a schema reflection before its real query -- the bulk
+        # of the per-request authz DB cost. Once a table has been resolved in this process it
+        # cannot change shape underneath us, so cache the resolved Table object and skip the
+        # re-check. Scoped to the authz tables to keep the change contained.
+        authz_cache = self._authz_table_cache
+        if table_type in _AUTHZ_TABLE_TYPES:
+            cached = authz_cache.get(table_name)
+            if cached is not None:
+                return cached
 
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
@@ -767,7 +792,10 @@ class PostgresDb(BaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            return self._create_table(table_name=table_name, table_type=table_type)
+            table = self._create_table(table_name=table_name, table_type=table_type)
+            if table_type in _AUTHZ_TABLE_TYPES:
+                authz_cache[table_name] = table
+            return table
 
         if not is_valid_table(
             db_engine=self.db_engine,
@@ -779,6 +807,8 @@ class PostgresDb(BaseDb):
 
         try:
             table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
+            if table_type in _AUTHZ_TABLE_TYPES:
+                authz_cache[table_name] = table
             return table
 
         except Exception as e:

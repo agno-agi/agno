@@ -1277,13 +1277,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if user_store is not None and user_id:
                 try:
                     if getattr(request.app.state, "user_auto_provision", False):
-                        user_store.provision_from_claims(
+                        # Provisioning already reads the row; read `disabled` off it rather
+                        # than issuing a second query for the same row every request.
+                        provisioned = user_store.provision_from_claims(
                             user_id,
                             payload,
                             email_claim=getattr(request.app.state, "user_email_claim", "email"),
                             name_claim=getattr(request.app.state, "user_name_claim", "name"),
                         )
-                    disabled = user_store.is_disabled(user_id)
+                        disabled = bool(provisioned.get("disabled")) if provisioned is not None else False
+                    else:
+                        disabled = user_store.is_disabled(user_id)
                 except Exception as e:  # directory unreachable: honour the configured policy
                     fail_closed = bool(getattr(request.app.state, "user_directory_fail_closed", False))
                     log_warning(
