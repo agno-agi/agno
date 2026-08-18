@@ -899,7 +899,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["store_events"] = agent.store_events
     # Skip events_to_skip as it contains RunEvent enums
 
-    # --- Role and culture settings ---
+    # --- Role settings ---
     if agent.role is not None:
         config["role"] = agent.role
     # --- Team and workflow settings ---
@@ -1084,12 +1084,6 @@ def from_dict(
     #     from agno.session import SessionSummaryManager
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
-    # --- Handle CultureManager reconstruction ---
-    # TODO: implement culture manager deserialization
-    # if "culture_manager" in config and isinstance(config["culture_manager"], dict):
-    #     from agno.culture import CultureManager
-    #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
-
     # --- Handle Knowledge reconstruction ---
     # Knowledge is stored as a reference by name and resolved from the registry,
     # since it holds live db/vector_db connections that cannot be serialized.
@@ -1249,8 +1243,6 @@ def from_dict(
         stream_events=config.get("stream_events"),
         store_events=config.get("store_events", False),
         role=config.get("role"),
-        # --- Culture settings ---
-        # culture_manager=config.get("culture_manager"),  # TODO
         # --- Metadata ---
         metadata=config.get("metadata"),
         # --- Compression settings ---

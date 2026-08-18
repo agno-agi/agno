@@ -6,7 +6,6 @@ pytest.importorskip("google.genai")
 pytest.importorskip("groq")
 
 from agno.agent import Agent
-from agno.culture.manager import CultureManager
 from agno.knowledge.chunking.agentic import AgenticChunking
 from agno.memory.manager import MemoryManager
 from agno.models.anthropic import Claude
@@ -183,18 +182,6 @@ def test_memory_manager_with_model_string():
 def test_memory_manager_with_model_instance():
     """Test MemoryManager accepts Model instance."""
     manager = MemoryManager(model=OpenAIChat(id="gpt-4o"))
-    assert isinstance(manager.model, OpenAIChat)
-
-
-def test_culture_manager_with_model_string():
-    """Test CultureManager accepts model string."""
-    manager = CultureManager(model="openai:gpt-4o")
-    assert isinstance(manager.model, OpenAIResponses)
-
-
-def test_culture_manager_with_model_instance():
-    """Test CultureManager accepts Model instance."""
-    manager = CultureManager(model=OpenAIChat(id="gpt-4o"))
     assert isinstance(manager.model, OpenAIChat)
 
 

@@ -24,7 +24,6 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "session_table",
         "job_table",
         "runs_table",
-        "culture_table",
         "memory_table",
         "metrics_table",
         "eval_table",

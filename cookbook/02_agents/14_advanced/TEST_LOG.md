@@ -5,42 +5,6 @@
 
 ---
 
-### 01_create_cultural_knowledge.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates 01 create cultural knowledge. Ran successfully and produced expected output.
-**Result:** Completed successfully in 6s.
-
----
-
-### 02_use_cultural_knowledge_in_agent.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates 02 use cultural knowledge in agent. Ran successfully and produced expected output.
-**Result:** Completed successfully in 10s.
-
----
-
-### 03_automatic_cultural_management.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates 03 automatic cultural management. Ran successfully and produced expected output.
-**Result:** Completed successfully in 26s.
-
----
-
-### 04_manually_add_culture.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates 04 manually add culture. Ran successfully and produced expected output.
-**Result:** Completed successfully in 8s.
-
----
-
 ### advanced_compression.py
 
 **Status:** TIMEOUT

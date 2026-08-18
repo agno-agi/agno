@@ -7,7 +7,6 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -2395,38 +2394,6 @@ class ValkeyDb(BaseDb):
         except Exception as e:
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise
-
-    # -- Cultural Knowledge methods --
-    # These methods raise NotImplementedError to satisfy the BaseDb interface.
-
-    def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
 
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:

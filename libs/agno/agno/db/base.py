@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.schemas import UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.run.agent import RunOutput
@@ -40,7 +39,6 @@ class BaseDb(ABC):
         self,
         session_table: Optional[str] = None,
         runs_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -79,7 +77,6 @@ class BaseDb(ABC):
             self.runs_table_name = f"{session_table}_runs"
         else:
             self.runs_table_name = "agno_runs"
-        self.culture_table_name = culture_table or "agno_culture"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
@@ -113,7 +110,6 @@ class BaseDb(ABC):
             "session_table": self.session_table_name,
             "job_table": self.job_table_name,
             "runs_table": self.runs_table_name,
-            "culture_table": self.culture_table_name,
             "memory_table": self.memory_table_name,
             "metrics_table": self.metrics_table_name,
             "eval_table": self.eval_table_name,
@@ -145,7 +141,6 @@ class BaseDb(ABC):
         return cls(
             session_table=data.get("session_table"),
             runs_table=data.get("runs_table"),
-            culture_table=data.get("culture_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
             eval_table=data.get("eval_table"),
@@ -755,36 +750,6 @@ class BaseDb(ABC):
                 Each dict contains: name, span_type, total_calls, avg_duration_ms,
                 p95_duration_ms, max_duration_ms, error_count, last_called_at (datetime).
         """
-        raise NotImplementedError
-
-    # --- Cultural Knowledge ---
-    @abstractmethod
-    def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> Optional[List[CulturalKnowledge]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
     # --- Components (Optional) ---
@@ -1650,7 +1615,6 @@ class AsyncBaseDb(ABC):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         components_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
@@ -1681,7 +1645,6 @@ class AsyncBaseDb(ABC):
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
-        self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         # Async adapters cannot read or write components yet, but may still migrate a table a sync adapter created.
         self.components_table_name = components_table or "agno_components"
@@ -2180,41 +2143,6 @@ class AsyncBaseDb(ABC):
                 Each dict contains: name, span_type, total_calls, avg_duration_ms,
                 p95_duration_ms, max_duration_ms, error_count, last_called_at (datetime).
         """
-        raise NotImplementedError
-
-    # --- Cultural Notions ---
-    @abstractmethod
-    async def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         raise NotImplementedError
 
     # --- Learnings ---

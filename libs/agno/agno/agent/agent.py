@@ -33,9 +33,7 @@ from agno.agent import (
     _utils,
 )
 from agno.compression.manager import CompressionManager
-from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
@@ -346,17 +344,6 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
-    # --- Experimental Features ---
-    # --- Agent Culture ---
-    # Culture manager to use for this agent
-    culture_manager: Optional[CultureManager] = None
-    # Enable the agent to manage cultural knowledge
-    enable_agentic_culture: bool = False
-    # Update cultural knowledge after every run
-    update_cultural_knowledge: bool = False
-    # If True, the agent adds cultural knowledge in the response
-    add_culture_to_context: Optional[bool] = None
-
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
@@ -486,10 +473,6 @@ class Agent:
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
-        culture_manager: Optional[CultureManager] = None,
-        enable_agentic_culture: bool = False,
-        update_cultural_knowledge: bool = False,
-        add_culture_to_context: Optional[bool] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
@@ -658,11 +641,6 @@ class Agent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
 
-        self.culture_manager = culture_manager
-        self.enable_agentic_culture = enable_agentic_culture
-        self.update_cultural_knowledge = update_cultural_knowledge
-        self.add_culture_to_context = add_culture_to_context
-
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:
             log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
@@ -689,7 +667,7 @@ class Agent:
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
 
-        # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+        # Lazy-initialized shared thread pool executor for background tasks (memory, learning, etc.)
         self._background_executor: Optional[Any] = None
 
         # Callable factory settings
@@ -1121,12 +1099,6 @@ class Agent:
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         return await _managers.aget_user_memories(self, user_id=user_id)
-
-    def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return _managers.get_culture_knowledge(self)
-
-    async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return await _managers.aget_culture_knowledge(self)
 
     # ---------------------------------------------------------------
     # _response module delegates

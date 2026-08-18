@@ -406,7 +406,7 @@ def __init__(
     # Internal resolved LearningMachine instance
     team._learning = None
 
-    # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+    # Lazy-initialized shared thread pool executor for background tasks (memory, learning, etc.)
     team._background_executor = None
 
     # Callable factory settings
@@ -426,7 +426,7 @@ def __init__(
 def background_executor(team: "Team") -> Any:
     """Lazy initialization of shared thread pool executor for background tasks.
 
-    Handles both memory creation and cultural knowledge updates concurrently.
+    Handles memory creation and learning updates concurrently.
     Initialized only on first use (runtime, not instantiation) and reused across runs.
     """
     if team._background_executor is None:

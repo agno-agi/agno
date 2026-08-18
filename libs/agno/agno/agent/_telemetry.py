@@ -25,9 +25,6 @@ def get_telemetry_data(agent: Agent) -> Dict[str, Any]:
         or agent.enable_agentic_memory is True
         or agent.memory_manager is not None,
         "has_learnings": agent._learning is not None,
-        "has_culture": agent.enable_agentic_culture is True
-        or agent.update_cultural_knowledge is True
-        or agent.culture_manager is not None,
         "has_reasoning": agent.reasoning is True,
         "has_knowledge": agent.knowledge is not None,
         "has_input_schema": agent.input_schema is not None,
