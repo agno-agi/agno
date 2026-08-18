@@ -1,4 +1,4 @@
-"""OutageDeck Tools - Live operational status without credentials.
+"""OutageDeck Tools - Vendor-published operational status without credentials.
 
 This example gives an agent current provider status, active and historical
 incidents, and individual service health through OutageDeck's public API.
