@@ -471,6 +471,23 @@ def attach_routes(
                         ),
                     )
 
+            # Pointer moves go through set_current_version, never through
+            # upsert_component: it enforces the published-only dispatch
+            # invariant (drafts and tombstones are refused with ValueError ->
+            # 400, conflicts with ComponentVersionConflictError -> 409), while
+            # upsert_component would write the pointer blindly.
+            if body.current_version is not None:
+                moved = db.set_current_version(
+                    component_id,
+                    version=body.current_version,
+                    expected_current_version=body.guard.current_version if body.guard else None,
+                )
+                if not moved:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Config {component_id} v{body.current_version} not found",
+                    )
+
             update_kwargs: Dict[str, Any] = {"component_id": component_id}
             if body.name is not None:
                 update_kwargs["name"] = body.name
@@ -478,8 +495,6 @@ def attach_routes(
                 update_kwargs["description"] = body.description
             if body.metadata is not None:
                 update_kwargs["metadata"] = body.metadata
-            if body.current_version is not None:
-                update_kwargs["current_version"] = body.current_version
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
 

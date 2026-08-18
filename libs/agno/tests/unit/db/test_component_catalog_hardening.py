@@ -287,6 +287,54 @@ class TestReads:
 
 
 # ----------------------------------------------------------------------
+# The current pointer never dispatches a tombstone
+# ----------------------------------------------------------------------
+
+
+def _tombstoned_v2(db):
+    """comp-a with v1 published (current) and v2 tombstoned."""
+    _mk(db)
+    db.upsert_config("comp-a", config={"name": "dead"})  # v2 draft
+    db.delete_config("comp-a", 2)  # tombstone v2
+
+
+def _corrupt_pointer(db, component_id: str, version: int) -> None:
+    """Point current_version at an arbitrary version via raw SQL.
+
+    set_current_version and upsert_component refuse this state, so the
+    corruption these tests exercise can only arrive from outside the API -
+    which is exactly what this raw write reproduces.
+    """
+    table = db._get_table(table_type="components")
+    with db.Session() as sess, sess.begin():
+        sess.execute(table.update().where(table.c.component_id == component_id).values(current_version=version))
+
+
+class TestPointerTombstones:
+    def test_get_config_never_serves_a_tombstone_via_the_pointer(self, db):
+        _tombstoned_v2(db)
+        _corrupt_pointer(db, "comp-a", 2)
+        # The pointer read and the current read agree: nothing is served
+        assert db.get_config("comp-a") is None
+        assert db.get_current_config("comp-a") is None
+        # The explicit escape hatch still reaches the tombstone
+        buried = db.get_config("comp-a", version=2, include_deleted=True)
+        assert buried is not None and buried["stage"] == DELETED_CONFIG_STAGE
+
+    def test_upsert_component_refuses_a_tombstoned_current_version(self, db):
+        _tombstoned_v2(db)
+        with pytest.raises(ValueError, match="deleted config"):
+            db.upsert_component(component_id="comp-a", current_version=2)
+        assert db.get_component("comp-a")["current_version"] == 1
+
+    def test_set_current_version_refuses_a_tombstone(self, db):
+        _tombstoned_v2(db)
+        with pytest.raises(ValueError, match="published"):
+            db.set_current_version("comp-a", 2)
+        assert db.get_component("comp-a")["current_version"] == 1
+
+
+# ----------------------------------------------------------------------
 # Publish projection
 # ----------------------------------------------------------------------
 

@@ -384,6 +384,154 @@ class TestUpdateComponent:
 
 
 # =============================================================================
+# Update Component Current-Version Pointer Tests
+# =============================================================================
+
+
+class TestUpdateComponentCurrentVersionRouting:
+    """PATCH current_version must route through set_current_version.
+
+    upsert_component writes the pointer blindly; only set_current_version
+    enforces the published-only dispatch invariant (draft and tombstoned
+    targets refused) and the CAS guard atomically.
+    """
+
+    _component = {
+        "component_id": "agent-1",
+        "name": "Agent 1",
+        "component_type": "agent",
+        "current_version": 1,
+        "created_at": 1234567890,
+    }
+
+    def test_patch_current_version_goes_through_set_current_version(self, client, mock_db):
+        """The pointer move is delegated; upsert never receives the pointer."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.return_value = True
+        mock_db.upsert_component.return_value = {**self._component, "current_version": 2}
+
+        response = client.patch("/components/agent-1", json={"current_version": 2})
+
+        assert response.status_code == 200
+        assert response.json()["current_version"] == 2
+        mock_db.set_current_version.assert_called_once_with("agent-1", version=2, expected_current_version=None)
+        assert "current_version" not in mock_db.upsert_component.call_args.kwargs
+
+    def test_patch_current_version_to_invalid_stage_returns_400(self, client, mock_db):
+        """A draft or tombstoned target (adapter ValueError) maps to 400."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.side_effect = ValueError(
+            "Cannot set draft config agent-1 v2 as current. Only published configs can be current."
+        )
+
+        response = client.patch("/components/agent-1", json={"current_version": 2})
+
+        assert response.status_code == 400
+        mock_db.upsert_component.assert_not_called()
+
+    def test_patch_current_version_to_nonexistent_returns_404(self, client, mock_db):
+        """A version the adapter cannot find (returns False) maps to 404."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.return_value = False
+
+        response = client.patch("/components/agent-1", json={"current_version": 99})
+
+        assert response.status_code == 404
+        mock_db.upsert_component.assert_not_called()
+
+    def test_patch_current_version_threads_the_guard(self, client, mock_db):
+        """guard.current_version becomes the CAS kwarg on set_current_version."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.return_value = True
+        mock_db.upsert_component.return_value = {**self._component, "current_version": 2}
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"current_version": 2, "guard": {"current_version": 1}},
+        )
+
+        assert response.status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["expected_current_version"] == 1
+
+    def test_patch_current_version_conflict_returns_409(self, client, mock_db):
+        """A CAS race inside set_current_version surfaces as 409."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.side_effect = ComponentVersionConflictError(
+            "Component agent-1 current version is 3, expected 1"
+        )
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"current_version": 2, "guard": {"current_version": 1}},
+        )
+
+        assert response.status_code == 409
+        mock_db.upsert_component.assert_not_called()
+
+
+class TestUpdateComponentCurrentVersionEndToEnd:
+    """The published-only dispatch invariant, pinned over a real SqliteDb."""
+
+    @pytest.fixture
+    def real_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="router-pointer-db", db_file=str(tmp_path / "router-pointer.db"))
+        db.create_component_with_config(
+            component_id="agent-1",
+            component_type=ComponentType.AGENT,
+            name="agent-1",
+            config={"name": "agent-1"},
+            stage="published",
+        )  # v1 published, current = 1
+        db.upsert_config("agent-1", config={"name": "v2-draft"})  # v2 draft
+        db.upsert_config("agent-1", config={"name": "v3"}, stage="published")  # v3 published, current = 3
+        db.upsert_config("agent-1", config={"name": "v4"})  # v4 draft
+        db.delete_config("agent-1", 4)  # v4 tombstoned
+        return db
+
+    @pytest.fixture
+    def real_client(self, real_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=real_db, settings=settings))
+        return TestClient(app)
+
+    def test_patch_to_a_draft_returns_400_and_pointer_stays(self, real_client, real_db):
+        response = real_client.patch("/components/agent-1", json={"current_version": 2})
+        assert response.status_code == 400
+        assert real_db.get_component("agent-1")["current_version"] == 3
+
+    def test_patch_to_a_tombstone_returns_400_and_pointer_stays(self, real_client, real_db):
+        response = real_client.patch("/components/agent-1", json={"current_version": 4})
+        assert response.status_code == 400
+        assert real_db.get_component("agent-1")["current_version"] == 3
+
+    def test_patch_to_a_nonexistent_version_returns_404_and_pointer_stays(self, real_client, real_db):
+        response = real_client.patch("/components/agent-1", json={"current_version": 99})
+        assert response.status_code == 404
+        assert real_db.get_component("agent-1")["current_version"] == 3
+
+    def test_patch_to_a_published_version_moves_the_pointer(self, real_client, real_db):
+        response = real_client.patch("/components/agent-1", json={"current_version": 1})
+        assert response.status_code == 200
+        assert response.json()["current_version"] == 1
+        assert real_db.get_component("agent-1")["current_version"] == 1
+        # Dispatch reads follow the pointer to the published payload
+        current = real_db.get_current_config("agent-1")
+        assert current is not None and current["version"] == 1 and current["stage"] == "published"
+
+    def test_patch_pointer_and_fields_together(self, real_client, real_db):
+        """The UI can move the pointer and rename in one PATCH."""
+        response = real_client.patch(
+            "/components/agent-1",
+            json={"current_version": 1, "name": "Renamed", "guard": {"current_version": 3}},
+        )
+        assert response.status_code == 200
+        row = real_db.get_component("agent-1")
+        assert row["current_version"] == 1 and row["name"] == "Renamed"
+
+
+# =============================================================================
 # Delete Component Tests
 # =============================================================================
 

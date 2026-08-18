@@ -3927,6 +3927,9 @@ class SqliteDb(BaseDb):
             if table is None:
                 raise ValueError("Components table not found")
 
+            # Resolved outside the transaction: _get_table may open its own.
+            configs_table = self._get_table(table_type="component_configs") if current_version is not None else None
+
             with self.Session() as sess, sess.begin():
                 existing_stmt = select(table).where(table.c.component_id == component_id)
                 if user_id is not None:
@@ -3985,7 +3988,6 @@ class SqliteDb(BaseDb):
                         # pointer and the visible history. Stage rules beyond
                         # that (published-only) are enforced by
                         # set_current_version, the intended pointer-move API.
-                        configs_table = self._get_table(table_type="component_configs")
                         if configs_table is not None:
                             target_stage = sess.execute(
                                 select(configs_table.c.stage).where(
