@@ -10,9 +10,7 @@ from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 from agno.utils.string import generate_id_from_name
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Legacy Parameter Support (Agno 2.x → 3.0)
-# ─────────────────────────────────────────────────────────────────────────────
+# Legacy parameter support for Agno 2.x → 3.0 migration.
 #
 # Agno 2.x used `enable_*` prefixes for tool flags:
 #   SlackTools(enable_send_message=True)
@@ -20,16 +18,18 @@ from agno.utils.string import generate_id_from_name
 # Agno 3.0 dropped the prefix:
 #   SlackTools(send_message=True)
 #
-# This shim accepts both styles with a deprecation warning for the old one.
-# Each toolkit can define `_legacy_param_aliases` for non-standard mappings
-# (e.g. {"enable_search": "search_web"} when the new name isn't just stripped).
+# This shim accepts both styles, remapping old names to new with a deprecation
+# warning. The remapping happens BEFORE Python binds the function signature,
+# which is the only way to correctly handle the case where both old and new
+# names are passed (new wins).
 #
-# HOW IT WORKS:
-# 1. __init_subclass__ wraps every Toolkit subclass's __init__ automatically
-# 2. The wrapper intercepts kwargs BEFORE Python binds the function signature
-# 3. Legacy `enable_*` kwargs are remapped to their new names
-# 4. If both old and new names passed, new name wins (explicit beats legacy)
-# ─────────────────────────────────────────────────────────────────────────────
+# Most toolkits need no extra code — the shim strips "enable_" automatically.
+# Toolkits where the new name isn't just the stripped prefix (e.g. WebSearchTools
+# where enable_search → search_web) define _legacy_param_aliases to override.
+#
+# The mechanism: Toolkit.__init_subclass__ wraps every subclass's __init__ at
+# class definition time. The wrapper intercepts kwargs, remaps legacy names,
+# then calls the original __init__ with the transformed kwargs.
 
 
 def _remap_legacy_kwargs(
@@ -37,53 +37,64 @@ def _remap_legacy_kwargs(
     valid_params: frozenset,
     kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Remap 2.x constructor kwargs to 3.0 names.
+    """Transform 2.x constructor kwargs to their 3.0 equivalents.
 
-    Rules:
-    - enable_foo → foo (strip prefix)
-    - _legacy_param_aliases[key] → custom target
-    - 'all' on toolkits that dropped it → warn and ignore
+    Example:
+        Input:  {"enable_search": True, "enable_news": False, "timeout": 30}
+        Output: {"search_web": True, "search_news": False, "timeout": 30}
 
-    Returns new dict; original unchanged.
+    The function iterates kwargs and for each legacy key (enable_*, all, or
+    in _legacy_param_aliases):
+    1. Looks up the new name (from aliases, or by stripping "enable_")
+    2. If the new name is a valid param and wasn't explicitly passed, remaps it
+    3. If the new name was also passed, keeps the new (explicit beats legacy)
+    4. Logs a deprecation warning either way
+
+    Args:
+        cls: The toolkit class (used for warning messages and reading aliases)
+        valid_params: Parameter names that the toolkit's __init__ accepts
+        kwargs: The kwargs dict to transform (not modified; returns a copy)
     """
     aliases: Dict[str, Optional[str]] = getattr(cls, "_legacy_param_aliases", {})
     result = dict(kwargs)
 
     for key in list(result.keys()):
-        # Already a valid 3.0 param — nothing to remap
+        # 1. Skip params that are already valid 3.0 names (e.g. "timeout")
         if key in valid_params:
             continue
 
-        # Not a legacy key we recognize
+        # 2. Skip params that aren't legacy patterns we recognize
         if not (key.startswith("enable_") or key == "all" or key in aliases):
             continue
 
-        # Handle 'all' specially — some toolkits dropped it
+        # 3. Handle 'all' specially — some toolkits dropped this param entirely
         if key == "all" and key not in valid_params and key not in aliases:
             result.pop(key)
             log_warning(f"`all` is no longer supported by {cls.__name__}. Enable individual tool flags instead.")
             continue
 
-        # Determine target name
+        # 4. Determine the new param name
         if key in aliases:
             target = aliases[key]
             if target is None:
-                # Subclass handles this kwarg itself
+                # None means the subclass handles this kwarg in its own __init__
                 continue
         else:
-            # Strip "enable_" prefix
+            # Default: strip "enable_" prefix (enable_send_message → send_message)
             target = key.removeprefix("enable_")
 
-        # Remap the value
+        # 5. Perform the remap
         value = result.pop(key)
         if target not in valid_params:
+            # The target param doesn't exist — this legacy flag was removed entirely
             log_warning(f"`{key}` is no longer supported by {cls.__name__}.")
         elif target in result:
-            # New name was also passed — new wins, warn about old
+            # User passed both old and new names — keep new, warn about old
             log_warning(
                 f"Both `{key}` and `{target}` passed to {cls.__name__}; using `{target}`. `{key}` is deprecated."
             )
         else:
+            # Normal case: remap old name to new name
             log_warning(f"`{key}` is deprecated for {cls.__name__}; use `{target}`.")
             result[target] = value
 
@@ -91,8 +102,13 @@ def _remap_legacy_kwargs(
 
 
 def _wrap_init_for_legacy_support(cls: type, original_init: Callable) -> Callable:
-    """Wrap a toolkit's __init__ to accept 2.x param names."""
-    # Compute valid params once at class definition time
+    """Wrap a toolkit's __init__ to accept 2.x parameter names.
+
+    Called once per toolkit class at definition time (via __init_subclass__).
+    The wrapper intercepts kwargs before Python binds them to the function
+    signature, transforms legacy names, then calls the original __init__.
+    """
+    # Compute valid param names once at class definition time, not per-call
     valid_params = frozenset(signature(original_init).parameters)
 
     @wraps(original_init)
@@ -206,14 +222,20 @@ class Toolkit:
     # When True, the Agent will automatically call connect() before using tools and close() after
     _requires_connect: bool = False
 
-    # Per-toolkit mapping for non-standard 2.x → 3.0 param renames.
-    # Example: {"enable_search": "search_web"} when stripping "enable_" isn't enough.
-    # Set to None to let the subclass handle the kwarg itself.
+    # Override in subclasses where the 2.x → 3.0 param rename isn't just stripping
+    # "enable_". For example, WebSearchTools has enable_search → search_web (not
+    # just "search"), so it defines: _legacy_param_aliases = {"enable_search": "search_web"}
+    # A value of None means the subclass handles that legacy kwarg in its own __init__.
     _legacy_param_aliases: Dict[str, Optional[str]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Hook called by Python when any class inherits from Toolkit.
+
+        We use this to automatically wrap the subclass's __init__ with legacy
+        parameter support. This runs once at class definition time, not per
+        instance, so there's no runtime overhead beyond the wrapper itself.
+        """
         super().__init_subclass__(**kwargs)
-        # Wrap every subclass's __init__ to accept deprecated 2.x kwargs
         if "__init__" in cls.__dict__:
             cls.__init__ = _wrap_init_for_legacy_support(cls, cls.__dict__["__init__"])  # type: ignore[method-assign]
 
