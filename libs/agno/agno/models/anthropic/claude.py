@@ -1291,10 +1291,14 @@ class Claude(Model):
         metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.input_tokens or 0
-        metrics.output_tokens = response_usage.output_tokens or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
         metrics.cache_read_tokens = response_usage.cache_read_input_tokens or 0
         metrics.cache_write_tokens = response_usage.cache_creation_input_tokens or 0
+        # Anthropic reports `input_tokens` net of the cache and bills cache reads/writes
+        # separately. Gross input_tokens so it matches the OpenAI parser's meaning and
+        # `total_tokens` covers everything billed. No-op when there is no cache usage.
+        metrics.input_tokens += metrics.cache_read_tokens + metrics.cache_write_tokens
+        metrics.output_tokens = response_usage.output_tokens or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         # Anthropic-specific additional fields
         if response_usage.server_tool_use:
