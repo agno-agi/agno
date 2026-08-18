@@ -4268,7 +4268,6 @@ class PostgresDb(BaseDb):
             # pinned children must be live too: archiving allowed parent-then-
             # child, and restoring only the parent would publish a component
             # whose members can never rebuild. Restore children first.
-            configs_table = self._get_table(table_type="component_configs")
             links_table = self._get_table(table_type="component_links")
             row = self.get_component(component_id, include_deleted=True)
             current_version = (row or {}).get("current_version")

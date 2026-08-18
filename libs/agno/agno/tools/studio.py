@@ -3613,7 +3613,7 @@ class StudioTools(Toolkit):
         """
         if target_type not in _SCHEDULE_TARGET_TYPES:
             return None, f"Invalid target_type: {target_type}. Must be one of {list(_SCHEDULE_TARGET_TYPES)}."
-        finders: Dict[str, Callable[[str], Optional[Any]]] = {
+        finders: Dict[str, Callable[..., Optional[Any]]] = {
             "agent": self._find_agent,
             "team": self._find_team,
             "workflow": self._find_workflow,
