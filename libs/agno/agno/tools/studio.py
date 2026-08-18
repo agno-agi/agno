@@ -478,14 +478,14 @@ class StudioTools(Toolkit):
     def _iter_workflows(self) -> List["Workflow"]:
         return self._runner_tools._iter_workflows()
 
-    def _find_agent(self, agent_id: str) -> Optional["Agent"]:
-        return self._runner_tools._find_agent(agent_id)
+    def _find_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
+        return self._runner_tools._find_agent(agent_id, actor=actor)
 
-    def _find_team(self, team_id: str) -> Optional["Team"]:
-        return self._runner_tools._find_team(team_id)
+    def _find_team(self, team_id: str, actor: Optional[str] = None) -> Optional["Team"]:
+        return self._runner_tools._find_team(team_id, actor=actor)
 
-    def _find_workflow(self, workflow_id: str) -> Optional["Workflow"]:
-        return self._runner_tools._find_workflow(workflow_id)
+    def _find_workflow(self, workflow_id: str, actor: Optional[str] = None) -> Optional["Workflow"]:
+        return self._runner_tools._find_workflow(workflow_id, actor=actor)
 
     # Edit-base lookups: like _find_*, but DB components load from the latest
     # draft when versioning is enabled, so successive partial edits accumulate
@@ -1595,11 +1595,13 @@ class StudioTools(Toolkit):
             model = self._find_model(model_id)
             if model is None:
                 return error_result("model_not_found", f"Model not found: {model_id or 'default'}")
-            members, missing = self._resolve_members(member_ids)
+            members, missing = self._resolve_members(member_ids, actor=_actor_id(_agno_run_context))
             if missing:
                 return error_result("component_not_found", f"Members not found: {missing}", missing=missing)
             assert self.db is not None
-            members, member_pins = self._bind_members_to_target_db(members, self.db, require_published=publish)
+            members, member_pins = self._bind_members_to_target_db(
+                members, self.db, require_published=publish, actor=_actor_id(_agno_run_context)
+            )
             team = Team(
                 id=team_id,
                 name=name,
@@ -1686,14 +1688,16 @@ class StudioTools(Toolkit):
             )
             if member_err is not None:
                 return member_err
-            built_steps, build_err = self._build_steps_from_specs(steps)
+            built_steps, build_err = self._build_steps_from_specs(steps, actor=_actor_id(_agno_run_context))
             if build_err is not None:
                 return build_err
             workflow_id, mint_err = self._mint_component_id(name, component_id, "workflow")
             if mint_err is not None:
                 return mint_err
             assert self.db is not None
-            step_pins = self._bind_steps_to_target_db(built_steps, self.db, require_published=publish)
+            step_pins = self._bind_steps_to_target_db(
+                built_steps, self.db, require_published=publish, actor=_actor_id(_agno_run_context)
+            )
             workflow = Workflow(
                 id=workflow_id,
                 name=name,
@@ -1743,7 +1747,7 @@ class StudioTools(Toolkit):
                 return None, error_result("invalid_request", f"steps[{index}] is invalid: {problems}", index=index)
         return coerced, None
 
-    def _build_steps_from_specs(self, specs: List[WorkflowStepSpec]) -> tuple:
+    def _build_steps_from_specs(self, specs: List[WorkflowStepSpec], actor: Optional[str] = None) -> tuple:
         """(steps, error): WorkflowStepSpec trees to workflow step objects."""
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
@@ -1782,12 +1786,12 @@ class StudioTools(Toolkit):
                 identifier = spec.agent_id or spec.team_id
                 assert identifier is not None
                 if spec.agent_id is not None:
-                    agent_component = self._find_agent(spec.agent_id)
+                    agent_component = self._find_agent(spec.agent_id, actor=actor)
                     if agent_component is None:
                         return None, error_result("component_not_found", f"Agent not found: {spec.agent_id}")
                     return Step(name=spec.name or identifier, agent=agent_component, description=spec.description), None
                 assert spec.team_id is not None
-                team_component = self._find_team(spec.team_id)
+                team_component = self._find_team(spec.team_id, actor=actor)
                 if team_component is None:
                     return None, error_result("component_not_found", f"Team not found: {spec.team_id}")
                 return Step(name=spec.name or identifier, team=team_component, description=spec.description), None
@@ -2124,12 +2128,15 @@ class StudioTools(Toolkit):
                 member_err = self._check_member_policy(member_ids)
                 if member_err is not None:
                     return member_err, None
-                members, missing = self._resolve_members(member_ids)
+                members, missing = self._resolve_members(member_ids, actor=_actor_id(_agno_run_context))
                 if missing:
                     return error_result("component_not_found", f"Members not found: {missing}", missing=missing), None
                 assert self.db is not None
                 members, pinned = self._bind_members_to_target_db(
-                    members, self.db, require_published=publish or not self.enable_versions
+                    members,
+                    self.db,
+                    require_published=publish or not self.enable_versions,
+                    actor=_actor_id(_agno_run_context),
                 )
                 team.members = members
                 replaced_keys.add("members")
@@ -2196,12 +2203,15 @@ class StudioTools(Toolkit):
                 )
                 if member_err is not None:
                     return member_err, None
-                built, build_err = self._build_steps_from_specs(coerced)
+                built, build_err = self._build_steps_from_specs(coerced, actor=_actor_id(_agno_run_context))
                 if build_err is not None:
                     return build_err, None
                 if self.db is not None:
                     pinned = self._bind_steps_to_target_db(
-                        built, self.db, require_published=publish or not self.enable_versions
+                        built,
+                        self.db,
+                        require_published=publish or not self.enable_versions,
+                        actor=_actor_id(_agno_run_context),
                     )
                 workflow.steps = built
                 replaced_keys.add("steps")
@@ -2426,6 +2436,34 @@ class StudioTools(Toolkit):
                 )
             return ok_result("archived", warnings=warnings, id=component_id)
         except Exception as e:
+            from agno.db.base import ComponentDependencyError
+
+            actor = _actor_id(_agno_run_context)
+            if isinstance(e, ComponentDependencyError) and actor is not None:
+                # A scoped archiver must not learn other owners' component ids
+                # from the refusal: name only the dependents it can see and
+                # count the rest.
+                try:
+                    links = self.db.get_dependents(component_id) or []
+                except NotImplementedError:
+                    links = []
+                parent_ids = sorted(
+                    {str(link.get("parent_component_id")) for link in links if link.get("parent_component_id")}
+                )
+                visible = [pid for pid in parent_ids if self.db.get_component(pid, user_id=actor) is not None]
+                hidden = len(parent_ids) - len(visible)
+                parts: List[str] = []
+                if visible:
+                    parts.append(f"referenced by {', '.join(visible)}")
+                if hidden:
+                    parts.append(
+                        f"and {hidden} other component(s)" if visible else f"referenced by {hidden} component(s)"
+                    )
+                detail = " ".join(parts) or "referenced by other components"
+                return error_result(
+                    "dependency_conflict",
+                    f"Cannot archive {component_id}: {detail}. Archive or edit the dependents first.",
+                )
             return self._error_from_exception(e, "Failed to archive component")
 
     def restore_component(self, component_id: str, _agno_run_context: Optional[RunContext] = None) -> str:
@@ -3053,7 +3091,9 @@ class StudioTools(Toolkit):
         from agno.db.schemas.scheduler import build_run_endpoint
 
         try:
-            component_id, target_error = self._resolve_schedule_target(target_type, target_id)
+            component_id, target_error = self._resolve_schedule_target(
+                target_type, target_id, actor=_actor_id(_agno_run_context)
+            )
             if target_error is not None:
                 return error_result("component_not_found", target_error)
             if not message or not message.strip():
@@ -3295,7 +3335,9 @@ class StudioTools(Toolkit):
             raise ValueError("StudioTools was built with schedules=False; cannot manage schedules.")
         return self._scheduler_tools.manager
 
-    def _resolve_schedule_target(self, target_type: str, target_id: str) -> tuple[Optional[str], Optional[str]]:
+    def _resolve_schedule_target(
+        self, target_type: str, target_id: str, actor: Optional[str] = None
+    ) -> tuple[Optional[str], Optional[str]]:
         """Resolve a schedule target to a real component id.
 
         Returns ``(component_id, error)``: exactly one side is set. Targets
@@ -3310,7 +3352,7 @@ class StudioTools(Toolkit):
             "team": self._find_team,
             "workflow": self._find_workflow,
         }
-        component = finders[target_type](target_id)
+        component = finders[target_type](target_id, actor=actor)
         if component is None:
             return None, f"{target_type.capitalize()} not found: {target_id}"
         component_id = getattr(component, "id", None)
@@ -3330,7 +3372,7 @@ class StudioTools(Toolkit):
         return db.get_component(component_id) is not None
 
     def _bind_child_to_target_db(
-        self, child: Any, target_db: "BaseDb", noun: str, require_published: bool = True
+        self, child: Any, target_db: "BaseDb", noun: str, require_published: bool = True, actor: Optional[str] = None
     ) -> tuple[Any, Optional[int]]:
         """The object a stored reference will actually reload from ``target_db``,
         with the version to pin it at.
@@ -3367,8 +3409,8 @@ class StudioTools(Toolkit):
 
         def read_snapshot() -> tuple:
             try:
-                typed_row = target_db.get_component(child_id, component_type=expected_type)
-                untyped = target_db.get_component(child_id) if typed_row is None else typed_row
+                typed_row = target_db.get_component(child_id, component_type=expected_type, user_id=actor)
+                untyped = target_db.get_component(child_id, user_id=actor) if typed_row is None else typed_row
                 config_row = target_db.get_config(component_id=child_id) if typed_row is not None else None
             except NotImplementedError:
                 return None, None, None
@@ -3438,13 +3480,13 @@ class StudioTools(Toolkit):
         return rebound, (resolved_version if isinstance(resolved_version, int) else None)
 
     def _bind_members_to_target_db(
-        self, members: List[Any], target_db: "BaseDb", require_published: bool = True
+        self, members: List[Any], target_db: "BaseDb", require_published: bool = True, actor: Optional[str] = None
     ) -> tuple[List[Any], Dict[str, int]]:
         bound: List[Any] = []
         pins: Dict[str, int] = {}
         for member in members:
             rebound, version = self._bind_child_to_target_db(
-                member, target_db, "Member", require_published=require_published
+                member, target_db, "Member", require_published=require_published, actor=actor
             )
             bound.append(rebound)
             if version is not None and getattr(rebound, "id", None):
@@ -3452,7 +3494,7 @@ class StudioTools(Toolkit):
         return bound, pins
 
     def _bind_steps_to_target_db(
-        self, steps: List[Any], target_db: "BaseDb", require_published: bool = True
+        self, steps: List[Any], target_db: "BaseDb", require_published: bool = True, actor: Optional[str] = None
     ) -> Dict[str, int]:
         pins: Dict[str, int] = {}
         for step in steps:
@@ -3461,14 +3503,14 @@ class StudioTools(Toolkit):
                 if child is None:
                     continue
                 rebound, version = self._bind_child_to_target_db(
-                    child, target_db, noun, require_published=require_published
+                    child, target_db, noun, require_published=require_published, actor=actor
                 )
                 setattr(step, attr, rebound)
                 if version is not None and getattr(rebound, "id", None):
                     pins[rebound.id] = version
         return pins
 
-    def _target_db_exact(self, identifier: str, target_db: "BaseDb") -> Optional[Any]:
+    def _target_db_exact(self, identifier: str, target_db: "BaseDb", actor: Optional[str] = None) -> Optional[Any]:
         """The component ``identifier`` names by exact id in the target db.
 
         Checked across both types; a target db claiming the id as both an
@@ -3480,8 +3522,8 @@ class StudioTools(Toolkit):
         from agno.team.team import get_team_by_id
 
         try:
-            agent_row = target_db.get_component(identifier, component_type=ComponentType.AGENT)
-            team_row = target_db.get_component(identifier, component_type=ComponentType.TEAM)
+            agent_row = target_db.get_component(identifier, component_type=ComponentType.AGENT, user_id=actor)
+            team_row = target_db.get_component(identifier, component_type=ComponentType.TEAM, user_id=actor)
         except NotImplementedError:
             return None
         if agent_row is not None and team_row is not None:
@@ -3498,7 +3540,7 @@ class StudioTools(Toolkit):
             raise ValueError(f"Member '{identifier}' in the target db cannot be rebuilt: {e}") from e
 
     def _resolve_members(
-        self, member_ids: List[str], target_db: Optional["BaseDb"] = None
+        self, member_ids: List[str], target_db: Optional["BaseDb"] = None, actor: Optional[str] = None
     ) -> tuple[List[TeamMember], List[str]]:
         """Resolve member identifiers to agents or teams, in request order.
 
@@ -3512,11 +3554,11 @@ class StudioTools(Toolkit):
         members: List[TeamMember] = []
         missing: List[str] = []
         for mid in member_ids:
-            agent_match = runner._find_agent_by_exact_id(mid)
-            team_match = runner._find_team_by_exact_id(mid)
+            agent_match = runner._find_agent_by_exact_id(mid, actor=actor)
+            team_match = runner._find_team_by_exact_id(mid, actor=actor)
             if agent_match is None and team_match is None and target_db is not None and target_db is not self.db:
                 # Exact ids in the selected target db outrank every name tier.
-                target_match = self._target_db_exact(mid, target_db)
+                target_match = self._target_db_exact(mid, target_db, actor=actor)
                 if target_match is not None:
                     members.append(target_match)
                     continue
@@ -3529,10 +3571,11 @@ class StudioTools(Toolkit):
                 )
             member: Optional[TeamMember] = agent_match or team_match
             if member is None and not (
-                runner._db_component_exists("agent", mid) or runner._db_component_exists("team", mid)
+                runner._db_component_exists("agent", mid, actor=actor)
+                or runner._db_component_exists("team", mid, actor=actor)
             ):
-                agent_named = runner._find_agent_by_name(mid)
-                team_named = runner._find_team_by_name(mid)
+                agent_named = runner._find_agent_by_name(mid, actor=actor)
+                team_named = runner._find_team_by_name(mid, actor=actor)
                 if agent_named is not None and team_named is not None:
                     raise ValueError(
                         f"Ambiguous member name: '{mid}' matches both an agent and a team. Use an exact id."
@@ -3554,7 +3597,7 @@ class StudioTools(Toolkit):
         return members, missing
 
     def _build_steps(
-        self, step_specs: List[Dict[str, Any]], fallback_db: Optional["BaseDb"] = None
+        self, step_specs: List[Dict[str, Any]], fallback_db: Optional["BaseDb"] = None, actor: Optional[str] = None
     ) -> tuple[List[Any], Optional[str]]:
         from agno.workflow.step import Step
 
@@ -3562,21 +3605,21 @@ class StudioTools(Toolkit):
             return [], "step_specs must contain at least one step"
 
         def find_agent(identifier: str) -> Optional[Any]:
-            found = self._runner_tools._find_agent_by_exact_id(identifier)
+            found = self._runner_tools._find_agent_by_exact_id(identifier, actor=actor)
             if found is None and fallback_db is not None and fallback_db is not self.db:
                 from agno.agent.agent import get_agent_by_id
 
                 # Exact ids in the selected target db outrank catalog name tiers.
-                found = get_agent_by_id(db=fallback_db, id=identifier, registry=self.registry)
-            return found if found is not None else self._find_agent(identifier)
+                found = get_agent_by_id(db=fallback_db, id=identifier, registry=self.registry, user_id=actor)
+            return found if found is not None else self._find_agent(identifier, actor=actor)
 
         def find_team(identifier: str) -> Optional[Any]:
-            found = self._runner_tools._find_team_by_exact_id(identifier)
+            found = self._runner_tools._find_team_by_exact_id(identifier, actor=actor)
             if found is None and fallback_db is not None and fallback_db is not self.db:
                 from agno.team.team import get_team_by_id
 
-                found = get_team_by_id(db=fallback_db, id=identifier, registry=self.registry)
-            return found if found is not None else self._find_team(identifier)
+                found = get_team_by_id(db=fallback_db, id=identifier, registry=self.registry, user_id=actor)
+            return found if found is not None else self._find_team(identifier, actor=actor)
 
         steps: List[Step] = []
         for i, spec in enumerate(step_specs):
