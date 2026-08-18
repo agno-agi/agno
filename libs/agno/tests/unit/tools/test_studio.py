@@ -2994,3 +2994,51 @@ class TestAsyncRunTwins:
         monkeypatch.setattr(studio._runner_tools, "_load_agent_from_db", lambda *a, **k: ArunOnly())
         out = _loads(await studio.arun_agent("async-previewed", "hi", version=1))
         assert out.get("content") == "from-arun", out
+
+
+class TestTemplateContract:
+    """The agentos-railway template's exact construction and boot calls: a
+    signature change that breaks the deployed template must break here first,
+    not on Railway."""
+
+    def test_template_studio_tools_construction(self, registry, db):
+        studio = StudioTools(
+            registry=registry,
+            db=db,
+            agents=True,
+            teams=True,
+            workflows=True,
+            versions=True,
+            schedules=True,
+            default_num_history_runs=5,
+            requires_confirmation_tools=[
+                "archive_component",
+                "delete_version",
+                "delete_schedule",
+            ],
+        )
+        names = set(studio.functions)
+        assert {"create_agent", "create_schedule", "update_schedule", "archive_component"} <= names
+
+    def test_template_boot_schedule_upsert(self, db):
+        # app/schedules.py boot path: create(if_exists="update") must keep
+        # repointing the template's own deployment-check schedule in place.
+        from agno.scheduler.manager import ScheduleManager
+
+        manager = ScheduleManager(db=db)
+        first = manager.create(
+            name="deployment-check",
+            cron="0 8 * * *",
+            endpoint="/workflows/deployment-check/runs",
+            payload={"message": "Run the deployment check."},
+            if_exists="update",
+        )
+        second = manager.create(
+            name="deployment-check",
+            cron="0 9 * * *",
+            endpoint="/workflows/deployment-check/runs",
+            payload={"message": "Run the deployment check."},
+            if_exists="update",
+        )
+        assert second.id == first.id
+        assert second.cron_expr == "0 9 * * *"
