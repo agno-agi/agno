@@ -2954,3 +2954,30 @@ class TestStudioGuardedWriteRaces:
             t.join()
         codes = sorted(("ok" if r.get("ok") else r["error"]["code"]) for r in results)
         assert codes == ["ok", "version_conflict"], results
+
+
+class TestAsyncRunTwins:
+    @pytest.mark.asyncio
+    async def test_async_preview_awaits_arun_not_run(self, studio, monkeypatch):
+        # The async twins must run the target's arun on the event loop; a
+        # thread-wrapped sync run skips async hooks and tools entirely.
+        _data(studio.create_agent(name="async-previewed", instructions="v1", model_id="gpt-5.4"))
+
+        class ArunOnly:
+            id = "async-previewed"
+
+            def run(self, *a, **k):
+                raise AssertionError("sync run must not be called by the async preview")
+
+            async def arun(self, *a, **k):
+                class R:
+                    run_id = "r1"
+                    session_id = "s1"
+                    status = "COMPLETED"
+                    content = "from-arun"
+
+                return R()
+
+        monkeypatch.setattr(studio._runner_tools, "_load_agent_from_db", lambda *a, **k: ArunOnly())
+        out = _loads(await studio.arun_agent("async-previewed", "hi", version=1))
+        assert out.get("content") == "from-arun", out

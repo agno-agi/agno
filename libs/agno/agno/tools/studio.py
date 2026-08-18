@@ -587,7 +587,7 @@ class StudioTools(Toolkit):
 
     def _check_component_access(
         self, component_id: str, actor: Optional[str], action: str, noun: str = "component"
-    ) -> Optional[str]:
+    ) -> Optional[tuple]:
         """Ownership gate for mutating an existing DB component row.
 
         Returns an error message, or None when the caller may proceed. The
@@ -606,8 +606,11 @@ class StudioTools(Toolkit):
         if owner == actor:
             return None
         if owner is None:
-            return f"Cannot {action} shared {noun} '{component_id}': it has no owner; ask an operator."
-        return f"{noun.capitalize()} not found: {component_id}"
+            return (
+                "shared_component",
+                f"Cannot {action} shared {noun} '{component_id}': it has no owner; ask an operator.",
+            )
+        return ("component_not_found", f"{noun.capitalize()} not found: {component_id}")
 
     def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
         return self._runner_tools._load_agent_from_db(agent_id, version=version)
@@ -703,11 +706,12 @@ class StudioTools(Toolkit):
     }
 
     @staticmethod
-    def _denied_error(denied: str) -> str:
-        """The access gate's message, mapped to its stable code."""
-        if "shared" in denied:
-            return error_result("shared_component", denied)
-        return error_result("component_not_found", denied)
+    def _denied_error(denied: tuple) -> str:
+        """The access gate's (code, message), rendered as an envelope. The code
+        travels structurally - substring-matching the prose let any id
+        containing "shared" masquerade as a shared-component refusal."""
+        code, message = denied
+        return error_result(code, message)  # type: ignore[arg-type]
 
     def _error_from_exception(self, exc: Exception, fallback_message: str) -> str:
         """Map an exception to the envelope. Typed catalog errors keep their
@@ -861,7 +865,9 @@ class StudioTools(Toolkit):
             )
         return None
 
-    def _mint_component_id(self, name: str, component_id: Optional[str], component_type: str) -> tuple:
+    def _mint_component_id(
+        self, name: str, component_id: Optional[str], component_type: str, actor: Optional[str] = None
+    ) -> tuple:
         """(id, error): strict mint from the name, or the validated explicit id.
 
         An id collision or a same-type display-name duplicate is a conflict
@@ -877,7 +883,7 @@ class StudioTools(Toolkit):
             candidate = component_id
         else:
             candidate = generate_component_id_from_name(name)
-            existing_by_name = self._same_name_component(name, component_type)
+            existing_by_name = self._same_name_component(name, component_type, actor=actor)
             if existing_by_name is not None and existing_by_name != candidate:
                 return None, error_result(
                     "component_conflict",
@@ -894,8 +900,11 @@ class StudioTools(Toolkit):
             )
         return candidate, None
 
-    def _same_name_component(self, name: str, component_type: str) -> Optional[str]:
-        """Exact display-name duplicate of the same type: code-defined or stored."""
+    def _same_name_component(self, name: str, component_type: str, actor: Optional[str] = None) -> Optional[str]:
+        """Exact display-name duplicate of the same type: code-defined or stored.
+
+        Scoped to the actor: another owner's private component neither blocks
+        the name nor leaks its id through the conflict payload."""
         iterators: Dict[str, Callable[[], List[Any]]] = {
             "agent": self._iter_agents,
             "team": self._iter_teams,
@@ -909,7 +918,11 @@ class StudioTools(Toolkit):
 
             try:
                 rows, _ = self.db.list_components(
-                    component_type=ComponentType(component_type), name=name, limit=1, include_deleted=True
+                    component_type=ComponentType(component_type),
+                    name=name,
+                    limit=1,
+                    include_deleted=True,
+                    user_id=actor,
                 )
             except NotImplementedError:
                 return None
@@ -951,7 +964,7 @@ class StudioTools(Toolkit):
         if row is None:
             from agno.db.base import ComponentType as _CT  # noqa: F401
 
-            rows, total = self.db.list_components(name=identifier, limit=2)
+            rows, total = self.db.list_components(name=identifier, limit=2, user_id=actor)
             if total > 1:
                 return (
                     None,
@@ -1533,7 +1546,9 @@ class StudioTools(Toolkit):
         if db_err is not None:
             return db_err
         try:
-            agent_id, mint_err = self._mint_component_id(name, component_id, "agent")
+            agent_id, mint_err = self._mint_component_id(
+                name, component_id, "agent", actor=_actor_id(_agno_run_context)
+            )
             if mint_err is not None:
                 return mint_err
             model = self._find_model(model_id)
@@ -1649,7 +1664,7 @@ class StudioTools(Toolkit):
             member_err = self._check_member_policy(member_ids)
             if member_err is not None:
                 return member_err
-            team_id, mint_err = self._mint_component_id(name, component_id, "team")
+            team_id, mint_err = self._mint_component_id(name, component_id, "team", actor=_actor_id(_agno_run_context))
             if mint_err is not None:
                 return mint_err
             model = self._find_model(model_id)
@@ -1763,7 +1778,9 @@ class StudioTools(Toolkit):
             member_err = self._refuse_privileged_resolved(step_executors)
             if member_err is not None:
                 return member_err
-            workflow_id, mint_err = self._mint_component_id(name, component_id, "workflow")
+            workflow_id, mint_err = self._mint_component_id(
+                name, component_id, "workflow", actor=_actor_id(_agno_run_context)
+            )
             if mint_err is not None:
                 return mint_err
             assert self.db is not None
@@ -2575,7 +2592,9 @@ class StudioTools(Toolkit):
             restored = self.db.restore_component(component_id, user_id=_actor_id(_agno_run_context))
             if restored:
                 return ok_result("restored", id=component_id)
-            if self.db.get_component(component_id) is not None:
+            # Scoped read: a foreign live row must answer the same not-found
+            # its absence would, not "is not archived".
+            if self.db.get_component(component_id, user_id=_actor_id(_agno_run_context)) is not None:
                 return error_result("invalid_request", f"Component is not archived: {component_id}")
             return error_result("component_not_found", f"Component not found: {component_id}")
         except Exception as e:
@@ -2684,6 +2703,59 @@ class StudioTools(Toolkit):
             return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
         try:
             response = component.run(
+                message,
+                stream=False,
+                user_id=self._runner_tools._caller_user_id(run_context, component),
+                session_id=self._runner_tools._sub_session_id(run_context, component_type, resolved_id),
+            )
+            payload = self._runner_tools._run_payload(f"{component_type}_id", resolved_id, response)
+            return self._alias_runner_result(payload)
+        except Exception as e:
+            return self._error_from_exception(e, f"Failed to run {component_type}")
+
+    async def _arun_component(
+        self,
+        component_type: str,
+        identifier: str,
+        message: str,
+        version: Optional[int],
+        run_context: Optional[RunContext],
+    ) -> str:
+        """Async mirror of _run_component: the target's arun actually runs on
+        the event loop (async hooks and tools included) instead of the sync
+        run being pushed to a thread; only the sync DB reads are off-loaded."""
+        import asyncio
+
+        runner_calls = {
+            "agent": self._runner_tools.arun_agent,
+            "team": self._runner_tools.arun_team,
+            "workflow": self._runner_tools.arun_workflow,
+        }
+        if version is None:
+            return self._alias_runner_result(await runner_calls[component_type](identifier, message, run_context))
+        row, resolved_id, err = await asyncio.to_thread(self._component_row, identifier, _actor_id(run_context))
+        if err is not None:
+            return err
+        actor = _actor_id(run_context)
+        if actor is not None and (row or {}).get("user_id") != actor:
+            return error_result("component_not_found", f"Component not found: {identifier}")
+        loaders = {
+            "agent": self._runner_tools._load_agent_from_db,
+            "team": self._runner_tools._load_team_from_db,
+            "workflow": self._runner_tools._load_workflow_from_db,
+        }
+        try:
+            component = await asyncio.to_thread(
+                loaders[component_type], resolved_id, version=version, for_dispatch=True
+            )
+        except StudioRunnerError as e:
+            return error_result("validation_failed", str(e))
+        except Exception as e:
+            return self._error_from_exception(e, f"Failed to load {component_type} '{identifier}' v{version}")
+        if component is None:
+            return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
+        try:
+            response = await component.arun(
                 message,
                 stream=False,
                 user_id=self._runner_tools._caller_user_id(run_context, component),
@@ -3116,9 +3188,7 @@ class StudioTools(Toolkit):
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
         """Async variant of run_agent."""
-        return await self._run_sync_tool(
-            self.run_agent, agent_id, message, version=version, _agno_run_context=_agno_run_context
-        )
+        return await self._arun_component("agent", agent_id, message, version, _agno_run_context)
 
     async def arun_team(
         self,
@@ -3128,9 +3198,7 @@ class StudioTools(Toolkit):
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
         """Async variant of run_team."""
-        return await self._run_sync_tool(
-            self.run_team, team_id, message, version=version, _agno_run_context=_agno_run_context
-        )
+        return await self._arun_component("team", team_id, message, version, _agno_run_context)
 
     async def arun_workflow(
         self,
@@ -3140,9 +3208,7 @@ class StudioTools(Toolkit):
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
         """Async variant of run_workflow."""
-        return await self._run_sync_tool(
-            self.run_workflow, workflow_id, message, version=version, _agno_run_context=_agno_run_context
-        )
+        return await self._arun_component("workflow", workflow_id, message, version, _agno_run_context)
 
     def create_schedule(
         self,

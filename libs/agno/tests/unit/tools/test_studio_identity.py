@@ -465,3 +465,67 @@ class TestComposeAndDispatchVisibility:
         ids = {row["id"] for row in listed["agents"]}
         assert shared_id in ids
         assert private_id not in ids
+
+
+# ----------------------------------------------------------------------
+# Disclosure oracles
+# ----------------------------------------------------------------------
+
+
+class TestDisclosureOracles:
+    def test_id_containing_shared_is_not_misclassified(self, studio):
+        # The denial code travels structurally; an id containing the word
+        # "shared" must not turn a foreign-row refusal into shared_component.
+        created = _data(
+            studio.create_agent(
+                name="Shared Notes Keeper",
+                component_id="shared-notes-keeper",
+                instructions="i",
+                _agno_run_context=ALICE,
+            )
+        )
+        out = _loads(studio.edit_agent(created["id"], instructions="x", _agno_run_context=BOB))
+        assert out["error"]["code"] == "component_not_found", out
+
+    def test_restore_answers_not_found_for_foreign_live_row(self, studio):
+        created = _create(studio, "Alive Agent", ALICE, publish=True)
+        out = _loads(studio.restore_component(created["id"], _agno_run_context=BOB))
+        assert out["error"]["code"] == "component_not_found", out
+        assert "not archived" not in str(out["error"]["message"])
+
+    def test_scoped_caller_resolves_own_name_despite_foreign_duplicate(self, studio):
+        _data(
+            studio.create_agent(
+                name="Report Bot", component_id="alice-report-bot", instructions="i", _agno_run_context=ALICE
+            )
+        )
+        _data(
+            studio.create_agent(
+                name="Report Bot", component_id="bob-report-bot", instructions="i", _agno_run_context=BOB
+            )
+        )
+        got = _loads(studio.get_component("Report Bot", _agno_run_context=ALICE))
+        assert got["ok"], got
+        assert got["data"]["id"] == "alice-report-bot"
+
+    def test_ambiguity_candidates_never_name_foreign_rows(self, studio):
+        # Two shared rows with one name are genuinely ambiguous for bob; a
+        # foreign private row must not appear among the candidates.
+        _data(studio.create_agent(name="Same Name", component_id="shared-one", instructions="i"))
+        _data(
+            studio.create_team(
+                name="Same Name",
+                component_id="shared-two",
+                instructions="i",
+                member_ids=["shared-one"],
+                _agno_run_context=None,
+            )
+        )
+        _data(
+            studio.create_agent(
+                name="Same Name", component_id="alices-hidden", instructions="i", _agno_run_context=ALICE
+            )
+        )
+        out = _loads(studio.get_component("Same Name", _agno_run_context=BOB))
+        assert out["error"]["code"] == "ambiguous_reference", out
+        assert "alices-hidden" not in out["error"].get("details", {}).get("candidates", [])

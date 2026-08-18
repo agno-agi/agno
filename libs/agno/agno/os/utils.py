@@ -2543,7 +2543,9 @@ async def resolve_agent(
     # An explicit draft version is a control-plane preview: owner/admin only.
     preview_actor, preview_privileged = draft_preview_identity(request)
     if not allow_draft_preview(db, agent_id, version, preview_actor, privileged=preview_privileged):
-        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+        # Byte-identical to the route's plain not-found: the denial must not
+        # read differently from the component being absent.
+        raise HTTPException(status_code=404, detail="Agent not found")
     is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
     if is_factory:
         if request is None:
@@ -2619,7 +2621,9 @@ async def resolve_team(
     # An explicit draft version is a control-plane preview: owner/admin only.
     preview_actor, preview_privileged = draft_preview_identity(request)
     if not allow_draft_preview(db, team_id, version, preview_actor, privileged=preview_privileged):
-        raise HTTPException(status_code=404, detail=f"Team not found: {team_id}")
+        # Byte-identical to the route's plain not-found: the denial must not
+        # read differently from the component being absent.
+        raise HTTPException(status_code=404, detail="Team not found")
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
         if request is None:
@@ -2695,7 +2699,9 @@ async def resolve_workflow(
     # An explicit draft version is a control-plane preview: owner/admin only.
     preview_actor, preview_privileged = draft_preview_identity(request)
     if not allow_draft_preview(db, workflow_id, version, preview_actor, privileged=preview_privileged):
-        raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+        # Byte-identical to the route's plain not-found: the denial must not
+        # read differently from the component being absent.
+        raise HTTPException(status_code=404, detail="Workflow not found")
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
