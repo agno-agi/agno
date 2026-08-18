@@ -145,19 +145,6 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "name": {"type": String, "nullable": False, "index": True},
-    "summary": {"type": Text, "nullable": True},
-    "content": {"type": JSONB, "nullable": True},
-    "metadata": {"type": JSONB, "nullable": True},
-    "input": {"type": Text, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
-}
-
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": String, "nullable": False, "primary_key": True},
     "version": {"type": String, "nullable": False},
@@ -491,7 +478,6 @@ def get_table_schema_definition(
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "components": COMPONENT_TABLE_SCHEMA,
