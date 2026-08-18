@@ -51,14 +51,6 @@ class ValyuTools(Toolkit):
         tool_call_mode: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_academic_search" in kwargs:
-            academic_search = kwargs.pop("enable_academic_search")
-        if "enable_web_search" in kwargs:
-            web_search = kwargs.pop("enable_web_search")
-        if "enable_paper_search" in kwargs:
-            paper_search = kwargs.pop("enable_paper_search")
-
         self.api_key = api_key or getenv("VALYU_API_KEY")
         if not self.api_key:
             raise ValueError("VALYU_API_KEY not set. Please set the VALYU_API_KEY environment variable.")

@@ -32,12 +32,6 @@ class JinaReaderTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_read_url" in kwargs:
-            read_url = kwargs.pop("enable_read_url")
-        if "enable_search_query" in kwargs:
-            search_query = kwargs.pop("enable_search_query")
-
         self.api_key = api_key or getenv("JINA_API_KEY")
         self.config: JinaReaderToolsConfig = JinaReaderToolsConfig(
             api_key=self.api_key,

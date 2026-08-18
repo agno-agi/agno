@@ -48,14 +48,6 @@ class TwilioTools(Toolkit):
             list_messages: Enable list_messages tool. Default True.
             all: Enable all tools.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_send_sms" in kwargs:
-            send_sms = kwargs.pop("enable_send_sms")
-        if "enable_get_call_details" in kwargs:
-            get_call_details = kwargs.pop("enable_get_call_details")
-        if "enable_list_messages" in kwargs:
-            list_messages = kwargs.pop("enable_list_messages")
-
         # Get credentials from environment if not provided
         self.account_sid = account_sid or getenv("TWILIO_ACCOUNT_SID")
         self.auth_token = auth_token or getenv("TWILIO_AUTH_TOKEN")

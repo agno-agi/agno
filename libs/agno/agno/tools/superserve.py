@@ -133,40 +133,6 @@ class SuperserveTools(Toolkit):
             instructions: Override the default toolkit instructions.
             add_instructions: Whether to add the instructions to the agent's system message.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_run_python_code" in kwargs:
-            run_python_code = kwargs.pop("enable_run_python_code")
-        if "enable_run_command" in kwargs:
-            run_command = kwargs.pop("enable_run_command")
-        if "enable_create_file" in kwargs:
-            create_file = kwargs.pop("enable_create_file")
-        if "enable_read_file" in kwargs:
-            read_file = kwargs.pop("enable_read_file")
-        if "enable_list_files" in kwargs:
-            list_files = kwargs.pop("enable_list_files")
-        if "enable_delete_file" in kwargs:
-            delete_file = kwargs.pop("enable_delete_file")
-        if "enable_download_directory" in kwargs:
-            download_directory = kwargs.pop("enable_download_directory")
-        if "enable_get_sandbox_info" in kwargs:
-            get_sandbox_info = kwargs.pop("enable_get_sandbox_info")
-        if "enable_list_sandboxes" in kwargs:
-            list_sandboxes = kwargs.pop("enable_list_sandboxes")
-        if "enable_shutdown_sandbox" in kwargs:
-            shutdown_sandbox = kwargs.pop("enable_shutdown_sandbox")
-        if "enable_shutdown_sandbox_by_id" in kwargs:
-            shutdown_sandbox_by_id = kwargs.pop("enable_shutdown_sandbox_by_id")
-        if "enable_get_preview_url" in kwargs:
-            get_preview_url = kwargs.pop("enable_get_preview_url")
-        if "enable_pause_sandbox" in kwargs:
-            pause_sandbox = kwargs.pop("enable_pause_sandbox")
-        if "enable_resume_sandbox" in kwargs:
-            resume_sandbox = kwargs.pop("enable_resume_sandbox")
-        if "enable_attach_secret" in kwargs:
-            attach_secret = kwargs.pop("enable_attach_secret")
-        if "enable_detach_secret" in kwargs:
-            detach_secret = kwargs.pop("enable_detach_secret")
-
         self.api_key = api_key or getenv("SUPERSERVE_API_KEY")
         if not self.api_key:
             raise ValueError("SUPERSERVE_API_KEY not set. Please set the SUPERSERVE_API_KEY environment variable.")

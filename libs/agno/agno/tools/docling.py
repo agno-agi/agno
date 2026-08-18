@@ -74,28 +74,6 @@ class DoclingTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_convert_to_markdown" in kwargs:
-            convert_to_markdown = kwargs.pop("enable_convert_to_markdown")
-        if "enable_convert_to_text" in kwargs:
-            convert_to_text = kwargs.pop("enable_convert_to_text")
-        if "enable_convert_to_html" in kwargs:
-            convert_to_html = kwargs.pop("enable_convert_to_html")
-        if "enable_convert_to_html_split_page" in kwargs:
-            convert_to_html_split_page = kwargs.pop("enable_convert_to_html_split_page")
-        if "enable_convert_to_json" in kwargs:
-            convert_to_json = kwargs.pop("enable_convert_to_json")
-        if "enable_convert_to_yaml" in kwargs:
-            convert_to_yaml = kwargs.pop("enable_convert_to_yaml")
-        if "enable_convert_to_doctags" in kwargs:
-            convert_to_doctags = kwargs.pop("enable_convert_to_doctags")
-        if "enable_convert_to_vtt" in kwargs:
-            convert_to_vtt = kwargs.pop("enable_convert_to_vtt")
-        if "enable_convert_string_content" in kwargs:
-            convert_string_content = kwargs.pop("enable_convert_string_content")
-        if "enable_list_supported_parsers" in kwargs:
-            list_supported_parsers = kwargs.pop("enable_list_supported_parsers")
-
         self.converter: DocumentConverter = converter or self._build_converter(
             allowed_input_formats=allowed_input_formats,
             format_options=format_options,

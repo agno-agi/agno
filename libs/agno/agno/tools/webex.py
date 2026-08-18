@@ -30,12 +30,6 @@ class WebexTools(Toolkit):
         list_rooms: bool = True,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_send_message" in kwargs:
-            send_message = kwargs.pop("enable_send_message")
-        if "enable_list_rooms" in kwargs:
-            list_rooms = kwargs.pop("enable_list_rooms")
-
         access_token = access_token or getenv("WEBEX_ACCESS_TOKEN")
         if access_token is None:
             raise ValueError("Webex access token is not set. Please set the WEBEX_ACCESS_TOKEN environment variable.")

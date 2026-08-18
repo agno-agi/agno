@@ -20,10 +20,6 @@ class AWSSESTool(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_send_email" in kwargs:
-            send_email = kwargs.pop("enable_send_email")
-
         self.client = boto3.client("ses", region_name=region_name)
         self.sender_email = sender_email
         self.sender_name = sender_name

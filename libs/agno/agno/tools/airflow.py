@@ -21,12 +21,6 @@ class AirflowTools(Toolkit):
 
         Quickstart: https://airflow.apache.org/docs/apache-airflow/stable/start.html
         """
-        # Backwards compat: enable_X -> X
-        if "enable_save_dag_file" in kwargs:
-            save_dag_file = kwargs.pop("enable_save_dag_file")
-        if "enable_read_dag_file" in kwargs:
-            read_dag_file = kwargs.pop("enable_read_dag_file")
-
         self.dags_dir = Path(dags_dir).resolve() if dags_dir is not None else Path.cwd().resolve()
 
         tools: List[Callable] = []

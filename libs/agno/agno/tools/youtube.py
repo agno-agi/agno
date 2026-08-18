@@ -36,15 +36,7 @@ class YouTubeTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
-        # Backwards compat: enable_get_video_X -> get_X
-        if "enable_get_video_captions" in kwargs:
-            get_transcript = kwargs.pop("enable_get_video_captions")
-        if "enable_get_video_data" in kwargs:
-            get_metadata = kwargs.pop("enable_get_video_data")
-        if "enable_get_video_timestamps" in kwargs:
-            get_timestamps = kwargs.pop("enable_get_video_timestamps")
-
-        self.languages: Optional[List[str]] = languages
+        # Backwards compat: enable_get_video_X -> get_Xself.languages: Optional[List[str]] = languages
 
         tools: List[Callable] = []
         if all or get_transcript:

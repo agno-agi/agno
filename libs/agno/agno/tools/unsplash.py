@@ -64,16 +64,6 @@ class UnsplashTools(Toolkit):
             timeout: Per-request HTTP timeout in seconds. Default is 30.
             **kwargs: Additional arguments passed to the Toolkit base class.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_search_photos" in kwargs:
-            search_photos = kwargs.pop("enable_search_photos")
-        if "enable_get_photo" in kwargs:
-            get_photo = kwargs.pop("enable_get_photo")
-        if "enable_get_random_photo" in kwargs:
-            get_random_photo = kwargs.pop("enable_get_random_photo")
-        if "enable_download_photo" in kwargs:
-            download_photo = kwargs.pop("enable_download_photo")
-
         self.access_key = access_key or getenv("UNSPLASH_ACCESS_KEY")
         if not self.access_key:
             logger.warning("No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable.")

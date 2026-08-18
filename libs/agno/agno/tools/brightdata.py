@@ -47,16 +47,6 @@ class BrightDataTools(Toolkit):
         timeout: int = 600,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_scrape_markdown" in kwargs:
-            scrape_markdown = kwargs.pop("enable_scrape_markdown")
-        if "enable_screenshot" in kwargs:
-            screenshot = kwargs.pop("enable_screenshot")
-        if "enable_search_engine" in kwargs:
-            search_engine = kwargs.pop("enable_search_engine")
-        if "enable_web_data_feed" in kwargs:
-            web_data_feed = kwargs.pop("enable_web_data_feed")
-
         self.api_key = api_key or getenv("BRIGHT_DATA_API_KEY")
         if not self.api_key:
             log_error("No Bright Data API key provided")

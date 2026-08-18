@@ -32,7 +32,6 @@ except ImportError as exc:
         f"Missing required package(s): {', '.join(missing)}. Install using: pip install {' '.join(missing)}"
     ) from exc
 
-
 # Note: Expand this list as new models become supported by the Google Content Generation API.
 ALLOWED_MODELS = ["gemini-2.5-flash-image"]
 ALLOWED_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
@@ -57,10 +56,6 @@ class NanoBananaTools(Toolkit):
             all: Enable all tools at once
             create_image: Enable the create_image tool
         """
-        # Backwards compat: enable_X -> X
-        if "enable_create_image" in kwargs:
-            create_image = kwargs.pop("enable_create_image")
-
         self.model = model
         self.aspect_ratio = aspect_ratio
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")

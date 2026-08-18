@@ -36,14 +36,6 @@ class SpiderTools(Toolkit):
             crawl: Enable web crawling. Defaults to False (token heavy).
             all: Enable all tools. Defaults to False.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_search" in kwargs:
-            search = kwargs.pop("enable_search")
-        if "enable_scrape" in kwargs:
-            scrape = kwargs.pop("enable_scrape")
-        if "enable_crawl" in kwargs:
-            crawl = kwargs.pop("enable_crawl")
-
         self.api_key = api_key or getenv("SPIDER_API_KEY")
         self.default_url = default_url
         self.max_results = max_results

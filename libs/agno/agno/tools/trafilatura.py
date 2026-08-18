@@ -22,7 +22,6 @@ try:
         SPIDER_AVAILABLE = False
         log_warning(f"Trafilatura spider module not available. Web crawling functionality will be disabled.: {str(e)}")
 
-
 except ImportError:
     raise ImportError("`trafilatura` not installed. Please install using `pip install trafilatura`")
 
@@ -77,18 +76,6 @@ class TrafilaturaTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_extract_text" in kwargs:
-            scrape = kwargs.pop("enable_extract_text")
-        if "enable_extract_metadata_only" in kwargs:
-            get_metadata = kwargs.pop("enable_extract_metadata_only")
-        if "enable_html_to_text" in kwargs:
-            convert_html = kwargs.pop("enable_html_to_text")
-        if "enable_extract_batch" in kwargs:
-            scrape_batch = kwargs.pop("enable_extract_batch")
-        if "enable_crawl_website" in kwargs:
-            crawl = kwargs.pop("enable_crawl_website")
-
         self.output_format = output_format
         self.include_comments = include_comments
         self.include_tables = include_tables

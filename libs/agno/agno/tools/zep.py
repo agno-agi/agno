@@ -64,15 +64,7 @@ class ZepTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X_zep_Y -> X_Y
-        if "enable_add_zep_message" in kwargs:
-            add_message = kwargs.pop("enable_add_zep_message")
-        if "enable_get_zep_memory" in kwargs:
-            get_memory = kwargs.pop("enable_get_zep_memory")
-        if "enable_search_zep_memory" in kwargs:
-            search_memory = kwargs.pop("enable_search_zep_memory")
-
-        self._api_key = api_key or getenv("ZEP_API_KEY")
+        # Backwards compat: enable_X_zep_Y -> X_Yself._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
                 "No Zep API key provided. Please set the ZEP_API_KEY environment variable or pass it to the ZepTools constructor."
@@ -298,15 +290,7 @@ class ZepAsyncTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X_zep_Y -> X_Y
-        if "enable_add_zep_message" in kwargs:
-            add_message = kwargs.pop("enable_add_zep_message")
-        if "enable_get_zep_memory" in kwargs:
-            get_memory = kwargs.pop("enable_get_zep_memory")
-        if "enable_search_zep_memory" in kwargs:
-            search_memory = kwargs.pop("enable_search_zep_memory")
-
-        self._api_key = api_key or getenv("ZEP_API_KEY")
+        # Backwards compat: enable_X_zep_Y -> X_Yself._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
                 "No Zep API key provided. Please set the ZEP_API_KEY environment variable or pass it to the ZepTools constructor."

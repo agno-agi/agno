@@ -36,10 +36,6 @@ class AzureOpenAITools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_generate_image" in kwargs:
-            generate_image = kwargs.pop("enable_generate_image")
-
         # Set credentials from parameters or environment variables
         self.api_key = api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")

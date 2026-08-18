@@ -160,22 +160,6 @@ class CodingTools(Toolkit):
             allowed_commands: List of allowed shell command names when restrict_to_base_dir is True.
                 Defaults to DEFAULT_ALLOWED_COMMANDS. Set to None explicitly after init to disable.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_read_file" in kwargs:
-            read_file = kwargs.pop("enable_read_file")
-        if "enable_edit_file" in kwargs:
-            edit_file = kwargs.pop("enable_edit_file")
-        if "enable_write_file" in kwargs:
-            write_file = kwargs.pop("enable_write_file")
-        if "enable_run_shell" in kwargs:
-            run_shell = kwargs.pop("enable_run_shell")
-        if "enable_grep" in kwargs:
-            run_grep = kwargs.pop("enable_grep")
-        if "enable_find" in kwargs:
-            run_find = kwargs.pop("enable_find")
-        if "enable_ls" in kwargs:
-            run_ls = kwargs.pop("enable_ls")
-
         self.base_dir: Path = Path(base_dir).resolve() if base_dir else Path.cwd().resolve()
         self.restrict_to_base_dir = restrict_to_base_dir
         self.allowed_commands: Optional[List[str]] = (

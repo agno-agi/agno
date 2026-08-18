@@ -77,10 +77,6 @@ class MLXTranscribeTools(Toolkit):
             read_files: Enable the read_files tool.
             all: Enable all tools.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_read_files_in_base_dir" in kwargs:
-            read_files = kwargs.pop("enable_read_files_in_base_dir")
-
         self.base_dir: Path = (base_dir or Path.cwd()).resolve()
         self.restrict_to_base_dir = restrict_to_base_dir
         self.path_or_hf_repo: str = path_or_hf_repo
