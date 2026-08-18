@@ -34,6 +34,26 @@ class SchedulerTools(Toolkit):
     The agent can ask a user "what should I do every day?" and then call
     ``create_schedule`` to set up a cron-based recurring execution via the
     existing AgentOS scheduler infrastructure.
+
+    Args:
+        db: Database adapter implementing scheduler DB methods.
+        default_endpoint: Endpoint to call when schedule fires (e.g. /agents/<id>/runs).
+            The agent can override this per-schedule.
+        default_method: HTTP method for endpoint. Defaults to POST.
+        default_timezone: Default timezone for schedules. Defaults to UTC.
+        default_payload: Default payload for scheduled runs.
+        user_id: Fixed owner for every schedule operation. When unset, the owner
+            is taken from the run's user_id (via run_context), so each user's
+            agent only sees and edits that user's schedules.
+        create_schedule: Enable create_schedule tool. Defaults to False.
+        list_schedules: Enable list_schedules tool. Defaults to True.
+        get_schedule: Enable get_schedule tool. Defaults to True.
+        delete_schedule: Enable delete_schedule tool. Defaults to False.
+        enable_schedule: Enable enable_schedule tool. Defaults to False.
+        disable_schedule: Enable disable_schedule tool. Defaults to False.
+        trigger_schedule: Enable trigger_schedule tool. Defaults to False.
+        get_schedule_runs: Enable get_schedule_runs tool. Defaults to False.
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -55,24 +75,6 @@ class SchedulerTools(Toolkit):
         all: bool = False,
         **kwargs: Any,
     ):
-        """Initialize scheduler toolkit for managing recurring tasks.
-
-        Args:
-            db: Database adapter implementing scheduler DB methods.
-            default_endpoint: Endpoint to call when schedule fires (e.g. /agents/<id>/runs).
-            default_method: HTTP method for endpoint (default: POST).
-            default_timezone: Default timezone for schedules (default: UTC).
-            default_payload: Default payload for scheduled runs.
-            create_schedule: Enable the create_schedule tool.
-            list_schedules: Enable the list_schedules tool.
-            get_schedule: Enable the get_schedule tool.
-            delete_schedule: Enable the delete_schedule tool.
-            enable_schedule: Enable the enable_schedule tool.
-            disable_schedule: Enable the disable_schedule tool.
-            trigger_schedule: Enable the trigger_schedule tool.
-            get_schedule_runs: Enable the get_schedule_runs tool.
-            all: Enable all tools.
-        """
         self.manager = ScheduleManager(db=db)
         self.user_id = user_id
         self.default_endpoint = default_endpoint
