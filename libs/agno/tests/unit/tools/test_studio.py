@@ -2884,3 +2884,44 @@ class TestPublishedParentsPinPublishedChildren:
             )
         )
         assert out["ok"], out
+
+
+# ----------------------------------------------------------------------
+# Adapters without the component catalog (Mongo-shaped)
+# ----------------------------------------------------------------------
+
+
+class TestNoCatalogAdapter:
+    """Mongo implements schedules but not the component catalog: catalog
+    reads raise NotImplementedError. Scheduling a code-defined target must
+    keep working (the target check treats no-catalog as live), and catalog
+    tools must answer with a capability error, not internal_error."""
+
+    @pytest.fixture
+    def no_catalog_db(self, tmp_path):
+        class NoCatalogDb(SqliteDb):
+            def get_component(self, *args, **kwargs):
+                raise NotImplementedError
+
+        return NoCatalogDb(id="no-catalog", db_file=str(tmp_path / "nocat.db"))
+
+    def test_create_schedule_for_code_defined_target_still_works(self, registry, no_catalog_db):
+        live = Agent(id="live-agent", name="Live Agent", model=OpenAIResponses(id="gpt-5.4"))
+        studio = StudioTools(registry=registry, db=no_catalog_db, agents_list=[live], schedules=True)
+        out = _loads(
+            studio.create_schedule(
+                name="code-target",
+                cron="0 9 * * *",
+                target_type="agent",
+                target_id="live-agent",
+                message="m",
+            )
+        )
+        assert out["ok"], out
+        assert out["data"]["endpoint"] == "/agents/live-agent/runs"
+
+    def test_archive_answers_capability_error_not_internal(self, registry, no_catalog_db):
+        studio = StudioTools(registry=registry, db=no_catalog_db)
+        out = _loads(studio.archive_component("anything"))
+        assert out["error"]["code"] in ("db_not_configured", "component_not_found"), out
+        assert out["error"]["code"] != "internal_error"

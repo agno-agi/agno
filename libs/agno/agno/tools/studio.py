@@ -716,6 +716,10 @@ class StudioTools(Toolkit):
         code = self._TYPED_ERROR_CODES.get(type(exc).__name__)
         if code is not None:
             return error_result(code, str(exc), retryable=(code == "version_conflict"))  # type: ignore[arg-type]
+        if isinstance(exc, NotImplementedError):
+            # An adapter without the component catalog (e.g. Mongo): an honest
+            # capability answer, not an internal error.
+            return error_result("db_not_configured", "This database does not support the component catalog.")
         if isinstance(exc, ValueError) and str(exc):
             return error_result("invalid_request", str(exc))
         logger.exception(fallback_message)
@@ -3184,16 +3188,22 @@ class StudioTools(Toolkit):
                 )
             assert component_id is not None
             # A schedule fires the live published version; a draft-only target
-            # would 404 on every tick.
+            # would 404 on every tick. Adapters without the component catalog
+            # (e.g. Mongo) cannot answer, and their targets are code-defined:
+            # treat them as live rather than failing the create.
+            row = None
             if self.db is not None:
-                row = self.db.get_component(component_id)
-                if row is not None and row.get("current_version") is None:
-                    return error_result(
-                        "target_not_published",
-                        f"{target_type.capitalize()} '{component_id}' has no published version; "
-                        "publish it before scheduling it.",
-                        target_id=component_id,
-                    )
+                try:
+                    row = self.db.get_component(component_id)
+                except NotImplementedError:
+                    row = None
+            if row is not None and row.get("current_version") is None:
+                return error_result(
+                    "target_not_published",
+                    f"{target_type.capitalize()} '{component_id}' has no published version; "
+                    "publish it before scheduling it.",
+                    target_id=component_id,
+                )
             actor = _actor_id(_agno_run_context)
             manager = self._get_schedule_manager()
             # The schedule is owned by the acting user: the run executes as the
