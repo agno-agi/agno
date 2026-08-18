@@ -1,6 +1,6 @@
 import json
 from textwrap import dedent
-from typing import Callable, List, Optional
+from typing import Any, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -13,9 +13,9 @@ class KnowledgeTools(Toolkit):
     def __init__(
         self,
         knowledge: Knowledge,
-        think: bool = True,
-        search: bool = True,
-        analyze: bool = True,
+        enable_think: bool = True,
+        enable_search: bool = True,
+        enable_analyze: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         add_few_shot: bool = False,
@@ -23,14 +23,6 @@ class KnowledgeTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_think" in kwargs:
-            think = kwargs.pop("enable_think")
-        if "enable_search" in kwargs:
-            search = kwargs.pop("enable_search")
-        if "enable_analyze" in kwargs:
-            analyze = kwargs.pop("enable_analyze")
-
         if knowledge is None:
             raise ValueError("knowledge must be provided when using KnowledgeTools")
 
@@ -48,12 +40,12 @@ class KnowledgeTools(Toolkit):
         # The knowledge to search
         self.knowledge: Knowledge = knowledge
 
-        tools: List[Callable] = []
-        if all or think:
+        tools: List[Any] = []
+        if enable_think or all:
             tools.append(self.think)
-        if all or search:
+        if enable_search or all:
             tools.append(self.search_knowledge)
-        if all or analyze:
+        if enable_analyze or all:
             tools.append(self.analyze)
 
         super().__init__(
@@ -74,7 +66,7 @@ class KnowledgeTools(Toolkit):
             thought: Your thought process and reasoning.
 
         Returns:
-            Full log of reasoning and the new thought.
+            str: The full log of reasoning and the new thought.
         """
         try:
             log_debug(f"Thought: {thought}")
@@ -98,7 +90,7 @@ class KnowledgeTools(Toolkit):
             return formatted_thoughts
         except Exception as e:
             log_error(f"Error recording thought: {str(e)}")
-            return json.dumps({"error": f"Error recording thought: {e}"})
+            return f"Error recording thought: {e}"
 
     def search_knowledge(self, run_context: RunContext, query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
@@ -108,7 +100,7 @@ class KnowledgeTools(Toolkit):
             query: The query to search the knowledge base for.
 
         Returns:
-            JSON with relevant documents from the knowledge base.
+            str: A string containing the response from the knowledge base.
         """
         try:
             log_debug(f"Searching knowledge base: {query}")
@@ -120,7 +112,7 @@ class KnowledgeTools(Toolkit):
             return json.dumps([doc.to_dict() for doc in relevant_docs])
         except Exception as e:
             log_error(f"Error searching knowledge base: {str(e)}")
-            return json.dumps({"error": f"Error searching knowledge base: {e}"})
+            return f"Error searching knowledge base: {e}"
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the returned documents are correct and sufficient.
@@ -130,7 +122,7 @@ class KnowledgeTools(Toolkit):
             analysis: A thought to think about and log.
 
         Returns:
-            Full log of analysis entries.
+            str: The full log of thoughts and the new thought.
         """
         try:
             log_debug(f"Analysis: {analysis}")
@@ -154,7 +146,7 @@ class KnowledgeTools(Toolkit):
             return formatted_analysis
         except Exception as e:
             log_error(f"Error recording analysis: {str(e)}")
-            return json.dumps({"error": f"Error recording analysis: {e}"})
+            return f"Error recording analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\
         You have access to the Think, Search, and Analyze tools that will help you search your knowledge for relevant information. Use these tools as frequently as needed to find the most relevant information.

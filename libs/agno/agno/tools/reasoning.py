@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import Callable, List, Optional
+from typing import Any, List, Optional
 
 from agno.reasoning.step import NextAction, ReasoningStep
 from agno.run import RunContext
@@ -10,8 +10,9 @@ from agno.utils.log import log_debug, log_error
 class ReasoningTools(Toolkit):
     def __init__(
         self,
-        think: bool = True,
-        analyze: bool = True,
+        enable_think: bool = True,
+        enable_analyze: bool = True,
+        all: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
         add_few_shot: bool = False,
@@ -19,11 +20,6 @@ class ReasoningTools(Toolkit):
         **kwargs,
     ):
         """A toolkit that provides step-by-step reasoning tools: Think and Analyze."""
-        # Backwards compat: enable_X -> X
-        if "enable_think" in kwargs:
-            think = kwargs.pop("enable_think")
-        if "enable_analyze" in kwargs:
-            analyze = kwargs.pop("enable_analyze")
 
         # Add instructions for using this toolkit
         if instructions is None:
@@ -37,10 +33,11 @@ class ReasoningTools(Toolkit):
         else:
             self.instructions = instructions
 
-        tools: List[Callable] = []
-        if think:
+        tools: List[Any] = []
+        # Prefer new flags; fallback to legacy ones
+        if all or enable_think:
             tools.append(self.think)
-        if analyze:
+        if all or enable_analyze:
             tools.append(self.analyze)
 
         super().__init__(

@@ -16,27 +16,12 @@ class RunWorkflowInput(BaseModel):
 
 
 class WorkflowTools(Toolkit):
-    """Toolkit for executing Agno Workflows with Think-Run-Analyze pattern.
-
-    Args:
-        workflow: The Workflow instance to execute.
-        run_workflow: Enable run_workflow tool. Defaults to False (executes workflow).
-        think: Enable think tool for reasoning scratchpad. Defaults to False.
-        analyze: Enable analyze tool for evaluating results. Defaults to False.
-        all: Enable all tools. Defaults to False.
-        instructions: Custom instructions for the toolkit.
-        add_instructions: Add instructions to agent. Defaults to True.
-        add_few_shot: Add few-shot examples. Defaults to False.
-        few_shot_examples: Custom few-shot examples.
-        async_mode: Use async variants of tools. Defaults to False.
-    """
-
     def __init__(
         self,
         workflow: Workflow,
-        run_workflow: bool = False,
-        think: bool = False,
-        analyze: bool = False,
+        enable_run_workflow: bool = True,
+        enable_think: bool = False,
+        enable_analyze: bool = False,
         all: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
@@ -45,14 +30,6 @@ class WorkflowTools(Toolkit):
         async_mode: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_run_workflow" in kwargs:
-            run_workflow = kwargs.pop("enable_run_workflow")
-        if "enable_think" in kwargs:
-            think = kwargs.pop("enable_think")
-        if "enable_analyze" in kwargs:
-            analyze = kwargs.pop("enable_analyze")
-
         # Add instructions for using this toolkit
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
@@ -73,17 +50,17 @@ class WorkflowTools(Toolkit):
             **kwargs,
         )
 
-        if all or think:
+        if enable_think or all:
             if async_mode:
                 self.register(self.async_think, name="think")
             else:
                 self.register(self.think, name="think")
-        if all or run_workflow:
+        if enable_run_workflow or all:
             if async_mode:
                 self.register(self.async_run_workflow, name="run_workflow")
             else:
                 self.register(self.run_workflow, name="run_workflow")
-        if all or analyze:
+        if enable_analyze or all:
             if async_mode:
                 self.register(self.async_analyze, name="analyze")
             else:
@@ -116,7 +93,7 @@ class WorkflowTools(Toolkit):
             return formatted_thoughts
         except Exception as e:
             log_error(f"Error recording workflow thought: {str(e)}")
-            return json.dumps({"error": f"Error recording workflow thought: {e}"})
+            return f"Error recording workflow thought: {e}"
 
     async def async_think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about the workflow execution, refine your approach, brainstorm workflow inputs, or revise your plan.
@@ -145,7 +122,7 @@ class WorkflowTools(Toolkit):
             return formatted_thoughts
         except Exception as e:
             log_error(f"Error recording workflow thought: {str(e)}")
-            return json.dumps({"error": f"Error recording workflow thought: {e}"})
+            return f"Error recording workflow thought: {e}"
 
     def run_workflow(
         self,
@@ -185,7 +162,7 @@ class WorkflowTools(Toolkit):
 
         except Exception as e:
             log_error(f"Error running workflow: {str(e)}")
-            return json.dumps({"error": f"Error running workflow: {e}"})
+            return f"Error running workflow: {e}"
 
     async def async_run_workflow(
         self,
@@ -225,7 +202,7 @@ class WorkflowTools(Toolkit):
 
         except Exception as e:
             log_error(f"Error running workflow: {str(e)}")
-            return json.dumps({"error": f"Error running workflow: {e}"})
+            return f"Error running workflow: {e}"
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the workflow execution results are correct and sufficient.
@@ -253,7 +230,7 @@ class WorkflowTools(Toolkit):
             return formatted_analysis
         except Exception as e:
             log_error(f"Error recording workflow analysis: {str(e)}")
-            return json.dumps({"error": f"Error recording workflow analysis: {e}"})
+            return f"Error recording workflow analysis: {e}"
 
     async def async_analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the workflow execution results are correct and sufficient.
@@ -281,7 +258,7 @@ class WorkflowTools(Toolkit):
             return formatted_analysis
         except Exception as e:
             log_error(f"Error recording workflow analysis: {str(e)}")
-            return json.dumps({"error": f"Error recording workflow analysis: {e}"})
+            return f"Error recording workflow analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\
         You have access to the Think, Run Workflow, and Analyze tools that will help you execute workflows and analyze their results. Use these tools as frequently as needed to successfully complete workflow-based tasks.
