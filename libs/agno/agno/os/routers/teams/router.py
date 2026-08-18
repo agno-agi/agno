@@ -1112,6 +1112,7 @@ def get_team_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
                 strict=False,
+                published_only=False,
             )  # type: ignore[assignment]
         except HTTPException:
             raise
@@ -1212,6 +1213,7 @@ def get_team_router(
             create_fresh=True,
             user_id=get_scoped_user_id(request),
             strict=False,
+            published_only=False,
         )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1332,6 +1334,7 @@ def get_team_router(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -1342,6 +1345,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    published_only=False,
                 )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1642,6 +1646,7 @@ def get_team_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
                 strict=False,
+                published_only=False,
             )
         except HTTPException:
             raise
@@ -1902,6 +1907,7 @@ def get_team_router(
                 registry=registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
+                published_only=False,
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1947,6 +1953,7 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -1958,6 +1965,7 @@ def get_team_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2046,6 +2054,7 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2057,6 +2066,7 @@ def get_team_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2115,6 +2125,7 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2126,6 +2137,7 @@ def get_team_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2184,6 +2196,7 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2195,6 +2208,7 @@ def get_team_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise

@@ -1767,7 +1767,9 @@ class StudioRunnerTools(Toolkit):
         Registry-backed references resolve at their current published version."""
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
+        loaded = self._load_config_row_from_db(
+            agent_id, version=version, component_type=ComponentType.AGENT, published_only=for_dispatch
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
@@ -1813,7 +1815,9 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Team"]:
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(team_id, version=version, component_type=ComponentType.TEAM)
+        loaded = self._load_config_row_from_db(
+            team_id, version=version, component_type=ComponentType.TEAM, published_only=for_dispatch
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
@@ -1863,7 +1867,9 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Workflow"]:
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
+        loaded = self._load_config_row_from_db(
+            workflow_id, version=version, component_type=ComponentType.WORKFLOW, published_only=for_dispatch
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
@@ -1923,6 +1929,7 @@ class StudioRunnerTools(Toolkit):
         component_id: str,
         version: Optional[int] = None,
         component_type: Optional["ComponentType"] = None,
+        published_only: bool = False,
     ) -> Optional[Tuple[Dict[str, Any], Optional[int]]]:
         """Load a component's config and its resolved version in one read.
 
@@ -1937,11 +1944,17 @@ class StudioRunnerTools(Toolkit):
         if self.db is None:
             return None
         try:
-            if (
-                component_type is not None
-                and self.db.get_component(component_id, component_type=component_type) is None
-            ):
+            component_row = self.db.get_component(component_id, component_type=component_type)
+            if component_type is not None and component_row is None:
                 return None
+            if published_only and version is None:
+                # Dispatch resolves only a published version: a draft-only
+                # component is inspectable and editable, never runnable
+                # (studio-3.0 spec section 3.3).
+                current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+                if current_version is None:
+                    return None
+                version = current_version
             row = self.db.get_config(component_id=component_id, version=version)
         except NotImplementedError:
             # Not every db adapter implements component storage; treat the

@@ -535,6 +535,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_returns_workflow(self, mock_db):
         """Test get_workflow_by_id returns workflow from database."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {
             "config": {"id": "found-workflow", "name": "Found Workflow"},
             "version": 1,
@@ -573,6 +575,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_fetches_links(self, mock_db):
         """Test get_workflow_by_id fetches links for the workflow version."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {
             "config": {"id": "linked-workflow", "name": "Linked"},
             "version": 5,
@@ -593,6 +597,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_sets_db(self, mock_db):
         """Test get_workflow_by_id sets db on returned workflow via registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         # The db is set via registry lookup when config contains a serialized db reference
         mock_db.id = "test-db"
         mock_db.get_config.return_value = {

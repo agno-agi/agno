@@ -1156,6 +1156,7 @@ def get_agent_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
                 strict=False,
+                published_only=False,
             )  # type: ignore[assignment]
         except HTTPException:
             raise
@@ -1334,6 +1335,7 @@ def get_agent_router(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -1344,6 +1346,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    published_only=False,
                 )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1673,6 +1676,7 @@ def get_agent_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
                 strict=False,
+                published_only=False,
             )
         except HTTPException:
             raise
@@ -1860,6 +1864,7 @@ def get_agent_router(
                 registry=os.registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
+                published_only=False,
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1913,6 +1918,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -1924,6 +1930,7 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2015,6 +2022,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2026,6 +2034,7 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2084,6 +2093,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2095,6 +2105,7 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2197,6 +2208,7 @@ def get_agent_router(
             create_fresh=True,
             user_id=get_scoped_user_id(request),
             strict=False,
+            published_only=False,
         )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -2250,6 +2262,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2261,6 +2274,7 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise

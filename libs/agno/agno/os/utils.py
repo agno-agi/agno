@@ -1215,6 +1215,41 @@ def find_factory_by_id(
     return None
 
 
+def allow_draft_preview(
+    db: Optional[Union[BaseDb, AsyncBaseDb]],
+    component_id: str,
+    version: Optional[int],
+    scoped_user_id: Optional[str],
+) -> bool:
+    """Whether an explicit-version run may proceed (studio-3.0 spec section 3.3).
+
+    Published versions were always reachable, so pinning one is never gated.
+    A draft version is a control-plane preview: allowed for the component's
+    owner and for unscoped callers (admin scope, or authorization/isolation
+    off); anyone else gets the same not-found the component would produce,
+    so drafts are not disclosed. Returns True when there is nothing to gate
+    (no version, no sync db, or no such config) - resolution then produces
+    its own not-found.
+    """
+    if version is None or not isinstance(db, BaseDb):
+        return True
+    try:
+        row = db.get_config(component_id=component_id, version=version)
+    except NotImplementedError:
+        return True
+    if not isinstance(row, dict):
+        return True
+    if row.get("stage") == "published":
+        return True
+    if scoped_user_id is None:
+        return True
+    try:
+        component = db.get_component(component_id=component_id)
+    except NotImplementedError:
+        return True
+    return bool(isinstance(component, dict) and component.get("user_id") == scoped_user_id)
+
+
 def get_agent_by_id(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
@@ -1225,6 +1260,7 @@ def get_agent_by_id(
     ctx: Optional[RequestContext] = None,
     user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
@@ -1280,7 +1316,13 @@ def get_agent_by_id(
 
         try:
             db_agent = get_agent_by_id_db(
-                db=db, id=agent_id, version=version, registry=registry, user_id=user_id, strict=strict
+                db=db,
+                id=agent_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
             )
             return db_agent
         except ComponentRehydrationError:
@@ -1303,6 +1345,7 @@ async def get_agent_by_id_async(
     ctx: Optional[RequestContext] = None,
     user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Async variant of get_agent_by_id that supports async factories."""
     if agent_id is None:
@@ -1333,7 +1376,13 @@ async def get_agent_by_id_async(
 
         try:
             db_agent = get_agent_by_id_db(
-                db=db, id=agent_id, version=version, registry=registry, user_id=user_id, strict=strict
+                db=db,
+                id=agent_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
             )
             return db_agent
         except ComponentRehydrationError:
@@ -1356,6 +1405,7 @@ def get_team_by_id(
     ctx: Optional[RequestContext] = None,
     user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -1403,7 +1453,13 @@ def get_team_by_id(
 
         try:
             db_team = get_team_by_id_db(
-                db=db, id=team_id, version=version, registry=registry, user_id=user_id, strict=strict
+                db=db,
+                id=team_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
             )
             return db_team
         except ComponentRehydrationError:
@@ -1426,6 +1482,7 @@ async def get_team_by_id_async(
     ctx: Optional[RequestContext] = None,
     user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Async variant of get_team_by_id that supports async factories."""
     if team_id is None:
@@ -1450,7 +1507,13 @@ async def get_team_by_id_async(
 
         try:
             db_team = get_team_by_id_db(
-                db=db, id=team_id, version=version, registry=registry, user_id=user_id, strict=strict
+                db=db,
+                id=team_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
             )
             return db_team
         except ComponentRehydrationError:
@@ -1473,6 +1536,7 @@ def get_workflow_by_id(
     ctx: Optional[RequestContext] = None,
     user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
@@ -1525,7 +1589,13 @@ def get_workflow_by_id(
 
         try:
             db_workflow = get_workflow_by_id_db(
-                db=db, id=workflow_id, version=version, registry=registry, user_id=user_id, strict=strict
+                db=db,
+                id=workflow_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
             )
             return db_workflow
         except ComponentRehydrationError:
@@ -1548,6 +1618,7 @@ async def get_workflow_by_id_async(
     ctx: Optional[RequestContext] = None,
     user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Async variant of get_workflow_by_id that supports async factories."""
     if workflow_id is None:
@@ -1574,7 +1645,13 @@ async def get_workflow_by_id_async(
 
         try:
             db_workflow = get_workflow_by_id_db(
-                db=db, id=workflow_id, version=version, registry=registry, user_id=user_id, strict=strict
+                db=db,
+                id=workflow_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
             )
             return db_workflow
         except ComponentRehydrationError:
@@ -2433,6 +2510,7 @@ async def resolve_agent(
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
@@ -2444,12 +2522,15 @@ async def resolve_agent(
 
     Raises HTTPException on all error paths.
     """
-    # Owner scope for DB-backed components; no request means unscoped.
+    # Owner scope for DB-BACKED components; no request means unscoped.
     scoped_user_id = None
     if request is not None:
         from agno.os.middleware.user_scope import get_scoped_user_id
 
         scoped_user_id = get_scoped_user_id(request)
+    # An explicit draft version is a control-plane preview: owner/admin only.
+    if not allow_draft_preview(db, agent_id, version, scoped_user_id):
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
     is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
     if is_factory:
         if request is None:
@@ -2457,7 +2538,15 @@ async def resolve_agent(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             agent = await get_agent_by_id_async(
-                agent_id, agents, db, registry, version=version, create_fresh=True, ctx=ctx, user_id=scoped_user_id
+                agent_id,
+                agents,
+                db,
+                registry,
+                version=version,
+                create_fresh=True,
+                ctx=ctx,
+                user_id=scoped_user_id,
+                published_only=published_only,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2505,6 +2594,7 @@ async def resolve_team(
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Union[Team, RemoteTeam]:
     """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
     # Owner scope for DB-backed components; no request means unscoped.
@@ -2513,6 +2603,9 @@ async def resolve_team(
         from agno.os.middleware.user_scope import get_scoped_user_id
 
         scoped_user_id = get_scoped_user_id(request)
+    # An explicit draft version is a control-plane preview: owner/admin only.
+    if not allow_draft_preview(db, team_id, version, scoped_user_id):
+        raise HTTPException(status_code=404, detail=f"Team not found: {team_id}")
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
         if request is None:
@@ -2528,6 +2621,7 @@ async def resolve_team(
                 create_fresh=True,
                 ctx=ctx,
                 user_id=scoped_user_id,
+                published_only=published_only,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2575,6 +2669,7 @@ async def resolve_workflow(
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Union[Workflow, RemoteWorkflow]:
     """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
     # Owner scope for DB-backed components; no request means unscoped.
@@ -2583,6 +2678,9 @@ async def resolve_workflow(
         from agno.os.middleware.user_scope import get_scoped_user_id
 
         scoped_user_id = get_scoped_user_id(request)
+    # An explicit draft version is a control-plane preview: owner/admin only.
+    if not allow_draft_preview(db, workflow_id, version, scoped_user_id):
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
@@ -2598,6 +2696,7 @@ async def resolve_workflow(
                 create_fresh=True,
                 ctx=ctx,
                 user_id=scoped_user_id,
+                published_only=published_only,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))

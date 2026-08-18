@@ -870,6 +870,8 @@ class TestGetAgentById:
 
     def test_get_agent_by_id_returns_agent(self, mock_db):
         """Test get_agent_by_id returns agent from database."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {"config": {"id": "found-agent", "name": "Found Agent"}}
 
         agent = get_agent_by_id(db=mock_db, id="found-agent")
@@ -896,6 +898,8 @@ class TestGetAgentById:
 
     def test_get_agent_by_id_with_registry(self, mock_db):
         """Test get_agent_by_id passes registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {"config": {"id": "registry-agent", "tools": [{"name": "calc"}]}}
 
         mock_registry = MagicMock()
@@ -915,6 +919,8 @@ class TestGetAgentById:
 
     def test_get_agent_by_id_sets_db(self, mock_db):
         """Test get_agent_by_id sets db on returned agent via registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         # The db is set via registry lookup when config contains a serialized db reference
         mock_db.id = "test-db"
         mock_db.get_config.return_value = {

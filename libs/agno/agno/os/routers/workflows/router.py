@@ -213,6 +213,14 @@ async def handle_workflow_via_websocket(
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
             return
 
+        # An explicit draft version is a control-plane preview: owner/admin only
+        # (studio-3.0 spec section 3.3). Published pins were always reachable.
+        from agno.os.utils import allow_draft_preview
+
+        if not allow_draft_preview(os.db, workflow_id, version, scoped_user_id):
+            await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
+            return
+
         # Get workflow from OS — supports both static and factory components
         is_factory = os.workflows and any(
             isinstance(w, WorkflowFactory) and w.id == workflow_id for w in (os.workflows or [])
@@ -529,6 +537,7 @@ async def handle_workflow_subscription(
                         create_fresh=True,
                         user_id=scoped_user_id,
                         strict=False,
+                        published_only=False,
                     )
                 except FactoryContextRequired:
                     workflow = None
@@ -720,6 +729,7 @@ async def handle_workflow_continue_via_websocket(
             registry=os.registry,
             create_fresh=True,
             user_id=scoped_user_id,
+            published_only=False,
         )
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
@@ -1470,6 +1480,7 @@ def get_workflow_router(
                 create_fresh=True,
                 version=version,
                 user_id=get_scoped_user_id(request),
+                published_only=False,
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1955,6 +1966,7 @@ def get_workflow_router(
             user_id=user_id,
             session_id=session_id,
             factory_input=factory_input,
+            published_only=False,
         )
 
         if isinstance(workflow, RemoteWorkflow):
@@ -2220,6 +2232,7 @@ def get_workflow_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
                 strict=False,
+                published_only=False,
             )  # type: ignore[assignment]
         except HTTPException:
             raise
@@ -2320,6 +2333,7 @@ def get_workflow_router(
             create_fresh=True,
             user_id=scoped_user_id,
             strict=False,
+            published_only=False,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -2384,6 +2398,7 @@ def get_workflow_router(
                 user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
+                published_only=False,
             )
         else:
             try:
@@ -2395,6 +2410,7 @@ def get_workflow_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2501,6 +2517,7 @@ def get_workflow_router(
             session_id=session_id,
             factory_input=factory_input,
             strict=False,
+            published_only=False,
         )
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")
