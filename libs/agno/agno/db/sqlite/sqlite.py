@@ -5816,18 +5816,24 @@ class SqliteDb(BaseDb):
         enable clears it. Crosses owners deliberately: archiving the target is
         a system action.
         """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return 0
-            endpoint = f"/{target_type}s/{target_id}/runs"
+            endpoint = build_run_endpoint(target_type, target_id)
+            # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+            # "/agents/x/runs/" is a valid run endpoint that plain equality would
+            # miss - matching both spellings keeps the cascade from leaking rows.
+            endpoints = [endpoint, endpoint + "/"]
             with self.Session() as sess, sess.begin():
                 result = sess.execute(
                     table.update()
                     .where(
                         or_(
                             and_(table.c.target_type == target_type, table.c.target_id == target_id),
-                            table.c.endpoint == endpoint,
+                            table.c.endpoint.in_(endpoints),
                         ),
                         table.c.enabled.is_(True),
                     )

@@ -37,7 +37,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.string import generate_id_from_name, hash_string_sha256
 
 logger = logging.getLogger(__name__)
@@ -519,11 +519,26 @@ def attach_routes(
             # Non-admins can read shared (unowned) components but not delete them.
             if scoped_user_id is not None and existing.get("user_id") is None:
                 raise HTTPException(status_code=403, detail="Cannot delete shared component")
+            component_type = str(existing.get("component_type"))
             deleted = db.delete_component(
                 component_id, user_id=scoped_user_id, expected_current_version=expected_current_version
             )
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+
+            try:
+                disabled = db.disable_schedules_for_target(
+                    component_type,
+                    component_id,
+                    reason=f"target_archived:{component_type}:{component_id}",
+                )
+                if disabled:
+                    log_info(f"Disabled {disabled} schedule(s) targeting archived {component_type} '{component_id}'")
+            except NotImplementedError:
+                # Database without scheduler support: nothing could be scheduled against it.
+                pass
+            except Exception as e:
+                log_error(f"Failed to disable schedules for archived component {component_id}: {e}")
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:

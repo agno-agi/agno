@@ -407,6 +407,54 @@ class TestDeleteComponent:
 
         assert response.status_code == 404
 
+    def test_delete_component_disables_schedules_for_the_target(self, client, mock_db):
+        """Archiving via REST must run the same cascade StudioTools.archive_component runs.
+
+        A schedule left pointing at an archived component only 404s on every tick,
+        and retries - the exact failure disable_schedules_for_target exists to stop.
+        """
+        mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
+        mock_db.delete_component.return_value = True
+        mock_db.disable_schedules_for_target = MagicMock(return_value=2)
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 204
+        mock_db.disable_schedules_for_target.assert_called_once_with(
+            "agent", "agent-1", reason="target_archived:agent:agent-1"
+        )
+
+    def test_delete_component_does_not_cascade_when_the_delete_failed(self, client, mock_db):
+        """Nothing was archived, so nothing may be disabled."""
+        mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
+        mock_db.delete_component.return_value = False
+        mock_db.disable_schedules_for_target = MagicMock(return_value=0)
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 404
+        mock_db.disable_schedules_for_target.assert_not_called()
+
+    def test_delete_component_survives_a_db_without_scheduler_support(self, client, mock_db):
+        """The component is archived; a missing scheduler primitive is not an error."""
+        mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
+        mock_db.delete_component.return_value = True
+        mock_db.disable_schedules_for_target = MagicMock(side_effect=NotImplementedError)
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 204
+
+    def test_delete_component_survives_a_failing_cascade(self, client, mock_db):
+        """A failed cascade must not turn a successful archive into a 500."""
+        mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
+        mock_db.delete_component.return_value = True
+        mock_db.disable_schedules_for_target = MagicMock(side_effect=RuntimeError("db down"))
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 204
+
 
 # =============================================================================
 # List Configs Tests

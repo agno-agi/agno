@@ -4095,11 +4095,17 @@ class AsyncPostgresDb(AsyncBaseDb):
         rows and generic rows whose endpoint is the component's run endpoint,
         across owners, and records the system reason in disabled_reason.
         """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return 0
-            endpoint = f"/{target_type}s/{target_id}/runs"
+            endpoint = build_run_endpoint(target_type, target_id)
+            # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+            # "/agents/x/runs/" is a valid run endpoint that plain equality would
+            # miss - matching both spellings keeps the cascade from leaking rows.
+            endpoints = [endpoint, endpoint + "/"]
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(
@@ -4107,7 +4113,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         .where(
                             or_(
                                 and_(table.c.target_type == target_type, table.c.target_id == target_id),
-                                table.c.endpoint == endpoint,
+                                table.c.endpoint.in_(endpoints),
                             ),
                             table.c.enabled.is_(True),
                         )

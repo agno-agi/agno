@@ -3224,6 +3224,67 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error deleting schedule: {e}")
             return False
 
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Async variant of the sync adapter's primitive: matches provenance-tagged
+        rows and generic rows whose endpoint is the component's run endpoint,
+        across owners, and records the system reason in disabled_reason.
+        """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return 0
+            endpoint = build_run_endpoint(target_type, target_id)
+            result = await collection.update_many(
+                {
+                    "enabled": True,
+                    "$or": [
+                        {"target_type": target_type, "target_id": target_id},
+                        {"endpoint": {"$in": [endpoint, endpoint + "/"]}},
+                    ],
+                },
+                {"$set": {"enabled": False, "disabled_reason": reason, "updated_at": int(time.time())}},
+            )
+            return int(result.modified_count or 0)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses."""
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return False
+            result = await collection.update_one(
+                {"id": schedule_id},
+                {"$set": {"updated_at": int(time.time()), **provenance}},
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
+
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedules")

@@ -21,6 +21,28 @@ INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
 # newline can't slip past the run-endpoint check.
 RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
 
+
+def build_run_endpoint(target_type: str, target_id: str) -> str:
+    """Build the canonical run endpoint for a component.
+
+    The single builder for every surface that constructs or compares a run
+    endpoint, so builder and parser cannot drift: ``RUN_ENDPOINT_RE`` accepts an
+    optional trailing slash, and a hand-built ``f"/{type}s/{id}/runs"`` compared
+    with ``==`` silently misses those rows. Callers matching a stored endpoint
+    must normalise it the same way - see ``match_run_endpoint``.
+    """
+    return f"/{target_type}s/{target_id}/runs"
+
+
+def match_run_endpoint(endpoint: str, target_type: str, target_id: str) -> bool:
+    """True when ``endpoint`` addresses that component's run route.
+
+    Tolerates the trailing slash ``RUN_ENDPOINT_RE`` accepts, so a schedule
+    stored as ``/agents/x/runs/`` is still recognised as targeting agent ``x``.
+    """
+    return endpoint.rstrip("/") == build_run_endpoint(target_type, target_id)
+
+
 # Marker for builder-managed schedules; generic surfaces may filter on it.
 STUDIO_SCHEDULE_MANAGED_BY = "studio"
 

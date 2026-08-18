@@ -3050,6 +3050,8 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data carries {id, name, cron, target_type,
             target_id, endpoint, timezone, enabled, next_run_at, runs_as}.
         """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
         try:
             component_id, target_error = self._resolve_schedule_target(target_type, target_id)
             if target_error is not None:
@@ -3079,7 +3081,7 @@ class StudioTools(Toolkit):
             schedule = manager.create(
                 name=name,
                 cron=cron,
-                endpoint=f"/{target_type}s/{component_id}/runs",
+                endpoint=build_run_endpoint(target_type, component_id),
                 method="POST",
                 description=description,
                 payload={"message": message},
@@ -3166,6 +3168,28 @@ class StudioTools(Toolkit):
                 updates["timezone"] = timezone
             if description is not None:
                 updates["description"] = description or None
+            # Validate the cadence and recompute next_run_at here, the way the REST
+            # route does: manager.update is a bare passthrough, so an unvalidated
+            # cron would be reported as success, fire once at the stale time, and
+            # then be force-disabled by the executor with no disabled_reason. A
+            # valid change needs the recompute too, or the old cadence fires once
+            # more before the new one takes effect.
+            if cron is not None or timezone is not None:
+                from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
+
+                new_cron = cron if cron is not None else existing.cron_expr
+                new_tz = timezone if timezone is not None else (existing.timezone or "UTC")
+                if not validate_cron_expr(new_cron):
+                    return error_result(
+                        "invalid_request",
+                        f"Invalid cron expression: {new_cron}. Use 5 fields, e.g. '0 9 * * *' for daily at 9am.",
+                    )
+                if not validate_timezone(new_tz):
+                    return error_result(
+                        "invalid_request",
+                        f"Invalid timezone: {new_tz}. Use an IANA name, e.g. 'America/New_York'.",
+                    )
+                updates["next_run_at"] = compute_next_run(new_cron, new_tz)
             if message is not None:
                 if not message.strip():
                     return error_result("invalid_request", "message must be a non-empty string.")

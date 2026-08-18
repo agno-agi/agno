@@ -1830,6 +1830,62 @@ class TestSchedules:
         out = _loads(studio_schedules.update_schedule(created["id"]))
         assert out["error"]["code"] == "invalid_request"
 
+    def test_update_schedule_rejects_an_invalid_cron(self, studio_schedules, db):
+        # manager.update is a bare passthrough: without validation here a typo'd
+        # cron is reported as success, fires once at the stale time, and is then
+        # force-disabled by the executor with no disabled_reason.
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules)
+        before = db.get_schedule(created["id"])
+
+        out = _loads(studio_schedules.update_schedule(created["id"], cron="not-a-cron"))
+        assert out["error"]["code"] == "invalid_request"
+        assert "Invalid cron expression" in out["error"]["message"]
+
+        after = db.get_schedule(created["id"])
+        assert after["cron_expr"] == before["cron_expr"]
+        assert after["next_run_at"] == before["next_run_at"]
+
+    def test_update_schedule_rejects_an_invalid_timezone(self, studio_schedules, db):
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules)
+        before = db.get_schedule(created["id"])
+
+        out = _loads(studio_schedules.update_schedule(created["id"], timezone="Mars/Olympus"))
+        assert out["error"]["code"] == "invalid_request"
+        assert "Invalid timezone" in out["error"]["message"]
+
+        assert db.get_schedule(created["id"])["timezone"] == before["timezone"]
+
+    def test_update_schedule_recomputes_next_run_at(self, studio_schedules, db):
+        # Without the recompute the old cadence fires once more before the new
+        # one takes effect.
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules, cron="0 9 * * *")
+        before = db.get_schedule(created["id"])
+
+        out = _loads(studio_schedules.update_schedule(created["id"], cron="*/5 * * * *"))
+        assert out["ok"], out
+
+        after = db.get_schedule(created["id"])
+        assert after["cron_expr"] == "*/5 * * * *"
+        assert after["next_run_at"] != before["next_run_at"]
+        assert out["data"]["next_run_at"] == after["next_run_at"]
+
+    def test_update_schedule_validates_cron_against_the_new_timezone(self, studio_schedules, db):
+        # A timezone-only change still recomputes: the same cron in a new zone is
+        # a different wall-clock next run.
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules, cron="0 9 * * *", timezone="UTC")
+        before = db.get_schedule(created["id"])
+
+        out = _loads(studio_schedules.update_schedule(created["id"], timezone="America/New_York"))
+        assert out["ok"], out
+
+        after = db.get_schedule(created["id"])
+        assert after["timezone"] == "America/New_York"
+        assert after["next_run_at"] != before["next_run_at"]
+
     def test_schedule_refuses_a_draft_only_target(self, studio_schedules):
         # A schedule fires the live published version; a draft target would
         # 404 on every tick.

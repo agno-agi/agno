@@ -138,3 +138,50 @@ class TestDisableForTarget:
         row = db.update_schedule("sched-revivable", enabled=True)
         assert row["enabled"] in (True, 1)
         assert row["disabled_reason"] is None
+
+
+class TestRunEndpointHelpers:
+    """The single builder/matcher pair, so builder and parser cannot drift."""
+
+    def test_builder_matches_the_regex_it_is_paired_with(self):
+        from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, build_run_endpoint
+
+        for target_type, target_id in (("agent", "analyst"), ("team", "t1"), ("workflow", "w1")):
+            endpoint = build_run_endpoint(target_type, target_id)
+            match = RUN_ENDPOINT_RE.match(endpoint)
+            assert match is not None
+            assert match.group(1) == f"{target_type}s"
+            assert match.group(2) == target_id
+
+    def test_matcher_tolerates_the_trailing_slash_the_regex_accepts(self):
+        from agno.db.schemas.scheduler import match_run_endpoint
+
+        assert match_run_endpoint("/agents/analyst/runs", "agent", "analyst")
+        assert match_run_endpoint("/agents/analyst/runs/", "agent", "analyst")
+        assert not match_run_endpoint("/agents/other/runs", "agent", "analyst")
+        assert not match_run_endpoint("/teams/analyst/runs", "agent", "analyst")
+
+
+class TestDisableForTargetTrailingSlash:
+    """RUN_ENDPOINT_RE accepts "/runs/", so the cascade must too.
+
+    A schedule stored with a trailing slash is a valid run endpoint the router
+    accepts and the executor fires; if the cascade misses it, archiving the
+    target leaves it firing 404s forever - the exact failure the primitive exists
+    to prevent.
+    """
+
+    def test_generic_row_with_trailing_slash_is_disabled(self, db):
+        _mk(db, "slashed", endpoint="/agents/analyst/runs/")
+        count = db.disable_schedules_for_target("agent", "analyst", reason="target_archived:agent:analyst")
+        assert count == 1
+        row = db.get_schedule("sched-slashed")
+        assert row["enabled"] in (False, 0)
+        assert row["disabled_reason"] == "target_archived:agent:analyst"
+
+    def test_both_spellings_disabled_together(self, db):
+        _mk(db, "plain", endpoint="/agents/analyst/runs")
+        _mk(db, "slashed", endpoint="/agents/analyst/runs/")
+        _mk(db, "unrelated-slashed", endpoint="/agents/other/runs/")
+        assert db.disable_schedules_for_target("agent", "analyst") == 2
+        assert db.get_schedule("sched-unrelated-slashed")["enabled"] in (True, 1)

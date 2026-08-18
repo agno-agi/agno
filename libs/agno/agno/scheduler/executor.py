@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, SCHEDULE_OWNER_HEADER, Schedule
+from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, SCHEDULE_OWNER_HEADER, Schedule, match_run_endpoint
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -108,8 +108,7 @@ class ScheduleExecutor:
             # provenance names: a repointed endpoint under an old target is
             # refused rather than executed (studio-3.0 spec section 3.5).
             if sched.managed_by is not None and sched.target_type and sched.target_id:
-                expected_endpoint = f"/{sched.target_type}s/{sched.target_id}/runs"
-                if sched.endpoint.rstrip("/") != expected_endpoint:
+                if not match_run_endpoint(sched.endpoint, sched.target_type, sched.target_id):
                     raise RuntimeError(
                         f"Schedule {sched.id} endpoint {sched.endpoint!r} does not match its "
                         f"provenance target {sched.target_type}:{sched.target_id}; refusing to execute"
