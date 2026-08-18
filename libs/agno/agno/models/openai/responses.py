@@ -1384,4 +1384,8 @@ class OpenAIResponses(Model):
         if output_tokens_details := response_usage.output_tokens_details:
             metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
 
+        # OpenRouter (and other Responses-compatible providers) include a per-request
+        # `cost` in usage; OpenAI itself does not, so this is a no-op for OpenAI.
+        metrics.cost = getattr(response_usage, "cost", None)
+
         return metrics
