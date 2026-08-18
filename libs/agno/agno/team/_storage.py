@@ -20,6 +20,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.agent._storage import is_auto_generated_memory_manager_id
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
@@ -698,9 +699,24 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["parse_response"] = team.parse_response
 
     # --- Memory settings ---
-    # TODO: implement memory manager serialization
-    # if team.memory_manager is not None:
-    #     config["memory_manager"] = team.memory_manager.to_dict()
+    # Stored as a registry reference by id, like knowledge: the manager holds
+    # a model and callables, so the config names it and the registry supplies
+    # the live object on load. An auto-generated id is minted fresh every
+    # process, so it can never resolve in a new one: writing it would poison
+    # every future strict load. Only a stable, user-assigned id is referenced.
+    if team.memory_manager is not None:
+        memory_manager_id = getattr(team.memory_manager, "id", None)
+        if memory_manager_id and not is_auto_generated_memory_manager_id(memory_manager_id):
+            config["memory_manager"] = {"registry_id": memory_manager_id}
+        elif team.enable_agentic_memory or team.update_memory_on_run:
+            # The default manager initialize_team builds; it rebuilds itself
+            # from these flags on load, so there is nothing to reference.
+            log_debug("Team memory_manager has an auto-generated id; not saved, the default rebuilds on load.")
+        else:
+            log_warning(
+                "Team memory_manager has no stable id, so it cannot be referenced across processes and will "
+                "not be saved. Give the manager an explicit id and register it in the registry to keep it."
+            )
     if team.enable_agentic_memory:
         config["enable_agentic_memory"] = team.enable_agentic_memory
     if team.update_memory_on_run:
@@ -1185,10 +1201,26 @@ def from_dict(
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
-    # TODO: implement memory manager deserialization
-    # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
-    #     from agno.memory import MemoryManager
-    #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+    if config.get("memory_manager") is not None:
+        manager_ref = config["memory_manager"]
+        ref_id = manager_ref.get("registry_id") if isinstance(manager_ref, dict) else manager_ref
+        resolved_manager = registry.get_memory_manager(ref_id) if (registry is not None and ref_id) else None
+        if resolved_manager is not None:
+            config["memory_manager"] = resolved_manager
+        else:
+            # When the team's own settings rebuild a default manager on init,
+            # losing the reference changes nothing - drop it rather than refuse
+            # the whole component. An auto-generated id (written by configs
+            # saved before ids were filtered) can never resolve in a new
+            # process, so refusing on it would 422 the component forever.
+            rebuilds_default = bool(config.get("enable_agentic_memory") or config.get("update_memory_on_run"))
+            if strict and not rebuilds_default and not is_auto_generated_memory_manager_id(ref_id):
+                raise ComponentRehydrationError(
+                    f"{component_label} references memory manager '{ref_id}' which was not found in the "
+                    "registry. Register the manager, or pass strict=False to load the component without it."
+                )
+            log_warning(f"Memory manager {ref_id!r} not found in registry; loading the component without it.")
+            config.pop("memory_manager", None)
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization
@@ -1306,7 +1338,7 @@ def from_dict(
             use_json_mode=config.get("use_json_mode", False),
             parse_response=config.get("parse_response", True),
             # --- Memory settings ---
-            # memory_manager=config.get("memory_manager"),  # TODO
+            memory_manager=config.get("memory_manager"),
             enable_agentic_memory=config.get("enable_agentic_memory", False),
             update_memory_on_run=config.get("update_memory_on_run", False),
             add_memories_to_context=config.get("add_memories_to_context"),

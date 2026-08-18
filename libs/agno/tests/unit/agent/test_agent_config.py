@@ -1191,3 +1191,101 @@ def test_strict_passes_provider_envelope_tools_through():
 
     assert with_registry.tools == [bedrock_tool]
     assert without_registry.tools == [bedrock_tool]
+
+
+# =============================================================================
+# Memory manager round-trip (A3 regression: auto-generated ids 422'd dispatch)
+# =============================================================================
+
+
+class TestMemoryManagerRoundTrip:
+    """A saved memory_manager reference must never refuse a component that
+    would rebuild a perfectly good default manager on its own, and must
+    round-trip a user's registered manager to the same live instance."""
+
+    def test_auto_created_manager_survives_fresh_registry_strict_load(self):
+        """enable_agentic_memory auto-creates a manager with a per-process id;
+        the config must not reference it, and a fresh-process strict load (the
+        dispatch shape) must succeed and rebuild the default on init."""
+        from agno.agent._init import initialize_agent
+
+        agent = Agent(id="mem-agent", name="Mem Agent", enable_agentic_memory=True)
+        initialize_agent(agent)
+        assert agent.memory_manager is not None
+        assert agent.memory_manager.id.startswith("memory_manager_")
+
+        config = agent.to_dict()
+        assert "memory_manager" not in config
+
+        loaded = Agent.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.enable_agentic_memory is True
+        initialize_agent(loaded)
+        assert loaded.memory_manager is not None
+
+    def test_registered_manager_round_trips_to_same_instance(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="shared-memory")
+        agent = Agent(id="mem-agent", name="Mem Agent", memory_manager=manager)
+
+        config = agent.to_dict()
+        assert config["memory_manager"] == {"registry_id": "shared-memory"}
+
+        loaded = Agent.from_dict(config, registry=Registry(memory_managers=[manager]), strict=True)
+        assert loaded.memory_manager is manager
+
+    def test_unregistered_manager_with_memory_flags_drops_with_warning(self):
+        """The flags rebuild a default manager on init, so losing the
+        reference changes nothing; strict must warn and drop, not raise."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="my-memory")
+        agent = Agent(id="mem-agent", name="Mem Agent", memory_manager=manager, enable_agentic_memory=True)
+        config = agent.to_dict()
+        assert config["memory_manager"] == {"registry_id": "my-memory"}
+
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Agent.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.memory_manager is None
+        assert any("my-memory" in str(c) for c in mock_warn.call_args_list)
+
+    def test_unregistered_manager_without_flags_raises_strict(self):
+        """No flags means dropping the manager removes memory entirely; the
+        user clearly asked for a specific one, so strict must refuse."""
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="my-memory")
+        agent = Agent(id="mem-agent", name="Mem Agent", memory_manager=manager)
+        config = agent.to_dict()
+
+        with pytest.raises(ComponentRehydrationError, match="memory manager 'my-memory'"):
+            Agent.from_dict(config, registry=Registry(), strict=True)
+
+        loaded = Agent.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.memory_manager is None
+
+    def test_auto_generated_id_never_serialized_even_for_explicit_manager(self):
+        """An explicit manager the user never gave an id can only be
+        referenced by its per-process auto id, which no fresh process can
+        resolve; the reference is pure loss and must be omitted (with a
+        warning when no flags would rebuild a default)."""
+        from agno.memory.manager import MemoryManager
+
+        agent = Agent(id="mem-agent", name="Mem Agent", memory_manager=MemoryManager())
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            config = agent.to_dict()
+        assert "memory_manager" not in config
+        assert mock_warn.called
+
+    def test_legacy_auto_id_reference_dropped_under_strict(self):
+        """Configs saved before ids were filtered carry auto ids that can
+        never resolve; strict must drop them, not 422 the component forever."""
+        config = {
+            "id": "legacy-agent",
+            "name": "Legacy Agent",
+            "memory_manager": {"registry_id": "memory_manager_ab12cd34"},
+        }
+
+        loaded = Agent.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.memory_manager is None

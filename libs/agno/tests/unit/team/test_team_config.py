@@ -1488,3 +1488,88 @@ def test_team_provider_envelope_tools_survive_save_and_strict_reload(tmp_path):
     # And a load-save cycle keeps it too.
     loaded.save(db=db)
     assert db.get_config(component_id="env-team")["config"].get("tools") == [envelope]
+
+
+# =============================================================================
+# Memory manager round-trip (A3 regression: auto-generated ids 422'd dispatch)
+# =============================================================================
+
+
+class TestTeamMemoryManagerRoundTrip:
+    """Mirror of the agent memory_manager round-trip: a saved reference must
+    never refuse a team that would rebuild a default manager on its own, and
+    must round-trip a registered manager to the same live instance."""
+
+    def test_auto_created_manager_survives_fresh_registry_strict_load(self):
+        from agno.team._init import initialize_team
+
+        team = Team(id="mem-team", name="Mem Team", members=[], enable_agentic_memory=True)
+        initialize_team(team)
+        assert team.memory_manager is not None
+        assert team.memory_manager.id.startswith("memory_manager_")
+
+        config = team.to_dict()
+        assert "memory_manager" not in config
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.enable_agentic_memory is True
+        initialize_team(loaded)
+        assert loaded.memory_manager is not None
+
+    def test_registered_manager_round_trips_to_same_instance(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="shared-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager)
+
+        config = team.to_dict()
+        assert config["memory_manager"] == {"registry_id": "shared-memory"}
+
+        loaded = Team.from_dict(config, registry=Registry(memory_managers=[manager]), strict=True)
+        assert loaded.memory_manager is manager
+
+    def test_unregistered_manager_with_memory_flags_drops_with_warning(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="my-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager, update_memory_on_run=True)
+        config = team.to_dict()
+        assert config["memory_manager"] == {"registry_id": "my-memory"}
+
+        with patch("agno.team._storage.log_warning") as mock_warn:
+            loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.memory_manager is None
+        assert any("my-memory" in str(c) for c in mock_warn.call_args_list)
+
+    def test_unregistered_manager_without_flags_raises_strict(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="my-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager)
+        config = team.to_dict()
+
+        with pytest.raises(ComponentRehydrationError, match="memory manager 'my-memory'"):
+            Team.from_dict(config, registry=Registry(), strict=True)
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.memory_manager is None
+
+    def test_auto_generated_id_never_serialized_even_for_explicit_manager(self):
+        from agno.memory.manager import MemoryManager
+
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=MemoryManager())
+        with patch("agno.team._storage.log_warning") as mock_warn:
+            config = team.to_dict()
+        assert "memory_manager" not in config
+        assert mock_warn.called
+
+    def test_legacy_auto_id_reference_dropped_under_strict(self):
+        config = {
+            "id": "legacy-team",
+            "name": "Legacy Team",
+            "memory_manager": {"registry_id": "memory_manager_ab12cd34"},
+        }
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.memory_manager is None

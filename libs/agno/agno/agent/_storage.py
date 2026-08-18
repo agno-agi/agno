@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -40,6 +41,18 @@ from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
+
+# MemoryManager.__init__ (agno/memory/manager.py) auto-generates
+# ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
+# every process, so a config carrying it can never resolve against a registry
+# in a new process; it must not be written as a registry reference.
+_AUTO_MEMORY_MANAGER_ID_RE = re.compile(r"memory_manager_[0-9a-f]{8}")
+
+
+def is_auto_generated_memory_manager_id(manager_id: Any) -> bool:
+    """True when the id has the shape MemoryManager auto-generates per instance."""
+    return isinstance(manager_id, str) and _AUTO_MEMORY_MANAGER_ID_RE.fullmatch(manager_id) is not None
+
 
 # ---------------------------------------------------------------------------
 # Run output accessors
@@ -654,14 +667,21 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Agentic Memory settings ---
     # Stored as a registry reference by id, like knowledge: the manager holds
     # a model and callables, so the config names it and the registry supplies
-    # the live object on load.
+    # the live object on load. An auto-generated id is minted fresh every
+    # process, so it can never resolve in a new one: writing it would poison
+    # every future strict load. Only a stable, user-assigned id is referenced.
     if agent.memory_manager is not None:
         memory_manager_id = getattr(agent.memory_manager, "id", None)
-        if memory_manager_id:
+        if memory_manager_id and not is_auto_generated_memory_manager_id(memory_manager_id):
             config["memory_manager"] = {"registry_id": memory_manager_id}
+        elif agent.enable_agentic_memory or agent.update_memory_on_run:
+            # The default manager initialize_agent builds; it rebuilds itself
+            # from these flags on load, so there is nothing to reference.
+            log_debug("Agent memory_manager has an auto-generated id; not saved, the default rebuilds on load.")
         else:
             log_warning(
-                "Agent memory_manager has no id; it cannot be referenced from the registry and will not be saved."
+                "Agent memory_manager has no stable id, so it cannot be referenced across processes and will "
+                "not be saved. Give the manager an explicit id and register it in the registry to keep it."
             )
     if agent.enable_agentic_memory:
         config["enable_agentic_memory"] = agent.enable_agentic_memory
@@ -1074,16 +1094,22 @@ def from_dict(
         manager_ref = config["memory_manager"]
         ref_id = manager_ref.get("registry_id") if isinstance(manager_ref, dict) else manager_ref
         resolved_manager = registry.get_memory_manager(ref_id) if (registry is not None and ref_id) else None
-        if resolved_manager is None:
-            if strict:
+        if resolved_manager is not None:
+            config["memory_manager"] = resolved_manager
+        else:
+            # When the agent's own settings rebuild a default manager on init,
+            # losing the reference changes nothing - drop it rather than refuse
+            # the whole component. An auto-generated id (written by configs
+            # saved before ids were filtered) can never resolve in a new
+            # process, so refusing on it would 422 the component forever.
+            rebuilds_default = bool(config.get("enable_agentic_memory") or config.get("update_memory_on_run"))
+            if strict and not rebuilds_default and not is_auto_generated_memory_manager_id(ref_id):
                 raise ComponentRehydrationError(
                     f"{component_label} references memory manager '{ref_id}' which was not found in the "
                     "registry. Register the manager, or pass strict=False to load the component without it."
                 )
-            log_warning(f"Memory manager {ref_id!r} not found in registry, skipping.")
+            log_warning(f"Memory manager {ref_id!r} not found in registry; loading the component without it.")
             config.pop("memory_manager", None)
-        else:
-            config["memory_manager"] = resolved_manager
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization
