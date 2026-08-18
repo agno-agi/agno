@@ -693,6 +693,7 @@ class StudioTools(Toolkit):
 
     _TYPED_ERROR_CODES = {
         "_ToolsNotFoundError": "tool_not_found",
+        "ComponentNotPublishedError": "component_not_published",
         "ComponentVersionConflictError": "version_conflict",
         "ComponentArchivedError": "component_archived",
         "ComponentDependencyError": "dependency_conflict",

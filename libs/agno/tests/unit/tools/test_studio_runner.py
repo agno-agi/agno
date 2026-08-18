@@ -865,7 +865,7 @@ class TestDiscovery:
 
         runner = StudioRunnerTools(registry=registry, db=db, agents_list=[_StubAgent()])
         out = _loads(runner.list_agents())
-        assert out["agents"][-1] == {"id": "radar", "name": "Radar", "description": "scans the week"}
+        assert out["agents"][-1] == {"id": "radar", "name": "Radar", "description": "scans the week", "status": "draft"}
         assert any(entry["id"] == _StubAgent().id for entry in out["agents"])
         assert out["count"] == len(out["agents"])
 
@@ -891,6 +891,39 @@ class TestDiscovery:
         out = _loads(runner.list_agents())
         assert out["count"] == 2
         assert out["total"] == 3
+
+    def test_list_marks_draft_only_rows_and_run_names_the_real_reason(self, registry, db):
+        # The regression this exists for: run_agent on a stored draft used to
+        # blame the registry ("Pass include_all_components=True") for a
+        # component that only needs publishing, and the listing gave a
+        # list-then-run caller no stage hint before it hit that refusal.
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Draft Only", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Live One", instructions="i", model_id="gpt-5.4", publish=True)
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        rows = {entry["id"]: entry for entry in _loads(runner.list_agents())["agents"]}
+        assert rows["draft-only"]["status"] == "draft"
+        assert "status" not in rows["live-one"]
+
+        out = _loads(runner.run_agent("draft-only", "hi"))
+        assert "no published version" in out["error"]
+        assert "include_all_components" not in out["error"]
+
+        # The same diagnosis through the StudioTools facade run surface.
+        facade = _loads(studio.run_agent("draft-only", "hi"))
+        assert "no published version" in facade["error"]
+
+    def test_draft_refusal_survives_include_all_components(self, registry, db):
+        # include_all_components admits registry components; it does not make
+        # drafts dispatchable, so the draft diagnosis must fire before the
+        # include-all early-return turns this into a bare "not found".
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Draft Only", instructions="i", model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(registry=registry, db=db, include_all_components=True)
+        out = _loads(runner.run_agent("draft-only", "hi"))
+        assert "no published version" in out["error"]
 
     def test_list_without_db_errors(self):
         runner = StudioRunnerTools()
@@ -1073,7 +1106,9 @@ class TestStudioEmbedding:
             dbs=[db],
         )
         studio = StudioTools(registry=armed_registry, db=db)
-        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
+        # Published: a draft would (correctly) hit the not-published diagnosis
+        # before the registry one this test pins.
+        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"], publish=True)
         runner = StudioRunnerTools(db=db)
         out = _loads(runner.run_agent("armed", "hi"))
         assert "registry" in out.get("error", "")
@@ -1091,8 +1126,8 @@ class TestStudioEmbedding:
             dbs=[db],
         )
         studio = StudioTools(registry=armed_registry, db=db, teams=True)
-        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
-        studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4")
+        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"], publish=True)
+        studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4", publish=True)
 
         runner = StudioRunnerTools(db=db)
         out = _loads(runner.run_team("crew", "hi"))

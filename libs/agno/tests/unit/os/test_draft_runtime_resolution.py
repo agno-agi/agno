@@ -71,9 +71,14 @@ class TestRunnerDispatch:
         return StudioRunnerTools(registry=registry, db=db, include_all_components=True)
 
     def test_draft_only_component_is_not_dispatchable(self, db):
+        from agno.tools.studio_runner import ComponentNotPublishedError
+
         _mk(db, "draft-bot", "draft")
         runner = self._runner(db)
-        assert runner._agent_for_run("draft-bot") is None
+        # Not a silent miss: the refusal names the real reason (unpublished),
+        # not the registry, so a caller knows to publish or preview by version.
+        with pytest.raises(ComponentNotPublishedError, match="no published version"):
+            runner._agent_for_run("draft-bot")
 
     def test_dispatch_resolves_current_not_latest_draft(self, db):
         _mk(db, "mixed-bot", "published")

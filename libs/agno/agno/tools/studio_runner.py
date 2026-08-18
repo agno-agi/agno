@@ -169,6 +169,15 @@ class ComponentNotDispatchableError(StudioRunnerError, RuntimeError):
     (``include_all_components``)."""
 
 
+class ComponentNotPublishedError(ComponentNotDispatchableError):
+    """The identifier names a stored component with no published version.
+
+    Drafts are inert on dispatch surfaces (studio-3.0 spec section 3.3): a
+    draft runs only through an explicit-version preview. Subclasses
+    ComponentNotDispatchableError so existing handlers keep working; kept
+    distinct so callers can map it to its own error code."""
+
+
 class DispatchCopyError(StudioRunnerError, RuntimeError):
     """A component could not be copied faithfully for dispatch.
 
@@ -763,9 +772,40 @@ class StudioRunnerTools(Toolkit):
             "or run the code-defined one by its id."
         )
 
+    def _refuse_if_stored_draft_only(self, component_type: str, identifier: str) -> None:
+        """A stored component with no published version is not a registry
+        problem: drafts are inert on dispatch surfaces (spec section 3.3).
+        Diagnose it first, or the include-all message below blames the
+        registry for a component that only needs publishing."""
+        if self.db is None:
+            return
+        from agno.db.base import ComponentType
+
+        resolved = identifier if self._db_component_exists(component_type, identifier) else None
+        if resolved is None:
+            try:
+                resolved = self._resolve_db_id_by_name_or_slug(component_type, identifier)
+            except AmbiguousComponentNameError:
+                raise
+            except Exception:
+                return
+        if resolved is None:
+            return
+        try:
+            row = self.db.get_component(resolved, component_type=ComponentType(component_type))
+        except NotImplementedError:
+            return
+        if row is not None and row.get("current_version") is None:
+            raise ComponentNotPublishedError(
+                f"{component_type.capitalize()} '{resolved}' exists but has no published version, and drafts "
+                "do not run on dispatch surfaces. Publish it (publish_component), or preview the draft by "
+                "running it with an explicit version."
+            )
+
     def _refuse_if_only_reachable_with_include_all(self, component_type: str, identifier: str) -> None:
         """Turn "not found" into the real reason when the identifier does name a
         component, but one this runner may not dispatch."""
+        self._refuse_if_stored_draft_only(component_type, identifier)
         if self.include_all_components:
             return
         finder = {"agent": self._find_agent, "team": self._find_team, "workflow": self._find_workflow}[component_type]
@@ -2009,10 +2049,19 @@ class StudioRunnerTools(Toolkit):
             # Not every db adapter implements component storage; degrade to an
             # empty listing like the other db helpers here.
             return [], 0
-        return (
-            [{"id": r.get("component_id"), "name": r.get("name"), "description": r.get("description")} for r in rows],
-            total,
-        )
+        summaries = []
+        for r in rows:
+            entry: Dict[str, Any] = {
+                "id": r.get("component_id"),
+                "name": r.get("name"),
+                "description": r.get("description"),
+            }
+            # A caller following list-then-run needs the stage hint here, or
+            # the refusal it hits is its first sign the row was a draft.
+            if r.get("current_version") is None:
+                entry["status"] = "draft"
+            summaries.append(entry)
+        return summaries, total
 
     # ------------------------------------------------------------------
     # Discovery
@@ -2026,10 +2075,12 @@ class StudioRunnerTools(Toolkit):
         registry under include_all_components). What can be run can be found.
 
         Returns:
-            str: JSON object with 'agents' (each {id, name, description}), 'count'
-                (returned) and 'total' (every component this runner can run;
-                total > count means the list is capped -- components beyond the
-                cap still run by exact id).
+            str: JSON object with 'agents' (each {id, name, description}; a row
+                with status 'draft' has no published version yet, so it will
+                not dispatch until published), 'count' (returned) and 'total'
+                (every component this runner can run; total > count means the
+                list is capped -- components beyond the cap still run by
+                exact id).
         """
         return self._list_payload("agent", "agents")
 
@@ -2041,10 +2092,12 @@ class StudioRunnerTools(Toolkit):
         registry under include_all_components). What can be run can be found.
 
         Returns:
-            str: JSON object with 'teams' (each {id, name, description}), 'count'
-                (returned) and 'total' (every component this runner can run;
-                total > count means the list is capped -- components beyond the
-                cap still run by exact id).
+            str: JSON object with 'teams' (each {id, name, description}; a row
+                with status 'draft' has no published version yet, so it will
+                not dispatch until published), 'count' (returned) and 'total'
+                (every component this runner can run; total > count means the
+                list is capped -- components beyond the cap still run by
+                exact id).
         """
         return self._list_payload("team", "teams")
 
@@ -2056,10 +2109,12 @@ class StudioRunnerTools(Toolkit):
         registry under include_all_components). What can be run can be found.
 
         Returns:
-            str: JSON object with 'workflows' (each {id, name, description}), 'count'
-                (returned) and 'total' (every component this runner can run;
-                total > count means the list is capped -- components beyond the
-                cap still run by exact id).
+            str: JSON object with 'workflows' (each {id, name, description}; a row
+                with status 'draft' has no published version yet, so it will
+                not dispatch until published), 'count' (returned) and 'total'
+                (every component this runner can run; total > count means the
+                list is capped -- components beyond the cap still run by
+                exact id).
         """
         return self._list_payload("workflow", "workflows")
 
