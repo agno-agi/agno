@@ -236,7 +236,7 @@ class TestDiscovery:
         function_names = {f["name"] for f in calculator["functions"]}
         assert "add" in function_names
         for entry in calculator["functions"]:
-            assert set(entry) == {"name", "description", "mutating"}
+            assert set(entry) == {"name", "description", "has_side_effects"}
 
     def test_list_functions(self, registry, db):
         def transform_content(value: str) -> str:

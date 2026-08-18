@@ -233,18 +233,18 @@ class TestSelfCompositionGuard:
         assert data["member_ids"] == ["plain"]
 
 
-class TestMutatingFlag:
-    def test_list_tools_surfaces_an_explicit_mutating_flag(self, db):
-        mutating_fn = Function(
+class TestSideEffectsFlag:
+    def test_list_tools_surfaces_an_explicit_side_effects_flag(self, db):
+        side_effectful_fn = Function(
             name="delete_everything",
             description="Deletes everything.",
-            mutating=True,
+            has_side_effects=True,
             parameters={"type": "object", "properties": {}},
             skip_entrypoint_processing=True,
         )
         registry = Registry(
-            name="Mutating Registry",
-            tools=[mutating_fn],
+            name="Side Effects Registry",
+            tools=[side_effectful_fn],
             models=[OpenAIResponses(id="gpt-5.5")],
             dbs=[db],
         )
@@ -253,7 +253,7 @@ class TestMutatingFlag:
         row = _tool_rows(studio)["delete_everything"]
         assert row["kind"] == "function"
         assert row["functions"] == [
-            {"name": "delete_everything", "description": "Deletes everything.", "mutating": True}
+            {"name": "delete_everything", "description": "Deletes everything.", "has_side_effects": True}
         ]
 
 

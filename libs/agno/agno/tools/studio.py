@@ -1197,7 +1197,7 @@ class StudioTools(Toolkit):
 
         Returns:
             str: StudioResult JSON; data.tools rows are {name, kind, buildable,
-            source, functions: [{name, description, mutating}]}. Only rows with
+            source, functions: [{name, description, has_side_effects}]}. Only rows with
             buildable=true may be wired into a component; the others exist so
             stored components can be rebuilt, and requesting one returns
             tool_not_allowed. Use exact names in tool_names arguments.
@@ -1213,7 +1213,7 @@ class StudioTools(Toolkit):
                         "description": getattr(fn, "description", None)
                         or (inspect.getdoc(getattr(fn, "entrypoint", None)) or "").split("\n")[0]
                         or None,
-                        "mutating": getattr(fn, "mutating", None),
+                        "has_side_effects": getattr(fn, "has_side_effects", None),
                     }
                     for fname, fn in tool.functions.items()
                 ]
@@ -1223,12 +1223,16 @@ class StudioTools(Toolkit):
                 name = tool.name
                 kind = "function"
                 functions = [
-                    {"name": tool.name, "description": getattr(tool, "description", None), "mutating": tool.mutating}
+                    {
+                        "name": tool.name,
+                        "description": getattr(tool, "description", None),
+                        "has_side_effects": tool.has_side_effects,
+                    }
                 ]
             elif callable(tool):
                 name = getattr(tool, "__name__", str(tool))
                 kind = "callable"
-                functions = [{"name": name, "description": inspect.getdoc(tool), "mutating": None}]
+                functions = [{"name": name, "description": inspect.getdoc(tool), "has_side_effects": None}]
             else:
                 continue
             rows.append(

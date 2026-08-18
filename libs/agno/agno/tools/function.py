@@ -761,7 +761,7 @@ RUNTIME_ONLY_FIELDS = (
     "cache_ttl",
     # A code-declared trait consumed by the Studio palette policy; the live
     # registry Function owns it, not the persisted config.
-    "mutating",
+    "has_side_effects",
 )
 
 
@@ -812,7 +812,7 @@ class Function(BaseModel):
     # Whether calling this function changes external state. None = undeclared.
     # Toolkits set it so palette policies can express "read-only tools only"
     # and discovery can label capability honestly.
-    mutating: Optional[bool] = None
+    has_side_effects: Optional[bool] = None
 
     # If True, the entrypoint processing is skipped and the Function is used as is.
     skip_entrypoint_processing: bool = False
