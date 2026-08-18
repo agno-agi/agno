@@ -1112,7 +1112,7 @@ class QueueWorker:
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
         )
-        if not fallback_allowed(result, job.get("attempt")):
+        if not fallback_allowed(result):
             # UPDATED, STALE_ATTEMPT (a newer attempt owns the row) or
             # TERMINAL_REFUSED (completed/cancelled wins) - all final; the
             # unfenced fallback below must not run. Returned AS-IS: the
@@ -1257,7 +1257,7 @@ class QueueWorker:
             if result is RunPersistOutcome.UPDATED:
                 log_info(f"Job queue: restored run row {job['id']} ERROR -> PAUSED for continuation re-drive")
                 return
-            if not fallback_allowed(result, job.get("attempt")):
+            if not fallback_allowed(result):
                 # STALE_ATTEMPT/TERMINAL_REFUSED: final - nothing to restore
                 # over (and nothing was restored, so no success log)
                 return

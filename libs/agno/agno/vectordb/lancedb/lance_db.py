@@ -39,7 +39,6 @@ class LanceDb(VectorDb):
         distance: The distance metric to use when searching for documents.
         nprobes: The number of probes to use when searching for documents.
         reranker: The reranker to use when reranking documents.
-        use_tantivy: Deprecated. LanceDB now uses native FTS. This parameter is ignored.
         on_bad_vectors: What to do if the vector is bad. One of "error", "drop", "fill", "null".
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
     """
@@ -61,7 +60,6 @@ class LanceDb(VectorDb):
         distance: Distance = Distance.cosine,
         nprobes: Optional[int] = None,
         reranker: Optional[Reranker] = None,
-        use_tantivy: bool = False,
         on_bad_vectors: Optional[str] = None,  # One of "error", "drop", "fill", "null".
         fill_value: Optional[float] = None,  # Only used if on_bad_vectors is "fill"
     ):
@@ -161,9 +159,6 @@ class LanceDb(VectorDb):
         self.on_bad_vectors: Optional[str] = on_bad_vectors
         self.fill_value: Optional[float] = fill_value
         self.fts_index_exists = False
-
-        if use_tantivy:
-            log_warning("use_tantivy is deprecated. LanceDB now uses native FTS. This parameter is ignored.")
 
         # Whether the live table has the ``user_id`` column; pre-v3 tables lack it.
         self._owner_column_exists: Optional[bool] = None

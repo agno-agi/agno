@@ -14,8 +14,8 @@ from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import (
@@ -64,7 +64,6 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
-    warn_session_state_param_deprecated,
 )
 
 if TYPE_CHECKING:
@@ -900,17 +899,13 @@ class Step:
         self,
         func: Callable,
         step_input: StepInput,
-        session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Call custom function with session_state support if the function accepts it"""
+        """Call custom function, passing run_context if the function accepts it"""
 
         kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
-        if session_state is not None and self._function_has_session_state_param():
-            kwargs["session_state"] = session_state
-            warn_session_state_param_deprecated(func, "custom function steps")
 
         return func(step_input, **kwargs)
 
@@ -918,17 +913,13 @@ class Step:
         self,
         func: Callable,
         step_input: StepInput,
-        session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Call custom async function with session_state support if the function accepts it"""
+        """Call custom async function, passing run_context if the function accepts it"""
 
         kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
-        if session_state is not None and self._function_has_session_state_param():
-            kwargs["session_state"] = session_state
-            warn_session_state_param_deprecated(func, "custom function steps")
 
         if _is_async_generator_function(func):
             return func(step_input, **kwargs)
@@ -986,7 +977,6 @@ class Step:
                             for chunk in self._call_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,  # type: ignore[arg-type]
                                 run_context,
                             ):  # type: ignore
                                 if isinstance(chunk, (BaseRunOutputEvent)):
@@ -1028,11 +1018,10 @@ class Step:
                         else:
                             response = StepOutput(content=content)
                     else:
-                        # Execute function with signature inspection for session_state support
+                        # Execute function with signature inspection for run_context support
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
 
@@ -1204,17 +1193,6 @@ class Step:
         except Exception:
             return False
 
-    def _function_has_session_state_param(self) -> bool:
-        """Check if the custom function has a session_state parameter"""
-        if self._executor_type != "function":
-            return False
-
-        try:
-            sig = inspect.signature(self.active_executor)  # type: ignore
-            return "session_state" in sig.parameters
-        except Exception:
-            return False
-
     def _enrich_event_with_context(
         self,
         event: Any,
@@ -1333,7 +1311,6 @@ class Step:
                             iterator = self._call_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
                             for event in iterator:  # type: ignore
@@ -1376,7 +1353,6 @@ class Step:
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
 
@@ -1646,7 +1622,6 @@ class Step:
                                 iterator = self._call_custom_function(
                                     self.active_executor,
                                     step_input,
-                                    session_state_copy,
                                     run_context,
                                 )
                                 for chunk in iterator:  # type: ignore
@@ -1674,7 +1649,6 @@ class Step:
                                     iterator = await self._acall_custom_function(
                                         self.active_executor,
                                         step_input,
-                                        session_state_copy,
                                         run_context,
                                     )
                                     async for chunk in iterator:  # type: ignore
@@ -1714,14 +1688,12 @@ class Step:
                             result = await self._acall_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
                         else:
                             result = self._call_custom_function(
                                 self.active_executor,  # type: ignore[arg-type]
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
 
@@ -1952,7 +1924,6 @@ class Step:
                         iterator = await self._acall_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         async for event in iterator:  # type: ignore
@@ -1988,7 +1959,6 @@ class Step:
                         result = await self._acall_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         if isinstance(result, StepOutput):
@@ -2003,7 +1973,6 @@ class Step:
                         iterator = self._call_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         for event in iterator:  # type: ignore
@@ -2042,7 +2011,6 @@ class Step:
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         if isinstance(result, StepOutput):

@@ -1675,16 +1675,9 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                 getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
             ):
                 continue
-            # Mirror JWTMiddleware.__init__ deprecated secret_key handling:
-            # append to verification_keys so manual setups using secret_key
-            # still get a working WebSocket validator.
-            verification_keys = list(kwargs.get("verification_keys") or [])
-            legacy_secret = kwargs.get("secret_key")
-            if legacy_secret and legacy_secret not in verification_keys:
-                verification_keys.append(legacy_secret)
             try:
                 lazy_validator = JWTValidator(
-                    verification_keys=verification_keys or None,
+                    verification_keys=kwargs.get("verification_keys"),
                     jwks_file=kwargs.get("jwks_file"),
                     algorithm=kwargs.get("algorithm", "RS256"),
                     validate=kwargs.get("validate", True),
@@ -1848,10 +1841,8 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     # Check the team tools
     if team.tools and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
 
@@ -1861,10 +1852,8 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             if isinstance(member, Agent):
                 if member.tools and isinstance(member.tools, list):
                     for tool in member.tools:
-                        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                        if hasattr(type(tool), "__mro__") and any(
-                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                        ):
+                        # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                        if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
 
@@ -1879,16 +1868,14 @@ def collect_mcp_tools_from_registry(registry: Optional[Registry], mcp_tools: Lis
     Registry tools are not attached to any agent, team or workflow, so the
     other collectors never see them. They still must be connected in the
     AgentOS lifespan: components created from registry tools (e.g. via
-    StudioTool) serialize a toolkit's functions at persist time, and an
+    StudioTools) serialize a toolkit's functions at persist time, and an
     unconnected MCP toolkit has none -- its tools would be silently dropped.
     """
     if registry is None or not registry.tools:
         return
     for tool in registry.tools:
-        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-        if hasattr(type(tool), "__mro__") and any(
-            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-        ):
+        # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+        if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
             if tool not in mcp_tools:
                 mcp_tools.append(tool)
 
@@ -1928,10 +1915,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.agent:
             if step.agent.tools and isinstance(step.agent.tools, list):
                 for tool in step.agent.tools:
-                    # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                    if hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                    ):
+                    # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                    if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
         # Check step's team
@@ -1953,10 +1938,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         # Direct agent in workflow steps
         if step.tools and isinstance(step.tools, list):
             for tool in step.tools:
-                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if hasattr(type(tool), "__mro__") and any(
-                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                ):
+                # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)
 
