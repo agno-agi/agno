@@ -47,21 +47,27 @@ class RedshiftTools(Toolkit):
 
     def __init__(
         self,
+        # Connection parameters
         host: Optional[str] = None,
         port: int = 5439,
         database: Optional[str] = None,
+        # Standard authentication (username/password)
         user: Optional[str] = None,
         password: Optional[str] = None,
+        # IAM Authentication
         iam: bool = False,
         cluster_identifier: Optional[str] = None,
         region: Optional[str] = None,
         db_user: Optional[str] = None,
+        # AWS Credentials (for IAM auth)
         access_key_id: Optional[str] = None,
         secret_access_key: Optional[str] = None,
         session_token: Optional[str] = None,
         profile: Optional[str] = None,
+        # Connection settings
         ssl: bool = True,
         table_schema: str = "public",
+        # Tool toggles
         show_tables: bool = True,
         describe_table: bool = True,
         summarize_table: bool = True,
