@@ -60,3 +60,18 @@ python cookbook/92_models/xai/image_agent_bytes.py
 ```shell
 python cookbook/92_models/xai/image_agent_with_memory.py
 ``
+
+### 9. Run Agent with SuperGrok sign-in (no API key)
+
+Sign in with a SuperGrok subscription through the OAuth device flow instead of
+setting `XAI_API_KEY`. The stored token is encrypted with a dedicated key:
+
+```shell
+export XAI_TOKEN_ENCRYPTION_KEY=***
+```
+
+Generate a key with `python -c "from agno.utils.encryption import generate_encryption_key; print(generate_encryption_key())"`
+
+```shell
+python cookbook/90_models/xai/oauth_device_login.py
+```
