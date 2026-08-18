@@ -8,6 +8,7 @@ Verifies that:
 - deep_copy shares the Skills instance by reference (shared resource)
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from agno.models.base import Function
@@ -19,7 +20,8 @@ from agno.team._messages import get_system_message
 from agno.team._tools import _determine_tools_for_model
 from agno.team.team import Team
 
-SAMPLE_SKILLS_DIR = "cookbook/02_agents/16_skills/sample_skills"
+# Anchored to the repo root so the test passes regardless of pytest's cwd
+SAMPLE_SKILLS_DIR = str(Path(__file__).parents[5] / "cookbook/02_agents/16_skills/sample_skills")
 
 SKILL_TOOL_NAMES = {"get_skill_instructions", "get_skill_reference", "get_skill_script"}
 
