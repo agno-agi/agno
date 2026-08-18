@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 from uuid import uuid4
@@ -22,6 +23,19 @@ if TYPE_CHECKING:
 EntrypointKey = Union[str, Tuple[str, str]]
 # The Function that owns the entrypoint, or the registered plain callable itself.
 EntrypointSource = Union[Function, Callable]
+
+
+class ToolSource(str, Enum):
+    """How a tool entered the registry.
+
+    DECLARED tools were registered directly on the registry and are buildable
+    from Studio. FOLDED tools were discovered on a registered component's own
+    tool list: they stay resolvable at rehydration, but Studio's palette policy
+    refuses to wire them into new components unless explicitly allow-listed.
+    """
+
+    DECLARED = "declared"
+    FOLDED = "folded"
 
 
 def _model_identity(model: Model) -> tuple:
@@ -362,8 +376,13 @@ class Registry:
                 return
         self.models.append(model)
 
-    def add_tool(self, tool: Any, source: str = "declared") -> None:
+    def add_tool(self, tool: Any, source: Union[ToolSource, str] = ToolSource.DECLARED) -> None:
         """Add a tool unless an equivalent one is already present.
+
+        ``source`` says how the tool arrived: ``ToolSource.DECLARED`` (the
+        default) for tools registered directly, ``ToolSource.FOLDED`` for tools
+        discovered on a registered component. The equivalent plain strings are
+        accepted for backward compatibility.
 
         Deduplication depends on the kind of tool, because they duplicate for
         different reasons:
@@ -417,7 +436,7 @@ class Registry:
                     continue
 
         self.tools.append(tool)
-        if source == "folded":
+        if source == ToolSource.FOLDED:
             # The fold makes every registered agent's own tools resolvable at
             # rehydration; resolvable is not the same as buildable. Studio's
             # palette policy reads this set.
