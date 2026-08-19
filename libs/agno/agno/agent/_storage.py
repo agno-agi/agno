@@ -20,6 +20,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentRehydrationError
@@ -1357,7 +1358,7 @@ def from_dict(
         store_events=config.get("store_events", False),
         role=config.get("role"),
         # --- Metadata ---
-        metadata=config.get("metadata"),
+        metadata=strip_reserved_run_metadata(config.get("metadata")),
         # --- Compression settings ---
         compress_tool_results=config.get("compress_tool_results", False),
         # compression_manager=config.get("compression_manager"),  # TODO

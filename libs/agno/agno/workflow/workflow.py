@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
@@ -1190,7 +1191,7 @@ class Workflow:
             # --- Schema settings ---
             input_schema=config.get("input_schema"),
             # --- Metadata and run-level params ---
-            metadata=config.get("metadata"),
+            metadata=strip_reserved_run_metadata(config.get("metadata")),
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context"),
             add_session_state_to_context=config.get("add_session_state_to_context"),

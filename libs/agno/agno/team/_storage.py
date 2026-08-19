@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent._storage import is_auto_generated_memory_manager_id, resolve_memory_manager_reference
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
@@ -1355,7 +1356,7 @@ def from_dict(
             delay_between_retries=config.get("delay_between_retries", 1),
             exponential_backoff=config.get("exponential_backoff", False),
             # --- Metadata ---
-            metadata=config.get("metadata"),
+            metadata=strip_reserved_run_metadata(config.get("metadata")),
             # --- Debug and telemetry settings ---
             debug_mode=config.get("debug_mode", False),
             debug_level=config.get("debug_level", 1),

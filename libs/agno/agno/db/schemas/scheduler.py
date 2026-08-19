@@ -52,6 +52,24 @@ STUDIO_SCHEDULE_MANAGED_BY = "studio"
 # continues on the SAME version instead of whatever is current by then.
 COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
 
+
+def strip_reserved_run_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A component's stored metadata without the keys the runtime owns.
+
+    ``agno_component_version`` records which version a run actually started
+    with, and the lifecycle routes trust it to continue a run on that same
+    version. Component metadata is merged OVER call-site metadata, so a stored
+    config carrying this key would both forge a stamp onto runs that were never
+    pinned and overwrite the one the route just wrote. Configs are user-supplied
+    and round-trip through the catalog, so the key is stripped where it enters
+    the object rather than trusted not to be there.
+    """
+    if not isinstance(metadata, dict) or COMPONENT_VERSION_METADATA_KEY not in metadata:
+        return metadata
+    cleaned = {key: value for key, value in metadata.items() if key != COMPONENT_VERSION_METADATA_KEY}
+    return cleaned or None
+
+
 # The columns a generic update_schedule may write. Everything else - ownership,
 # provenance, trigger and lock state - moves only through dedicated primitives,
 # so a name-keyed upsert can never repoint who a schedule belongs to or which
