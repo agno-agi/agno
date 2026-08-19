@@ -1,6 +1,7 @@
 """SuperGrok OAuth for the xAI model: device-code sign-in, token storage, and refresh."""
 
 import asyncio
+import itertools
 import json
 import os
 import threading
@@ -48,11 +49,27 @@ _cache_lock = threading.Lock()
 _async_lock_guard = threading.Lock()
 _async_cache_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
 
+# Monotonic per-store scope tokens for the cache key: a token is never
+# reissued, so a new store object reusing a collected store's id() can never
+# inherit its cache entries; the finalizer registered at issuance evicts a
+# dead store's entries so the cache does not accumulate. The guard is
+# dedicated (never _cache_lock): _cache_scope runs on the lock-free fast path.
+_db_scope_registry: "weakref.WeakKeyDictionary[Any, str]" = weakref.WeakKeyDictionary()
+_db_scope_counter = itertools.count()
+_scope_guard = threading.Lock()
+
+
+def _evict_scope(scope: str) -> None:
+    """Drop a collected store's cache entries (finalizer target - must not raise)."""
+    for key in [k for k in _token_cache if k[0] == scope]:
+        _token_cache.pop(key, None)
+
 
 def _reset_cache_for_tests() -> None:
     """Clear the module-level token cache and lock state so tests stay order-independent."""
     _token_cache.clear()
     _async_cache_locks.clear()
+    _db_scope_registry.clear()
 
 
 def _get_async_cache_lock() -> asyncio.Lock:
@@ -61,11 +78,15 @@ def _get_async_cache_lock() -> asyncio.Lock:
     An asyncio.Lock binds to the event loop that first sees contention on it,
     and one process can run many loops - sequentially (asyncio.run per call)
     or concurrently in separate threads - so each loop gets its own lock in a
-    weak registry (dead loops fall out on their own). Single-flight stays per
-    loop, which matches the lock-free cross-process design.
+    weak registry. Weak keying releases never-contended entries; a CONTENDED
+    lock strongly references its loop (registry -> lock -> loop), so closed
+    loops are swept on each fetch. Single-flight stays per loop, which
+    matches the lock-free cross-process design.
     """
     loop = asyncio.get_running_loop()
     with _async_lock_guard:
+        for dead in [known for known in list(_async_cache_locks) if known.is_closed()]:
+            _async_cache_locks.pop(dead, None)
         lock = _async_cache_locks.get(loop)
         if lock is None:
             lock = asyncio.Lock()
@@ -124,12 +145,21 @@ class XAITokenManager:
 
         Managers on the same store share the fast path; managers on different
         stores must never serve each other's tokens (they can hold different
-        accounts). id() of a live db object is stable; a collected db's id
-        could recur, at worst re-keying a dead cache entry.
+        accounts). DB stores get a monotonic token that is never reissued, so
+        a new store object reusing a collected store's memory address cannot
+        inherit its entries; a finalizer evicts the dead store's entries.
         """
-        if self.db is not None:
-            return f"db-{id(self.db)}"
-        return f"file-{self._token_file()}"
+        if self.db is None:
+            return f"file-{self._token_file()}"
+        scope = _db_scope_registry.get(self.db)
+        if scope is None:
+            with _scope_guard:
+                scope = _db_scope_registry.get(self.db)
+                if scope is None:
+                    scope = f"db-{next(_db_scope_counter)}"
+                    _db_scope_registry[self.db] = scope
+                    weakref.finalize(self.db, _evict_scope, scope)
+        return scope
 
     def _cache_key(self) -> Tuple[str, str, str, str]:
         return (self._cache_scope(), *self._store_key())
