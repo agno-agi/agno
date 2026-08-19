@@ -306,6 +306,14 @@ upsert names a conflict target that does not exist — while MySQL's
 numbers on the first owner's row without erroring. What an operator notices either way
 is that metrics stop moving, not that something failed.
 
+One caveat on the `is_valid_table` guard: a running process validates each table on
+its first access and then caches the resolved table. Migrations that run through
+`MigrationManager` on the live instance (including `POST /databases/{id}/migrate`)
+invalidate that cache themselves. A schema change made behind the process's back —
+another process migrating the shared database, or an ALTER by hand — is not seen
+until the process restarts or something calls `_invalidate_resolved_table` on the
+adapter.
+
 It runs with the rest of the version — `MigrationManager(db).up()` — or on its own:
 
 ```python

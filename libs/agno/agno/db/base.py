@@ -100,6 +100,49 @@ class BaseDb(ABC):
         self.mcp_oauth_codes_table_name = mcp_oauth_codes_table or "agno_mcp_oauth_codes"
         self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
         self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
+        # Table objects resolved by the adapter, keyed by table name. Concurrent
+        # resolutions may both store; both hold the same metadata-registered object.
+        self._resolved_tables: Dict[str, Any] = {}
+
+    def _invalidate_resolved_table(self, table_name: str) -> None:
+        """Forget a resolved table so the next access re-resolves it from the database.
+
+        Reflected tables stay pinned on the adapter's SQLAlchemy metadata even
+        after the underlying table changes, so this also unregisters the table
+        from the metadata when the adapter has one.
+        """
+        resolved_tables = getattr(self, "_resolved_tables", None)
+        if resolved_tables is not None:
+            resolved_tables.pop(table_name, None)
+        metadata = getattr(self, "metadata", None)
+        if metadata is not None:
+            for table in list(metadata.tables.values()):
+                if table.name == table_name:
+                    metadata.remove(table)
+
+    def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:
+        """Tables that the given table type's schema declares foreign keys to.
+
+        Returns (table_type, configured_table_name) pairs. Each referenced
+        Table must be registered on the adapter's SQLAlchemy metadata before
+        the dependent table can be constructed.
+        """
+        edges = {
+            "runs": [("sessions", "session_table_name")],
+            "spans": [("traces", "trace_table_name")],
+            "schedule_runs": [("schedules", "schedules_table_name")],
+            "component_configs": [("components", "components_table_name")],
+            "component_links": [
+                ("components", "components_table_name"),
+                ("component_configs", "component_configs_table_name"),
+            ],
+        }
+        dependencies = []
+        for ref_type, attr in edges.get(table_type, []):
+            ref_name = getattr(self, attr, None)
+            if ref_name:
+                dependencies.append((ref_type, ref_name))
+        return dependencies
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -1655,6 +1698,49 @@ class AsyncBaseDb(ABC):
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+        # Table objects resolved by the adapter, keyed by table name. Concurrent
+        # resolutions may both store; both hold the same metadata-registered object.
+        self._resolved_tables: Dict[str, Any] = {}
+
+    def _invalidate_resolved_table(self, table_name: str) -> None:
+        """Forget a resolved table so the next access re-resolves it from the database.
+
+        Reflected tables stay pinned on the adapter's SQLAlchemy metadata even
+        after the underlying table changes, so this also unregisters the table
+        from the metadata when the adapter has one.
+        """
+        resolved_tables = getattr(self, "_resolved_tables", None)
+        if resolved_tables is not None:
+            resolved_tables.pop(table_name, None)
+        metadata = getattr(self, "metadata", None)
+        if metadata is not None:
+            for table in list(metadata.tables.values()):
+                if table.name == table_name:
+                    metadata.remove(table)
+
+    def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:
+        """Tables that the given table type's schema declares foreign keys to.
+
+        Returns (table_type, configured_table_name) pairs. Each referenced
+        Table must be registered on the adapter's SQLAlchemy metadata before
+        the dependent table can be constructed.
+        """
+        edges = {
+            "runs": [("sessions", "session_table_name")],
+            "spans": [("traces", "trace_table_name")],
+            "schedule_runs": [("schedules", "schedules_table_name")],
+            "component_configs": [("components", "components_table_name")],
+            "component_links": [
+                ("components", "components_table_name"),
+                ("component_configs", "component_configs_table_name"),
+            ],
+        }
+        dependencies = []
+        for ref_type, attr in edges.get(table_type, []):
+            ref_name = getattr(self, attr, None)
+            if ref_name:
+                dependencies.append((ref_type, ref_name))
+        return dependencies
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""

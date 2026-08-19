@@ -210,6 +210,13 @@ class SqliteDb(BaseDb):
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
 
+        # In-memory SQLite gets a SingletonThreadPool: one private database per
+        # thread, so "this table exists" is not a process-wide fact and resolved
+        # tables must not be cached across threads.
+        from sqlalchemy.pool import SingletonThreadPool
+
+        self._cache_resolved_tables: bool = not isinstance(self.db_engine.pool, SingletonThreadPool)
+
     # -- Serialization methods --
     def to_dict(self) -> Dict[str, Any]:
         base = super().to_dict()
@@ -290,6 +297,9 @@ class SqliteDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-resolve even if cached: callers use this to guarantee the
+            # tables exist, including after an external drop.
+            self._invalidate_resolved_table(table_name)
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -312,12 +322,16 @@ class SqliteDb(BaseDb):
         # The runs table declares a FK to sessions — ensure the real sessions
         # Table object is registered in ``self.metadata`` first so SQLAlchemy
         # can resolve the FK reference at ``Table(...)`` construction.
-        if table_type == "runs" and self.session_table_name not in self.metadata.tables:
-            self._get_or_create_table(
-                table_name=self.session_table_name,
-                table_type="sessions",
-                create_table_if_not_found=True,
-            )
+        # A table whose schema declares foreign keys needs each referenced
+        # Table registered in ``self.metadata`` before ``Table(...)`` can
+        # resolve the references.
+        for ref_table_type, ref_table_name in self._fk_dependencies(table_type):
+            if ref_table_name not in self.metadata.tables:
+                self._get_or_create_table(
+                    table_name=ref_table_name,
+                    table_type=ref_table_type,
+                    create_table_if_not_found=True,
+                )
         try:
             from sqlalchemy.schema import ForeignKeyConstraint, PrimaryKeyConstraint
 
@@ -695,6 +709,10 @@ class SqliteDb(BaseDb):
         """
         Check if the table exists and is valid, else create it.
 
+        Successful resolutions are cached on the instance, so only the first
+        access to a table pays the existence and validation queries. Call
+        _invalidate_resolved_table after changing a table outside this adapter.
+
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
@@ -702,13 +720,21 @@ class SqliteDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        if self._cache_resolved_tables:
+            cached_table = self._resolved_tables.get(table_name)
+            if cached_table is not None:
+                return cached_table
+
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            return self._create_table(table_name=table_name, table_type=table_type)
+            table = self._create_table(table_name=table_name, table_type=table_type)
+            if table is not None and self._cache_resolved_tables:
+                self._resolved_tables[table_name] = table
+            return table
 
         # SQLite version of table validation (no schema)
         if not is_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
@@ -716,6 +742,10 @@ class SqliteDb(BaseDb):
 
         try:
             table = Table(table_name, self.metadata, autoload_with=self.db_engine)
+            # A concurrent first resolution can observe another thread's
+            # half-built Table; cache only a fully built, still-registered one.
+            if self._cache_resolved_tables and table.columns and self.metadata.tables.get(table.key) is table:
+                self._resolved_tables[table_name] = table
             return table
 
         except Exception as e:
@@ -795,9 +825,11 @@ class SqliteDb(BaseDb):
                         "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
                     )
 
+            dropped = False
             try:
                 sess.execute(text(f"ALTER TABLE {self.session_table_name} DROP COLUMN runs"))
                 log_info(f"Dropped legacy runs column from {self.session_table_name}")
+                dropped = True
             except Exception:
                 # SQLite < 3.35 does not support DROP COLUMN; clear the column instead.
                 sess.execute(text(f"UPDATE {self.session_table_name} SET runs = NULL"))
@@ -805,7 +837,11 @@ class SqliteDb(BaseDb):
                     f"Could not drop runs column from {self.session_table_name} "
                     "(SQLite < 3.35); cleared its content instead."
                 )
-            return True
+        # Invalidate only after the transaction commits, so a concurrent
+        # resolution cannot re-cache the pre-drop shape.
+        if dropped:
+            self._invalidate_resolved_table(self.session_table_name)
+        return True
 
     # -- Run methods --
     def _get_session_runs_data(

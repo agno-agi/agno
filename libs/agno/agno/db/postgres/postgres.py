@@ -314,6 +314,9 @@ class PostgresDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-resolve even if cached: callers use this to guarantee the
+            # tables exist, including after an external drop.
+            self._invalidate_resolved_table(table_name)
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -329,12 +332,15 @@ class PostgresDb(BaseDb):
         # The runs table declares a FK to sessions — ensure the sessions
         # Table is registered in ``self.metadata`` first so SQLAlchemy can
         # resolve the FK reference at ``Table(...)`` construction.
-        if table_type == "runs":
-            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
-            if fq_sessions not in self.metadata.tables:
+        # A table whose schema declares foreign keys needs each referenced
+        # Table registered in ``self.metadata`` before ``Table(...)`` can
+        # resolve the references.
+        for ref_table_type, ref_table_name in self._fk_dependencies(table_type):
+            fq_ref = f"{self.db_schema}.{ref_table_name}" if self.db_schema else ref_table_name
+            if fq_ref not in self.metadata.tables:
                 self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
+                    table_name=ref_table_name,
+                    table_type=ref_table_type,
                     create_table_if_not_found=True,
                 )
         try:
@@ -722,6 +728,10 @@ class PostgresDb(BaseDb):
         """
         Check if the table exists and is valid, else create it.
 
+        Successful resolutions are cached on the instance, so only the first
+        access to a table pays the existence and validation queries. Call
+        _invalidate_resolved_table after changing a table outside this adapter.
+
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
@@ -729,6 +739,9 @@ class PostgresDb(BaseDb):
         Returns:
             Optional[Table]: SQLAlchemy Table object representing the schema.
         """
+        cached_table = self._resolved_tables.get(table_name)
+        if cached_table is not None:
+            return cached_table
 
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
@@ -736,7 +749,10 @@ class PostgresDb(BaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            return self._create_table(table_name=table_name, table_type=table_type)
+            table = self._create_table(table_name=table_name, table_type=table_type)
+            if table is not None:
+                self._resolved_tables[table_name] = table
+            return table
 
         if not is_valid_table(
             db_engine=self.db_engine,
@@ -748,6 +764,10 @@ class PostgresDb(BaseDb):
 
         try:
             table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
+            # A concurrent first resolution can observe another thread's
+            # half-built Table; cache only a fully built, still-registered one.
+            if table.columns and self.metadata.tables.get(table.key) is table:
+                self._resolved_tables[table_name] = table
             return table
 
         except Exception as e:
@@ -837,7 +857,10 @@ class PostgresDb(BaseDb):
 
             log_info(f"Dropping legacy runs column from {self.session_table_name}")
             sess.execute(text(f'ALTER TABLE {self.db_schema}."{self.session_table_name}" DROP COLUMN runs'))
-            return True
+        # Invalidate only after the transaction commits, so a concurrent
+        # resolution cannot re-cache the pre-drop shape.
+        self._invalidate_resolved_table(self.session_table_name)
+        return True
 
     # -- Run methods --
     def _get_session_runs_data(

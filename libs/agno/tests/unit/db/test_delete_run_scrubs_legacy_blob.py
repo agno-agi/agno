@@ -216,8 +216,7 @@ class TestSqliteDbDeleteRunScrubsLegacyBlob:
         # Refresh SQLAlchemy metadata so the read path sees the legacy column.
         db.metadata = MetaData()
         db.metadata.reflect(bind=db.db_engine)
-        if hasattr(db, "_tables"):
-            db._tables = {}
+        db._resolved_tables = {}
 
         return db
 

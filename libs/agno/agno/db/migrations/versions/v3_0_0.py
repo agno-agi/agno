@@ -401,9 +401,12 @@ def _forget_table(db, table_name: Optional[str], attribute: str) -> None:
     """Drop a table from the adapter's SQLAlchemy state after it goes away.
 
     ``DROP TABLE`` and ``RENAME TO`` leave the Table object registered on
-    ``db.metadata``, so a later up() in the same process fails with
-    "Table is already defined".
+    ``db.metadata`` and in the adapter's resolved-table cache, so a later
+    up() in the same process fails with "Table is already defined".
     """
+    resolved_tables = getattr(db, "_resolved_tables", None)
+    if resolved_tables is not None and table_name is not None:
+        resolved_tables.pop(table_name, None)
     metadata = getattr(db, "metadata", None)
     if metadata is not None and table_name is not None:
         for table in list(metadata.tables.values()):
