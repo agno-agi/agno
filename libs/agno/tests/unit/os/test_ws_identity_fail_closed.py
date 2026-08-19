@@ -16,13 +16,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from agno.os.middleware.user_scope import MISSING_USER_IDENTITY, SESSION_ID_REQUIRED_RECONNECT
-from agno.os.scopes import AgentOSScope
 from agno.os.routers.workflows.router import (
     WebSocketAuthContext,
     handle_workflow_continue_via_websocket,
     handle_workflow_subscription,
     handle_workflow_via_websocket,
 )
+from agno.os.scopes import AgentOSScope
 
 
 class FakeWebSocket:
@@ -338,10 +338,11 @@ class TestDispatcherPassesTheTokenContextToContinue:
     pin the wiring as well as the handler."""
 
     async def test_continue_branch_forwards_ws_user_context(self, tmp_path, monkeypatch):
+        from fastapi.testclient import TestClient
+
         import agno.os.router as os_router
         from agno.db.sqlite import SqliteDb
         from agno.os import AgentOS
-        from fastapi.testclient import TestClient
 
         captured: List[dict] = []
 

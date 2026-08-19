@@ -105,14 +105,27 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             kwargs.pop("dependencies")
             log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}: {str(e)}")
 
-    if metadata := kwargs.get("metadata"):
-        try:
-            if isinstance(metadata, str):
-                metadata_dict = json.loads(metadata)  # type: ignore
-                kwargs["metadata"] = metadata_dict
-        except json.JSONDecodeError as e:
-            kwargs.pop("metadata")
-            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {str(e)}")
+    # Presence, not truthiness: an empty form value is not a JSON object either and
+    # has to be dropped here rather than reach the run methods as a bare string.
+    if "metadata" in kwargs:
+        metadata = kwargs["metadata"]
+        decoded_metadata: Any = metadata
+        metadata_decoded = True
+        if isinstance(metadata, str):
+            try:
+                decoded_metadata = json.loads(metadata)
+            except json.JSONDecodeError as e:
+                metadata_decoded = False
+                kwargs.pop("metadata")
+                log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {str(e)}")
+        if metadata_decoded:
+            if decoded_metadata is not None and not isinstance(decoded_metadata, dict):
+                # metadata is a caller-writable form field holding a JSON object. An
+                # array, string or number cannot be merged with the run's own metadata
+                # and the run methods cannot consume it, so this is a client error and
+                # must be answered as one instead of failing deeper in the stack.
+                raise HTTPException(status_code=400, detail="Invalid metadata parameter: expected a JSON object")
+            kwargs["metadata"] = decoded_metadata
 
     # Handle media parameters. AgnoClient (e.g. remote agent/team members) sends them as
     # JSON strings of media dicts with base64-encoded content, the format produced by
@@ -1718,6 +1731,52 @@ def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: O
     ]
 
 
+def resolve_ws_deployment_scope_config(app: FastAPI) -> Tuple[Optional[str], bool]:
+    """The deployment's admin scope and user-isolation flag, as the HTTP surface sees them.
+
+    Both settings are configured independently of any JWT key source: a
+    deployment authenticated by security key or by service-account tokens
+    carries a custom admin scope and user isolation exactly as a JWT one does,
+    and the auth layer stamps both on ``app.state`` in every one of those modes.
+    Reading them only where a JWT validator exists left the WebSocket surface
+    ruling on the DEFAULT scope name while REST ruled on the configured one -
+    so the configured admin scope was demoted on WebSockets, and the default
+    scope name was promoted there.
+
+    Order of precedence:
+      1. ``app.state``, populated eagerly by AgentOS for every authenticated
+         mode and lazily by the auth middleware on the first HTTP request.
+      2. the auth middleware's own ``add_middleware`` kwargs, which cover the
+         manual setup path before any HTTP request has run and the keyless
+         (security-key / service-account) layer that never populates state.
+
+    A deployment with no auth layer at all configures neither, so both surfaces
+    fall back to the default admin scope and to isolation off.
+    """
+    state = getattr(app, "state", None)
+    admin_scope_raw = getattr(state, "admin_scope", None) if state is not None else None
+    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) and admin_scope_raw else None
+    user_isolation = bool(getattr(state, "user_isolation_enabled", False)) if state is not None else False
+
+    if admin_scope is not None and user_isolation:
+        return admin_scope, user_isolation
+
+    from agno.os.middleware.jwt import AuthMiddleware
+
+    for entry in getattr(app, "user_middleware", None) or []:
+        if getattr(entry, "cls", None) is not AuthMiddleware:
+            continue
+        kwargs = getattr(entry, "kwargs", {}) or {}
+        if admin_scope is None:
+            candidate = kwargs.get("admin_scope")
+            if isinstance(candidate, str) and candidate:
+                admin_scope = candidate
+        if not user_isolation:
+            user_isolation = bool(kwargs.get("user_isolation", False))
+
+    return admin_scope, user_isolation
+
+
 def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     """Resolve JWT auth config for the WebSocket entrypoint.
 
@@ -1734,19 +1793,32 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     This helper bridges that gap by walking ``app.user_middleware`` to find a
     ``JWTMiddleware`` entry, building a validator from its kwargs the same way
     the middleware does, and caching the result on ``app.state``.
+
+    The admin scope and the user-isolation flag are resolved separately, on
+    every path: they are deployment settings that outlive the JWT question, and
+    a WebSocket that read them only when a validator exists disagreed with REST
+    on every security-key and service-account deployment.
     """
+    state = getattr(app, "state", None)
+    if state is None:
+        return {
+            "validator": None,
+            "verify_audience": False,
+            "audience": None,
+            "admin_scope": None,
+            "user_isolation": False,
+            "auth_required": False,
+        }
+
+    deployment_admin_scope, deployment_user_isolation = resolve_ws_deployment_scope_config(app)
     blank: Dict[str, Any] = {
         "validator": None,
         "verify_audience": False,
         "audience": None,
-        "admin_scope": None,
-        "user_isolation": False,
+        "admin_scope": deployment_admin_scope,
+        "user_isolation": deployment_user_isolation,
         "auth_required": False,
     }
-
-    state = getattr(app, "state", None)
-    if state is None:
-        return blank
 
     validator = getattr(state, "jwt_validator", None)
     if validator is not None:
@@ -1754,8 +1826,8 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
             "validator": validator,
             "verify_audience": getattr(state, "jwt_verify_audience", False),
             "audience": getattr(state, "jwt_audience", None),
-            "admin_scope": getattr(state, "admin_scope", None),
-            "user_isolation": bool(getattr(state, "user_isolation_enabled", False)),
+            "admin_scope": deployment_admin_scope,
+            "user_isolation": deployment_user_isolation,
             "auth_required": True,
         }
 
@@ -1801,8 +1873,12 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
 
             verify_audience = bool(kwargs.get("verify_audience", False))
             audience = kwargs.get("audience")
-            admin_scope = kwargs.get("admin_scope")
-            user_isolation = bool(kwargs.get("user_isolation", False))
+            # The admin scope and isolation flag come from the deployment-wide
+            # resolution, which already read this entry's kwargs: an app carrying
+            # more than one auth layer must not answer differently depending on
+            # which one happens to hold the JWT key.
+            admin_scope = deployment_admin_scope
+            user_isolation = deployment_user_isolation
 
             # Cache on app.state so subsequent WebSocket connections and the
             # HTTP middleware see the same validator instance.
@@ -2529,6 +2605,16 @@ def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> N
     the caller sent their own (now-sanitized) metadata.
     """
     inbound = kwargs.get("metadata")
+    if inbound is not None and not isinstance(inbound, dict):
+        # Only a mapping can carry (or forge) the stamp. The run routes reject a
+        # non-object ``metadata`` at the request seam, so this only guards callers
+        # that build kwargs themselves: with no version pinned there is nothing to
+        # write, so the value is left exactly as it arrived; with one pinned the
+        # stamp is authoritative for lifecycle re-resolution and must not be
+        # dropped, so it replaces a value nothing downstream could have read.
+        if version is None:
+            return
+        inbound = None
     had_metadata = inbound is not None
     metadata = dict(inbound or {})
     # Strip any forged stamp before trusting the route's own pinned version.
