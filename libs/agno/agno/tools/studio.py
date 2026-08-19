@@ -2516,6 +2516,21 @@ class StudioTools(Toolkit):
                 if not drafts:
                     return error_result("invalid_request", "No draft version to publish.")
                 target = max(d.get("version", 0) for d in drafts)
+                # The newest draft is not necessarily ahead of the live version:
+                # a draft saved before a later publish stays the newest draft
+                # while sitting behind the pointer. Promoting it would move the
+                # live version backwards, which an unversioned publish must
+                # never do silently - deliberate rollback is set_current_version.
+                live_version = (self.db.get_component(component_id) or {}).get("current_version")
+                if isinstance(live_version, int) and target < live_version:
+                    return error_result(
+                        "invalid_request",
+                        f"The newest draft of '{component_id}' is v{target}, behind the live v{live_version}; "
+                        f"publishing it would move the live version backwards. Edit it again to get a draft "
+                        f"ahead of v{live_version}, or use set_current_version to roll back deliberately.",
+                        draft_version=target,
+                        current_version=live_version,
+                    )
             else:
                 match = next((c for c in configs if c.get("version") == target), None)
                 if match is None:
