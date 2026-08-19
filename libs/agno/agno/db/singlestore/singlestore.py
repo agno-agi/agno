@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
+from agno.utils.dttm import current_datetime_utc
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -475,7 +476,7 @@ class SingleStoreDb(BaseDb):
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return
-        current_datetime = datetime.now().isoformat()
+        current_datetime = current_datetime_utc().isoformat()
         with self.Session() as sess, sess.begin():
             stmt = mysql.insert(table).values(
                 table_name=table_name,

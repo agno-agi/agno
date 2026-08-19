@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import AsyncBaseDb, ComponentType, SessionType
+from agno.utils.dttm import current_datetime_utc
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
@@ -531,7 +532,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return
-        current_datetime = datetime.now().isoformat()
+        current_datetime = current_datetime_utc().isoformat()
         async with self.async_session_factory() as sess, sess.begin():
             stmt = postgresql.insert(table).values(
                 table_name=table_name,

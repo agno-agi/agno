@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.utils.dttm import current_datetime_utc
 from agno.db.migrations.manager import MigrationManager
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.mysql.utils import (
@@ -418,7 +419,7 @@ class AsyncMySQLDb(AsyncBaseDb):
     async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
         table = await self._get_table(table_type="versions", create_table_if_not_found=True)
-        current_datetime = datetime.now().isoformat()
+        current_datetime = current_datetime_utc().isoformat()
         async with self.async_session_factory() as sess, sess.begin():
             stmt = mysql.insert(table).values(  # type: ignore
                 table_name=table_name,

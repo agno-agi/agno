@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 from agno.db import mcp_oauth_store
 from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.utils.dttm import current_datetime_utc
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -709,7 +710,7 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return
-        current_datetime = datetime.now().isoformat()
+        current_datetime = current_datetime_utc().isoformat()
         with self.Session() as sess, sess.begin():
             stmt = sqlite.insert(table).values(
                 table_name=table_name,

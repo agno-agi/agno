@@ -135,3 +135,48 @@ def test_full_workflow(sqlite_db_real):
 
         assert result is not None
         assert result.session_type == "agent"
+
+
+def test_upsert_schema_version_stores_utc_timestamps(sqlite_db_real):
+    """Schema-version rows must store UTC ISO timestamps with an offset.
+
+    Regression test for the naive-local-time bug: every db adapter used
+    ``datetime.now().isoformat()`` (naive local wall clock) for the
+    versions table, while the rest of the db layer stores UTC. A stored
+    value must parse as a UTC-aware datetime and be comparable with the
+    epoch-based timestamps used elsewhere.
+    """
+    from datetime import datetime, timezone
+
+    from agno.utils.dttm import parse_datetime_utc
+
+    sqlite_db_real.upsert_schema_version("test_schema_table", "1.0.0")
+
+    with sqlite_db_real.Session() as sess:
+        table = sqlite_db_real._get_table(table_type="versions", create_table_if_not_found=True)
+        row = sess.execute(table.select().where(table.c.table_name == "test_schema_table")).fetchone()
+        assert row is not None
+        created_at = row.created_at
+        updated_at = row.updated_at
+
+    # Stored strings must carry an explicit UTC offset (aware), not be naive.
+    assert created_at.endswith("+00:00"), f"expected UTC offset, got {created_at!r}"
+    assert updated_at.endswith("+00:00"), f"expected UTC offset, got {updated_at!r}"
+
+    # Must parse as a UTC-aware datetime (naive local strings fail here).
+    parsed = parse_datetime_utc(created_at)
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == timezone.utc.utcoffset(parsed)
+    assert parsed.utcoffset() == timezone.utc.utcoffset(parsed)
+
+    # Round-trip through the schema layer's epoch helper stays consistent:
+    # converting the stored instant to epoch seconds then back must yield the
+    # same instant (a naive local time would shift by the local offset).
+    from agno.utils.dttm import to_epoch_s
+
+    epoch = to_epoch_s(created_at)
+    restored = datetime.fromtimestamp(epoch, tz=timezone.utc)
+    # Epoch seconds drop sub-second precision, so compare at second granularity.
+    assert restored.replace(microsecond=0) == parsed.replace(microsecond=0), (
+        f"epoch round-trip mismatch: {restored} != {parsed}"
+    )

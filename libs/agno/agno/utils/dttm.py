@@ -30,7 +30,7 @@ def parse_datetime_utc(value: Any) -> datetime:
 
 
 def current_datetime() -> datetime:
-    return datetime.now()
+    return datetime.now(timezone.utc)
 
 
 def current_datetime_utc() -> datetime:
@@ -38,7 +38,7 @@ def current_datetime_utc() -> datetime:
 
 
 def current_datetime_utc_str() -> str:
-    return current_datetime_utc().strftime("%Y-%m-%dT%H:%M:%S")
+    return current_datetime_utc().isoformat(timespec="seconds")
 
 
 def now_epoch_s() -> int:
