@@ -466,8 +466,11 @@ class SchedulerTools(Toolkit):
                 )
 
         # A schedule aimed at an archived component can only 404 at fire time:
-        # refuse the create instead of accepting an armed dead schedule.
-        refusal = archived_endpoint_refusal(self.manager.db, resolved_endpoint)
+        # refuse the create instead of accepting an armed dead schedule. Scoped
+        # to the acting owner: an unscoped probe answers "archived" for another
+        # owner's component and "fine" for an id that does not exist, which
+        # discloses that the component exists.
+        refusal = archived_endpoint_refusal(self.manager.db, resolved_endpoint, user_id=self._owner(run_context))
         if refusal is not None:
             target_type, target_id = refusal
             return json.dumps(
@@ -476,6 +479,23 @@ class SchedulerTools(Toolkit):
                     f"{target_type} '{target_id}' is archived. "
                     "Restore the component first.",
                     "error_type": "target_archived",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                }
+            )
+        # A schedule fires the live published version, so a draft-only target
+        # can only 404 on every tick - and once the cascade disables the row,
+        # the enable guard refuses to re-arm it. The REST create route refuses
+        # this identically; keep the two surfaces in step.
+        draft_target = draft_endpoint_refusal(self.manager.db, resolved_endpoint, user_id=self._owner(run_context))
+        if draft_target is not None:
+            target_type, target_id = draft_target
+            return json.dumps(
+                {
+                    "error": f"Cannot create schedule '{name}': its target "
+                    f"{target_type} '{target_id}' has no published version. "
+                    "Publish it first.",
+                    "error_type": "target_not_published",
                     "target_type": target_type,
                     "target_id": target_id,
                 }
@@ -799,8 +819,11 @@ class SchedulerTools(Toolkit):
                 )
 
         # A schedule aimed at an archived component can only 404 at fire time:
-        # refuse the create instead of accepting an armed dead schedule.
-        refusal = await aarchived_endpoint_refusal(self.manager.db, resolved_endpoint)
+        # refuse the create instead of accepting an armed dead schedule. Scoped
+        # to the acting owner: an unscoped probe answers "archived" for another
+        # owner's component and "fine" for an id that does not exist, which
+        # discloses that the component exists.
+        refusal = await aarchived_endpoint_refusal(self.manager.db, resolved_endpoint, user_id=self._owner(run_context))
         if refusal is not None:
             target_type, target_id = refusal
             return json.dumps(
@@ -809,6 +832,25 @@ class SchedulerTools(Toolkit):
                     f"{target_type} '{target_id}' is archived. "
                     "Restore the component first.",
                     "error_type": "target_archived",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                }
+            )
+        # A schedule fires the live published version, so a draft-only target
+        # can only 404 on every tick - and once the cascade disables the row,
+        # the enable guard refuses to re-arm it. The REST create route refuses
+        # this identically; keep the two surfaces in step.
+        draft_target = await adraft_endpoint_refusal(
+            self.manager.db, resolved_endpoint, user_id=self._owner(run_context)
+        )
+        if draft_target is not None:
+            target_type, target_id = draft_target
+            return json.dumps(
+                {
+                    "error": f"Cannot create schedule '{name}': its target "
+                    f"{target_type} '{target_id}' has no published version. "
+                    "Publish it first.",
+                    "error_type": "target_not_published",
                     "target_type": target_type,
                     "target_id": target_id,
                 }

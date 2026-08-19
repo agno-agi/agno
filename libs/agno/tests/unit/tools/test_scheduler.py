@@ -956,6 +956,182 @@ class TestCreateArchivedTargetGuard:
         assert out.get("status") == "created", out
 
 
+class TestCreateDraftTargetGuard:
+    """Creating a schedule against a draft-only target is refused up front.
+
+    An armed schedule at an unpublished component 404s on every tick, and once
+    the cascade disables it the enable guard refuses to ever re-arm it.
+    """
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        return SqliteDb(id="sched-tools-draft-guard", db_file=str(tmp_path / "draft_guard.db"))
+
+    @pytest.fixture
+    def real_tools(self, db):
+        return SchedulerTools(db=db, default_payload={"message": "go"})
+
+    @staticmethod
+    def _draft_only(db, component_id):
+        db.upsert_component(component_id=component_id, component_type=ComponentType.AGENT, name=component_id)
+        db.upsert_config(component_id, config={"name": component_id}, stage="draft")
+
+    @staticmethod
+    def _published(db, component_id):
+        db.upsert_component(component_id=component_id, component_type=ComponentType.AGENT, name=component_id)
+        db.upsert_config(component_id, config={"name": component_id}, stage="published")
+
+    @staticmethod
+    def _create(real_tools, name, endpoint):
+        return json.loads(
+            real_tools.create_schedule(name=name, cron="0 9 * * *", endpoint=endpoint, payload='{"message": "x"}')
+        )
+
+    @staticmethod
+    async def _acreate(real_tools, name, endpoint):
+        return json.loads(
+            await real_tools.acreate_schedule(
+                name=name, cron="0 9 * * *", endpoint=endpoint, payload='{"message": "x"}'
+            )
+        )
+
+    def test_create_against_draft_only_target_is_refused(self, db, real_tools):
+        self._draft_only(db, "draft-agent")
+        out = self._create(real_tools, "armed-at-a-draft", "/agents/draft-agent/runs")
+        assert out.get("error_type") == "target_not_published", out
+        assert "has no published version" in out["error"]
+        assert "Publish it first" in out["error"]
+        assert out["target_type"] == "agent" and out["target_id"] == "draft-agent"
+        # Nothing was created or left armed
+        _, total = db.get_schedules()
+        assert total == 0
+
+    @pytest.mark.asyncio
+    async def test_acreate_against_draft_only_target_is_refused(self, db, real_tools):
+        self._draft_only(db, "draft-agent")
+        out = await self._acreate(real_tools, "armed-at-a-draft-async", "/agents/draft-agent/runs")
+        assert out.get("error_type") == "target_not_published", out
+        assert out["target_type"] == "agent" and out["target_id"] == "draft-agent"
+        _, total = db.get_schedules()
+        assert total == 0
+
+    def test_create_against_published_target_still_works(self, db, real_tools):
+        self._published(db, "pub-agent")
+        out = self._create(real_tools, "published", "/agents/pub-agent/runs")
+        assert out.get("status") == "created", out
+
+    @pytest.mark.asyncio
+    async def test_acreate_against_published_target_still_works(self, db, real_tools):
+        self._published(db, "pub-agent")
+        out = await self._acreate(real_tools, "published-async", "/agents/pub-agent/runs")
+        assert out.get("status") == "created", out
+
+    def test_create_against_code_defined_target_still_works(self, db, real_tools):
+        # No components row at all: nothing to publish, so nothing to refuse
+        out = self._create(real_tools, "code-defined", "/agents/no-row/runs")
+        assert out.get("status") == "created", out
+
+    @pytest.mark.asyncio
+    async def test_acreate_against_code_defined_target_still_works(self, db, real_tools):
+        out = await self._acreate(real_tools, "code-defined-async", "/agents/no-row/runs")
+        assert out.get("status") == "created", out
+
+    def test_create_against_a_bare_components_row_still_works(self, db, real_tools):
+        # A registry stub with no configs reads as unpublished but has nothing
+        # to publish; refusing it would brick schedules that work today
+        db.upsert_component(component_id="stub-agent", component_type=ComponentType.AGENT, name="stub-agent")
+        out = self._create(real_tools, "stub", "/agents/stub-agent/runs")
+        assert out.get("status") == "created", out
+
+    def test_create_on_an_adapter_without_a_catalog_still_works(self, tmp_path):
+        class _NoCatalogDb(SqliteDb):
+            def get_component(self, *args, **kwargs):
+                raise NotImplementedError
+
+        db = _NoCatalogDb(id="sched-tools-no-catalog", db_file=str(tmp_path / "no_catalog.db"))
+        real_tools = SchedulerTools(db=db, default_payload={"message": "go"})
+        out = self._create(real_tools, "no-catalog", "/agents/whoever/runs")
+        assert out.get("status") == "created", out
+
+    @pytest.mark.asyncio
+    async def test_acreate_on_an_adapter_without_a_catalog_still_works(self, tmp_path):
+        class _NoCatalogDb(SqliteDb):
+            def get_component(self, *args, **kwargs):
+                raise NotImplementedError
+
+        db = _NoCatalogDb(id="sched-tools-no-catalog-async", db_file=str(tmp_path / "no_catalog_async.db"))
+        real_tools = SchedulerTools(db=db, default_payload={"message": "go"})
+        out = await self._acreate(real_tools, "no-catalog-async", "/agents/whoever/runs")
+        assert out.get("status") == "created", out
+
+
+class TestCreateTargetProbeIsScoped:
+    """The create-side catalog probe reads as the acting owner.
+
+    An unscoped probe answers "archived" for another owner's component and
+    "fine" for an id that does not exist, which discloses that it exists.
+    """
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        return SqliteDb(id="sched-tools-scoped-probe", db_file=str(tmp_path / "scoped_probe.db"))
+
+    @staticmethod
+    def _tools(db, owner):
+        return SchedulerTools(db=db, user_id=owner, default_payload={"message": "go"})
+
+    @staticmethod
+    def _archive_owned_by(db, component_id, owner):
+        db.upsert_component(
+            component_id=component_id, component_type=ComponentType.AGENT, name=component_id, user_id=owner
+        )
+        db.delete_component(component_id)
+
+    @staticmethod
+    def _create(real_tools, name, endpoint):
+        return json.loads(
+            real_tools.create_schedule(name=name, cron="0 9 * * *", endpoint=endpoint, payload='{"message": "x"}')
+        )
+
+    @staticmethod
+    async def _acreate(real_tools, name, endpoint):
+        return json.loads(
+            await real_tools.acreate_schedule(
+                name=name, cron="0 9 * * *", endpoint=endpoint, payload='{"message": "x"}'
+            )
+        )
+
+    def test_another_owners_archived_component_is_not_reported(self, db):
+        self._archive_owned_by(db, "their-agent", "other-owner")
+        out = self._create(self._tools(db, "scoped-owner"), "invisible", "/agents/their-agent/runs")
+        assert out.get("status") == "created", out
+        assert "archived" not in json.dumps(out)
+
+    @pytest.mark.asyncio
+    async def test_another_owners_archived_component_is_not_reported_async(self, db):
+        self._archive_owned_by(db, "their-agent", "other-owner")
+        out = await self._acreate(self._tools(db, "scoped-owner"), "invisible-async", "/agents/their-agent/runs")
+        assert out.get("status") == "created", out
+
+    def test_the_callers_own_archived_component_is_still_refused(self, db):
+        self._archive_owned_by(db, "my-agent", "scoped-owner")
+        out = self._create(self._tools(db, "scoped-owner"), "mine", "/agents/my-agent/runs")
+        assert out.get("error_type") == "target_archived", out
+
+    @pytest.mark.asyncio
+    async def test_the_callers_own_archived_component_is_still_refused_async(self, db):
+        self._archive_owned_by(db, "my-agent", "scoped-owner")
+        out = await self._acreate(self._tools(db, "scoped-owner"), "mine-async", "/agents/my-agent/runs")
+        assert out.get("error_type") == "target_archived", out
+
+    def test_a_shared_unowned_archived_component_is_still_refused(self, db):
+        # Unowned components are shared: every scoped caller still sees them
+        db.upsert_component(component_id="shared-agent", component_type=ComponentType.AGENT, name="shared-agent")
+        db.delete_component("shared-agent")
+        out = self._create(self._tools(db, "scoped-owner"), "shared", "/agents/shared-agent/runs")
+        assert out.get("error_type") == "target_archived", out
+
+
 @pytest.mark.asyncio
 class TestAsyncDbCallsRunOffThread:
     """A sync DB adapter must not run on the event loop thread."""
