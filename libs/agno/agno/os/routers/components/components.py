@@ -41,7 +41,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import draft_preview_identity, may_read_draft_configs
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
-from agno.utils.string import generate_id_from_name, hash_string_sha256
+from agno.utils.string import generate_component_id_from_name, hash_string_sha256, validate_component_id
 
 logger = logging.getLogger(__name__)
 
@@ -674,10 +674,21 @@ def attach_routes(
             scoped_user_id = get_scoped_user_id(request)
             component_id = body.component_id
             if component_id is None:
-                component_id = generate_id_from_name(body.name)
+                # The strict mint, the one StudioTools uses: it never produces a
+                # value validate_component_id would reject, so a machine-minted
+                # id is always a safe single URL path segment. The loose
+                # generator keeps "/" and "?" from a display name, and an id
+                # carrying "/" is not merely unaddressable - it slips past
+                # RUN_ENDPOINT_RE, so the schedule guards that read a run
+                # endpoint fail open on it.
+                component_id = generate_component_id_from_name(body.name)
                 # Owner-derived suffix so two users creating the same name get distinct component_ids.
                 if scoped_user_id:
                     component_id = f"{component_id}-{hash_string_sha256(scoped_user_id)[:8]}"
+            else:
+                problem = validate_component_id(component_id)
+                if problem is not None:
+                    raise HTTPException(status_code=400, detail=problem)
 
             # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}

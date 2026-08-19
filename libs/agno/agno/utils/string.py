@@ -315,7 +315,7 @@ def generate_component_id_from_name(name: str) -> str:
     """Strict single-segment component id: lowercase, non-alphanumerics fold to
     one hyphen, edges stripped.
 
-    This is the Studio/REST mint (it has been Studio's since 2.8 as _slugify).
+    This is the Studio and REST mint (it has been Studio's since 2.8 as _slugify).
     It never produces a value validate_component_id rejects, so a machine-
     minted id is always a safe URL path segment. generate_id_from_name above
     stays untouched: it is a persisted identity contract for code-defined
@@ -343,6 +343,10 @@ def validate_component_id(component_id: str) -> Optional[str]:
     hit = next((ch for ch in component_id if ch in forbidden or ord(ch) < 32), None)
     if hit is not None:
         return f"component_id must not contain {hit!r}"
+    # "." and ".." are path segments, not names: a URL carrying one is
+    # normalised before it reaches a route, so the row would be unaddressable.
+    if component_id in (".", ".."):
+        return "component_id must not be a path segment"
     return None
 
 
