@@ -280,6 +280,50 @@ def _validate_referenced_component_ownership(
             raise HTTPException(status_code=404, detail=f"Component {referenced_id} not found")
 
 
+def _redact_db_connection(value: Any) -> Any:
+    """Strip connection-defining fields from every ``db`` block in a config.
+
+    ``_resolve_db_in_config`` stores the resolved database's full ``to_dict()``
+    so the component rebuilds without the registry. That dict carries whatever
+    the adapter exposes -- ``db_url`` with its credentials on Postgres, a
+    ``db_file`` path on SQLite, a plaintext ``password`` on ClickHouse -- and
+    publishing a component now makes its config readable by every actor.
+
+    The keep-list is positive, not a list of secrets to remove: an adapter that
+    grows a new connection field must not silently start leaking it. What
+    survives is what a reader legitimately needs to understand the component --
+    which database it points at, and which tables it uses.
+    """
+    if isinstance(value, list):
+        return [_redact_db_connection(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    redacted = {key: _redact_db_connection(item) for key, item in value.items()}
+    db_block = redacted.get("db")
+    if isinstance(db_block, dict):
+        redacted["db"] = {
+            key: item for key, item in db_block.items() if key in ("id", "type") or key.endswith("_table")
+        }
+    return redacted
+
+
+def _config_response(
+    config: Dict[str, Any], component_row: Optional[Dict[str, Any]], request: Request
+) -> ComponentConfigResponse:
+    """A config as this caller may read it.
+
+    The owner, an unscoped caller and a privileged one read the config as
+    stored; anyone else reads it without the database's connection details.
+    """
+    actor, privileged = draft_preview_identity(request)
+    owner = (component_row or {}).get("user_id")
+    if not privileged and actor is not None and owner != actor:
+        blob = config.get("config")
+        if isinstance(blob, dict):
+            config = {**config, "config": _redact_db_connection(blob)}
+    return ComponentConfigResponse(**config)
+
+
 def _require_write_ownership(existing: Dict[str, Any], scoped_user_id: Optional[str], verb: str = "modify") -> None:
     """Refuse a scoped caller writing to a component it does not own.
 
@@ -898,7 +942,7 @@ def attach_routes(
             actor, privileged = draft_preview_identity(request)
             if not may_read_draft_configs(component_row, actor, privileged):
                 configs = [c for c in configs if c.get("stage") == "published"]
-            return [ComponentConfigResponse(**c) for c in configs]
+            return [_config_response(c, component_row, request) for c in configs]
         except HTTPException:
             raise
         except Exception as e:
@@ -1041,12 +1085,13 @@ def attach_routes(
         component_id: str = Path(description="Component ID"),
     ) -> ComponentConfigResponse:
         try:
-            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+            component_row = db.get_component(component_id, user_id=get_scoped_user_id(request))
+            if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id)
             if config is None:
                 raise HTTPException(status_code=404, detail=f"No current config for {component_id}")
-            return ComponentConfigResponse(**config)
+            return _config_response(config, component_row, request)
         except HTTPException:
             raise
         except Exception as e:
@@ -1084,7 +1129,7 @@ def attach_routes(
 
             if config is None:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
-            return ComponentConfigResponse(**config)
+            return _config_response(config, component_row, request)
         except HTTPException:
             raise
         except Exception as e:
