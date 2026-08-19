@@ -1131,8 +1131,54 @@ class TestCreateTargetProbeIsScoped:
         out = self._create(self._tools(db, "scoped-owner"), "shared", "/agents/shared-agent/runs")
         assert out.get("error_type") == "target_archived", out
 
+    @staticmethod
+    def _draft_only_owned_by(db, component_id, owner):
+        db.upsert_component(
+            component_id=component_id, component_type=ComponentType.AGENT, name=component_id, user_id=owner
+        )
+        db.upsert_config(component_id, config={"name": component_id}, stage="draft")
 
-@pytest.mark.asyncio
+    def test_another_owners_draft_only_component_is_not_reported(self, db):
+        # Unscoped, the draft probe answers "not published" for a component the
+        # caller may not see, which discloses that the id is taken
+        self._draft_only_owned_by(db, "their-draft", "other-owner")
+        out = self._create(self._tools(db, "scoped-owner"), "invisible-draft", "/agents/their-draft/runs")
+        assert out.get("status") == "created", out
+        assert "published" not in json.dumps(out)
+
+    @pytest.mark.asyncio
+    async def test_another_owners_draft_only_component_is_not_reported_async(self, db):
+        self._draft_only_owned_by(db, "their-draft", "other-owner")
+        out = await self._acreate(self._tools(db, "scoped-owner"), "invisible-draft-async", "/agents/their-draft/runs")
+        assert out.get("status") == "created", out
+        assert "published" not in json.dumps(out)
+
+    def test_the_callers_own_draft_only_component_is_still_refused(self, db):
+        self._draft_only_owned_by(db, "my-draft", "scoped-owner")
+        out = self._create(self._tools(db, "scoped-owner"), "mine-draft", "/agents/my-draft/runs")
+        assert out.get("error_type") == "target_not_published", out
+
+    @pytest.mark.asyncio
+    async def test_the_callers_own_draft_only_component_is_still_refused_async(self, db):
+        self._draft_only_owned_by(db, "my-draft", "scoped-owner")
+        out = await self._acreate(self._tools(db, "scoped-owner"), "mine-draft-async", "/agents/my-draft/runs")
+        assert out.get("error_type") == "target_not_published", out
+
+    def test_a_shared_unowned_draft_only_component_is_still_refused(self, db):
+        # Unowned components are shared: every scoped caller still sees them
+        db.upsert_component(component_id="shared-draft", component_type=ComponentType.AGENT, name="shared-draft")
+        db.upsert_config("shared-draft", config={"name": "shared-draft"}, stage="draft")
+        out = self._create(self._tools(db, "scoped-owner"), "shared-draft", "/agents/shared-draft/runs")
+        assert out.get("error_type") == "target_not_published", out
+
+    @pytest.mark.asyncio
+    async def test_a_shared_unowned_draft_only_component_is_still_refused_async(self, db):
+        db.upsert_component(component_id="shared-draft", component_type=ComponentType.AGENT, name="shared-draft")
+        db.upsert_config("shared-draft", config={"name": "shared-draft"}, stage="draft")
+        out = await self._acreate(self._tools(db, "scoped-owner"), "shared-draft-async", "/agents/shared-draft/runs")
+        assert out.get("error_type") == "target_not_published", out
+
+
 class TestAsyncDbCallsRunOffThread:
     """A sync DB adapter must not run on the event loop thread."""
 

@@ -1208,8 +1208,20 @@ class TestArchivedComponentDiscovery:
         assert owner_client.get("/components/archived-1?include_deleted=true").status_code == 200
 
     def test_include_deleted_does_not_widen_visibility_across_owners(self, arch_db, settings):
-        """include_deleted relaxes the tombstone filter, never the owner filter."""
+        """include_deleted relaxes the tombstone filter, never the owner filter.
+
+        Both halves belong in one test: the non-owner half alone also holds
+        when include_deleted is ignored altogether and the archived row reaches
+        nobody, so it is paired with the owner who must receive that same row
+        from the same flag."""
+        owner_client = self._scoped_client(arch_db, settings, "user-A")
         other_client = self._scoped_client(arch_db, settings, "user-B")
+
+        owner_listed = owner_client.get("/components?include_deleted=true")
+        assert owner_listed.status_code == 200
+        assert {c["component_id"] for c in owner_listed.json()["data"]} == {"live-1", "archived-1"}
+        assert owner_listed.json()["meta"]["total_count"] == 2
+        assert owner_client.get("/components/archived-1?include_deleted=true").status_code == 200
 
         listed = other_client.get("/components?include_deleted=true")
         assert listed.status_code == 200
@@ -1218,6 +1230,40 @@ class TestArchivedComponentDiscovery:
 
         assert other_client.get("/components/archived-1?include_deleted=true").status_code == 404
         assert other_client.get("/components/live-1?include_deleted=true").status_code == 404
+
+    def test_include_deleted_keeps_unowned_archived_components_shared(self, arch_db, settings):
+        """An unowned row is shared, and archiving it does not make it private.
+
+        The tombstone filter and the owner filter are independent, so a scoped
+        caller reads a shared archived row under include_deleted the same way it
+        already reads a shared live row without the flag."""
+        for component_id in ("shared-live", "shared-archived"):
+            arch_db.create_component_with_config(
+                component_id=component_id,
+                component_type=ComponentType.AGENT,
+                name=component_id,
+                config={"name": component_id},
+                stage="published",
+            )
+        assert arch_db.delete_component("shared-archived") is True
+
+        other_client = self._scoped_client(arch_db, settings, "user-B")
+
+        # The live precedent this pins against: an unowned row lists for a non-owner.
+        default_listed = other_client.get("/components")
+        assert default_listed.status_code == 200
+        assert {c["component_id"] for c in default_listed.json()["data"]} == {"shared-live"}
+        assert default_listed.json()["meta"]["total_count"] == 1
+        assert other_client.get("/components/shared-archived").status_code == 404
+
+        listed = other_client.get("/components?include_deleted=true")
+        assert listed.status_code == 200
+        assert {c["component_id"] for c in listed.json()["data"]} == {"shared-live", "shared-archived"}
+        assert listed.json()["meta"]["total_count"] == 2
+
+        fetched = other_client.get("/components/shared-archived?include_deleted=true")
+        assert fetched.status_code == 200
+        assert isinstance(fetched.json()["deleted_at"], int)
 
     def test_discover_then_restore_round_trip(self, arch_client, arch_db):
         """The full flow a frontend performs: find the archived id, restore it,
