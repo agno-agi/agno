@@ -97,6 +97,21 @@ TeamMember = Union["Agent", "Team"]
 _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 
 
+class _UnresolvedFactory:
+    """Marker for a tools/members factory the composition guard could not run.
+
+    The guard proves the ABSENCE of the control plane, so a factory it cannot
+    resolve is treated as if it carried one: an async factory, a raising
+    factory, or one asking for an argument the runtime does not inject is
+    refused rather than composed on the assumption that it is harmless.
+    """
+
+    __slots__ = ()
+
+
+_UNRESOLVED_FACTORY = _UnresolvedFactory()
+
+
 class _ToolsNotFoundError(ValueError):
     """tool_names include names absent from the registry (spec 3.4: distinct
     from tool_not_allowed, which is a palette refusal for a name that exists)."""
@@ -123,10 +138,11 @@ class StudioTools(Toolkit):
         teams: Expose team operations. Defaults to False (see module docstring
             for auto-enable rules).
         workflows: Expose workflow operations. Defaults to False.
-        versions: Expose versioning tools (list_versions, get_version,
-            publish_component, set_current_version, delete_version). Defaults
-            to False; without versioning, edits publish immediately instead of
-            producing drafts.
+        versions: Expose versioning tools (list_versions, publish_component,
+            set_current_version, delete_version). Defaults to True, so create_*
+            and edit_* write drafts that serve nobody until publish_component
+            promotes them. Set False to publish every edit immediately and hide
+            the version tools.
         list_limit: Cap on DB components returned by each list tool (default
             100). The list payloads report 'db_total' so a capped list is
             visible as capped.
@@ -137,6 +153,11 @@ class StudioTools(Toolkit):
             False. Requires the optional scheduler dependencies (croniter and
             pytz -- ``pip install agno[scheduler]``); when they are missing,
             the first schedule tool call that needs them returns an error JSON.
+        buildable_tools: Names a caller may build with even though the palette
+            would refuse them -- a folded tool, or the id of a component that
+            itself carries StudioTools. Denials still win.
+        denied_tools: Names no caller may build with, whatever their source.
+            A denied toolkit covers its member functions too.
     """
 
     def __init__(
@@ -811,61 +832,67 @@ class StudioTools(Toolkit):
     def _iterable_attr(component: Any, name: str) -> List[Any]:
         """A list view of an attribute that may be a list OR a callable factory.
 
-        ``tools`` and ``members`` accept callables (per-run factories). A
-        factory that needs no arguments is resolved here: treating it as empty
-        let ``tools=lambda: [studio_tools]`` compose where ``tools=[studio_tools]``
-        is refused, handing the composed member the whole control plane. A
-        factory that takes a run context cannot be resolved without one, so it
-        stays empty - the gap narrows to factories that genuinely need a run."""
+        ``tools`` and ``members`` accept callables (per-run factories). The
+        factory is resolved exactly the way the runtime resolves it -- by
+        name-based injection of agent/team/run_context/session_state -- because
+        treating it as empty let ``tools=lambda agent: [studio_tools]`` compose
+        where ``tools=[studio_tools]`` is refused, handing the composed member
+        the whole control plane. A factory that still will not resolve (async,
+        raising, or asking for an argument nothing injects) yields the
+        unresolved marker instead of an empty list, so the guard refuses rather
+        than assumes.
+        """
         value = getattr(component, name, None)
         if value is None:
             return []
-        if callable(value):
-            from inspect import Parameter, signature
+        if callable(value) and not isinstance(value, type):
+            from agno.run import RunContext
+            from agno.utils.callables import invoke_callable_factory
 
             try:
-                params = signature(value).parameters.values()
-                needs_args = any(
-                    p.default is Parameter.empty
-                    and p.kind in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD)
-                    for p in params
+                produced = invoke_callable_factory(
+                    value, component, RunContext(run_id="studio-guard", session_id="studio-guard")
                 )
-                if needs_args:
-                    return []
-                produced = value()
             except Exception:
-                # A factory that will not introspect or run here is no worse
-                # off than before: it stays uninspectable, never a crash.
+                logger.debug(f"StudioTools: unresolvable {name} factory treated as privileged", exc_info=True)
+                return [_UNRESOLVED_FACTORY]
+            if produced is None:
                 return []
             try:
                 return list(produced)
             except TypeError:
-                return []
+                return [_UNRESOLVED_FACTORY]
         try:
             return list(value)
         except TypeError:
             return []
 
-    def _privileged_component_ids(self) -> Set[str]:
+    def _privileged_component_ids(self, only_ids: Optional[Set[str]] = None) -> Set[str]:
         """Components whose own tools include a StudioTools instance.
 
         Composing one into a team or workflow hands the built component the
         whole control plane; the palette refuses unless explicitly allowed.
         One odd registry object must not break every compose call, so each
-        component is inspected under its own try/except."""
+        component is inspected under its own try/except.
+
+        Inspecting a component can RUN its tools factory, which is arbitrary
+        user code, so ``only_ids`` narrows the scan to the ids the caller is
+        actually asking about instead of every component on the platform.
+        """
         privileged: Set[str] = set()
         for component in [*self._iter_agents(), *self._iter_teams()]:
+            component_id = getattr(component, "id", None)
+            if not component_id or (only_ids is not None and component_id not in only_ids):
+                continue
             try:
                 if self._carries_studio_toolkit(component):
-                    component_id = getattr(component, "id", None)
-                    if component_id:
-                        privileged.add(component_id)
+                    privileged.add(component_id)
             except Exception:
                 logger.debug("StudioTools: skipping un-inspectable component in privilege scan", exc_info=True)
         return privileged
 
     def _check_member_policy(self, member_ids: List[str]) -> Optional[str]:
-        privileged = self._privileged_component_ids()
+        privileged = self._privileged_component_ids(only_ids=set(member_ids))
         blocked = sorted(m for m in member_ids if m in privileged and m not in self._buildable_tools)
         if blocked:
             return error_result(
@@ -884,6 +911,8 @@ class StudioTools(Toolkit):
         one holds the toolkit's member Functions, whose bound entrypoints name
         the owning instance."""
         for tool in StudioTools._iterable_attr(component, "tools"):
+            if tool is _UNRESOLVED_FACTORY:
+                return True
             if isinstance(tool, StudioTools):
                 return True
             owner = getattr(getattr(tool, "entrypoint", None), "__self__", None)
@@ -904,6 +933,8 @@ class StudioTools(Toolkit):
         if self._carries_studio_toolkit(component):
             return True
         for member in self._iterable_attr(component, "members"):
+            if member is _UNRESOLVED_FACTORY:
+                return True
             if self._component_is_privileged(member, seen):
                 return True
         return False
@@ -2170,6 +2201,12 @@ class StudioTools(Toolkit):
                     f"Only stored components are editable.{hint}",
                 )
             component = finder(identifier, actor=actor)
+        except AmbiguousComponentNameError as e:
+            # Ambiguity is its own code with the candidate ids attached, the
+            # same answer get_component and list_versions give. It subclasses
+            # StudioRunnerError, so this branch has to precede that one or the
+            # caller loses the list of ids it needs to pick from.
+            return self._error_from_exception(e, f"Failed to resolve {component_type} '{identifier}'")
         except StudioRunnerError as e:
             return error_result("invalid_request", str(e))
         except Exception as e:
@@ -2535,6 +2572,7 @@ class StudioTools(Toolkit):
             if not configs:
                 return error_result("component_not_found", f"Component not found: {component_id}")
             target = version
+            already_published = False
             if target is None:
                 drafts = [c for c in configs if c.get("stage") == "draft"]
                 if not drafts:
@@ -2559,9 +2597,10 @@ class StudioTools(Toolkit):
                 match = next((c for c in configs if c.get("version") == target), None)
                 if match is None:
                     return error_result("version_not_found", f"Version not found: {component_id} v{target}")
-                if match.get("stage") == "published":
-                    self._sync_component_row(component_id, target)
-                    return ok_result("already_published", id=component_id, version=target)
+                already_published = match.get("stage") == "published"
+            # The compare-and-set guard is answered before the already-published
+            # no-op returns: a caller who guarded on a live version it no longer
+            # holds must hear version_conflict, not a success envelope.
             if expected_current_version is not None:
                 row = self.db.get_component(component_id) or {}
                 if row.get("current_version") != expected_current_version:
@@ -2571,6 +2610,12 @@ class StudioTools(Toolkit):
                         retryable=True,
                         current_version=row.get("current_version"),
                     )
+            if already_published:
+                # Nothing to write. The catalog row belongs to whichever version
+                # the live pointer names, so re-projecting this one would make
+                # the row describe a version that is not live; moving the
+                # pointer backwards is set_current_version's job, not publish's.
+                return ok_result("already_published", id=component_id, version=target)
             result = self.db.upsert_config(
                 component_id=component_id,
                 version=target,
@@ -2614,11 +2659,34 @@ class StudioTools(Toolkit):
                 component_id, version=version, expected_current_version=expected_current_version
             )
             if not ok:
-                return error_result("version_not_found", f"Component or version not found: {component_id} v{version}")
+                missing = self._missing_component_error(component_id)
+                if missing is not None:
+                    return missing
+                return error_result("version_not_found", f"Version not found: {component_id} v{version}")
             self._sync_component_row(component_id, version)
             return ok_result("set_current", id=component_id, version=version)
         except Exception as e:
             return self._error_from_exception(e, "Failed to set current version")
+
+    def _missing_component_error(self, component_id: str) -> Optional[str]:
+        """A component_not_found envelope when the id names no catalog row.
+
+        The pointer and tombstone writes report failure as a bare boolean,
+        which cannot separate "no such component" from "no such version"; the
+        row read separates them so a caller gets the same component_not_found
+        every other surface returns for a missing id. Ownership was already
+        settled by _check_component_access, so another owner's row never
+        reaches this read.
+        """
+        if self.db is None:
+            return None
+        try:
+            row = self.db.get_component(component_id, include_deleted=True)
+        except NotImplementedError:
+            return None
+        if row is None:
+            return error_result("component_not_found", f"Component not found: {component_id}")
+        return None
 
     def _redact_dependents(self, component_id: str, actor: Optional[str], verb: str) -> str:
         """A dependency_conflict envelope naming only the dependents ``actor``
@@ -2667,6 +2735,9 @@ class StudioTools(Toolkit):
         try:
             deleted = self.db.delete_config(component_id, version=version)
             if not deleted:
+                missing = self._missing_component_error(component_id)
+                if missing is not None:
+                    return missing
                 return error_result("version_not_found", f"Version not found: {component_id} v{version}")
             return ok_result("deleted", id=component_id, version=version)
         except Exception as e:
@@ -2731,29 +2802,22 @@ class StudioTools(Toolkit):
             if denied is not None:
                 return self._denied_error(denied)
             component_type = str(row.get("component_type"))
+            # The cascade runs inside delete_component, in the archive's own
+            # transaction, and reports back what it silenced: the count is only
+            # knowable there, because it counts the rows this archive flipped
+            # from enabled and restore does not re-enable them.
+            cascade_stats: Dict[str, int] = {}
             archived = self.db.delete_component(
                 component_id,
                 hard_delete=False,
                 user_id=_actor_id(_agno_run_context),
                 expected_current_version=expected_current_version,
+                cascade_stats=cascade_stats,
             )
             if not archived:
                 return error_result("component_not_found", f"Component not found: {component_id}")
             warnings: List[str] = []
-            try:
-                disabled = self.db.disable_schedules_for_target(
-                    component_type,
-                    component_id,
-                    reason=f"target_archived:{component_type}:{component_id}",
-                )
-            except NotImplementedError:
-                disabled = 0
-            except Exception:
-                logger.exception("Failed to disable schedules for archived target")
-                warnings.append(
-                    f"Could not disable the schedules targeting {component_type} '{component_id}'; check them manually."
-                )
-                disabled = 0
+            disabled = cascade_stats.get("schedules_disabled", 0)
             if disabled:
                 # The count only - listing ids would disclose other owners' rows
                 # through the archiver's result.
@@ -2879,6 +2943,28 @@ class StudioTools(Toolkit):
             return True
         return (row or {}).get("user_id") == actor
 
+    @staticmethod
+    def _version_stamp(version: Optional[int]) -> Dict[str, Any]:
+        """Run kwargs that record the pinned version on the run itself.
+
+        A preview of an exact version must stay pinned for the whole run: the
+        continue/resume surfaces re-resolve the component from this stamp, and
+        without it an approved tool call on a paused draft preview silently
+        resumes on the published version. An unpinned run carries no stamp, so
+        it keeps re-resolving the live version as before.
+
+        The dict is built here rather than merged into caller-supplied
+        metadata, so there is no inbound stamp to strip: the toolkit's own
+        pinned version is the only source. Only the key is imported, because
+        the writer that sanitizes caller metadata lives in the server package
+        and the toolkit must keep working without it installed.
+        """
+        from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY
+
+        if version is None:
+            return {}
+        return {"metadata": {COMPONENT_VERSION_METADATA_KEY: version}}
+
     def _run_component(
         self,
         component_type: str,
@@ -2921,6 +3007,7 @@ class StudioTools(Toolkit):
                 stream=False,
                 user_id=self._runner_tools._caller_user_id(run_context, component),
                 session_id=self._runner_tools._sub_session_id(run_context, component_type, resolved_id),
+                **self._version_stamp(version),
             )
             payload = self._runner_tools._run_payload(f"{component_type}_id", resolved_id, response)
             return self._alias_runner_result(payload)
@@ -2974,6 +3061,7 @@ class StudioTools(Toolkit):
                 stream=False,
                 user_id=self._runner_tools._caller_user_id(run_context, component),
                 session_id=self._runner_tools._sub_session_id(run_context, component_type, resolved_id),
+                **self._version_stamp(version),
             )
             payload = self._runner_tools._run_payload(f"{component_type}_id", resolved_id, response)
             return self._alias_runner_result(payload)
@@ -3460,12 +3548,12 @@ class StudioTools(Toolkit):
         """
         from agno.db.schemas.scheduler import build_run_endpoint
 
+        actor = _actor_id(_agno_run_context)
         try:
-            component_id, target_error = self._resolve_schedule_target(
-                target_type, target_id, actor=_actor_id(_agno_run_context)
-            )
+            component_id, target_error = self._resolve_schedule_target(target_type, target_id, actor=actor)
             if target_error is not None:
-                return error_result("component_not_found", target_error)
+                target_code, target_message = target_error
+                return error_result(target_code, target_message)  # type: ignore[arg-type]
             if not message or not message.strip():
                 return error_result(
                     "invalid_request",
@@ -3474,25 +3562,40 @@ class StudioTools(Toolkit):
                 )
             assert component_id is not None
             # A schedule fires the live published version; a draft-only target
-            # would 404 on every tick. Adapters without the component catalog
-            # (e.g. Mongo) cannot answer, and their targets are code-defined:
-            # treat them as live rather than failing the create.
-            row = None
-            if self.db is not None:
-                from agno.db.base import ComponentType
+            # would 404 on every tick. The shared predicate decides that, the
+            # same one the REST schedule routes and SchedulerTools apply: a
+            # catalog row carrying no configs at all is a code-defined target
+            # with nothing to publish and stays schedulable, and the read is
+            # scoped to the acting owner so another owner's draft neither
+            # blocks the schedule nor is disclosed by the refusal.
+            from agno.tools.scheduler import _draft_only_component_refusal, code_defined_probe
 
-                try:
-                    row = self.db.get_component(component_id, component_type=ComponentType(target_type))
-                except (NotImplementedError, ValueError):
-                    row = None
-            if row is not None and row.get("current_version") is None:
+            if (
+                _draft_only_component_refusal(
+                    self.db,
+                    target_type,
+                    component_id,
+                    user_id=actor,
+                    is_code_defined=code_defined_probe(self.agents_list, self.teams_list, self.workflows_list),
+                )
+                is not None
+            ):
                 return error_result(
                     "target_not_published",
                     f"{target_type.capitalize()} '{component_id}' has no published version; "
                     "publish it before scheduling it.",
                     target_id=component_id,
                 )
-            actor = _actor_id(_agno_run_context)
+            # Read again for the response payload only: adapters without the
+            # component catalog cannot answer, and their targets are code-defined.
+            row = None
+            if self.db is not None:
+                from agno.db.base import ComponentType
+
+                try:
+                    row = self.db.get_component(component_id, component_type=ComponentType(target_type), user_id=actor)
+                except (NotImplementedError, ValueError):
+                    row = None
             manager = self._get_schedule_manager()
             from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY
 
@@ -3729,16 +3832,23 @@ class StudioTools(Toolkit):
 
     def _resolve_schedule_target(
         self, target_type: str, target_id: str, actor: Optional[str] = None
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[Optional[str], Optional[tuple[str, str]]]:
         """Resolve a schedule target to a real component id.
 
-        Returns ``(component_id, error)``: exactly one side is set. Targets
-        resolve through the Studio lookup path (code-defined lists, then DB;
-        matched by id or name), so schedules always point at a component's
-        real id even when the caller passed its display name.
+        Returns ``(component_id, error)``: exactly one side is set, and the
+        error carries its own code with the message. A malformed target_type
+        is a bad argument, not a missing component - reported as the latter, a
+        model retries a target_id that was never the problem.
+
+        Targets resolve through the Studio lookup path (code-defined lists,
+        then DB; matched by id or name), so schedules always point at a
+        component's real id even when the caller passed its display name.
         """
         if target_type not in _SCHEDULE_TARGET_TYPES:
-            return None, f"Invalid target_type: {target_type}. Must be one of {list(_SCHEDULE_TARGET_TYPES)}."
+            return None, (
+                "invalid_request",
+                f"Invalid target_type: {target_type}. Must be one of {list(_SCHEDULE_TARGET_TYPES)}.",
+            )
         finders: Dict[str, Callable[..., Optional[Any]]] = {
             "agent": self._find_agent,
             "team": self._find_team,
@@ -3746,10 +3856,10 @@ class StudioTools(Toolkit):
         }
         component = finders[target_type](target_id, actor=actor)
         if component is None:
-            return None, f"{target_type.capitalize()} not found: {target_id}"
+            return None, ("component_not_found", f"{target_type.capitalize()} not found: {target_id}")
         component_id = getattr(component, "id", None)
         if component_id is None:
-            return None, f"{target_type.capitalize()} has no id: {target_id}"
+            return None, ("component_not_found", f"{target_type.capitalize()} has no id: {target_id}")
         return component_id, None
 
     def _component_id_exists(self, component_id: str, db: "BaseDb") -> bool:
@@ -4373,8 +4483,12 @@ class StudioTools(Toolkit):
             component_id=component_id,
             component_type=ComponentType(component["component_type"]),
             name=config.get("name") or component.get("name"),
-            description=config.get("description"),
-            metadata=config.get("metadata"),
+            # A field the published version does not carry was cleared, and the
+            # adapters read None as "leave this column alone" - so the empty
+            # value is projected explicitly, or the catalog keeps serving text
+            # the live version no longer has.
+            description=config.get("description") or "",
+            metadata=config.get("metadata") or {},
         )
 
 
@@ -4518,7 +4632,15 @@ def _persist_only(
             links=links,
             expected_latest_version=expected_latest_version,
         )
-        db.upsert_component(**identity)
+        # Same rule as the publish projection: an absent description/metadata
+        # is a cleared field, and None reads as "leave the column alone".
+        db.upsert_component(
+            **{
+                **identity,
+                "description": identity["description"] or "",
+                "metadata": identity["metadata"] or {},
+            }
+        )
         return result.get("version")
 
     # Create fallback (the atomic path was unavailable): the component does
