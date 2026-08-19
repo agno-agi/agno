@@ -1691,3 +1691,90 @@ class TestTeamMemoryManagerReferenceShapes:
 
         loaded = Team.from_dict(self._team_config(payload), registry=Registry(), strict=False)
         assert loaded.memory_manager is None
+
+    def test_ambiguous_name_does_not_defeat_the_memory_flag_escape_hatch(self):
+        """A team whose own settings rebuild a default manager never needed
+        the referenced one, so an ambiguous name must drop with a warning
+        rather than make the team permanently unloadable."""
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(
+            memory_managers=[
+                MemoryManager(id="mm-1", name="Support Memory"),
+                MemoryManager(id="mm-2", name="Support Memory"),
+            ]
+        )
+        config = self._team_config({"name": "Support Memory"})
+        config["update_memory_on_run"] = True
+
+        # Teams share the agent module's memory manager resolution.
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Team.from_dict(config, registry=registry, strict=True)
+        assert loaded.update_memory_on_run is True
+        assert loaded.memory_manager is None
+        assert any("Support Memory" in str(c) for c in mock_warn.call_args_list)
+
+    def test_stale_id_key_falls_back_to_the_name_key(self):
+        """The registry listing emits both an id and a name, so a config
+        authored from it carries both; a manager re-registered under a new id
+        must still bind through the name."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-new", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"id": "mm-old", "name": "Support Memory"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_stale_auto_generated_id_falls_back_to_the_name_key(self):
+        """An auto-generated id is minted fresh every process, so the name is
+        the only key that can resolve; the stale id must not swallow the
+        reference and leave the team silently without memory."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"id": "memory_manager_deadbeef", "name": "Support Memory"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_auto_generated_id_with_unresolvable_name_still_raises_strict(self):
+        """The auto-id escape covers a reference carrying nothing else; a real
+        name alongside it is a manager the user asked for by name."""
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(memory_managers=[MemoryManager(id="mm-1", name="Support Memory")])
+
+        with pytest.raises(ComponentRehydrationError) as exc_info:
+            Team.from_dict(
+                self._team_config({"id": "memory_manager_deadbeef", "name": "Other Memory"}),
+                registry=registry,
+                strict=True,
+            )
+        message = str(exc_info.value)
+        assert "memory_manager_deadbeef" in message
+        assert "Other Memory" in message
+
+    def test_lenient_ambiguous_name_warns_naming_the_competing_managers(self):
+        """Lenient stays lenient and binds the first match, but the arbitrary
+        choice must not be silent."""
+        from agno.memory.manager import MemoryManager
+
+        first = MemoryManager(id="mm-1", name="Support Memory")
+        second = MemoryManager(id="mm-2", name="Support Memory")
+
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Team.from_dict(
+                self._team_config({"name": "Support Memory"}),
+                registry=Registry(memory_managers=[first, second]),
+                strict=False,
+            )
+        assert loaded.memory_manager is first
+        warnings = " ".join(str(c) for c in mock_warn.call_args_list)
+        assert "mm-1" in warnings
+        assert "mm-2" in warnings

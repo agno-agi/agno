@@ -26,7 +26,7 @@ from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.registry.registry import Registry
+from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.tools.function import Function
@@ -61,16 +61,32 @@ def is_auto_generated_memory_manager_id(manager_id: Any) -> bool:
 _MEMORY_MANAGER_REF_KEYS = ("registry_id", "id", "name")
 
 
-def _memory_manager_ref_key(manager_ref: Any) -> Optional[str]:
-    """The registry key a serialized memory_manager reference points at."""
+def _memory_manager_ref_keys(manager_ref: Any) -> List[str]:
+    """Every registry key a serialized memory_manager reference carries.
+
+    The registry listing emits both an id and a name for each manager, so a
+    config authored from it carries both. Either one may be the key that still
+    resolves in the process doing the load, so all of them are candidates.
+    """
     if isinstance(manager_ref, str):
-        return manager_ref or None
+        return [manager_ref] if manager_ref else []
     if isinstance(manager_ref, dict):
+        keys: List[str] = []
         for key in _MEMORY_MANAGER_REF_KEYS:
             value = manager_ref.get(key)
-            if isinstance(value, str) and value:
-                return value
-    return None
+            if isinstance(value, str) and value and value not in keys:
+                keys.append(value)
+        return keys
+    return []
+
+
+def _competing_memory_manager_ids(registry: Registry, name: str) -> List[str]:
+    """Ids of the registered managers a single listing name matches."""
+    return [
+        str(getattr(manager, "id", None))
+        for manager in (registry.memory_managers or [])
+        if _memory_manager_resource_name(manager) == name
+    ]
 
 
 def resolve_memory_manager_reference(
@@ -89,21 +105,36 @@ def resolve_memory_manager_reference(
     if manager_ref is None:
         return
 
-    ref_key = _memory_manager_ref_key(manager_ref)
+    ref_keys = _memory_manager_ref_keys(manager_ref)
     resolved_manager = None
-    if registry is not None and ref_key:
-        resolved_manager = registry.get_memory_manager(ref_key)
-        if resolved_manager is None:
-            # Ids are matched first; a name only decides what no id claimed. A
-            # name two distinct managers share could bind the wrong one, so a
-            # strict load refuses it rather than taking the first.
-            if strict and registry.memory_manager_name_is_ambiguous(ref_key):
-                raise ComponentRehydrationError(
-                    f"{component_label} references memory manager '{ref_key}', but two distinct "
-                    "managers are registered under that name, so the reference could bind the "
-                    "wrong manager. Give the managers distinct names."
+    ambiguous_key: Optional[str] = None
+    if registry is not None:
+        # Keys are tried in priority order, and each is resolved as an id
+        # before a name: within one key an id match beats a name match, but an
+        # earlier key always outranks a later one. Resolving every key as an id
+        # first would let the reference's name field outrank its own
+        # registry_id whenever some unrelated manager's id equals that name.
+        for key in ref_keys:
+            resolved_manager = registry.get_memory_manager(key)
+            if resolved_manager is not None:
+                break
+            if registry.memory_manager_name_is_ambiguous(key):
+                # A name two distinct managers share could bind the wrong one.
+                # A strict load leaves it unresolved so the remaining keys
+                # decide; a lenient load stays lenient and takes the first
+                # match, naming the managers that competed.
+                if strict:
+                    if ambiguous_key is None:
+                        ambiguous_key = key
+                    continue
+                competing = ", ".join(_competing_memory_manager_ids(registry, key))
+                log_warning(
+                    f"Memory manager name '{key}' matches more than one registered manager "
+                    f"({competing}); binding the first."
                 )
-            resolved_manager = registry.get_memory_manager_by_name(ref_key)
+            resolved_manager = registry.get_memory_manager_by_name(key)
+            if resolved_manager is not None:
+                break
 
     if resolved_manager is not None:
         config["memory_manager"] = resolved_manager
@@ -111,17 +142,33 @@ def resolve_memory_manager_reference(
 
     # When the component's own settings rebuild a default manager on init,
     # losing the reference changes nothing - drop it rather than refuse the
-    # whole component. An auto-generated id (written by configs saved before
-    # ids were filtered) can never resolve in a new process, so refusing on it
-    # would 422 the component forever.
+    # whole component. A reference carrying nothing but an auto-generated id
+    # (written by configs saved before ids were filtered) can never resolve in
+    # a new process, so refusing on it would 422 the component forever. Both
+    # escapes are weighed before any refusal, including the ambiguous-name
+    # one, so a component that does not need the manager still loads.
     rebuilds_default = bool(config.get("enable_agentic_memory") or config.get("update_memory_on_run"))
-    if strict and not rebuilds_default and not is_auto_generated_memory_manager_id(ref_key):
+    only_auto_ids = bool(ref_keys) and all(is_auto_generated_memory_manager_id(key) for key in ref_keys)
+    tried = " or ".join(f"'{key}'" for key in ref_keys) if ref_keys else repr(manager_ref)
+    if strict and not rebuilds_default and not only_auto_ids:
+        if ambiguous_key is not None:
+            raise ComponentRehydrationError(
+                f"{component_label} references memory manager '{ambiguous_key}', but two distinct "
+                "managers are registered under that name, so the reference could bind the "
+                "wrong manager. Give the managers distinct names."
+            )
         raise ComponentRehydrationError(
-            f"{component_label} references memory manager {ref_key or manager_ref!r} which was not "
+            f"{component_label} references memory manager {tried} which was not "
             "found in the registry. Register the manager in the process serving the component, or "
             "pass strict=False to load the component without it."
         )
-    log_warning(f"Memory manager {ref_key or manager_ref!r} not found in registry; loading the component without it.")
+    if ambiguous_key is not None:
+        log_warning(
+            f"Memory manager name '{ambiguous_key}' matches two distinct registered managers; "
+            "loading the component without it."
+        )
+    else:
+        log_warning(f"Memory manager {tried} not found in registry; loading the component without it.")
     config.pop("memory_manager", None)
 
 
