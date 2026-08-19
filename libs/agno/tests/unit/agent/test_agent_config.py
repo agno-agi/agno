@@ -1258,7 +1258,6 @@ class TestMemoryManagerRoundTrip:
         """No flags means dropping the manager removes memory entirely; the
         user clearly asked for a specific one, so strict must refuse."""
         from agno.exceptions import ComponentRehydrationError
-        from agno.exceptions import ComponentRehydrationError
         from agno.memory.manager import MemoryManager
 
         manager = MemoryManager(id="my-memory")

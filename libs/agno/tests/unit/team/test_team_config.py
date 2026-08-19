@@ -1547,7 +1547,6 @@ class TestTeamMemoryManagerRoundTrip:
 
     def test_unregistered_manager_without_flags_raises_strict(self):
         from agno.exceptions import ComponentRehydrationError
-        from agno.exceptions import ComponentRehydrationError
         from agno.memory.manager import MemoryManager
 
         manager = MemoryManager(id="my-memory")
