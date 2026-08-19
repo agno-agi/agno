@@ -14,9 +14,9 @@ from agno.models.groq import Groq
 
 # Create a reasoning agent that uses:
 # - `deepseek-r1-distill-llama-70b` as the reasoning model
-# - `llama-3.3-70b-versatile` to generate the final response
+# - `openai/gpt-oss-120b` to generate the final response
 reasoning_agent = Agent(
-    model=Groq(id="llama-3.3-70b-versatile"),
+    model=Groq(id="openai/gpt-oss-120b"),
     reasoning_model=Groq(
         id="deepseek-r1-distill-llama-70b", temperature=0.6, max_tokens=1024, top_p=0.95
     ),

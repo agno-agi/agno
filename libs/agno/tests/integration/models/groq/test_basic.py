@@ -1,3 +1,4 @@
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -9,7 +10,7 @@ from agno.models.groq import Groq
 @pytest.fixture(scope="module")
 def groq_model():
     """Fixture that provides a Groq model and reuses it across all tests in the module."""
-    return Groq(id="llama-3.3-70b-versatile")
+    return Groq(id="openai/gpt-oss-120b")
 
 
 def _assert_metrics(response: RunOutput):
@@ -87,7 +88,11 @@ def test_with_memory(groq_model):
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
     assert response2.content is not None
-    assert "John Smith" in response2.content
+    # Models render names with typographic spaces (U+202F narrow no-break, U+00A0 no-break),
+    # so fold just those two back to a plain space. Anything wider - collapsing \s+ - would
+    # also accept "John\nSmith" and stop the assertion catching format regressions.
+    normalised = response2.content.replace("\u202f", " ").replace("\xa0", " ")
+    assert "John Smith" in normalised
 
     # Verify memories were created
     messages = agent.get_session_messages()
