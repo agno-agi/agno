@@ -7,7 +7,13 @@ from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, SCHEDULE_OWNER_HEADER, Schedule, match_run_endpoint
+from agno.db.schemas.scheduler import (
+    COMPONENT_VERSION_METADATA_KEY,
+    RUN_ENDPOINT_RE,
+    SCHEDULE_OWNER_HEADER,
+    Schedule,
+    match_run_endpoint,
+)
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -334,8 +340,6 @@ class ScheduleExecutor:
             # carries onto the run, so scrub it from any forwarded metadata -
             # and from the top level - or a crafted schedule smuggles a draft
             # preview the lifecycle routes would then re-resolve.
-            from agno.os.utils import COMPONENT_VERSION_METADATA_KEY
-
             sanitized_payload = dict(payload)
             raw_metadata = sanitized_payload.get("metadata")
             if isinstance(raw_metadata, str):

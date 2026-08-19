@@ -2510,11 +2510,7 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 # High-level resolvers with error handling for routers
 # ---------------------------------------------------------------------------
 
-# Run-metadata key recording which component version a run was started with.
-# Written by the run-start routes when the caller pins a version explicitly
-# (draft preview); read back by the lifecycle routes so a paused/completed
-# run continues on the SAME version instead of whatever is current by then.
-COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
+from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY  # noqa: E402
 
 
 def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> None:

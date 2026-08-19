@@ -46,6 +46,12 @@ def match_run_endpoint(endpoint: str, target_type: str, target_id: str) -> bool:
 # Marker for builder-managed schedules; generic surfaces may filter on it.
 STUDIO_SCHEDULE_MANAGED_BY = "studio"
 
+# Run-metadata key recording which component version a run was started with.
+# Written by the run-start routes when the caller pins a version explicitly
+# (draft preview); read back by the lifecycle routes so a paused/completed run
+# continues on the SAME version instead of whatever is current by then.
+COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
+
 # The columns a generic update_schedule may write. Everything else - ownership,
 # provenance, trigger and lock state - moves only through dedicated primitives,
 # so a name-keyed upsert can never repoint who a schedule belongs to or which
