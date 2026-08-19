@@ -451,6 +451,21 @@ def test_force_is_model_visible_on_the_sign_in_tool():
     assert "force" in function.parameters["properties"]
 
 
+def test_the_framework_injects_run_context_into_the_tool(endpoint, sqlite_db, encryption_key):
+    """The requester reaches the tool through injection, not through the model's arguments."""
+    from agno.tools.function import FunctionCall
+
+    auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
+    function = auth.functions["sign_in_with_supergrok"]
+    function.process_entrypoint()
+    function._run_context = _ctx("injected-user")
+
+    result = FunctionCall(function=function, arguments={}).execute()
+
+    assert json.loads(result.result)["url"] == APPROVAL_URL
+    assert _stash(sqlite_db, "injected-user", encryption_key)["device_code"] == "device-code-1"
+
+
 def test_the_pending_row_follows_the_requester_while_the_token_row_stays_shared(endpoint, sqlite_db, encryption_key):
     auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
 
