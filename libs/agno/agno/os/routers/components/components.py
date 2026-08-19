@@ -280,6 +280,49 @@ def _validate_referenced_component_ownership(
             raise HTTPException(status_code=404, detail=f"Component {referenced_id} not found")
 
 
+def _validate_pinned_versions_readable(
+    db: BaseDb,
+    links: Optional[List[Dict[str, Any]]],
+    request: Request,
+) -> None:
+    """Reject a caller-supplied pin at a version that caller may not read.
+
+    ``_validate_referenced_component_ownership`` asks whether the referenced
+    COMPONENT is visible; a link also names a VERSION, and visibility is not
+    readable depth. Publishing shares one version, so a pin at an unpublished
+    version of a shared component would let a caller compose another owner's
+    draft into its own component and read it back through the detail routes --
+    the disclosure ``GET /components/{id}/configs/{version}`` refuses.
+
+    The refusal is that route's, verbatim, so the two agree and neither
+    becomes an oracle for the other. A version that does not exist is left
+    alone: the adapter's own pin validation answers that.
+    """
+    if not links:
+        return
+    actor, privileged = draft_preview_identity(request)
+    if privileged or actor is None:
+        return
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        child_id = link.get("child_component_id")
+        child_version = link.get("child_version")
+        if not isinstance(child_id, str) or not isinstance(child_version, int):
+            continue
+        try:
+            child_row = db.get_component(child_id)
+            if child_row is None:
+                continue  # Code-defined or absent: not this check's business.
+            child_config = db.get_config(component_id=child_id, version=child_version)
+        except NotImplementedError:
+            return
+        if not isinstance(child_config, dict):
+            continue
+        if child_config.get("stage") != "published" and not may_read_draft_configs(child_row, actor, privileged):
+            raise HTTPException(status_code=404, detail=f"Config {child_id} v{child_version} not found")
+
+
 def _redact_db_connection(value: Any) -> Any:
     """Strip connection-defining fields from every ``db`` block in a config.
 
@@ -981,6 +1024,9 @@ def attach_routes(
                 scoped_user_id=scoped_user_id,
                 own_component_id=component_id,
             )
+            # A link names a version as well as a component, and visibility is
+            # not readable depth.
+            _validate_pinned_versions_readable(db, body.links, request)
 
             _reject_unsupported_guard(body.guard, "latest_version")
             links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
@@ -1042,6 +1088,9 @@ def attach_routes(
                 scoped_user_id=scoped_user_id,
                 own_component_id=component_id,
             )
+            # A link names a version as well as a component, and visibility is
+            # not readable depth.
+            _validate_pinned_versions_readable(db, body.links, request)
 
             _reject_unsupported_guard(body.guard, "latest_version")
             links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
