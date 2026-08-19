@@ -4022,9 +4022,16 @@ class SqliteDb(BaseDb):
                         )
                     log_debug(f"Updated component {component_id}")
 
-            result = self.get_component(component_id, user_id=user_id)
-            if result is None:
-                raise ValueError(f"Failed to get component {component_id} after upsert")
+                # The answer is read inside the transaction that wrote it, and
+                # without the archived filter. A read taken after the commit can
+                # be overtaken by an archive on another connection, and reporting
+                # a committed write as a failure hands the caller a 4xx for a
+                # write that landed.
+                written = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
+                if written is None:
+                    raise ValueError(f"Failed to get component {component_id} after upsert")
+                result = dict(written._mapping)
+
             return result
 
         except Exception as e:
@@ -4038,8 +4045,13 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         expected_current_version: Optional[int] = None,
         require_no_dependents: bool = True,
+        cascade_stats: Optional[Dict[str, int]] = None,
     ) -> bool:
         """Delete a component. Soft delete archives it; the id stays reserved.
+
+        Every schedule aimed at the component is disabled in the same
+        transaction, so no delete surface can leave a schedule firing at a
+        target that is gone; a cascade failure rolls the delete back.
 
         Args:
             component_id: The component ID.
@@ -4055,6 +4067,7 @@ class SqliteDb(BaseDb):
             components_table = self._get_table(table_type="components")
             configs_table = self._get_table(table_type="component_configs")
             links_table = self._get_table(table_type="component_links")
+            schedules_table = self._get_table(table_type="schedules")
 
             if components_table is None:
                 return False
@@ -4068,7 +4081,9 @@ class SqliteDb(BaseDb):
 
             if require_no_dependents:
                 # An archive breaks only live parents; a hard delete breaks even an
-                # archived parent's history, so it checks every link.
+                # archived parent's history, so it checks every link. This read is
+                # the early, friendly refusal; the one that cannot be overtaken
+                # runs after the write below.
                 dependents = self.get_dependents(component_id, active_parents_only=not hard_delete)
                 if dependents:
                     parents = sorted(
@@ -4079,21 +4094,23 @@ class SqliteDb(BaseDb):
                     )
 
             with self.Session() as sess, sess.begin():
-                if expected_current_version is not None:
-                    # Locked read (a no-op lock on SQLite, a row lock on
-                    # Postgres): the guard is decided before any row goes.
-                    row = sess.execute(
-                        select(components_table.c.current_version)
-                        .where(components_table.c.component_id == component_id)
-                        .with_for_update()
-                    ).fetchone()
-                    if row is None:
-                        return False
-                    if row.current_version != expected_current_version:
-                        raise ComponentVersionConflictError(
-                            f"Component {component_id} current version is {row.current_version}, "
-                            f"expected {expected_current_version}"
-                        )
+                # Locked read (a no-op lock on SQLite, a row lock on Postgres):
+                # the guard is decided before any row goes, and a concurrent
+                # writer pinning this component serializes here.
+                row = sess.execute(
+                    select(components_table.c.current_version, components_table.c.component_type)
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+                if row is None:
+                    return False
+                component_type = str(row.component_type)
+                if expected_current_version is not None and row.current_version != expected_current_version:
+                    raise ComponentVersionConflictError(
+                        f"Component {component_id} current version is {row.current_version}, "
+                        f"expected {expected_current_version}"
+                    )
+
                 if hard_delete:
                     # FK order: links and configs go before the component row
                     # (the FKs have no ON DELETE CASCADE, so the reverse order
@@ -4146,6 +4163,41 @@ class SqliteDb(BaseDb):
                                 f"Component {component_id} current version changed; expected {expected_current_version}"
                             )
 
+                    if require_no_dependents and result.rowcount > 0:
+                        # The guard above is check-then-write: SQLite takes the
+                        # write lock at the first write, so a parent that pinned
+                        # this component in the gap becomes visible only now.
+                        # Re-asserting rolls the archive back instead of leaving
+                        # a live parent pinning an archived child.
+                        self._refuse_if_dependents(
+                            sess,
+                            links_table,
+                            components_table,
+                            configs_table,
+                            component_id,
+                            active_parents_only=True,
+                        )
+
+                if result.rowcount > 0 and schedules_table is not None:
+                    # A component that is gone cannot serve a run, so the
+                    # schedules aimed at it go off in the SAME transaction as
+                    # the delete. Left to the caller, the cascade reaches only
+                    # the surfaces that remember it (the SDK deletes did not),
+                    # and run after the commit it leaves a window where the
+                    # target is gone and the poller still fires. A failure here
+                    # rolls the delete back rather than parting the two halves.
+                    disabled = self._disable_schedules_for_target_in_session(
+                        sess,
+                        schedules_table,
+                        target_type=component_type,
+                        target_id=component_id,
+                        reason=f"target_archived:{component_type}:{component_id}",
+                    )
+                    if cascade_stats is not None:
+                        cascade_stats["schedules_disabled"] = disabled
+                    if disabled:
+                        log_debug(f"Disabled {disabled} schedule(s) targeting {component_type} '{component_id}'")
+
             return result.rowcount > 0
 
         except Exception as e:
@@ -4168,41 +4220,18 @@ class SqliteDb(BaseDb):
                 if component is None or component.get("user_id") != user_id:
                     return False
 
-            # A restore returns the component to dispatch, so its live version's
-            # pinned children must be live too: archiving allowed parent-then-
-            # child, and restoring only the parent would publish a component
-            # whose members can never rebuild. Restore children first.
             links_table = self._get_table(table_type="component_links")
-            row = self.get_component(component_id, include_deleted=True)
-            current_version = (row or {}).get("current_version")
-            if row is not None and current_version is not None and links_table is not None:
-                with self.Session() as sess:
-                    link_rows = sess.execute(
-                        select(
-                            links_table.c.child_component_id,
-                            links_table.c.link_kind,
-                        ).where(
-                            links_table.c.parent_component_id == component_id,
-                            links_table.c.parent_version == current_version,
-                        )
-                    ).fetchall()
-                archived_children = sorted(
-                    {
-                        str(link.child_component_id)
-                        for link in link_rows
-                        if link.link_kind in PIN_LINK_KINDS
-                        and (child := self.get_component(str(link.child_component_id), include_deleted=True))
-                        is not None
-                        and child.get("deleted_at") is not None
-                    }
-                )
-                if archived_children:
-                    raise ComponentDependencyError(
-                        f"Cannot restore {component_id}: pinned child(ren) "
-                        f"{', '.join(archived_children)} are archived. Restore them first."
-                    )
 
             with self.Session() as sess, sess.begin():
+                # Locked read (a row lock on Postgres, a no-op on SQLite).
+                row = sess.execute(
+                    select(components_table.c.current_version)
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+                if row is None:
+                    return False
+
                 result = sess.execute(
                     components_table.update()
                     .where(
@@ -4211,7 +4240,43 @@ class SqliteDb(BaseDb):
                     )
                     .values(deleted_at=None, updated_at=int(time.time()))
                 )
-            return result.rowcount > 0
+                if result.rowcount == 0:
+                    return False
+
+                # A restore returns the component to dispatch, so its live
+                # version's pinned children must be live too: archiving allowed
+                # parent-then-child, and restoring only the parent would publish
+                # a component whose members can never rebuild. Restore children
+                # first. The check runs after the restore write, inside the
+                # transaction that holds the write lock: read before it, the
+                # guard is check-then-write and an archive of a child committing
+                # in the gap leaves a live parent pinning it - a state this
+                # guard is supposed to make unreachable.
+                if row.current_version is not None and links_table is not None:
+                    link_rows = sess.execute(
+                        select(links_table.c.child_component_id).where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == row.current_version,
+                            links_table.c.link_kind.in_(PIN_LINK_KINDS),
+                        )
+                    ).fetchall()
+                    child_ids = {link.child_component_id for link in link_rows if link.child_component_id}
+                    if child_ids:
+                        child_rows = sess.execute(
+                            select(components_table.c.component_id, components_table.c.deleted_at)
+                            .where(components_table.c.component_id.in_(child_ids))
+                            .with_for_update()
+                        ).fetchall()
+                        archived_children = sorted(
+                            str(child.component_id) for child in child_rows if child.deleted_at is not None
+                        )
+                        if archived_children:
+                            raise ComponentDependencyError(
+                                f"Cannot restore {component_id}: pinned child(ren) "
+                                f"{', '.join(archived_children)} are archived. Restore them first."
+                            )
+
+            return True
 
         except Exception as e:
             log_error(f"Error restoring component: {str(e)}")
@@ -4432,14 +4497,28 @@ class SqliteDb(BaseDb):
                             )
                         )
 
-            # Fetch and return both
-            component = self.get_component(component_id)
-            config_result = self.get_config(component_id, version=version)
+                # Both halves of the answer are read inside the transaction that
+                # wrote them, and without the archived filter. A read taken after
+                # the commit can be overtaken by an archive on another connection,
+                # and reporting a committed creation as a failure hands the caller
+                # a 4xx for a write that landed.
+                component_row = sess.execute(
+                    select(components_table).where(components_table.c.component_id == component_id)
+                ).fetchone()
+                config_row = sess.execute(
+                    select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                ).fetchone()
 
-            if component is None:
-                raise ValueError(f"Failed to get component {component_id} after creation")
-            if config_result is None:
-                raise ValueError(f"Failed to get config for {component_id} after creation")
+                if component_row is None:
+                    raise ValueError(f"Failed to get component {component_id} after creation")
+                if config_row is None:
+                    raise ValueError(f"Failed to get config for {component_id} after creation")
+
+                component = dict(component_row._mapping)
+                config_result = dict(config_row._mapping)
 
             return component, config_result
 
@@ -4778,6 +4857,20 @@ class SqliteDb(BaseDb):
                     )
                     final_version = version
 
+                # The archive precondition at the top is check-then-write:
+                # SQLite opens its transaction at the first write, so an archive
+                # can commit in the gap. The config row is written by now, which
+                # holds the write lock, so this re-read is final - an archive
+                # that got in first rolls the whole edit back instead of letting
+                # it mutate a row that is already immutable.
+                archived_at = sess.execute(
+                    select(components_table.c.deleted_at).where(components_table.c.component_id == component_id)
+                ).scalar()
+                if archived_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
+
                 if links is not None and links_table is not None:
                     sess.execute(
                         links_table.delete().where(
@@ -4836,6 +4929,26 @@ class SqliteDb(BaseDb):
                                     f"v{link_row.child_version} is {child_stage or 'missing'}; "
                                     "publish the child first."
                                 )
+                            # A pinned child must also still be LIVE. A config
+                            # keeps its published stage after its component is
+                            # archived, so a stage-only gate lets a version go
+                            # live pinning an archived child, and the parent
+                            # then loads with that member missing. The lock is a
+                            # no-op on SQLite and a row lock on Postgres, where
+                            # it serializes this against a concurrent archive.
+                            # A child with no catalog row is code-defined and
+                            # passes, exactly as the link validator allows.
+                            child_deleted_at = sess.execute(
+                                select(components_table.c.deleted_at)
+                                .where(components_table.c.component_id == link_row.child_component_id)
+                                .with_for_update()
+                            ).scalar()
+                            if child_deleted_at is not None:
+                                raise ComponentDependencyError(
+                                    f"Cannot publish {component_id} v{final_version}: pinned "
+                                    f"{link_row.link_kind} '{link_row.child_component_id}' is archived; "
+                                    "restore it first."
+                                )
                     # Publishing moves the pointer and re-projects the config's
                     # denormalized identity onto the row in one transaction, so
                     # listings never show a stale name for the live version.
@@ -4858,7 +4971,10 @@ class SqliteDb(BaseDb):
                             projection["metadata"] = published_config.get("metadata")
                     projection_update = (
                         components_table.update()
-                        .where(components_table.c.component_id == component_id)
+                        .where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
                         .values(**projection)
                     )
                     if expected_current_version is not None:
@@ -4869,14 +4985,39 @@ class SqliteDb(BaseDb):
                             components_table.c.current_version == expected_current_version
                         )
                     projection_result = sess.execute(projection_update)
-                    if projection_result.rowcount == 0 and expected_current_version is not None:
-                        raise ComponentVersionConflictError(
-                            f"Component {component_id} current version changed; expected {expected_current_version}"
-                        )
+                    if projection_result.rowcount == 0:
+                        # Zero rows: the row was archived underneath this
+                        # publish, or the CAS guard lost. Re-read to answer
+                        # which, holding the write transaction.
+                        still_live = sess.execute(
+                            select(components_table.c.component_id).where(
+                                components_table.c.component_id == component_id,
+                                components_table.c.deleted_at.is_(None),
+                            )
+                        ).fetchone()
+                        if still_live is None:
+                            raise ComponentArchivedError(
+                                f"Component {component_id} is archived; restore it explicitly before writing to it"
+                            )
+                        if expected_current_version is not None:
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} current version changed; expected {expected_current_version}"
+                            )
 
-            result = self.get_config(component_id, version=final_version)
-            if result is None:
-                raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
+                # The answer is built inside the transaction that wrote it. A
+                # read taken after the commit can be overtaken by an archive on
+                # another connection, and reporting a committed publish as a
+                # failure hands the caller a 4xx for a write that landed.
+                written = sess.execute(
+                    select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == final_version,
+                    )
+                ).fetchone()
+                if written is None:
+                    raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
+                result = dict(written._mapping)
+
             return result
 
         except Exception as e:
@@ -4888,20 +5029,25 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: int,
     ) -> bool:
-        """Delete a specific config version.
+        """Tombstone a specific config version. Its number is never reused.
 
         Only draft configs can be deleted. Published configs are immutable.
-        Cannot delete the current version.
+        Never the current version, never the last visible version, and never a
+        version an ACTIVE parent pins - a parent that is archived, or whose own
+        version is tombstoned, holds no pin.
 
         Args:
             component_id: The component ID.
             version: The version to delete.
 
         Returns:
-            True if deleted, False if not found.
+            True if deleted, False if not found (or already tombstoned).
 
         Raises:
-            ValueError: If attempting to delete a published or current config.
+            ComponentDraftRequiredError: If the version is published.
+            ComponentLastConfigError: If it is the last visible version.
+            ComponentDependencyError: If an active parent pins this version.
+            ValueError: If it is the current version.
         """
         try:
             configs_table = self._get_table(table_type="component_configs")
@@ -4928,9 +5074,13 @@ class SqliteDb(BaseDb):
                         f"Cannot delete published config {component_id} v{version}; only drafts are deletable"
                     )
 
-                # Check if it's current version
+                # Check if it's current version. The locked read (a row lock on
+                # Postgres, a no-op on SQLite) serializes this call against a
+                # concurrent publish of the same component.
                 current = sess.execute(
-                    select(components_table.c.current_version).where(components_table.c.component_id == component_id)
+                    select(components_table.c.current_version)
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
                 ).fetchone()
 
                 if current and current.current_version == version:
@@ -4948,22 +5098,105 @@ class SqliteDb(BaseDb):
                 if (visible or 0) <= 1:
                     raise ComponentLastConfigError(f"Cannot delete the last visible config of {component_id}")
 
-                # Another component may pin this exact version
+                # Another ACTIVE component may pin this exact version. A parent
+                # that is archived, or whose own version is tombstoned, has no
+                # claim left: it cannot dispatch, so holding a draft hostage
+                # would leave the only release destroying the parent's history.
+                # The release must be PROVEN, never assumed from an absent row -
+                # a link whose parent config row is missing keeps its pin, since
+                # nothing there says the parent is gone.
+                pinned_stmt = None
                 if links_table is not None:
-                    pinned_by = sess.execute(
-                        select(links_table.c.parent_component_id).where(
-                            links_table.c.child_component_id == component_id,
-                            links_table.c.child_version == version,
+                    archived_parent = (
+                        select(components_table.c.component_id)
+                        .where(
+                            components_table.c.component_id == links_table.c.parent_component_id,
+                            components_table.c.deleted_at.is_not(None),
                         )
-                    ).fetchall()
+                        .correlate(links_table)
+                        .exists()
+                    )
+                    tombstoned_parent_version = (
+                        select(configs_table.c.version)
+                        .where(
+                            configs_table.c.component_id == links_table.c.parent_component_id,
+                            configs_table.c.version == links_table.c.parent_version,
+                            configs_table.c.stage == DELETED_CONFIG_STAGE,
+                        )
+                        .correlate(links_table)
+                        .exists()
+                    )
+                    pinned_stmt = select(links_table.c.parent_component_id).where(
+                        links_table.c.child_component_id == component_id,
+                        links_table.c.child_version == version,
+                        ~archived_parent,
+                        ~tombstoned_parent_version,
+                    )
+                    pinned_by = sess.execute(pinned_stmt).fetchall()
                     if pinned_by:
                         parents = sorted({r.parent_component_id for r in pinned_by if r.parent_component_id})
                         raise ComponentDependencyError(
                             f"Cannot delete {component_id} v{version}: pinned by {', '.join(parents)}"
                         )
 
-                # Tombstone: keep the row so the version number is never reused,
-                # free its label, drop its outgoing links.
+                # Tombstone: keep the row so the version number is never reused
+                # and free its label. The draft predicate rides the UPDATE -
+                # every read above is check-then-write, and a publish of this
+                # very version committing in the gap would otherwise leave the
+                # live pointer naming a deleted config.
+                result = sess.execute(
+                    configs_table.update()
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                        configs_table.c.stage == "draft",
+                    )
+                    .values(stage=DELETED_CONFIG_STAGE, label=None, updated_at=int(time.time()))
+                )
+                if result.rowcount == 0:
+                    stage_now = sess.execute(
+                        select(configs_table.c.stage).where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.version == version,
+                        )
+                    ).scalar()
+                    if stage_now is None or stage_now == DELETED_CONFIG_STAGE:
+                        return False
+                    raise ComponentDraftRequiredError(
+                        f"Cannot delete published config {component_id} v{version}; only drafts are deletable"
+                    )
+
+                # The other three guards ride the same transaction: the write
+                # above holds the write lock, so these re-reads see every
+                # committed writer and nothing can move underneath them. A
+                # violation rolls the tombstone back.
+                current_after = sess.execute(
+                    select(components_table.c.current_version).where(components_table.c.component_id == component_id)
+                ).scalar()
+                if current_after == version:
+                    raise ValueError(f"Cannot delete current config {component_id} v{version}")
+
+                visible_after = sess.execute(
+                    select(func.count())
+                    .select_from(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                ).scalar()
+                if (visible_after or 0) < 1:
+                    raise ComponentLastConfigError(f"Cannot delete the last visible config of {component_id}")
+
+                if pinned_stmt is not None:
+                    pinned_after = sess.execute(pinned_stmt).fetchall()
+                    if pinned_after:
+                        parents = sorted({r.parent_component_id for r in pinned_after if r.parent_component_id})
+                        raise ComponentDependencyError(
+                            f"Cannot delete {component_id} v{version}: pinned by {', '.join(parents)}"
+                        )
+
+                # Drop the version's outgoing links last: nothing below can
+                # refuse the delete now.
                 if links_table is not None:
                     sess.execute(
                         links_table.delete().where(
@@ -4971,14 +5204,6 @@ class SqliteDb(BaseDb):
                             links_table.c.parent_version == version,
                         )
                     )
-                sess.execute(
-                    configs_table.update()
-                    .where(
-                        configs_table.c.component_id == component_id,
-                        configs_table.c.version == version,
-                    )
-                    .values(stage=DELETED_CONFIG_STAGE, label=None, updated_at=int(time.time()))
-                )
 
             return True
 
@@ -5068,10 +5293,12 @@ class SqliteDb(BaseDb):
 
         Raises:
             ValueError: If attempting to set a draft config as current.
+            ComponentDependencyError: If the version pins an archived child.
         """
         try:
             configs_table = self._get_table(table_type="component_configs")
             components_table = self._get_table(table_type="components")
+            links_table = self._get_table(table_type="component_links")
 
             if configs_table is None or components_table is None:
                 return False
@@ -5155,6 +5382,37 @@ class SqliteDb(BaseDb):
                         f"Component {component_id} current version changed; expected {expected_current_version}"
                     )
 
+                # The live version must not pin an archived child: the component
+                # would resolve and dispatch with that member missing. Stage
+                # alone does not say this - a config keeps its published stage
+                # after its component is archived. Checked after the pointer
+                # write so the guard rides the transaction holding the write
+                # lock; a violation rolls the pointer move back. Children with
+                # no catalog row are code-defined and pass.
+                if links_table is not None:
+                    pinned = sess.execute(
+                        select(links_table.c.child_component_id).where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == version,
+                            links_table.c.link_kind.in_(PIN_LINK_KINDS),
+                        )
+                    ).fetchall()
+                    child_ids = {row.child_component_id for row in pinned if row.child_component_id}
+                    if child_ids:
+                        child_rows = sess.execute(
+                            select(components_table.c.component_id, components_table.c.deleted_at)
+                            .where(components_table.c.component_id.in_(child_ids))
+                            .with_for_update()
+                        ).fetchall()
+                        archived_children = sorted(
+                            str(row.component_id) for row in child_rows if row.deleted_at is not None
+                        )
+                        if archived_children:
+                            raise ComponentDependencyError(
+                                f"Cannot make {component_id} v{version} current: pinned child(ren) "
+                                f"{', '.join(archived_children)} are archived. Restore them first."
+                            )
+
             log_debug(f"Set {component_id} current version to {version}")
             return True
 
@@ -5228,35 +5486,87 @@ class SqliteDb(BaseDb):
             configs_table = self._get_table(table_type="component_configs")
 
             with self.Session() as sess:
-                stmt = select(table).where(table.c.child_component_id == component_id)
-                if version is not None:
-                    stmt = stmt.where(table.c.child_version == version)
-                if active_parents_only and components_table is not None and configs_table is not None:
-                    stmt = (
-                        stmt.join(
-                            components_table,
-                            components_table.c.component_id == table.c.parent_component_id,
-                        )
-                        .join(
-                            configs_table,
-                            and_(
-                                configs_table.c.component_id == table.c.parent_component_id,
-                                configs_table.c.version == table.c.parent_version,
-                            ),
-                        )
-                        .where(
-                            components_table.c.deleted_at.is_(None),
-                            configs_table.c.stage != DELETED_CONFIG_STAGE,
-                        )
-                    )
-
-                results = sess.execute(stmt).fetchall()
-                # The join widens the row; keep only the link columns.
-                return [{k: v for k, v in row._mapping.items() if k in table.c.keys()} for row in results]
+                return self._dependents_in_session(
+                    sess,
+                    table,
+                    components_table,
+                    configs_table,
+                    component_id,
+                    version=version,
+                    active_parents_only=active_parents_only,
+                )
 
         except Exception as e:
             log_error(f"Error getting dependents: {str(e)}")
             raise
+
+    def _dependents_in_session(
+        self,
+        sess,
+        links_table,
+        components_table,
+        configs_table,
+        component_id: str,
+        version: Optional[int] = None,
+        active_parents_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """The dependents read, run on a session the caller already holds.
+
+        The tables are passed in because the caller may hold an open
+        transaction on this scoped session; _get_table would try to begin a
+        second one.
+        """
+        if links_table is None:
+            return []
+        stmt = select(links_table).where(links_table.c.child_component_id == component_id)
+        if version is not None:
+            stmt = stmt.where(links_table.c.child_version == version)
+        if active_parents_only and components_table is not None and configs_table is not None:
+            stmt = (
+                stmt.join(
+                    components_table,
+                    components_table.c.component_id == links_table.c.parent_component_id,
+                )
+                .join(
+                    configs_table,
+                    and_(
+                        configs_table.c.component_id == links_table.c.parent_component_id,
+                        configs_table.c.version == links_table.c.parent_version,
+                    ),
+                )
+                .where(
+                    components_table.c.deleted_at.is_(None),
+                    configs_table.c.stage != DELETED_CONFIG_STAGE,
+                )
+            )
+
+        results = sess.execute(stmt).fetchall()
+        # The join widens the row; keep only the link columns.
+        return [{k: v for k, v in row._mapping.items() if k in links_table.c.keys()} for row in results]
+
+    def _refuse_if_dependents(
+        self,
+        sess,
+        links_table,
+        components_table,
+        configs_table,
+        component_id: str,
+        active_parents_only: bool,
+    ) -> None:
+        """Raise ComponentDependencyError when another component pins this one."""
+        dependents = self._dependents_in_session(
+            sess,
+            links_table,
+            components_table,
+            configs_table,
+            component_id,
+            active_parents_only=active_parents_only,
+        )
+        if dependents:
+            parents = sorted({str(d["parent_component_id"]) for d in dependents if d.get("parent_component_id")})
+            raise ComponentDependencyError(
+                f"Cannot delete {component_id}: referenced by {', '.join(str(x) for x in parents)}"
+            )
 
     def _validate_links_in_session(
         self,
@@ -6044,34 +6354,53 @@ class SqliteDb(BaseDb):
         lands in disabled_reason so the owner's next read explains the flip;
         enable clears it. Crosses owners deliberately: archiving the target is
         a system action.
-        """
-        from agno.db.schemas.scheduler import build_run_endpoint
 
+        delete_component runs this same cascade inside the transaction that
+        removes the target, so archiving through the catalog needs no second
+        call; this stays public for targets that have no catalog row.
+        """
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return 0
-            endpoint = build_run_endpoint(target_type, target_id)
-            # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
-            # "/agents/x/runs/" is a valid run endpoint that plain equality would
-            # miss - matching both spellings keeps the cascade from leaking rows.
-            endpoints = [endpoint, endpoint + "/"]
             with self.Session() as sess, sess.begin():
-                result = sess.execute(
-                    table.update()
-                    .where(
-                        or_(
-                            and_(table.c.target_type == target_type, table.c.target_id == target_id),
-                            table.c.endpoint.in_(endpoints),
-                        ),
-                        table.c.enabled.is_(True),
-                    )
-                    .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
-                )
-            return int(result.rowcount or 0)
+                return self._disable_schedules_for_target_in_session(sess, table, target_type, target_id, reason)
         except Exception as e:
             log_error(f"Error disabling schedules for target: {e}")
             raise
+
+    def _disable_schedules_for_target_in_session(
+        self,
+        sess,
+        table,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """The cascade write, run on a session the caller already holds.
+
+        The table is passed in because the caller may hold an open transaction
+        on this scoped session; _get_table would try to begin a second one.
+        """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        endpoint = build_run_endpoint(target_type, target_id)
+        # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+        # "/agents/x/runs/" is a valid run endpoint that plain equality would
+        # miss - matching both spellings keeps the cascade from leaking rows.
+        endpoints = [endpoint, endpoint + "/"]
+        result = sess.execute(
+            table.update()
+            .where(
+                or_(
+                    and_(table.c.target_type == target_type, table.c.target_id == target_id),
+                    table.c.endpoint.in_(endpoints),
+                ),
+                table.c.enabled.is_(True),
+            )
+            .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+        )
+        return int(result.rowcount or 0)
 
     def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
         """Write provenance columns the generic update_schedule refuses.
@@ -6131,11 +6460,17 @@ class SqliteDb(BaseDb):
                 if row is None:
                     return None
                 schedule = dict(row._mapping)
-                # Atomically claim it
+                # Claim it with EVERY predicate the select used, not just the
+                # lock half: the select runs outside the write transaction, so
+                # a disable (the archive cascade among them) or a reschedule
+                # committing in the gap must make the claim a no-op rather than
+                # arm a run against a target that is gone.
                 result = sess.execute(
                     table.update()
                     .where(
                         table.c.id == schedule["id"],
+                        table.c.enabled == True,  # noqa: E712
+                        table.c.next_run_at <= now,
                         or_(
                             table.c.locked_by.is_(None),
                             table.c.locked_at <= stale_lock_threshold,
@@ -6145,9 +6480,12 @@ class SqliteDb(BaseDb):
                 )
                 if result.rowcount == 0:
                     return None
-                schedule["locked_by"] = worker_id
-                schedule["locked_at"] = now
-                return schedule
+                # Return post-claim state: the executor acts on this dict, and
+                # the pre-claim snapshot can already be stale.
+                claimed = sess.execute(select(table).where(table.c.id == schedule["id"])).fetchone()
+                if claimed is None:
+                    return None
+                return dict(claimed._mapping)
         except Exception as e:
             log_debug(f"Error claiming schedule: {e}")
             return None

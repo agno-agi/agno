@@ -857,6 +857,7 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         expected_current_version: Optional[int] = None,
         require_no_dependents: bool = True,
+        cascade_stats: Optional[Dict[str, int]] = None,
     ) -> bool:
         """Delete a component. Soft delete archives it; the id stays reserved.
 
@@ -871,6 +872,12 @@ class BaseDb(ABC):
                 An archive checks active (non-archived) parents; a hard delete
                 checks every parent, because it would break even an archived
                 parent's history.
+            cascade_stats: Optional dict the delete fills in with what its
+                cascade touched, currently "schedules_disabled". The count is
+                only knowable inside the cascade - it counts the rows this
+                delete flipped from enabled, and restore does not re-enable
+                them - so a caller that reports it cannot recompute it from a
+                later read.
 
         Returns:
             True if deleted, False if not found or already deleted.
