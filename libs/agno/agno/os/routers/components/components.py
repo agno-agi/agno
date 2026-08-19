@@ -288,6 +288,38 @@ def _resolve_member_links(
     return links, unresolved
 
 
+def _member_links_for_config(
+    component_id: str,
+    config: Optional[Dict[str, Any]],
+    links: Optional[List[Dict[str, Any]]],
+    db: BaseDb,
+    registry: Optional[Registry] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Member link rows for a team config saved through the config routes.
+
+    ``create_component`` derives these from ``config["members"]``; the config
+    routes only persisted caller-supplied ``links``, so a member added by
+    editing a team's config got no link row. Without one the member is not a
+    dependent: it archives freely and the team keeps a reference that resolves
+    to nothing, while the same member at create time correctly conflicts.
+
+    Explicit links win - a caller that sent its own link set is authoritative.
+    Returns None when there is nothing to derive, so callers pass their own
+    value through unchanged.
+    """
+    if links:
+        return links
+    if not isinstance(config, dict) or not config.get("members"):
+        return links
+    existing = db.get_component(component_id)
+    if existing is None or str(existing.get("component_type")) != ComponentType.TEAM.value:
+        return links
+    derived, _unresolved = _resolve_member_links(config, db, registry)
+    # Unresolved members are not raised here: unlike create, an edit may
+    # legitimately reference a code-defined member this process cannot see.
+    return derived or links
+
+
 def get_components_router(
     os_db: Union[BaseDb, AsyncBaseDb],
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -717,6 +749,7 @@ def attach_routes(
             )
 
             _reject_unsupported_guard(body.guard, "latest_version")
+            links = _member_links_for_config(component_id, config_data, body.links, db, registry)
             config = db.upsert_config(
                 component_id=component_id,
                 version=None,  # Always create new
@@ -724,7 +757,7 @@ def attach_routes(
                 label=body.label,
                 stage=body.stage,
                 notes=body.notes,
-                links=body.links,
+                links=links,
                 expected_latest_version=body.guard.latest_version if body.guard else None,
             )
             return ComponentConfigResponse(**config)
@@ -777,6 +810,7 @@ def attach_routes(
             )
 
             _reject_unsupported_guard(body.guard, "latest_version")
+            links = _member_links_for_config(component_id, config_data, body.links, db, registry)
             config = db.upsert_config(
                 component_id=component_id,
                 version=version,  # Always update existing
@@ -784,7 +818,7 @@ def attach_routes(
                 label=body.label,
                 stage=body.stage,
                 notes=body.notes,
-                links=body.links,
+                links=links,
                 expected_latest_version=body.guard.latest_version if body.guard else None,
             )
             return ComponentConfigResponse(**config)
