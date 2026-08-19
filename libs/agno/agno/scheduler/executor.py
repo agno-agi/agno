@@ -351,6 +351,17 @@ class ScheduleExecutor:
                 sanitized_payload["metadata"] = {
                     k: v for k, v in raw_metadata.items() if k != COMPONENT_VERSION_METADATA_KEY
                 }
+            elif "metadata" in sanitized_payload:
+                # The run routes accept only a JSON object here and answer 4xx
+                # for anything else. A schedule stored with a non-object
+                # metadata would then fail on every attempt of every tick,
+                # forever, with no tick able to repair it - so drop the field
+                # rather than fire a request that can only fail.
+                sanitized_payload.pop("metadata")
+                log_warning(
+                    f"Schedule {schedule.id}: dropping non-object metadata from the payload; "
+                    "run endpoints accept a JSON object."
+                )
             form_payload = {
                 k: _to_form_value(v)
                 for k, v in sanitized_payload.items()
