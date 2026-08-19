@@ -28,6 +28,7 @@ StudioErrorCode = Literal[
     "component_not_published",
     "dependency_conflict",
     "shared_component",
+    "not_owner",
     "invalid_request",
     "invalid_component_id",
     "model_not_found",

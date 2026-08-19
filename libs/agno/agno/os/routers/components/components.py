@@ -38,6 +38,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import draft_preview_identity, may_read_draft_configs
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id_from_name, hash_string_sha256
@@ -873,9 +874,13 @@ def attach_routes(
         include_config: bool = Query(True, description="Include full config blob"),
     ) -> List[ComponentConfigResponse]:
         try:
-            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+            component_row = db.get_component(component_id, user_id=get_scoped_user_id(request))
+            if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             configs = db.list_configs(component_id, include_config=include_config)
+            actor, privileged = draft_preview_identity(request)
+            if not may_read_draft_configs(component_row, actor, privileged):
+                configs = [c for c in configs if c.get("stage") == "published"]
             return [ComponentConfigResponse(**c) for c in configs]
         except HTTPException:
             raise
@@ -1046,9 +1051,19 @@ def attach_routes(
         version: int = Path(description="Version number"),
     ) -> ComponentConfigResponse:
         try:
-            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+            component_row = db.get_component(component_id, user_id=get_scoped_user_id(request))
+            if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id, version=version)
+            actor, privileged = draft_preview_identity(request)
+            if (
+                config is not None
+                and config.get("stage") != "published"
+                and not may_read_draft_configs(component_row, actor, privileged)
+            ):
+                # A draft version answers as if absent, so the 404 cannot be read
+                # as "exists but withheld".
+                config = None
 
             if config is None:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")

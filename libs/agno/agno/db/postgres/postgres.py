@@ -3985,7 +3985,8 @@ class PostgresDb(BaseDb):
         Args:
             component_id: The component ID.
             component_type: Optional type filter (agent|team|workflow).
-            user_id: If set, return the component only if owned by this user or shared.
+            user_id: If set, return the component only if this user may see it:
+                owned by them, unowned (shared), or published.
             include_deleted: Also return an archived (soft-deleted) row.
 
         Returns:
@@ -4004,8 +4005,26 @@ class PostgresDb(BaseDb):
                 if component_type is not None:
                     stmt = stmt.where(table.c.component_type == component_type.value)
                 if user_id is not None:
-                    # Unowned components are shared: visible to every scoped caller
-                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                    # Catalog visibility, stated once for every scoped catalog read:
+                    # a scoped caller sees its own rows, unowned (shared) rows, and any
+                    # component carrying a published version. Publishing is what puts a
+                    # component on the platform; a draft stays private to its owner.
+                    # Visibility only -- mutation stays owner-scoped, because user_id
+                    # remains a plain WHERE filter on every write.
+                    stmt = stmt.where(
+                        or_(
+                            table.c.user_id == user_id,
+                            table.c.user_id.is_(None),
+                            # Live published rows only. Archiving is the off-switch:
+                            # it withdraws a component from every other user even
+                            # under include_deleted, which relaxes the tombstone
+                            # filter for the OWNER's own history, never across owners.
+                            and_(
+                                table.c.current_version.isnot(None),
+                                table.c.deleted_at.is_(None),
+                            ),
+                        )
+                    )
 
                 row = sess.execute(stmt).mappings().one_or_none()
                 return dict(row) if row else None
@@ -4418,7 +4437,8 @@ class PostgresDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
-            user_id: If set, list components owned by this user plus shared ones.
+            user_id: If set, list the components this user may see: their own,
+                unowned (shared) ones, and published ones.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 
@@ -4436,8 +4456,22 @@ class PostgresDb(BaseDb):
                 if component_type is not None:
                     where_clauses.append(table.c.component_type == component_type.value)
                 if user_id is not None:
-                    # Unowned components are shared: they list for every scoped caller
-                    where_clauses.append(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                    # Same catalog visibility rule as get_component: own rows,
+                    # unowned (shared) rows, and anything published.
+                    where_clauses.append(
+                        or_(
+                            table.c.user_id == user_id,
+                            table.c.user_id.is_(None),
+                            # Live published rows only. Archiving is the off-switch:
+                            # it withdraws a component from every other user even
+                            # under include_deleted, which relaxes the tombstone
+                            # filter for the OWNER's own history, never across owners.
+                            and_(
+                                table.c.current_version.isnot(None),
+                                table.c.deleted_at.is_(None),
+                            ),
+                        )
+                    )
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:

@@ -901,13 +901,19 @@ class StudioRunnerTools(Toolkit):
 
         Pages through the full components table so a match beyond the first page
         is never silently missed; only runs after the exact-id lookup missed.
-        Raises AmbiguousComponentNameError when several components share the name.
+
+        Published components are platform-visible, so one display name can now
+        match rows belonging to different owners. The caller's own component
+        wins outright -- "my radar" means mine, and another user publishing a
+        radar must not change what my name resolves to. Ambiguity that survives
+        that is still refused with the candidates rather than silently picked.
         """
         if self.db is None:
             return None
         from agno.db.base import ComponentType
 
         matches: List[str] = []
+        owned: List[str] = []
         offset = 0
         component_type_enum = ComponentType(component_type)
         while True:
@@ -921,13 +927,23 @@ class StudioRunnerTools(Toolkit):
                 return None
             if not rows:
                 break
-            matches.extend(str(r["component_id"]) for r in rows if r.get("name") == name and r.get("component_id"))
+            for r in rows:
+                component_id = r.get("component_id")
+                if r.get("name") != name or not component_id:
+                    continue
+                matches.append(str(component_id))
+                if actor is not None and r.get("user_id") == actor:
+                    owned.append(str(component_id))
             offset += len(rows)
             if offset >= total:
                 break
-        if len(matches) > 1:
-            raise AmbiguousComponentNameError(component_type, name, matches)
-        return matches[0] if matches else None
+        # One of my own settles it, however many other owners published the name.
+        if len(owned) == 1:
+            return owned[0]
+        candidates = owned or matches
+        if len(candidates) > 1:
+            raise AmbiguousComponentNameError(component_type, name, candidates)
+        return candidates[0] if candidates else None
 
     def _resolve_db_id_by_name_or_slug(
         self, component_type: str, identifier: str, actor: Optional[str] = None

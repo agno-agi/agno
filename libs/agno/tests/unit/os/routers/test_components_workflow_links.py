@@ -607,7 +607,7 @@ class TestScopedConflictDetail:
             component_type=ComponentType.TEAM,
             name="their-secret-team",
             config={"id": "their-secret-team"},
-            stage="published",
+            stage="draft",
             links=[
                 {
                     "link_kind": "member",

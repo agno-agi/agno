@@ -2060,7 +2060,7 @@ class TestArchive:
         assert "radar-scout" in error["message"]
         assert _loads(studio.archive_component("radar-scout"))["status"] == "archived"
 
-    def test_archive_by_another_owners_display_name_answers_as_if_absent(self, studio):
+    def test_archive_by_another_owners_draft_display_name_answers_as_if_absent(self, studio):
         from agno.run.base import RunContext
 
         alice = RunContext(run_id="r1", session_id="s1", user_id="alice")
@@ -2069,13 +2069,19 @@ class TestArchive:
         # Bob's answer for a name that exists nowhere is the control.
         absent = studio.archive_component("Quarterly Secrets", _agno_run_context=bob)
         studio.create_agent(
-            name="Quarterly Secrets", instructions="i", model_id="gpt-5.4", publish=True, _agno_run_context=alice
+            name="Quarterly Secrets", instructions="i", model_id="gpt-5.4", publish=False, _agno_run_context=alice
         )
 
-        # The same call once Alice owns the name must be byte-identical: a
-        # differing refusal would report whose names exist.
+        # Alice's draft is hers alone, so the same call must stay byte-identical
+        # to the control: a differing refusal would report whose names exist.
         assert studio.archive_component("Quarterly Secrets", _agno_run_context=bob) == absent
         assert _error(absent)["code"] == "component_not_found"
+
+        # Published, the name is on the platform and resolves for Bob too - but
+        # the archive itself is still refused, now for the honest reason.
+        studio.publish_component("quarterly-secrets", _agno_run_context=alice)
+        denied = _error(studio.archive_component("quarterly-secrets", _agno_run_context=bob))
+        assert denied["code"] == "not_owner", denied
 
         # The owner still resolves her own display name.
         owner_error = _error(studio.archive_component("Quarterly Secrets", _agno_run_context=alice))
@@ -2084,7 +2090,7 @@ class TestArchive:
         assert _loads(studio.archive_component("quarterly-secrets", _agno_run_context=alice))["status"] == "archived"
 
     @pytest.mark.asyncio
-    async def test_async_archive_by_another_owners_display_name_answers_as_if_absent(self, studio):
+    async def test_async_archive_by_another_owners_draft_display_name_answers_as_if_absent(self, studio):
         from agno.run.base import RunContext
 
         alice = RunContext(run_id="r1", session_id="s1", user_id="alice")
@@ -2092,11 +2098,15 @@ class TestArchive:
 
         absent = await studio.aarchive_component("Quarterly Secrets", _agno_run_context=bob)
         studio.create_agent(
-            name="Quarterly Secrets", instructions="i", model_id="gpt-5.4", publish=True, _agno_run_context=alice
+            name="Quarterly Secrets", instructions="i", model_id="gpt-5.4", publish=False, _agno_run_context=alice
         )
 
         assert await studio.aarchive_component("Quarterly Secrets", _agno_run_context=bob) == absent
         assert _error(absent)["code"] == "component_not_found"
+
+        studio.publish_component("quarterly-secrets", _agno_run_context=alice)
+        denied = _error(await studio.aarchive_component("quarterly-secrets", _agno_run_context=bob))
+        assert denied["code"] == "not_owner", denied
 
         owner_error = _error(await studio.aarchive_component("Quarterly Secrets", _agno_run_context=alice))
         assert owner_error["code"] == "invalid_request"

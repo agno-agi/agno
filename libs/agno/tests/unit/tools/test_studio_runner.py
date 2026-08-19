@@ -1816,15 +1816,18 @@ class TestStudioEmbedding:
         assert out.get("status") == "edited"
         assert out["data"]["id"] == "support"
 
-    def test_other_owners_row_does_not_block_code_defined_name_read(self, registry, db, tmp_path):
+    def test_other_owners_draft_row_does_not_block_code_defined_name_read(self, registry, db, tmp_path):
         # The id-first gate probes the DB with the ACTOR'S visibility: a row
         # the actor cannot see must neither block the code-defined name read
         # nor make the response differ from the row not existing at all.
+        # Alice's row is a DRAFT here: published, it would be visible to Bob and
+        # its exact id would outrank a code-defined display name, which the
+        # next test pins.
         from agno.agent import Agent
 
         owner = StudioTools(registry=registry, db=db)
         owner.create_agent(
-            name="support", instructions="i", model_id="gpt-5.4", publish=True, _agno_run_context=_context("alice")
+            name="support", instructions="i", model_id="gpt-5.4", publish=False, _agno_run_context=_context("alice")
         )
         shadow = Agent(id="code-1", name="support", model=OpenAIResponses(id="gpt-5.4"))
         studio = StudioTools(registry=registry, db=db, agents_list=[shadow])
@@ -1836,6 +1839,24 @@ class TestStudioEmbedding:
         clean = StudioTools(registry=registry, db=clean_db, agents_list=[shadow])
         without_row = _loads(clean.get_component("support", _agno_run_context=_context("bob")))
         assert without_row["data"] == with_row["data"]
+
+    def test_other_owners_published_row_outranks_a_code_defined_display_name(self, registry, db):
+        """Publishing changes which tier answers, by the rule that was already
+        there: an exact DB id beats a code-defined display NAME. Alice's
+        published row is visible to Bob, so its id now wins where a draft's
+        would not. A code-defined component with the same *id* still shadows
+        the row -- that ordering is untouched."""
+        from agno.agent import Agent
+
+        owner = StudioTools(registry=registry, db=db)
+        owner.create_agent(
+            name="support", instructions="i", model_id="gpt-5.4", publish=True, _agno_run_context=_context("alice")
+        )
+        shadow = Agent(id="code-1", name="support", model=OpenAIResponses(id="gpt-5.4"))
+        studio = StudioTools(registry=registry, db=db, agents_list=[shadow])
+        read = _loads(studio.get_component("support", _agno_run_context=_context("bob")))
+        assert read["data"]["id"] == "support"
+        assert read["data"]["source"] == "db"
 
     def test_edit_by_display_name_accumulates_drafts_with_versions(self, registry, db):
         # The edit base version must come from the RESOLVED id: a display-name

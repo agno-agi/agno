@@ -1227,13 +1227,16 @@ class TestArchivedComponentDiscovery:
         assert owner_listed.json()["meta"]["total_count"] == 2
         assert owner_client.get("/components/archived-1?include_deleted=true").status_code == 200
 
+        # include_deleted relaxes the tombstone filter for the OWNER's history.
+        # For everyone else archiving is the off-switch: user-B keeps the
+        # published live row and loses the archived one, flag or no flag.
         listed = other_client.get("/components?include_deleted=true")
         assert listed.status_code == 200
-        assert listed.json()["data"] == []
-        assert listed.json()["meta"]["total_count"] == 0
+        assert {c["component_id"] for c in listed.json()["data"]} == {"live-1"}
+        assert listed.json()["meta"]["total_count"] == 1
 
         assert other_client.get("/components/archived-1?include_deleted=true").status_code == 404
-        assert other_client.get("/components/live-1?include_deleted=true").status_code == 404
+        assert other_client.get("/components/live-1?include_deleted=true").status_code == 200
 
     def test_include_deleted_keeps_unowned_archived_components_shared(self, arch_db, settings):
         """An unowned row is shared, and archiving it does not make it private.
@@ -1253,17 +1256,21 @@ class TestArchivedComponentDiscovery:
 
         other_client = self._scoped_client(arch_db, settings, "user-B")
 
-        # The live precedent this pins against: an unowned row lists for a non-owner.
+        # The live precedent this pins against: an unowned row lists for a
+        # non-owner. user-A's published live-1 lists too -- publishing puts it on
+        # the platform -- while her archived-1 stays withdrawn.
         default_listed = other_client.get("/components")
         assert default_listed.status_code == 200
-        assert {c["component_id"] for c in default_listed.json()["data"]} == {"shared-live"}
-        assert default_listed.json()["meta"]["total_count"] == 1
+        assert {c["component_id"] for c in default_listed.json()["data"]} == {"shared-live", "live-1"}
+        assert default_listed.json()["meta"]["total_count"] == 2
         assert other_client.get("/components/shared-archived").status_code == 404
 
         listed = other_client.get("/components?include_deleted=true")
         assert listed.status_code == 200
-        assert {c["component_id"] for c in listed.json()["data"]} == {"shared-live", "shared-archived"}
-        assert listed.json()["meta"]["total_count"] == 2
+        assert {c["component_id"] for c in listed.json()["data"]} == {"shared-live", "shared-archived", "live-1"}
+        assert listed.json()["meta"]["total_count"] == 3
+        # Another owner's archived row is withdrawn from her even under the flag.
+        assert other_client.get("/components/archived-1?include_deleted=true").status_code == 404
 
         fetched = other_client.get("/components/shared-archived?include_deleted=true")
         assert fetched.status_code == 200

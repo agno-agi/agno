@@ -330,69 +330,139 @@ class TestInternalServiceScopes:
 
 
 class TestComposeAndDispatchVisibility:
-    """A scoped actor must not compose, run, or schedule another owner's
-    private component through any surface, and the refusal must be the same
-    not-found the row's absence would produce. Shared (unowned) rows stay
-    usable by everyone; the owner keeps full use of their own rows."""
+    """Stage decides who may reach a component.
 
-    def _private_agent(self, studio, publish=True):
-        return _create(studio, "Private Agent", ALICE, publish=publish)["id"]
+    A draft is the owner's alone: invisible to compose, run, schedule and name
+    lookup on every surface, and its refusal is the same not-found an absent id
+    produces, so the draft's existence is never disclosed. Publishing puts the
+    component on the platform, and from then on any actor may compose, run and
+    schedule it -- while still being unable to edit it. Shared (unowned) rows
+    stay usable by everyone; the owner keeps full use of their own."""
 
-    def test_team_compose_with_foreign_member_is_not_found(self, studio):
-        private_id = self._private_agent(studio)
+    def _draft_agent(self, studio):
+        """Alice's draft-only agent: on the platform for nobody but Alice."""
+        return _create(studio, "Private Agent", ALICE, publish=False)["id"]
+
+    def _published_agent(self, studio, name="Published Agent"):
+        return _create(studio, name, ALICE, publish=True)["id"]
+
+    def test_team_compose_with_foreign_draft_is_not_found(self, studio):
+        draft_id = self._draft_agent(studio)
         out = _loads(
-            studio.create_team(name="bob-team", instructions="i", member_ids=[private_id], _agno_run_context=BOB)
+            studio.create_team(name="bob-team", instructions="i", member_ids=[draft_id], _agno_run_context=BOB)
         )
         assert out["error"]["code"] == "component_not_found", out
 
-    def test_edit_team_with_foreign_member_is_not_found(self, studio):
-        private_id = self._private_agent(studio)
+    def test_team_compose_with_foreign_published_member_succeeds(self, studio):
+        published_id = self._published_agent(studio)
+        out = _loads(
+            studio.create_team(
+                name="bob-team", instructions="i", member_ids=[published_id], publish=True, _agno_run_context=BOB
+            )
+        )
+        assert out["ok"], out
+
+    def test_edit_team_with_foreign_draft_member_is_not_found(self, studio):
+        draft_id = self._draft_agent(studio)
         own = _create(studio, "Bobs Member", BOB, publish=True)["id"]
         team = _data(
             studio.create_team(
                 name="bob-editable", instructions="i", member_ids=[own], publish=True, _agno_run_context=BOB
             )
         )
-        out = _loads(studio.edit_team(team["id"], member_ids=[own, private_id], _agno_run_context=BOB))
+        out = _loads(studio.edit_team(team["id"], member_ids=[own, draft_id], _agno_run_context=BOB))
         assert out["error"]["code"] == "component_not_found", out
 
-    def test_workflow_step_with_foreign_agent_is_not_found(self, studio):
-        private_id = self._private_agent(studio)
-        out = _loads(
-            studio.create_workflow(
-                name="bob-flow", steps=[{"name": "s1", "agent_id": private_id}], _agno_run_context=BOB
+    def test_edit_team_can_add_a_foreign_published_member(self, studio):
+        published_id = self._published_agent(studio)
+        own = _create(studio, "Bobs Member", BOB, publish=True)["id"]
+        team = _data(
+            studio.create_team(
+                name="bob-editable", instructions="i", member_ids=[own], publish=True, _agno_run_context=BOB
             )
+        )
+        out = _loads(studio.edit_team(team["id"], member_ids=[own, published_id], _agno_run_context=BOB))
+        assert out["ok"], out
+
+    def test_workflow_step_with_foreign_draft_agent_is_not_found(self, studio):
+        draft_id = self._draft_agent(studio)
+        out = _loads(
+            studio.create_workflow(name="bob-flow", steps=[{"name": "s1", "agent_id": draft_id}], _agno_run_context=BOB)
         )
         assert out["error"]["code"] == "component_not_found", out
 
-    def test_run_answers_identical_not_found_for_published_and_draft(self, studio):
-        published_id = self._private_agent(studio, publish=True)
-        draft_id = _create(studio, "Private Draft", ALICE, publish=False)["id"]
-        run_published = _loads(studio.run_agent(published_id, "hi", _agno_run_context=BOB))
+    def test_workflow_step_with_foreign_published_agent_succeeds(self, studio):
+        published_id = self._published_agent(studio)
+        out = _loads(
+            studio.create_workflow(
+                name="bob-flow",
+                steps=[{"name": "s1", "agent_id": published_id}],
+                publish=True,
+                _agno_run_context=BOB,
+            )
+        )
+        assert out["ok"], out
+
+    def test_run_answers_identical_not_found_for_a_foreign_draft_and_an_absent_id(self, studio):
+        """The disclosure oracle, on the half that still holds.
+
+        A published component is now findable by design, so the pairing that
+        matters is a foreign draft against an id that was never minted: those
+        two must stay byte-identical, or the refusal reveals that the draft
+        exists."""
+        draft_id = self._draft_agent(studio)
         run_draft = _loads(studio.run_agent(draft_id, "hi", _agno_run_context=BOB))
-        # Byte-identical shape: existence (and stage) of a foreign row is not disclosed.
-        assert run_published["error"] == f"Agent not found: {published_id}"
+        run_absent = _loads(studio.run_agent("never-minted", "hi", _agno_run_context=BOB))
         assert run_draft["error"] == f"Agent not found: {draft_id}"
+        assert run_absent["error"] == "Agent not found: never-minted"
+
+    def test_run_reaches_a_foreign_published_component(self, studio):
+        """Resolution, not the model, is what this pins: the dispatch gate lets
+        another owner's published component through. What the model does next is
+        another layer's concern (and needs credentials this suite has not got)."""
+        published_id = self._published_agent(studio)
+        out = _loads(studio.run_agent(published_id, "hi", _agno_run_context=BOB))
+        assert out.get("error") != f"Agent not found: {published_id}", out
 
     @pytest.mark.asyncio
-    async def test_async_run_is_gated_too(self, studio):
-        private_id = self._private_agent(studio)
-        out = _loads(await studio._runner_tools.arun_agent(private_id, "hi", _agno_run_context=BOB))
-        assert out["error"] == f"Agent not found: {private_id}"
+    async def test_async_run_is_gated_for_a_foreign_draft(self, studio):
+        draft_id = self._draft_agent(studio)
+        out = _loads(await studio._runner_tools.arun_agent(draft_id, "hi", _agno_run_context=BOB))
+        assert out["error"] == f"Agent not found: {draft_id}"
 
-    def test_schedule_target_is_gated(self, studio):
-        private_id = self._private_agent(studio)
+    @pytest.mark.asyncio
+    async def test_async_run_reaches_a_foreign_published_component(self, studio):
+        published_id = self._published_agent(studio)
+        out = _loads(await studio._runner_tools.arun_agent(published_id, "hi", _agno_run_context=BOB))
+        assert out.get("error") != f"Agent not found: {published_id}", out
+
+    def test_schedule_target_is_gated_for_a_foreign_draft(self, studio):
+        draft_id = self._draft_agent(studio)
         out = _loads(
             studio.create_schedule(
                 name="bob-sched",
                 cron="0 9 * * *",
                 target_type="agent",
-                target_id=private_id,
+                target_id=draft_id,
                 message="m",
                 _agno_run_context=BOB,
             )
         )
         assert out["error"]["code"] == "component_not_found", out
+
+    def test_b_schedules_a_foreign_published_component(self, studio):
+        published_id = self._published_agent(studio)
+        out = _loads(
+            studio.create_schedule(
+                name="bob-sched",
+                cron="0 9 * * *",
+                target_type="agent",
+                target_id=published_id,
+                message="m",
+                _agno_run_context=BOB,
+            )
+        )
+        assert out["ok"], out
 
     def test_shared_component_stays_composable_and_runnable(self, studio):
         shared_id = _create(studio, "Shared Agent", None, publish=True)["id"]
@@ -408,22 +478,25 @@ class TestComposeAndDispatchVisibility:
         assert team["ok"], team
 
     def test_owner_composes_own_private_member(self, studio):
-        private_id = self._private_agent(studio)
+        # Alice's draft is hers to build on. The team stays a draft too: the
+        # separate publish gate refuses a published parent pinning a draft
+        # child, and that rule is not what this test is about.
+        draft_id = self._draft_agent(studio)
         team = _loads(
             studio.create_team(
                 name="alice-own-team",
                 instructions="i",
-                member_ids=[private_id],
-                publish=True,
+                member_ids=[draft_id],
+                publish=False,
                 _agno_run_context=ALICE,
             )
         )
         assert team["ok"], team
 
-    def test_foreign_name_reference_does_not_resolve(self, studio):
-        # Names resolve inside the actor's visibility, so a foreign display
-        # name is as invisible as a foreign id.
-        self._private_agent(studio)
+    def test_foreign_draft_name_does_not_resolve(self, studio):
+        # A draft is invisible by name as well as by id: name lookup resolves
+        # inside the caller's visibility, and a draft is not in it.
+        self._draft_agent(studio)
         out = _loads(
             studio.create_team(
                 name="bob-name-team", instructions="i", member_ids=["Private Agent"], _agno_run_context=BOB
@@ -431,40 +504,59 @@ class TestComposeAndDispatchVisibility:
         )
         assert out["error"]["code"] == "component_not_found", out
 
+    def test_foreign_published_name_resolves(self, studio):
+        self._published_agent(studio, name="Radar")
+        out = _loads(
+            studio.create_team(
+                name="bob-name-team",
+                instructions="i",
+                member_ids=["Radar"],
+                publish=True,
+                _agno_run_context=BOB,
+            )
+        )
+        assert out["ok"], out
+
     def test_archive_refusal_names_only_visible_dependents(self, studio, db):
-        private_id = self._private_agent(studio)
-        # Alice's own dependent is namable; a dependent created without scope
-        # (an operator surface) must appear only as a count.
+        """A dependent Alice cannot see is a count, never a name.
+
+        Bob's dependent is left a DRAFT on purpose: a published one would be
+        visible to Alice under the platform rule, and naming it would then be
+        correct rather than a leak."""
+        published_id = self._published_agent(studio)
         _data(
             studio.create_team(
                 name="alice-dep-team",
                 instructions="i",
-                member_ids=[private_id],
+                member_ids=[published_id],
                 publish=True,
                 _agno_run_context=ALICE,
             )
         )
-        _data(studio.create_team(name="foreign-dep-team", instructions="i", member_ids=[private_id], publish=True))
-        # Make the second dependent another owner's private row - the state
-        # legacy data (or an operator surface) can produce - via raw SQL,
-        # since the visibility fix itself prevents creating it through Studio.
-        from sqlalchemy import text
-
-        with db.Session() as sess, sess.begin():
-            sess.execute(text("UPDATE agno_components SET user_id = 'bob' WHERE component_id = 'foreign-dep-team'"))
-        out = _loads(studio.archive_component(private_id, _agno_run_context=ALICE))
-        assert out["error"]["code"] == "dependency_conflict"
+        _data(
+            studio.create_team(
+                name="bob-dep-team",
+                instructions="i",
+                member_ids=[published_id],
+                publish=False,
+                _agno_run_context=BOB,
+            )
+        )
+        out = _loads(studio.archive_component(published_id, _agno_run_context=ALICE))
+        assert out["error"]["code"] == "dependency_conflict", out
         assert "alice-dep-team" in out["error"]["message"]
-        assert "foreign-dep-team" not in out["error"]["message"]
+        assert "bob-dep-team" not in out["error"]["message"]
         assert "1 other component" in out["error"]["message"]
 
-    def test_runner_listing_is_scoped_to_the_caller(self, studio):
-        private_id = self._private_agent(studio)
+    def test_runner_listing_shows_published_and_hides_foreign_drafts(self, studio):
+        draft_id = self._draft_agent(studio)
+        published_id = self._published_agent(studio)
         shared_id = _create(studio, "Listed Shared", None, publish=True)["id"]
         listed = _loads(studio._runner_tools.list_agents(_agno_run_context=BOB))
         ids = {row["id"] for row in listed["agents"]}
         assert shared_id in ids
-        assert private_id not in ids
+        assert published_id in ids
+        assert draft_id not in ids
 
 
 # ----------------------------------------------------------------------
@@ -487,10 +579,20 @@ class TestDisclosureOracles:
         out = _loads(studio.edit_agent(created["id"], instructions="x", _agno_run_context=BOB))
         assert out["error"]["code"] == "component_not_found", out
 
-    def test_restore_answers_not_found_for_foreign_live_row(self, studio):
-        created = _create(studio, "Alive Agent", ALICE, publish=True)
+    def test_restore_answers_not_found_for_a_foreign_draft(self, studio):
+        created = _create(studio, "Draft Agent", ALICE, publish=False)
         out = _loads(studio.restore_component(created["id"], _agno_run_context=BOB))
         assert out["error"]["code"] == "component_not_found", out
+        assert "not archived" not in str(out["error"]["message"])
+
+    def test_restore_of_a_foreign_published_row_refuses_on_ownership_not_state(self, studio):
+        """Bob can see Alice's published component, so hiding it would be a lie.
+        What he must not learn is its lifecycle state: "not archived" answers a
+        question he was never entitled to ask, and restoring it was not on offer
+        either way."""
+        created = _create(studio, "Alive Agent", ALICE, publish=True)
+        out = _loads(studio.restore_component(created["id"], _agno_run_context=BOB))
+        assert out["error"]["code"] == "not_owner", out
         assert "not archived" not in str(out["error"]["message"])
 
     def test_scoped_caller_resolves_own_name_despite_foreign_duplicate(self, studio):
@@ -560,21 +662,34 @@ class TestRoundThreeTenancy:
 
 
 class TestDispatchVisibilityAllSurfaces:
-    """Mutation-killers: the actor visibility gate must hold on EVERY run and
-    list surface, not just run_agent. A leak here passed the prior suite."""
+    """Mutation-killers: the stage gate must hold on EVERY run and list
+    surface, not just run_agent. A leak here passed the prior suite.
 
-    def _alice_private(self, studio, kind="agent"):
-        if kind == "agent":
-            return _data(
-                studio.create_agent(
-                    name="Sec A", component_id="sec-a", instructions="ALICE", publish=True, _agno_run_context=ALICE
-                )
-            )["id"]
-        member = _data(
+    Each surface is pinned twice -- a foreign draft is refused, a foreign
+    published component is reached -- because a gate that refuses everything
+    passes the first half on its own."""
+
+    def _alice_member(self, studio):
+        return _data(
             studio.create_agent(
                 name="Sec M", component_id="sec-m", instructions="m", publish=True, _agno_run_context=ALICE
             )
         )["id"]
+
+    def _alice(self, studio, kind="agent", publish=False):
+        """Alice's component of ``kind``. A draft parent keeps a published
+        member, so only the parent's own stage is under test."""
+        if kind == "agent":
+            return _data(
+                studio.create_agent(
+                    name="Sec A",
+                    component_id="sec-a",
+                    instructions="ALICE",
+                    publish=publish,
+                    _agno_run_context=ALICE,
+                )
+            )["id"]
+        member = self._alice_member(studio)
         if kind == "team":
             return _data(
                 studio.create_team(
@@ -582,7 +697,7 @@ class TestDispatchVisibilityAllSurfaces:
                     component_id="sec-t",
                     instructions="i",
                     member_ids=[member],
-                    publish=True,
+                    publish=publish,
                     _agno_run_context=ALICE,
                 )
             )["id"]
@@ -591,34 +706,55 @@ class TestDispatchVisibilityAllSurfaces:
                 name="Sec W",
                 component_id="sec-w",
                 steps=[{"name": "s", "agent_id": member}],
-                publish=True,
+                publish=publish,
                 _agno_run_context=ALICE,
             )
         )["id"]
 
-    def test_run_team_gated_for_foreign_owner(self, studio):
-        tid = self._alice_private(studio, "team")
+    def test_run_team_gated_for_a_foreign_draft(self, studio):
+        tid = self._alice(studio, "team")
         assert _loads(studio.run_team(tid, "hi", _agno_run_context=BOB))["error"] == f"Team not found: {tid}"
 
-    def test_run_workflow_gated_for_foreign_owner(self, studio):
-        wid = self._alice_private(studio, "workflow")
+    def test_run_team_reaches_a_foreign_published_team(self, studio):
+        tid = self._alice(studio, "team", publish=True)
+        out = _loads(studio.run_team(tid, "hi", _agno_run_context=BOB))
+        assert out.get("error") != f"Team not found: {tid}", out
+
+    def test_run_workflow_gated_for_a_foreign_draft(self, studio):
+        wid = self._alice(studio, "workflow")
         assert _loads(studio.run_workflow(wid, "hi", _agno_run_context=BOB))["error"] == f"Workflow not found: {wid}"
 
+    def test_run_workflow_reaches_a_foreign_published_workflow(self, studio):
+        wid = self._alice(studio, "workflow", publish=True)
+        out = _loads(studio.run_workflow(wid, "hi", _agno_run_context=BOB))
+        assert out.get("error") != f"Workflow not found: {wid}", out
+
     @pytest.mark.asyncio
-    async def test_async_run_team_and_workflow_gated(self, studio):
-        tid = self._alice_private(studio, "team")
+    async def test_async_run_team_gated_for_a_foreign_draft(self, studio):
+        tid = self._alice(studio, "team")
         out = _loads(await studio.arun_team(tid, "hi", _agno_run_context=BOB))
         assert out["error"] == f"Team not found: {tid}"
 
-    def test_list_teams_and_workflows_scoped(self, studio):
-        tid = self._alice_private(studio, "team")
+    @pytest.mark.asyncio
+    async def test_async_run_team_reaches_a_foreign_published_team(self, studio):
+        tid = self._alice(studio, "team", publish=True)
+        out = _loads(await studio.arun_team(tid, "hi", _agno_run_context=BOB))
+        assert out.get("error") != f"Team not found: {tid}", out
+
+    def test_list_teams_hides_foreign_drafts(self, studio):
+        tid = self._alice(studio, "team")
         listed = _loads(studio._runner_tools.list_teams(_agno_run_context=BOB))
         assert all(row["id"] != tid for row in listed["teams"])
 
-    def test_edit_workflow_with_foreign_step_member_not_found(self, studio):
+    def test_list_teams_shows_foreign_published(self, studio):
+        tid = self._alice(studio, "team", publish=True)
+        listed = _loads(studio._runner_tools.list_teams(_agno_run_context=BOB))
+        assert any(row["id"] == tid for row in listed["teams"])
+
+    def test_edit_workflow_with_foreign_draft_step_member_not_found(self, studio):
         member = _data(
             studio.create_agent(
-                name="Priv Step", component_id="priv-step", instructions="i", publish=True, _agno_run_context=ALICE
+                name="Priv Step", component_id="priv-step", instructions="i", publish=False, _agno_run_context=ALICE
             )
         )["id"]
         own = _data(
@@ -637,3 +773,26 @@ class TestDispatchVisibilityAllSurfaces:
         )["id"]
         out = _loads(studio.edit_workflow(wf, steps=[{"name": "s", "agent_id": member}], _agno_run_context=BOB))
         assert out["error"]["code"] == "component_not_found"
+
+    def test_edit_workflow_can_use_a_foreign_published_step_member(self, studio):
+        member = _data(
+            studio.create_agent(
+                name="Pub Step", component_id="pub-step", instructions="i", publish=True, _agno_run_context=ALICE
+            )
+        )["id"]
+        own = _data(
+            studio.create_agent(
+                name="Bob Step", component_id="bob-step", instructions="i", publish=True, _agno_run_context=BOB
+            )
+        )["id"]
+        wf = _data(
+            studio.create_workflow(
+                name="Bob WF",
+                component_id="bob-wf",
+                steps=[{"name": "s", "agent_id": own}],
+                publish=True,
+                _agno_run_context=BOB,
+            )
+        )["id"]
+        out = _loads(studio.edit_workflow(wf, steps=[{"name": "s", "agent_id": member}], _agno_run_context=BOB))
+        assert out["ok"], out

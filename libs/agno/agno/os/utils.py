@@ -1253,6 +1253,26 @@ def draft_preview_identity(request: Any) -> tuple:
     return (user_id if isinstance(user_id, str) else None), False
 
 
+def may_read_draft_configs(
+    component_row: Optional[Dict[str, Any]], actor: Optional[str], privileged: bool = False
+) -> bool:
+    """Whether this caller may read a component's draft-stage configs.
+
+    The REST twin of the toolkit's rule. Publishing puts a component on the
+    platform, but it publishes one version: everything above the live pointer
+    is the owner's work in progress. A caller who can see a component reads its
+    published stage only, unless it owns the row, the row is unowned (shared),
+    or the caller is privileged (admin, or authorization off).
+
+    Seeing is not reading every stage -- the route already decided visibility
+    with ``get_component(user_id=...)`` before asking this.
+    """
+    if privileged or actor is None or component_row is None:
+        return True
+    owner = component_row.get("user_id")
+    return owner is None or owner == actor
+
+
 def allow_draft_preview(
     db: Optional[Union[BaseDb, AsyncBaseDb]],
     component_id: str,

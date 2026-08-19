@@ -96,6 +96,12 @@ TeamMember = Union["Agent", "Team"]
 
 _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 
+# How many same-name rows a display-name lookup pulls before calling it
+# ambiguous. One display name can match several owners now that published
+# components are platform-visible, so the window has to be wider than the old
+# two -- the actor's own has to be findable among the collisions.
+_NAME_MATCH_LIMIT = 20
+
 
 class _UnresolvedFactory:
     """Marker for a tools/members factory the composition guard could not run.
@@ -357,7 +363,9 @@ class StudioTools(Toolkit):
         instruction_lines = [
             "Compose agents, teams, and workflows from registry primitives. The lifecycle: create "
             "(a draft, unless publish=true) -> validate_component -> publish_component. Only the "
-            "published version serves runs and schedules; drafts are invisible to users.",
+            "published version serves runs and schedules. Drafts are private to you; publishing "
+            "puts the component on the platform, where every user can find and run it (but only "
+            "you can edit it).",
             "Discovery first: list_tools/list_functions/list_models names are exact and "
             "case-sensitive; only buildable tools may be wired. Never guess a name.",
             "get_component reads the LATEST version (the one you just edited); call it before "
@@ -599,43 +607,60 @@ class StudioTools(Toolkit):
         ]
         return max(drafts) if drafts else None
 
-    def _check_component_visibility(
-        self, component_id: Optional[str], actor: Optional[str], noun: str = "component"
-    ) -> Optional[str]:
-        """Read gate: a scoped caller must not see another owner's DB component.
+    @staticmethod
+    def _visible_to(row: Optional[Dict[str, Any]], actor: Optional[str]) -> bool:
+        """Whether ``actor`` may see this component row.
 
-        Own and shared (unowned) rows are visible; a code-defined component
-        with the same id shadows the row on every resolution path, so it stays
-        visible regardless of who owns the shadowed row."""
-        if self.db is None or actor is None or component_id is None:
-            return None
-        iterators: Dict[str, Callable[[], List[Any]]] = {
-            "agent": self._iter_agents,
-            "team": self._iter_teams,
-            "workflow": self._iter_workflows,
-        }
-        candidates = iterators.get(noun, lambda: [])()
-        if any(getattr(c, "id", None) == component_id for c in candidates):
-            return None
-        row = self.db.get_component(component_id)
-        if row is None:
-            return None
+        The toolkit-side twin of the catalog read predicate, for the paths that
+        read a row unscoped and then decide: own rows, unowned (shared) rows,
+        and live published rows. Publishing is what puts a component on the
+        platform; a draft stays private to its owner, and archiving withdraws a
+        published one again. An unscoped caller (no run identity) sees
+        everything. Seeing is not touching -- mutation stays owner-scoped in
+        _check_component_access.
+        """
+        if actor is None or row is None:
+            return True
         owner = row.get("user_id")
         if owner is None or owner == actor:
-            return None
-        return f"{noun.capitalize()} not found: {component_id}"
+            return True
+        return row.get("current_version") is not None and row.get("deleted_at") is None
+
+    @staticmethod
+    def _may_read_drafts(row: Optional[Dict[str, Any]], actor: Optional[str]) -> bool:
+        """Whether ``actor`` may read this component's draft-stage versions.
+
+        Visibility and readable depth are different questions. Publishing puts a
+        component on the platform, but it publishes one version -- work in
+        progress above the live pointer stays the owner's. So a non-owner who
+        can see a component reads its published stage only; the owner (and an
+        unscoped caller, and anyone on a shared row) reads every stage.
+
+        Every read path that can return draft-stage data consults this: the
+        config reads in get_component and validate_component, the version
+        history in list_versions, and the latest_version/latest_stage hints in
+        list_components. _pin_allowed states the same rule for running a pinned
+        version, and allow_draft_preview (os/utils.py) for the REST twin.
+        """
+        if actor is None or row is None:
+            return True
+        owner = row.get("user_id")
+        return owner is None or owner == actor
 
     def _check_component_access(
         self, component_id: str, actor: Optional[str], action: str, noun: str = "component"
     ) -> Optional[tuple]:
         """Ownership gate for mutating an existing DB component row.
 
-        Returns an error message, or None when the caller may proceed. The
-        rules mirror the REST router: an unscoped caller (no run identity)
-        may touch anything; a scoped caller may touch only rows it owns.
-        Another owner's row answers "not found" -- the row's existence is not
-        disclosed. A shared (unowned) row is readable by everyone, so it gets
-        the honest refusal instead.
+        Returns an error message, or None when the caller may proceed. An
+        unscoped caller (no run identity) may touch anything; a scoped caller
+        may touch only rows it owns.
+
+        Refusals split on what the caller can already see, so a refusal never
+        becomes an existence oracle: a row it cannot see answers the same
+        "not found" its absence would, while a row it can see -- a shared
+        (unowned) one, or another owner's published one -- gets an honest,
+        structured refusal naming the real obstacle.
         """
         if self.db is None or actor is None:
             return None
@@ -653,6 +678,11 @@ class StudioTools(Toolkit):
             return (
                 "shared_component",
                 f"Cannot {action} shared {noun} '{component_id}': it has no owner; ask an operator.",
+            )
+        if self._visible_to(row, actor):
+            return (
+                "not_owner",
+                f"Cannot {action} {noun} '{component_id}': it is owned by another user; ask them or an operator.",
             )
         return ("component_not_found", f"{noun.capitalize()} not found: {component_id}")
 
@@ -1003,8 +1033,12 @@ class StudioTools(Toolkit):
     def _same_name_component(self, name: str, component_type: str, actor: Optional[str] = None) -> Optional[str]:
         """Exact display-name duplicate of the same type: code-defined or stored.
 
-        Scoped to the actor: another owner's private component neither blocks
-        the name nor leaks its id through the conflict payload."""
+        Deliberately narrower than catalog visibility: only the actor's own and
+        unowned rows count. Another owner's published component shares the id
+        namespace, so a colliding create is still refused -- by the id check,
+        which says "that id is taken, pass another". Letting the name check see
+        it instead would answer "already exists, edit it" and send the caller
+        into an edit that ownership then refuses."""
         iterators: Dict[str, Callable[[], List[Any]]] = {
             "agent": self._iter_agents,
             "team": self._iter_teams,
@@ -1020,10 +1054,12 @@ class StudioTools(Toolkit):
                 rows, _ = self.db.list_components(
                     component_type=ComponentType(component_type),
                     name=name,
-                    limit=1,
+                    limit=_NAME_MATCH_LIMIT,
                     include_deleted=True,
                     user_id=actor,
                 )
+                if actor is not None:
+                    rows = [r for r in rows if r.get("user_id") in (None, actor)]
             except NotImplementedError:
                 return None
             if rows:
@@ -1054,7 +1090,12 @@ class StudioTools(Toolkit):
 
     def _component_row(self, identifier: str, actor: Optional[str]) -> tuple:
         """(row, resolved_id, error) for a stored component by exact id, then
-        exact display name. Another owner's row answers not-found."""
+        exact display name.
+
+        Gates on visibility, not ownership: another owner's published component
+        resolves here and the caller reads it. What it must not do is hand back
+        draft-stage data -- callers apply _published_only_for_non_owner to the
+        config they then read."""
         db_err = self._require_db()
         if db_err is not None:
             return None, None, db_err
@@ -1064,7 +1105,12 @@ class StudioTools(Toolkit):
         if row is None:
             from agno.db.base import ComponentType as _CT  # noqa: F401
 
-            rows, total = self.db.list_components(name=identifier, limit=2, user_id=actor)
+            # limit spans the collisions: a published name can match several
+            # owners now, and the actor's own has to be found among them.
+            rows, total = self.db.list_components(name=identifier, limit=_NAME_MATCH_LIMIT, user_id=actor)
+            owned_rows = [r for r in rows if actor is not None and r.get("user_id") == actor]
+            if len(owned_rows) == 1:
+                rows, total = owned_rows, 1
             if total > 1:
                 return (
                     None,
@@ -1080,8 +1126,7 @@ class StudioTools(Toolkit):
                 row = self.db.get_component(resolved_id) if resolved_id else None
         if row is None:
             return None, None, error_result("component_not_found", f"Component not found: {identifier}")
-        owner = row.get("user_id")
-        if actor is not None and owner is not None and owner != actor:
+        if not self._visible_to(row, actor):
             return None, None, error_result("component_not_found", f"Component not found: {identifier}")
         return row, resolved_id, None
 
@@ -1408,6 +1453,10 @@ class StudioTools(Toolkit):
                 if r["component_id"] in seen_ids or r.get("name") in idless_names:
                     continue
                 latest_row = latest.get(r["component_id"]) or {}
+                if not self._may_read_drafts(r, actor):
+                    # Collapse the hints onto the live version: a non-owner must
+                    # not learn from a listing that a newer draft exists.
+                    latest_row = {"version": r.get("current_version"), "stage": "published"}
                 rows.append(
                     {
                         "id": r["component_id"],
@@ -1483,13 +1532,24 @@ class StudioTools(Toolkit):
         if err is not None:
             return err
         assert self.db is not None and row is not None
+        reads_drafts = self._may_read_drafts(row, actor)
         try:
             if version is not None:
                 config_row = self.db.get_config(resolved_id, version=version)
-            else:
+            elif reads_drafts:
                 config_row = self.db.get_latest_config(resolved_id)
+            else:
+                # "Latest" means latest published to a non-owner: the live
+                # version, never the owner's work in progress above it.
+                config_row = self.db.get_config(resolved_id, version=row.get("current_version"))
         except NotImplementedError:
             config_row = self.db.get_config(resolved_id, version=version)
+        if config_row is not None and not reads_drafts and config_row.get("stage") != "published":
+            # An explicit draft version answers as if that version were absent:
+            # the same answer an id the caller cannot see would give.
+            if version is not None:
+                return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
+            config_row = None
         if config_row is None or not isinstance(config_row.get("config"), dict):
             if version is not None:
                 return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
@@ -1497,7 +1557,9 @@ class StudioTools(Toolkit):
         current_version = row.get("current_version")
         latest_row = None
         try:
-            latest_row = self.db.get_latest_config(resolved_id)
+            # latest_version tells the reader what is above the live pointer;
+            # for a non-owner nothing is, because drafts are not theirs to see.
+            latest_row = self.db.get_latest_config(resolved_id) if reads_drafts else config_row
         except NotImplementedError:
             pass
         view = self._curated_config_view(str(row.get("component_type")), config_row["config"])
@@ -1531,6 +1593,10 @@ class StudioTools(Toolkit):
         assert self.db is not None and row is not None
         current_version = row.get("current_version")
         configs = self.db.list_configs(resolved_id, include_config=False)
+        if not self._may_read_drafts(row, _actor_id(_agno_run_context)):
+            # A non-owner sees the published history only: the draft numbers,
+            # labels and timestamps above the live pointer are not theirs.
+            configs = [c for c in configs if c.get("stage") == "published"]
         versions = [
             {
                 "version": c.get("version"),
@@ -1713,8 +1779,9 @@ class StudioTools(Toolkit):
                 Include EVERY tool the user asked for.
             description (Optional[str]): Concise purpose shown in listings.
             component_id (Optional[str]): Explicit id; overrides the name mint.
-            publish (bool): True publishes version 1 immediately; False leaves a
-                draft that publish_component promotes.
+            publish (bool): True publishes version 1 immediately, putting the
+                agent on the platform for every user; False leaves a draft only
+                you can see, which publish_component promotes.
             role (Optional[str]): The agent's role when used as a team member.
             markdown (Optional[bool]): Format responses as markdown.
             expected_output (Optional[str]): What a good answer looks like.
@@ -1820,7 +1887,8 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): Leader model. Omit for the default.
             description (Optional[str]): Concise purpose shown in listings.
             component_id (Optional[str]): Explicit id; overrides the name mint.
-            publish (bool): True publishes version 1 immediately.
+            publish (bool): True publishes version 1 immediately, putting the team
+                on the platform for every user; a draft stays private to you.
             mode (str): 'coordinate' (leader delegates and synthesizes),
                 'route' (leader routes, member answers), 'broadcast'
                 (every member gets the task), or 'tasks' (leader keeps a
@@ -1942,7 +2010,9 @@ class StudioTools(Toolkit):
                 further steps. See the WorkflowStepSpec fields.
             description (Optional[str]): What the workflow does.
             component_id (Optional[str]): Explicit id; overrides the name mint.
-            publish (bool): True publishes version 1 immediately.
+            publish (bool): True publishes version 1 immediately, putting the
+                workflow on the platform for every user; a draft stays private
+                to you.
             metadata (Optional[Dict]): Arbitrary metadata stored on the component.
 
         Returns:
@@ -2320,7 +2390,8 @@ class StudioTools(Toolkit):
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard against the
                 latest version you read; a conflict means someone else edited.
-            publish (bool): True publishes this edit immediately.
+            publish (bool): True publishes this edit immediately, replacing the
+                version every user runs; otherwise it stays a draft only you see.
 
         Returns:
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
@@ -2399,7 +2470,8 @@ class StudioTools(Toolkit):
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard.
-            publish (bool): True publishes this edit immediately.
+            publish (bool): True publishes this edit immediately, replacing the
+                version every user runs; otherwise it stays a draft only you see.
 
         Returns:
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
@@ -2484,7 +2556,8 @@ class StudioTools(Toolkit):
             steps (Optional[List[WorkflowStepSpec]]): Replacement step list.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard.
-            publish (bool): True publishes this edit immediately.
+            publish (bool): True publishes this edit immediately, replacing the
+                version every user runs; otherwise it stays a draft only you see.
 
         Returns:
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
@@ -2775,11 +2848,12 @@ class StudioTools(Toolkit):
         try:
             row = self.db.get_component(component_id)
             if row is None:
-                if self.db.get_component(component_id, include_deleted=True) is not None:
+                archived_row = self.db.get_component(component_id, include_deleted=True)
+                if archived_row is not None:
                     actor = _actor_id(_agno_run_context)
-                    archived_row = self.db.get_component(component_id, include_deleted=True)
-                    owner = (archived_row or {}).get("user_id")
-                    if actor is not None and owner is not None and owner != actor:
+                    # An archived row is withdrawn from every other user, so it is
+                    # never visible across owners: the refusal is the plain 404.
+                    if not self._visible_to(archived_row, actor):
                         return error_result("component_not_found", f"Component not found: {component_id}")
                     return ok_result("already_archived", id=component_id)
                 try:
@@ -2850,12 +2924,18 @@ class StudioTools(Toolkit):
             return db_err
         assert self.db is not None
         try:
-            restored = self.db.restore_component(component_id, user_id=_actor_id(_agno_run_context))
+            actor = _actor_id(_agno_run_context)
+            restored = self.db.restore_component(component_id, user_id=actor)
             if restored:
                 return ok_result("restored", id=component_id)
-            # Scoped read: a foreign live row must answer the same not-found
-            # its absence would, not "is not archived".
-            if self.db.get_component(component_id, user_id=_actor_id(_agno_run_context)) is not None:
+            # The restore missed. Ownership decides which refusal that is before
+            # state does: another owner's component is refused for being theirs,
+            # never for "is not archived" -- restoring it was not on offer either
+            # way, and an invisible row still answers the plain not-found.
+            denied = self._check_component_access(component_id, actor, "restore")
+            if denied is not None:
+                return self._denied_error(denied)
+            if self.db.get_component(component_id, user_id=actor) is not None:
                 return error_result("invalid_request", f"Component is not archived: {component_id}")
             return error_result("component_not_found", f"Component not found: {component_id}")
         except Exception as e:
@@ -2887,15 +2967,23 @@ class StudioTools(Toolkit):
             return err
         assert self.db is not None and row is not None
         component_type = str(row.get("component_type"))
+        reads_drafts = self._may_read_drafts(row, _actor_id(_agno_run_context))
         try:
             if version is None:
-                latest = self.db.get_latest_config(resolved_id)
+                # A non-owner validates what is live, not what is being written.
+                latest = (
+                    self.db.get_latest_config(resolved_id)
+                    if reads_drafts
+                    else self.db.get_config(resolved_id, version=row.get("current_version"))
+                )
                 if latest is None:
                     return error_result("component_not_found", f"Component has no config: {resolved_id}")
                 version = latest.get("version")
                 stage = latest.get("stage")
             else:
                 config_row = self.db.get_config(resolved_id, version=version)
+                if config_row is not None and not reads_drafts and config_row.get("stage") != "published":
+                    return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
                 if config_row is None:
                     return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
                 stage = config_row.get("stage")
