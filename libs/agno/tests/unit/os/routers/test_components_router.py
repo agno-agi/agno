@@ -1119,6 +1119,143 @@ class TestRestoreComponent:
         assert response.json()["detail"] == "Component is not archived"
 
 
+class TestArchivedComponentDiscovery:
+    """Archived components must be reachable through the read routes.
+
+    Nothing else hands a client an archived component_id - POST /components
+    answers identically for a live and an archived id - so without
+    include_deleted the restore route can only be called for an id the caller
+    happened to remember."""
+
+    @pytest.fixture
+    def arch_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="archived-db", db_file=str(tmp_path / "archived.db"))
+        for component_id in ("live-1", "archived-1"):
+            db.create_component_with_config(
+                component_id=component_id,
+                component_type=ComponentType.AGENT,
+                name=component_id,
+                config={"name": component_id},
+                stage="published",
+                user_id="user-A",
+            )
+        assert db.delete_component("archived-1", user_id="user-A") is True
+        return db
+
+    @pytest.fixture
+    def arch_client(self, arch_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=arch_db, settings=settings))
+        return TestClient(app)
+
+    def _scoped_client(self, db, settings, user_id):
+        """A client scoped to a regular (non-admin) user with isolation on."""
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def add_jwt_user(request, call_next):
+            request.state.user_isolation_enabled = True
+            request.state.user_id = user_id
+            request.state.scopes = []
+            return await call_next(request)
+
+        app.include_router(get_components_router(os_db=db, settings=settings))
+        return TestClient(app)
+
+    def test_list_omits_archived_by_default(self, arch_client):
+        response = arch_client.get("/components")
+        assert response.status_code == 200
+        data = response.json()
+        assert [c["component_id"] for c in data["data"]] == ["live-1"]
+        assert data["meta"]["total_count"] == 1
+
+    def test_list_with_include_deleted_returns_archived(self, arch_client):
+        response = arch_client.get("/components?include_deleted=true")
+        assert response.status_code == 200
+        data = response.json()
+        assert {c["component_id"] for c in data["data"]} == {"live-1", "archived-1"}
+        assert data["meta"]["total_count"] == 2
+
+    def test_list_labels_archived_rows_with_deleted_at(self, arch_client):
+        response = arch_client.get("/components?include_deleted=true")
+        rows = {c["component_id"]: c for c in response.json()["data"]}
+        assert isinstance(rows["archived-1"]["deleted_at"], int)
+        # Omitted for live rows: every component route excludes None fields.
+        assert "deleted_at" not in rows["live-1"]
+
+    def test_get_one_404s_for_archived_by_default(self, arch_client):
+        assert arch_client.get("/components/archived-1").status_code == 404
+
+    def test_get_one_with_include_deleted_returns_archived(self, arch_client):
+        response = arch_client.get("/components/archived-1?include_deleted=true")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["component_id"] == "archived-1"
+        assert isinstance(body["deleted_at"], int)
+
+    def test_get_one_live_component_carries_no_deleted_at(self, arch_client):
+        response = arch_client.get("/components/live-1?include_deleted=true")
+        assert response.status_code == 200
+        assert "deleted_at" not in response.json()
+
+    def test_owner_sees_own_archived_component(self, arch_db, settings):
+        """Positive control for the isolation test below."""
+        owner_client = self._scoped_client(arch_db, settings, "user-A")
+        listed = owner_client.get("/components?include_deleted=true")
+        assert "archived-1" in {c["component_id"] for c in listed.json()["data"]}
+        assert owner_client.get("/components/archived-1?include_deleted=true").status_code == 200
+
+    def test_include_deleted_does_not_widen_visibility_across_owners(self, arch_db, settings):
+        """include_deleted relaxes the tombstone filter, never the owner filter."""
+        other_client = self._scoped_client(arch_db, settings, "user-B")
+
+        listed = other_client.get("/components?include_deleted=true")
+        assert listed.status_code == 200
+        assert listed.json()["data"] == []
+        assert listed.json()["meta"]["total_count"] == 0
+
+        assert other_client.get("/components/archived-1?include_deleted=true").status_code == 404
+        assert other_client.get("/components/live-1?include_deleted=true").status_code == 404
+
+    def test_discover_then_restore_round_trip(self, arch_client, arch_db):
+        """The full flow a frontend performs: find the archived id, restore it,
+        and read it back as a live component."""
+        listed = arch_client.get("/components?include_deleted=true")
+        archived_ids = [c["component_id"] for c in listed.json()["data"] if c.get("deleted_at") is not None]
+        assert archived_ids == ["archived-1"]
+
+        restored = arch_client.post(f"/components/{archived_ids[0]}/restore")
+        assert restored.status_code == 200
+        assert "deleted_at" not in restored.json()
+
+        assert arch_client.get("/components/archived-1").status_code == 200
+        assert arch_db.get_component("archived-1") is not None
+        relisted = arch_client.get("/components")
+        assert {c["component_id"] for c in relisted.json()["data"]} == {"live-1", "archived-1"}
+
+    def test_clickhouse_get_component_stub_accepts_include_deleted(self):
+        """The restore route calls get_component(..., include_deleted=True), so
+        every BaseDb implementation must accept it or restore raises TypeError
+        and answers 500. clickhouse-connect is an optional dependency, so the
+        stub's signature is read from source rather than imported."""
+        import ast
+        from pathlib import Path
+
+        import agno.db
+
+        source = (Path(agno.db.__file__).parent / "clickhouse" / "clickhouse.py").read_text()
+        stub = next(
+            node
+            for cls in ast.parse(source).body
+            if isinstance(cls, ast.ClassDef) and cls.name == "ClickhouseDb"
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name == "get_component"
+        )
+        assert "include_deleted" in {arg.arg for arg in stub.args.args}
+
+
 # =============================================================================
 # _resolve_db_in_config Tests
 # =============================================================================

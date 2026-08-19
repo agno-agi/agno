@@ -363,6 +363,9 @@ def attach_routes(
         component_type: Optional[ComponentType] = Query(None, description="Filter by type: agent, team, workflow"),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
+        include_deleted: bool = Query(
+            False, description="Also list archived (soft-deleted) components, marked by a deleted_at timestamp"
+        ),
     ) -> PaginatedResponse[ComponentResponse]:
         try:
             start_time_ms = time.time() * 1000
@@ -373,6 +376,7 @@ def attach_routes(
 
             components, total_count = db.list_components(
                 component_type=DbComponentType(component_type.value) if component_type else None,
+                include_deleted=include_deleted,
                 limit=limit,
                 offset=offset,
                 exclude_component_ids=exclude_ids or None,
@@ -494,9 +498,14 @@ def attach_routes(
     async def get_component(
         request: Request,
         component_id: str = Path(description="Component ID"),
+        include_deleted: bool = Query(
+            False, description="Also return an archived (soft-deleted) component, marked by a deleted_at timestamp"
+        ),
     ) -> ComponentResponse:
         try:
-            component = db.get_component(component_id, user_id=get_scoped_user_id(request))
+            component = db.get_component(
+                component_id, user_id=get_scoped_user_id(request), include_deleted=include_deleted
+            )
             if component is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             return ComponentResponse(**component)

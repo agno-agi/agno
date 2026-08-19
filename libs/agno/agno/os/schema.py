@@ -848,6 +848,8 @@ class ComponentResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
     updated_at: Optional[int] = None
+    # Set only on archived (soft-deleted) rows, so a mixed list can label them.
+    deleted_at: Optional[int] = None
 
 
 class ConfigCreate(BaseModel):
