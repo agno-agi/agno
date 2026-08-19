@@ -809,3 +809,56 @@ class TestDeterministicCASInterleaving:
         with pytest.raises(ComponentVersionConflictError):
             db.delete_component(cid, hard_delete=False, expected_current_version=3)
         assert db.get_component(cid) is not None  # not archived
+
+
+class TestArchiveFreezesTheWholeHistory:
+    """Archive reserves the id and keeps every version so restore can bring
+    them back. A writer that skips the archived check breaks that promise
+    quietly: the version is gone, and restore cannot tell.
+    """
+
+    def _archived_with_draft(self, db, component_id="frozen"):
+        _mk(db, component_id, stage="published")
+        draft = db.upsert_config(component_id, config={"name": component_id, "instructions": "v2"})
+        db.delete_component(component_id)
+        return draft["version"]
+
+    def test_delete_config_refuses_a_draft_of_an_archived_component(self, db):
+        draft_version = self._archived_with_draft(db)
+        with pytest.raises(ComponentArchivedError):
+            db.delete_config("frozen", version=draft_version)
+
+    def test_the_draft_survives_the_refusal(self, db):
+        draft_version = self._archived_with_draft(db)
+        with pytest.raises(ComponentArchivedError):
+            db.delete_config("frozen", version=draft_version)
+        db.restore_component("frozen")
+        stages = {c["version"]: c["stage"] for c in db.list_configs("frozen", include_config=False)}
+        assert stages[draft_version] == "draft"
+
+    def test_every_other_writer_refuses_the_same_way(self, db):
+        """The guard delete_config was missing is the one its siblings have."""
+        self._archived_with_draft(db)
+        with pytest.raises(ComponentArchivedError):
+            db.upsert_config("frozen", config={"name": "frozen"})
+        with pytest.raises(ComponentArchivedError):
+            db.upsert_component(component_id="frozen", component_type=ComponentType.AGENT, name="frozen")
+
+    def test_a_live_component_still_deletes_its_draft(self, db):
+        _mk(db, "live", stage="published")
+        draft = db.upsert_config("live", config={"name": "live", "instructions": "v2"})
+        assert db.delete_config("live", version=draft["version"]) is True
+
+    def test_the_owner_scope_still_answers_first(self, db):
+        """A foreign caller must not learn that the row is archived."""
+        db.create_component_with_config(
+            component_id="alice-frozen",
+            component_type=ComponentType.AGENT,
+            name="alice-frozen",
+            config={"name": "alice-frozen"},
+            stage="published",
+            user_id="alice",
+        )
+        draft = db.upsert_config("alice-frozen", config={"name": "alice-frozen", "instructions": "v2"})
+        db.delete_component("alice-frozen", user_id="alice")
+        assert db.delete_config("alice-frozen", version=draft["version"], user_id="bob") is False

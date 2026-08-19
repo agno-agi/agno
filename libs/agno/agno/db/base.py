@@ -1097,6 +1097,8 @@ class BaseDb(ABC):
 
         Raises:
             ComponentDraftRequiredError: If the version is published.
+            ComponentArchivedError: If the component is archived; its history is
+                frozen so restore brings every version back.
             ComponentLastConfigError: If it is the last visible version.
             ComponentDependencyError: If an active parent pins this version.
             ValueError: If it is the current version.

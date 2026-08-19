@@ -5089,6 +5089,8 @@ class SqliteDb(BaseDb):
 
         Raises:
             ComponentDraftRequiredError: If the version is published.
+            ComponentArchivedError: If the component is archived; its history is
+                frozen so restore brings every version back.
             ComponentLastConfigError: If it is the last visible version.
             ComponentDependencyError: If an active parent pins this version.
             ValueError: If it is the current version.
@@ -5109,7 +5111,11 @@ class SqliteDb(BaseDb):
                 # the lock serializes this call against a concurrent publish
                 # of the same component.
                 component_row = sess.execute(
-                    select(components_table.c.current_version, components_table.c.user_id)
+                    select(
+                        components_table.c.current_version,
+                        components_table.c.user_id,
+                        components_table.c.deleted_at,
+                    )
                     .where(components_table.c.component_id == component_id)
                     .with_for_update()
                 ).fetchone()
@@ -5119,6 +5125,15 @@ class SqliteDb(BaseDb):
                 # the write transaction.
                 if user_id is not None and (component_row is None or component_row.user_id != user_id):
                     return False
+
+                # An archived component's history is frozen: archive reserves
+                # the id and keeps every version so restore can bring them
+                # back, which a tombstoned draft would silently break. Every
+                # other writer refuses an archived row; this one is the last.
+                if component_row is not None and component_row.deleted_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
 
                 # Get config stage and check if it's current
                 config_row = sess.execute(
