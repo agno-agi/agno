@@ -210,6 +210,24 @@ class SqliteDb(BaseDb):
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
 
+        # Resolved Table objects, keyed by table name. Avoids re-running the
+        # existence check and schema validation on every query. Only successful
+        # resolutions are cached: a missing table is re-checked on the next call,
+        # so a table created later (or by another process) is still picked up.
+        self._table_cache: Dict[str, Table] = {}
+
+    def _invalidate_table_cache(self, table_name: str) -> None:
+        """Forget a resolved table after an in-process schema change (ALTER/DROP).
+
+        Clears both the resolution cache and the SQLAlchemy metadata entry so
+        the next access re-reflects the current shape. Other processes hold
+        their own cache: restart replicas after cross-process schema changes.
+        """
+        self._table_cache.pop(table_name, None)
+        existing = self.metadata.tables.get(table_name)
+        if existing is not None:
+            self.metadata.remove(existing)
+
     # -- Serialization methods --
     def to_dict(self) -> Dict[str, Any]:
         base = super().to_dict()
@@ -702,13 +720,20 @@ class SqliteDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        cached = self._table_cache.get(table_name)
+        if cached is not None:
+            return cached
+
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            return self._create_table(table_name=table_name, table_type=table_type)
+            table = self._create_table(table_name=table_name, table_type=table_type)
+            if table is not None:
+                self._table_cache[table_name] = table
+            return table
 
         # SQLite version of table validation (no schema)
         if not is_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
@@ -716,6 +741,7 @@ class SqliteDb(BaseDb):
 
         try:
             table = Table(table_name, self.metadata, autoload_with=self.db_engine)
+            self._table_cache[table_name] = table
             return table
 
         except Exception as e:
@@ -805,7 +831,9 @@ class SqliteDb(BaseDb):
                     f"Could not drop runs column from {self.session_table_name} "
                     "(SQLite < 3.35); cleared its content instead."
                 )
-            return True
+
+        self._invalidate_table_cache(self.session_table_name)
+        return True
 
     # -- Run methods --
     def _get_session_runs_data(

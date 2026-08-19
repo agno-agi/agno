@@ -142,6 +142,25 @@ class SingleStoreDb(BaseDb):
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
+        # Resolved Table objects, keyed by table name. Avoids re-running the
+        # existence check and schema validation on every query. Only successful
+        # resolutions are cached: a missing table is re-checked on the next call,
+        # so a table created later (or by another replica) is still picked up.
+        self._table_cache: Dict[str, Table] = {}
+
+    def _invalidate_table_cache(self, table_name: str) -> None:
+        """Forget a resolved table after an in-process schema change (ALTER/DROP).
+
+        Clears both the resolution cache and the SQLAlchemy metadata entry so
+        the next access re-reflects the current shape. Other processes hold
+        their own cache: restart replicas after cross-process schema changes.
+        """
+        self._table_cache.pop(table_name, None)
+        fq_name = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
+        existing = self.metadata.tables.get(fq_name)
+        if existing is not None:
+            self.metadata.remove(existing)
+
     # -- DB methods --
     def table_exists(self, table_name: str) -> bool:
         """Check if a table with the given name exists in the SingleStore database.
@@ -476,6 +495,9 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
+        cached = self._table_cache.get(table_name)
+        if cached is not None:
+            return cached
 
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
@@ -489,7 +511,10 @@ class SingleStoreDb(BaseDb):
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            return self._create_table(table_name=table_name, table_type=table_type)
+            table = self._create_table(table_name=table_name, table_type=table_type)
+            if table is not None:
+                self._table_cache[table_name] = table
+            return table
 
         if not is_valid_table(
             db_engine=self.db_engine,
@@ -501,7 +526,10 @@ class SingleStoreDb(BaseDb):
             raise ValueError(f"Table {table_ref} has an invalid schema")
 
         try:
-            return self._create_table_structure_only(table_name=table_name, table_type=table_type)
+            table = self._create_table_structure_only(table_name=table_name, table_type=table_type)
+            if table is not None:
+                self._table_cache[table_name] = table
+            return table
 
         except Exception as e:
             table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
@@ -580,7 +608,9 @@ class SingleStoreDb(BaseDb):
 
             log_info(f"Dropping legacy runs column from {self.session_table_name}")
             sess.execute(text(f"ALTER TABLE `{schema}`.`{self.session_table_name}` DROP COLUMN `runs`"))
-            return True
+
+        self._invalidate_table_cache(self.session_table_name)
+        return True
 
     # -- Run methods --
     def _get_session_runs_data(

@@ -65,6 +65,19 @@ class ScheduleDuplicateNamesError(RuntimeError):
     later run (a re-run would skip an already-stamped version)."""
 
 
+def _applied_and_forget(db: Any, table_name: str, applied: bool) -> bool:
+    """After an executed SQL migration, forget the table's cached resolution.
+
+    The migration may have altered the table (user_id columns, metrics key),
+    so a Table object resolved earlier in this process is stale.
+    """
+    if applied:
+        invalidate = getattr(db, "_invalidate_table_cache", None)
+        if invalidate is not None:
+            invalidate(table_name)
+    return applied
+
+
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     """
     Apply the following changes to the database:
@@ -81,11 +94,11 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     try:
         if db_type == "PostgresDb":
-            return _migrate_postgres(db, table_type, table_name)
+            return _applied_and_forget(db, table_name, _migrate_postgres(db, table_type, table_name))
         elif db_type == "SqliteDb":
-            return _migrate_sqlite(db, table_type, table_name)
+            return _applied_and_forget(db, table_name, _migrate_sqlite(db, table_type, table_name))
         elif db_type in ("MySQLDb", "SingleStoreDb"):
-            return _migrate_mysql_like(db, table_type, table_name)
+            return _applied_and_forget(db, table_name, _migrate_mysql_like(db, table_type, table_name))
         elif db_type == "MongoDb":
             return _migrate_mongo(db, table_type, table_name)
         elif db_type == "FirestoreDb":
@@ -128,11 +141,11 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
 
     try:
         if db_type == "AsyncPostgresDb":
-            return await _migrate_async_postgres(db, table_type, table_name)
+            return _applied_and_forget(db, table_name, await _migrate_async_postgres(db, table_type, table_name))
         elif db_type == "AsyncSqliteDb":
-            return await _migrate_async_sqlite(db, table_type, table_name)
+            return _applied_and_forget(db, table_name, await _migrate_async_sqlite(db, table_type, table_name))
         elif db_type == "AsyncMySQLDb":
-            return await _migrate_async_mysql(db, table_type, table_name)
+            return _applied_and_forget(db, table_name, await _migrate_async_mysql(db, table_type, table_name))
         elif db_type == "AsyncMongoDb":
             return await _migrate_async_mongo(db, table_type, table_name)
         else:
@@ -409,6 +422,9 @@ def _forget_table(db, table_name: Optional[str], attribute: str) -> None:
         for table in list(metadata.tables.values()):
             if table.name == table_name:
                 metadata.remove(table)
+    table_cache = getattr(db, "_table_cache", None)
+    if table_cache is not None and table_name is not None:
+        table_cache.pop(table_name, None)
     if hasattr(db, attribute):
         setattr(db, attribute, None)
 
