@@ -1528,7 +1528,8 @@ class TestTeamMemoryManagerRoundTrip:
         loaded = Team.from_dict(config, registry=Registry(memory_managers=[manager]), strict=True)
         assert loaded.memory_manager is manager
 
-    def test_unregistered_manager_with_memory_flags_drops_with_warning(self):
+    def test_unregistered_manager_with_memory_flags_still_raises_strict(self):
+        from agno.exceptions import ComponentRehydrationError
         from agno.memory.manager import MemoryManager
 
         manager = MemoryManager(id="my-memory")
@@ -1537,12 +1538,15 @@ class TestTeamMemoryManagerRoundTrip:
         assert config["memory_manager"] == {"registry_id": "my-memory"}
 
         # Teams share the agent module's memory manager resolution.
-        with patch("agno.agent._storage.log_warning") as mock_warn:
-            loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        with pytest.raises(ComponentRehydrationError, match="my-memory"):
+            Team.from_dict(config, registry=Registry(), strict=True)
+
+        # strict=False still loads the component without it.
+        loaded = Team.from_dict(config, registry=Registry(), strict=False)
         assert loaded.memory_manager is None
-        assert any("my-memory" in str(c) for c in mock_warn.call_args_list)
 
     def test_unregistered_manager_without_flags_raises_strict(self):
+        from agno.exceptions import ComponentRehydrationError
         from agno.exceptions import ComponentRehydrationError
         from agno.memory.manager import MemoryManager
 
@@ -1692,10 +1696,11 @@ class TestTeamMemoryManagerReferenceShapes:
         loaded = Team.from_dict(self._team_config(payload), registry=Registry(), strict=False)
         assert loaded.memory_manager is None
 
-    def test_ambiguous_name_does_not_defeat_the_memory_flag_escape_hatch(self):
+    def test_ambiguous_name_refuses_even_with_the_memory_flags_set(self):
         """A team whose own settings rebuild a default manager never needed
         the referenced one, so an ambiguous name must drop with a warning
         rather than make the team permanently unloadable."""
+        from agno.exceptions import ComponentRehydrationError
         from agno.memory.manager import MemoryManager
 
         registry = Registry(
@@ -1708,11 +1713,14 @@ class TestTeamMemoryManagerReferenceShapes:
         config["update_memory_on_run"] = True
 
         # Teams share the agent module's memory manager resolution.
-        with patch("agno.agent._storage.log_warning") as mock_warn:
-            loaded = Team.from_dict(config, registry=registry, strict=True)
+        with pytest.raises(ComponentRehydrationError, match="Support Memory"):
+            Team.from_dict(config, registry=registry, strict=True)
+
+        # strict=False keeps the documented lenient behaviour: warn, and bind
+        # the first of the competing managers.
+        loaded = Team.from_dict(config, registry=registry, strict=False)
         assert loaded.update_memory_on_run is True
-        assert loaded.memory_manager is None
-        assert any("Support Memory" in str(c) for c in mock_warn.call_args_list)
+        assert loaded.memory_manager is not None
 
     def test_stale_id_key_falls_back_to_the_name_key(self):
         """The registry listing emits both an id and a name, so a config

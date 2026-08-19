@@ -141,17 +141,21 @@ def resolve_memory_manager_reference(
         config["memory_manager"] = resolved_manager
         return
 
-    # When the component's own settings rebuild a default manager on init,
-    # losing the reference changes nothing - drop it rather than refuse the
-    # whole component. A reference carrying nothing but an auto-generated id
-    # (written by configs saved before ids were filtered) can never resolve in
-    # a new process, so refusing on it would 422 the component forever. Both
-    # escapes are weighed before any refusal, including the ambiguous-name
-    # one, so a component that does not need the manager still loads.
-    rebuilds_default = bool(config.get("enable_agentic_memory") or config.get("update_memory_on_run"))
+    # A reference carrying nothing but an auto-generated id (written by configs
+    # saved before ids were filtered) can never resolve in a new process, so
+    # refusing on it would 422 the component forever. That escape is weighed
+    # before any refusal, including the ambiguous-name one.
+    #
+    # There is deliberately no escape for "the component rebuilds a default
+    # manager anyway": the serializer writes this reference ONLY for a manager
+    # with a stable, deliberately-assigned id, so what a default rebuild
+    # produces is a different manager - the agent's own model, no capture
+    # instructions - writing memories under rules nobody asked for, while the
+    # caller is told the load succeeded. A missing model, knowledge or tool
+    # reference refuses on this same path; so does this one.
     only_auto_ids = bool(ref_keys) and all(is_auto_generated_memory_manager_id(key) for key in ref_keys)
     tried = " or ".join(f"'{key}'" for key in ref_keys) if ref_keys else repr(manager_ref)
-    if strict and not rebuilds_default and not only_auto_ids:
+    if strict and not only_auto_ids:
         if ambiguous_key is not None:
             raise ComponentRehydrationError(
                 f"{component_label} references memory manager '{ambiguous_key}', but two distinct "

@@ -1234,9 +1234,12 @@ class TestMemoryManagerRoundTrip:
         loaded = Agent.from_dict(config, registry=Registry(memory_managers=[manager]), strict=True)
         assert loaded.memory_manager is manager
 
-    def test_unregistered_manager_with_memory_flags_drops_with_warning(self):
-        """The flags rebuild a default manager on init, so losing the
-        reference changes nothing; strict must warn and drop, not raise."""
+    def test_unregistered_manager_with_memory_flags_still_raises_strict(self):
+        """The flags rebuild a DEFAULT manager - the agent's own model, no
+        capture instructions - which is not the manager the config named.
+        Dropping the reference silently changes how memories are written,
+        so strict refuses it like any other unresolvable reference."""
+        from agno.exceptions import ComponentRehydrationError
         from agno.memory.manager import MemoryManager
 
         manager = MemoryManager(id="my-memory")
@@ -1244,14 +1247,17 @@ class TestMemoryManagerRoundTrip:
         config = agent.to_dict()
         assert config["memory_manager"] == {"registry_id": "my-memory"}
 
-        with patch("agno.agent._storage.log_warning") as mock_warn:
-            loaded = Agent.from_dict(config, registry=Registry(), strict=True)
+        with pytest.raises(ComponentRehydrationError, match="my-memory"):
+            Agent.from_dict(config, registry=Registry(), strict=True)
+
+        # strict=False still loads the component without it.
+        loaded = Agent.from_dict(config, registry=Registry(), strict=False)
         assert loaded.memory_manager is None
-        assert any("my-memory" in str(c) for c in mock_warn.call_args_list)
 
     def test_unregistered_manager_without_flags_raises_strict(self):
         """No flags means dropping the manager removes memory entirely; the
         user clearly asked for a specific one, so strict must refuse."""
+        from agno.exceptions import ComponentRehydrationError
         from agno.exceptions import ComponentRehydrationError
         from agno.memory.manager import MemoryManager
 
@@ -1415,10 +1421,11 @@ class TestMemoryManagerReferenceShapes:
         loaded = Agent.from_dict(self._agent_config(payload), registry=Registry(), strict=False)
         assert loaded.memory_manager is None
 
-    def test_ambiguous_name_does_not_defeat_the_memory_flag_escape_hatch(self):
-        """A component whose own settings rebuild a default manager never
-        needed the referenced one, so an ambiguous name must drop with a
-        warning rather than make the component permanently unloadable."""
+    def test_ambiguous_name_refuses_even_with_the_memory_flags_set(self):
+        """An ambiguous name could bind the wrong manager, and the memory
+        flags do not make that safe: what they rebuild is a default, not
+        the manager the config named."""
+        from agno.exceptions import ComponentRehydrationError
         from agno.memory.manager import MemoryManager
 
         registry = Registry(
@@ -1430,11 +1437,14 @@ class TestMemoryManagerReferenceShapes:
         config = self._agent_config({"name": "Support Memory"})
         config["enable_agentic_memory"] = True
 
-        with patch("agno.agent._storage.log_warning") as mock_warn:
-            loaded = Agent.from_dict(config, registry=registry, strict=True)
+        with pytest.raises(ComponentRehydrationError, match="Support Memory"):
+            Agent.from_dict(config, registry=registry, strict=True)
+
+        # strict=False keeps the documented lenient behaviour: warn, and bind
+        # the first of the competing managers.
+        loaded = Agent.from_dict(config, registry=registry, strict=False)
         assert loaded.enable_agentic_memory is True
-        assert loaded.memory_manager is None
-        assert any("Support Memory" in str(c) for c in mock_warn.call_args_list)
+        assert loaded.memory_manager is not None
 
     def test_stale_id_key_falls_back_to_the_name_key(self):
         """The registry listing emits both an id and a name, so a config
