@@ -119,7 +119,7 @@ show this.
 The build palette is enforced, not prompted. Tools declared on the `Registry`
 are buildable; tools that arrived via the AgentOS fold (every registered
 agent's own wiring) are resolvable for rebuilds but **not** buildable unless
-allowed with `buildable_tools=[...]`; `denied_tools` always wins; composing a
+allowed with `allowed_tools=[...]`; `denied_tools` always wins; composing a
 component that itself carries `StudioTools` is refused the same way.
 `list_tools` reports `buildable` and `source` (`declared` or `folded`) per
 row, and wiring a non-buildable name returns `tool_not_allowed` (distinct from

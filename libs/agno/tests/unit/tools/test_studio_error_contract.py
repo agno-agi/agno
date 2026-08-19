@@ -179,4 +179,4 @@ class TestTheClassDocstringMatchesTheConstructor:
 
         doc = StudioTools.__doc__ or ""
         documented = {name for name in inspect.signature(StudioTools.__init__).parameters if f"{name}:" in doc}
-        assert {"buildable_tools", "denied_tools"} <= documented
+        assert {"allowed_tools", "denied_tools"} <= documented

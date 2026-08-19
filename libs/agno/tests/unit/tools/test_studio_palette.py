@@ -1,6 +1,6 @@
 """Palette policy for StudioTools.
 
-The build palette is declared tools + buildable_tools - denied_tools. Tools
+The build palette is declared tools + allowed_tools - denied_tools. Tools
 that arrived via the registry fold (Registry.add_tool(tool, source="folded"),
 the way AgentOS folds every registered agent's own tools in) are resolvable
 for rehydration but not buildable; wiring one returns tool_not_allowed with
@@ -95,14 +95,14 @@ class TestFoldedTools:
         error = _error(studio.edit_agent("editable", tool_names=["agent_private"]))
         assert error["code"] == "tool_not_allowed"
 
-    def test_buildable_tools_allows_a_folded_toolkit(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, buildable_tools=["agent_private"])
+    def test_allowed_tools_allows_a_folded_toolkit(self, registry, db):
+        studio = StudioTools(registry=registry, db=db, allowed_tools=["agent_private"])
         assert _tool_rows(studio)["agent_private"]["buildable"] is True
         data = _data(studio.create_agent(name="allowed", instructions="i", tool_names=["agent_private"]))
         assert data["id"] == "allowed"
 
-    def test_buildable_tools_allows_a_single_folded_function(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, buildable_tools=["_folded_lookup"])
+    def test_allowed_tools_allows_a_single_folded_function(self, registry, db):
+        studio = StudioTools(registry=registry, db=db, allowed_tools=["_folded_lookup"])
         data = _data(studio.create_agent(name="allowed-fn", instructions="i", tool_names=["_folded_lookup"]))
         assert data["id"] == "allowed-fn"
 
@@ -121,9 +121,7 @@ class TestDeniedTools:
         assert error["code"] == "tool_not_allowed"
 
     def test_denied_always_wins_over_buildable(self, registry, db):
-        studio = StudioTools(
-            registry=registry, db=db, buildable_tools=["agent_private"], denied_tools=["agent_private"]
-        )
+        studio = StudioTools(registry=registry, db=db, allowed_tools=["agent_private"], denied_tools=["agent_private"])
         error = _error(studio.create_agent(name="x", instructions="i", tool_names=["agent_private"]))
         assert error["code"] == "tool_not_allowed"
 
@@ -155,9 +153,9 @@ class TestSelfCompositionGuard:
         assert error["code"] == "tool_not_allowed"
         assert error["details"]["blocked"] == ["builder"]
 
-    def test_buildable_tools_overrides_the_guard(self, registry, db, builder_agent):
+    def test_allowed_tools_overrides_the_guard(self, registry, db, builder_agent):
         studio = StudioTools(
-            registry=registry, db=db, teams=True, agents_list=[builder_agent], buildable_tools=["builder"]
+            registry=registry, db=db, teams=True, agents_list=[builder_agent], allowed_tools=["builder"]
         )
         data = _data(studio.create_team(name="Meta", instructions="i", member_ids=["builder"]))
         assert data["member_ids"] == ["builder"]

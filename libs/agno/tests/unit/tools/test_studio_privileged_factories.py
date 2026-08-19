@@ -271,7 +271,7 @@ class TestHarmlessFactoriesStillCompose:
             db=db,
             teams=True,
             agents_list=[smuggler],
-            buildable_tools=["smuggler"],
+            allowed_tools=["smuggler"],
         )
         data = _data(studio.create_team(name="Crew", instructions="i", member_ids=["smuggler"]))
         assert data["member_ids"] == ["smuggler"]

@@ -49,7 +49,7 @@ Identity and ownership:
 Palette policy:
     * Declared registry tools are buildable. Tools that arrived via the
       AgentOS fold (every registered agent's own wiring) are resolvable but
-      NOT buildable unless allowed via buildable_tools; denied_tools always
+      NOT buildable unless allowed via allowed_tools; denied_tools always
       wins; composing a component that itself carries StudioTools is refused
       the same way. list_tools reports buildable and source per row.
 
@@ -159,9 +159,15 @@ class StudioTools(Toolkit):
             False. Requires the optional scheduler dependencies (croniter and
             pytz -- ``pip install agno[scheduler]``); when they are missing,
             the first schedule tool call that needs them returns an error JSON.
-        buildable_tools: Names a caller may build with even though the palette
-            would refuse them -- a folded tool, or the id of a component that
-            itself carries StudioTools. Denials still win.
+        allowed_tools: Extra names a caller may build with even though the
+            palette would refuse them. Additive, never exhaustive: declared
+            registry tools are buildable without being listed here, so this
+            list cannot narrow the palette -- that is what denied_tools is
+            for. Two kinds of name are accepted: a folded tool's name, which
+            promotes it into the build palette, and the id of a component
+            that itself carries StudioTools, which permits composing it into
+            teams and workflows -- a control-plane grant, so list one
+            deliberately. denied_tools still wins over both.
         denied_tools: Names no caller may build with, whatever their source.
             A denied toolkit covers its member functions too.
     """
@@ -181,7 +187,7 @@ class StudioTools(Toolkit):
         versions: bool = True,
         schedules: bool = False,
         list_limit: int = 100,
-        buildable_tools: Optional[List[str]] = None,
+        allowed_tools: Optional[List[str]] = None,
         denied_tools: Optional[List[str]] = None,
         **kwargs: Any,
     ):
@@ -220,7 +226,7 @@ class StudioTools(Toolkit):
         self.list_limit = list_limit
         # Palette policy: declared registry tools are buildable; folded tools
         # are resolvable but not buildable unless allowed; denials always win.
-        self._buildable_tools: Set[str] = set(buildable_tools or [])
+        self._allowed_tools: Set[str] = set(allowed_tools or [])
         self._denied_tools: Set[str] = set(denied_tools or [])
 
         # Execution and component resolution live on StudioRunnerTools -- the
@@ -820,7 +826,7 @@ class StudioTools(Toolkit):
         not just its top-level name."""
         if name in self._denied_tools:
             return False
-        if name in self._buildable_tools:
+        if name in self._allowed_tools:
             return True
         if name in self.registry.folded_tool_names:
             return False
@@ -839,7 +845,7 @@ class StudioTools(Toolkit):
             if isinstance(tool, Toolkit) and name in tool.functions:
                 if tool.name in self._denied_tools:
                     return False
-                if tool.name in self._buildable_tools:
+                if tool.name in self._allowed_tools:
                     return True
                 if tool.name in self.registry.folded_tool_names:
                     return False
@@ -853,7 +859,7 @@ class StudioTools(Toolkit):
             return error_result(
                 "tool_not_allowed",
                 f"Not buildable: {blocked}. These tools exist for resolution but are outside the build "
-                "palette; a deployer allows one by name via buildable_tools.",
+                "palette; a deployer allows one by name via allowed_tools.",
                 blocked=blocked,
             )
         return None
@@ -923,12 +929,12 @@ class StudioTools(Toolkit):
 
     def _check_member_policy(self, member_ids: List[str]) -> Optional[str]:
         privileged = self._privileged_component_ids(only_ids=set(member_ids))
-        blocked = sorted(m for m in member_ids if m in privileged and m not in self._buildable_tools)
+        blocked = sorted(m for m in member_ids if m in privileged and m not in self._allowed_tools)
         if blocked:
             return error_result(
                 "tool_not_allowed",
                 f"Refusing to compose {blocked}: these components carry the Studio control plane "
-                "(self-composition). A deployer allows one by listing its id in buildable_tools.",
+                "(self-composition). A deployer allows one by listing its id in allowed_tools.",
                 blocked=blocked,
             )
         return None
@@ -981,14 +987,14 @@ class StudioTools(Toolkit):
                 str(getattr(component, "id", None) or getattr(component, "name", ""))
                 for component in components
                 if self._component_is_privileged(component)
-                and getattr(component, "id", None) not in self._buildable_tools
+                and getattr(component, "id", None) not in self._allowed_tools
             }
         )
         if blocked:
             return error_result(
                 "tool_not_allowed",
                 f"Refusing to compose {blocked}: these components carry the Studio control plane "
-                "(self-composition). A deployer allows one by listing its id in buildable_tools.",
+                "(self-composition). A deployer allows one by listing its id in allowed_tools.",
                 blocked=blocked,
             )
         return None
