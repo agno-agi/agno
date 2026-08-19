@@ -159,6 +159,74 @@ class TestScopedWrites:
         assert db.get_component("c_alice")["user_id"] == "alice"
 
 
+class TestScopedConfigWrites:
+    """The config writers are owner-scoped the same way the component writers are.
+
+    Publishing shares a component for reading; writes are owner-scoped always.
+    The scope is enforced on the component row inside the write transaction,
+    so a foreign or shared row answers exactly as a missing one and nothing
+    is written.
+    """
+
+    def test_upsert_config_scoped(self, db):
+        _make(db, "c_alice", "alice")
+
+        with pytest.raises(ValueError, match="not found"):
+            db.upsert_config(component_id="c_alice", config={"name": "hacked"}, stage="published", user_id="bob")
+        assert len(db.list_configs("c_alice")) == 1
+
+        appended = db.upsert_config(component_id="c_alice", config={"name": "mine"}, user_id="alice")
+        assert appended["version"] == 2
+
+    def test_upsert_config_scoped_refuses_shared_row(self, db):
+        _make(db, "c_shared", None)
+
+        with pytest.raises(ValueError, match="not found"):
+            db.upsert_config(component_id="c_shared", config={"name": "hacked"}, user_id="alice")
+        # An unscoped caller (operator) still writes.
+        appended = db.upsert_config(component_id="c_shared", config={"name": "ok"})
+        assert appended["version"] == 2
+
+    def test_delete_config_scoped(self, db):
+        _make(db, "c_alice", "alice")
+        db.upsert_config(component_id="c_alice", config={"name": "draft"}, stage="draft", user_id="alice")
+
+        assert db.delete_config("c_alice", version=2, user_id="bob") is False
+        assert len(db.list_configs("c_alice")) == 2
+
+        assert db.delete_config("c_alice", version=2, user_id="alice") is True
+
+    def test_delete_config_scoped_answers_false_before_stage_verdicts(self, db):
+        """A foreign probe learns nothing from stage: a published version and
+        an archived component both answer the same False a missing version
+        answers, never the owner's ComponentDraftRequiredError."""
+        _make(db, "c_alice", "alice")
+        assert db.delete_config("c_alice", version=1, user_id="bob") is False
+        assert len(db.list_configs("c_alice")) == 1
+
+        _make(db, "c_gone", "alice")
+        assert db.delete_component("c_gone", user_id="alice") is True
+        assert db.delete_config("c_gone", version=1, user_id="bob") is False
+
+    def test_set_current_version_scoped(self, db):
+        _make(db, "c_alice", "alice")
+        db.upsert_config(component_id="c_alice", config={"name": "v2"}, stage="published", user_id="alice")
+        assert db.get_component("c_alice")["current_version"] == 2
+
+        assert db.set_current_version("c_alice", version=1, user_id="bob") is False
+        assert db.get_component("c_alice")["current_version"] == 2
+
+        assert db.set_current_version("c_alice", version=1, user_id="alice") is True
+        assert db.get_component("c_alice")["current_version"] == 1
+
+    def test_unscoped_config_writes_stay_global(self, db):
+        _make(db, "c_alice", "alice")
+
+        appended = db.upsert_config(component_id="c_alice", config={"name": "operator"}, stage="published")
+        assert appended["version"] == 2
+        assert db.set_current_version("c_alice", version=1) is True
+
+
 class TestComponentIdIsTakenIsGeneric:
     def test_duplicate_id_does_not_confirm_other_users_component(self, db):
         """The clash error must not reveal that another user owns that id."""

@@ -4849,6 +4849,7 @@ class PostgresDb(BaseDb):
         links: Optional[List[Dict[str, Any]]] = None,
         expected_latest_version: Optional[int] = None,
         expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
@@ -4867,6 +4868,9 @@ class PostgresDb(BaseDb):
             links: Optional list of links. Each link must have child_version set.
             expected_latest_version: Optional CAS guard against the latest
                 visible version; None skips the check.
+            user_id: When set, the write applies only if this user owns the
+                component; checked on the locked component row inside the
+                write transaction.
 
         Returns:
             Created/updated config dictionary.
@@ -4898,12 +4902,17 @@ class PostgresDb(BaseDb):
                 # the version allocation below is race-free; the primary key
                 # on (component_id, version) stays the backstop.
                 component = sess.execute(
-                    select(components_table.c.component_id, components_table.c.deleted_at)
+                    select(components_table.c.component_id, components_table.c.deleted_at, components_table.c.user_id)
                     .where(components_table.c.component_id == component_id)
                     .with_for_update()
                 ).fetchone()
 
                 if component is None:
+                    raise ValueError(f"Component {component_id} not found")
+                # Writes are owner-scoped always. Checked before the archived
+                # verdict and answering exactly as a missing component, so a
+                # scoped caller learns nothing about a row it does not own.
+                if user_id is not None and component.user_id != user_id:
                     raise ValueError(f"Component {component_id} not found")
                 if component.deleted_at is not None:
                     raise ComponentArchivedError(
@@ -5231,6 +5240,7 @@ class PostgresDb(BaseDb):
         self,
         component_id: str,
         version: int,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Tombstone a specific config version. Its number is never reused.
 
@@ -5242,6 +5252,10 @@ class PostgresDb(BaseDb):
         Args:
             component_id: The component ID.
             version: The version to delete.
+            user_id: When set, the delete applies only if this user owns the
+                component; checked on the locked component row inside the
+                write transaction. A foreign or shared row answers False,
+                the same as a missing version.
 
         Returns:
             True if deleted, False if not found (or already tombstoned).
@@ -5261,6 +5275,23 @@ class PostgresDb(BaseDb):
                 return False
 
             with self.Session() as sess, sess.begin():
+                # The component row is read first, locked, doing two jobs: the
+                # owner scope must answer before ANY stage verdict - a foreign
+                # probe learns nothing, not even that a version is published -
+                # and the row lock serializes this call against a concurrent
+                # publish of the same component.
+                component_row = sess.execute(
+                    select(components_table.c.current_version, components_table.c.user_id)
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+
+                # Writes are owner-scoped always. A foreign or shared row
+                # answers the same False a missing version answers, on the
+                # locked row, so the refusal cannot be split from the write.
+                if user_id is not None and (component_row is None or component_row.user_id != user_id):
+                    return False
+
                 # Get config stage and check if it's current
                 config_row = sess.execute(
                     select(configs_table.c.stage).where(
@@ -5277,16 +5308,7 @@ class PostgresDb(BaseDb):
                         f"Cannot delete published config {component_id} v{version}; only drafts are deletable"
                     )
 
-                # Check if it's current version. The locked read serializes
-                # this call against a concurrent publish of the same component,
-                # which takes the same row lock.
-                current = sess.execute(
-                    select(components_table.c.current_version)
-                    .where(components_table.c.component_id == component_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-
-                if current == version:
+                if component_row is not None and component_row.current_version == version:
                     raise ValueError(f"Cannot delete current config {component_id} v{version}")
 
                 # A component keeps at least one visible version
@@ -5481,6 +5503,7 @@ class PostgresDb(BaseDb):
         component_id: str,
         version: int,
         expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -5493,6 +5516,9 @@ class PostgresDb(BaseDb):
             version: The version to set as current (must be published).
             expected_current_version: Optional CAS guard on the pointer being
                 replaced; None skips the check.
+            user_id: When set, the pointer moves only if this user owns the
+                component; the predicate rides the UPDATE itself. A foreign
+                or shared row answers False, the same as a missing component.
 
         Returns:
             True if successful, False if component or version not found.
@@ -5512,14 +5538,19 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 # Verify component exists and is not deleted
-                component_exists = sess.execute(
-                    select(components_table.c.component_id).where(
+                component_row = sess.execute(
+                    select(components_table.c.component_id, components_table.c.user_id).where(
                         components_table.c.component_id == component_id,
                         components_table.c.deleted_at.is_(None),
                     )
-                ).scalar_one_or_none()
+                ).fetchone()
 
-                if component_exists is None:
+                if component_row is None:
+                    return False
+
+                # Writes are owner-scoped always: a foreign or shared row
+                # answers the same False a missing component answers.
+                if user_id is not None and component_row.user_id != user_id:
                     return False
 
                 # Verify version exists and get stage
@@ -5559,7 +5590,9 @@ class PostgresDb(BaseDb):
                 # is re-asserted here because the liveness pre-read above is
                 # check-then-write: a concurrent archive committing in the gap
                 # must make this a no-op, never a pointer move onto an
-                # archived (immutable) row.
+                # archived (immutable) row. The owner scope rides the same way,
+                # so a delete-and-recreate under a new owner in that gap is a
+                # no-op too, never a pointer move on someone else's row.
                 pointer_update = (
                     components_table.update()
                     .where(
@@ -5568,6 +5601,8 @@ class PostgresDb(BaseDb):
                     )
                     .values(current_version=version, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    pointer_update = pointer_update.where(components_table.c.user_id == user_id)
                 if expected_current_version is not None:
                     pointer_update = pointer_update.where(
                         components_table.c.current_version == expected_current_version
@@ -5575,14 +5610,16 @@ class PostgresDb(BaseDb):
                 result = sess.execute(pointer_update)
 
                 if result.rowcount == 0:
-                    # Zero rows: the row was archived underneath us, or the
-                    # CAS guard lost. Re-read to answer which.
-                    still_live = sess.execute(
-                        select(components_table.c.component_id).where(
-                            components_table.c.component_id == component_id,
-                            components_table.c.deleted_at.is_(None),
-                        )
-                    ).scalar_one_or_none()
+                    # Zero rows: the row was archived or changed owner
+                    # underneath us, or the CAS guard lost. Re-read to answer
+                    # which, under the same scope the UPDATE used.
+                    still_live_stmt = select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                    if user_id is not None:
+                        still_live_stmt = still_live_stmt.where(components_table.c.user_id == user_id)
+                    still_live = sess.execute(still_live_stmt).scalar_one_or_none()
                     if still_live is None:
                         # Concurrent archive won: same verdict as the pre-check.
                         return False

@@ -280,6 +280,24 @@ def _validate_referenced_component_ownership(
             raise HTTPException(status_code=404, detail=f"Component {referenced_id} not found")
 
 
+def _require_write_ownership(existing: Dict[str, Any], scoped_user_id: Optional[str], verb: str = "modify") -> None:
+    """Refuse a scoped caller writing to a component it does not own.
+
+    Publishing shares a component for reading, running and composing; mutation
+    stays owner-scoped. The route has already resolved the row through the
+    scoped visibility read, so this refusal is never an existence oracle: a row
+    the caller cannot see answered 404 there, and a row it can see - shared
+    (unowned), or another owner's published one - gets the honest 403 here.
+    """
+    if scoped_user_id is None:
+        return
+    owner = existing.get("user_id")
+    if owner is None:
+        raise HTTPException(status_code=403, detail=f"Cannot {verb} shared component")
+    if owner != scoped_user_id:
+        raise HTTPException(status_code=403, detail=f"Cannot {verb} component owned by another user")
+
+
 def _resolve_member_links(
     config: Dict[str, Any],
     db: BaseDb,
@@ -691,9 +709,8 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not modify them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id)
 
             # upsert_component has no CAS parameter; the guard is enforced as a
             # pre-check against the row that was just read.
@@ -733,6 +750,7 @@ def attach_routes(
                     component_id,
                     version=body.current_version,
                     expected_current_version=body.guard.current_version if body.guard else None,
+                    user_id=scoped_user_id,
                 )
                 if not moved:
                     raise HTTPException(
@@ -796,9 +814,8 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not delete them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot delete shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id, verb="delete")
             # The schedule cascade rides the delete inside the adapter, so every
             # delete surface carries it and a cascade failure rolls the archive
             # back rather than leaving an archived component with live schedules.
@@ -907,9 +924,8 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not modify them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id)
             # Resolve db from config if present
             config_data = body.config or {}
             config_data = _resolve_db_in_config(config_data, db, registry)
@@ -933,6 +949,7 @@ def attach_routes(
                 notes=body.notes,
                 links=links,
                 expected_latest_version=body.guard.latest_version if body.guard else None,
+                user_id=scoped_user_id,
             )
             return ComponentConfigResponse(**config)
         except HTTPException:
@@ -967,9 +984,8 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not modify them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id)
             # Resolve db from config if present
             config_data = body.config
             if config_data is not None:
@@ -994,6 +1010,7 @@ def attach_routes(
                 notes=body.notes,
                 links=links,
                 expected_latest_version=body.guard.latest_version if body.guard else None,
+                user_id=scoped_user_id,
             )
             return ComponentConfigResponse(**config)
         except HTTPException:
@@ -1091,11 +1108,10 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not delete them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot delete shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id, verb="delete")
             # Resolve version number
-            deleted = db.delete_config(component_id, version=version)
+            deleted = db.delete_config(component_id, version=version, user_id=scoped_user_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
         except HTTPException:
@@ -1132,14 +1148,14 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not modify them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id)
             _reject_unsupported_guard(body.guard if body else None, "current_version")
             success = db.set_current_version(
                 component_id,
                 version=version,
                 expected_current_version=body.guard.current_version if body and body.guard else None,
+                user_id=scoped_user_id,
             )
             if not success:
                 raise HTTPException(

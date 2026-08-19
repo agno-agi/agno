@@ -414,7 +414,9 @@ class TestUpdateComponentCurrentVersionRouting:
 
         assert response.status_code == 200
         assert response.json()["current_version"] == 2
-        mock_db.set_current_version.assert_called_once_with("agent-1", version=2, expected_current_version=None)
+        mock_db.set_current_version.assert_called_once_with(
+            "agent-1", version=2, expected_current_version=None, user_id=None
+        )
         assert "current_version" not in mock_db.upsert_component.call_args.kwargs
 
     def test_patch_current_version_to_invalid_stage_returns_400(self, client, mock_db):
@@ -1509,3 +1511,86 @@ class TestGuardHalfRejectionAllRoutes:
         )
         assert r.status_code == 400
         assert "guard.latest_version" in r.json()["detail"]
+
+
+class TestScopedWriteThreading:
+    """The write routes must hand the caller's scope to the DB writers.
+
+    The route guard alone cannot give the in-transaction guarantee: the writer
+    parameter defaults to None, so dropping the kwarg at one call site would be
+    a silent, test-green regression of the atomic refusal. These pin the
+    binding for every write call site, with the caller as the row's owner so
+    the route guard passes and the call goes through.
+    """
+
+    _row = {
+        "component_id": "agent-1",
+        "name": "Agent 1",
+        "component_type": "agent",
+        "current_version": 1,
+        "user_id": "user-x",
+        "created_at": 1234567890,
+    }
+    _config = {
+        "component_id": "agent-1",
+        "version": 1,
+        "config": {"name": "Agent 1"},
+        "stage": "draft",
+        "created_at": 1234567890,
+    }
+
+    def _client(self, mock_db, settings):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def add_jwt_user(request, call_next):
+            request.state.user_isolation_enabled = True
+            request.state.user_id = "user-x"
+            request.state.scopes = []
+            return await call_next(request)
+
+        app.include_router(get_components_router(os_db=mock_db, settings=settings))
+        return TestClient(app)
+
+    def test_create_config_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.upsert_config.return_value = dict(self._config)
+        client = self._client(mock_db, settings)
+
+        assert client.post("/components/agent-1/configs", json={"config": {"name": "x"}}).status_code == 201
+        assert mock_db.upsert_config.call_args.kwargs["user_id"] == "user-x"
+
+    def test_update_config_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.upsert_config.return_value = dict(self._config)
+        client = self._client(mock_db, settings)
+
+        assert client.patch("/components/agent-1/configs/1", json={"config": {"name": "x"}}).status_code == 200
+        assert mock_db.upsert_config.call_args.kwargs["user_id"] == "user-x"
+
+    def test_delete_config_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.delete_config.return_value = True
+        client = self._client(mock_db, settings)
+
+        assert client.delete("/components/agent-1/configs/2").status_code == 204
+        assert mock_db.delete_config.call_args.kwargs["user_id"] == "user-x"
+
+    def test_set_current_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.set_current_version.return_value = True
+        client = self._client(mock_db, settings)
+
+        assert client.post("/components/agent-1/configs/1/set-current").status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["user_id"] == "user-x"
+
+    def test_patch_pointer_move_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.get_config.return_value = dict(self._config)
+        mock_db.set_current_version.return_value = True
+        mock_db.upsert_component.return_value = dict(self._row)
+        client = self._client(mock_db, settings)
+
+        assert client.patch("/components/agent-1", json={"current_version": 1}).status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["user_id"] == "user-x"
+        assert mock_db.upsert_component.call_args.kwargs["user_id"] == "user-x"

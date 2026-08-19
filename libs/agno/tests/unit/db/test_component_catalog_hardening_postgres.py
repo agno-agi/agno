@@ -848,3 +848,91 @@ class TestDeterministicCASInterleaving:
         with pytest.raises(ComponentVersionConflictError):
             db.delete_component(cid, hard_delete=False, expected_current_version=3)
         assert db.get_component(cid) is not None  # not archived
+
+
+# ----------------------------------------------------------------------
+# Owner-scoped config writes
+# ----------------------------------------------------------------------
+
+
+class TestScopedConfigWrites:
+    """Postgres mirror of the SQLite suite's owner-scoped config writes.
+
+    Publishing shares a component for reading; writes are owner-scoped always.
+    The scope is enforced on the locked component row inside the write
+    transaction, so a foreign or shared row answers exactly as a missing one
+    and nothing is written.
+    """
+
+    def _owned(self, db, component_id="owned-a", user_id="alice"):
+        db.create_component_with_config(
+            component_id=component_id,
+            component_type=ComponentType.AGENT,
+            name=component_id,
+            config={"name": component_id},
+            stage="published",
+            user_id=user_id,
+        )
+        return component_id
+
+    def test_upsert_config_scoped(self, db):
+        cid = self._owned(db)
+
+        with pytest.raises(ValueError, match="not found"):
+            db.upsert_config(component_id=cid, config={"name": "hacked"}, stage="published", user_id="bob")
+        assert len(db.list_configs(cid)) == 1
+
+        appended = db.upsert_config(component_id=cid, config={"name": "mine"}, user_id="alice")
+        assert appended["version"] == 2
+
+    def test_delete_config_scoped(self, db):
+        cid = self._owned(db)
+        db.upsert_config(component_id=cid, config={"name": "draft"}, stage="draft", user_id="alice")
+
+        assert db.delete_config(cid, version=2, user_id="bob") is False
+        assert len(db.list_configs(cid)) == 2
+
+        assert db.delete_config(cid, version=2, user_id="alice") is True
+
+    def test_delete_config_scoped_answers_false_before_stage_verdicts(self, db):
+        """A foreign probe learns nothing from stage: a published version and
+        an archived component both answer the same False a missing version
+        answers, never the owner's ComponentDraftRequiredError."""
+        cid = self._owned(db)
+        assert db.delete_config(cid, version=1, user_id="bob") is False
+        assert len(db.list_configs(cid)) == 1
+
+        gone = self._owned(db, component_id="owned-gone")
+        assert db.delete_component(gone, user_id="alice") is True
+        assert db.delete_config(gone, version=1, user_id="bob") is False
+
+    def test_set_current_version_scoped(self, db):
+        cid = self._owned(db)
+        db.upsert_config(component_id=cid, config={"name": "v2"}, stage="published", user_id="alice")
+        assert db.get_component(cid)["current_version"] == 2
+
+        assert db.set_current_version(cid, version=1, user_id="bob") is False
+        assert db.get_component(cid)["current_version"] == 2
+
+        assert db.set_current_version(cid, version=1, user_id="alice") is True
+        assert db.get_component(cid)["current_version"] == 1
+
+    def test_scoped_writes_refuse_shared_row(self, db):
+        db.create_component_with_config(
+            component_id="shared-a",
+            component_type=ComponentType.AGENT,
+            name="shared-a",
+            config={"name": "shared-a"},
+            stage="published",
+            user_id=None,
+        )
+        db.upsert_config(component_id="shared-a", config={"name": "draft"}, stage="draft")
+
+        with pytest.raises(ValueError, match="not found"):
+            db.upsert_config(component_id="shared-a", config={"name": "hacked"}, user_id="alice")
+        assert db.set_current_version("shared-a", version=1, user_id="alice") is False
+        assert db.delete_config("shared-a", version=2, user_id="alice") is False
+        assert len(db.list_configs("shared-a")) == 2
+
+        # An unscoped caller (operator) still writes.
+        assert db.delete_config("shared-a", version=2) is True

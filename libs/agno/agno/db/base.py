@@ -1028,6 +1028,7 @@ class BaseDb(ABC):
         links: Optional[List[Dict[str, Any]]] = None,
         expected_latest_version: Optional[int] = None,
         expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
@@ -1055,6 +1056,10 @@ class BaseDb(ABC):
             notes: Optional notes.
             links: Optional list of links. Each link must have child_version set.
             expected_latest_version: Optional CAS guard; None skips the check.
+            user_id: When set, the write applies only if this user owns the
+                component. A foreign or shared (unowned) row answers the same
+                ValueError a missing component answers, inside the write
+                transaction, so the refusal cannot be split from the write.
 
         Returns:
             Created/updated config dictionary.
@@ -1073,6 +1078,7 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: int,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Tombstone a specific config version. Its number is never reused.
 
@@ -1082,6 +1088,9 @@ class BaseDb(ABC):
         Args:
             component_id: The component ID.
             version: The version to delete.
+            user_id: When set, the delete applies only if this user owns the
+                component. A foreign or shared (unowned) row answers the same
+                False a missing version answers, inside the write transaction.
 
         Returns:
             True if deleted, False if not found (or already tombstoned).
@@ -1118,6 +1127,7 @@ class BaseDb(ABC):
         component_id: str,
         version: int,
         expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -1130,6 +1140,10 @@ class BaseDb(ABC):
             version: The version to set as current (must be published).
             expected_current_version: Optional compare-and-set guard on the
                 pointer being replaced; None skips the check.
+            user_id: When set, the pointer moves only if this user owns the
+                component; the predicate rides the UPDATE itself. A foreign or
+                shared (unowned) row answers the same False a missing
+                component answers.
 
         Returns:
             True if successful, False if component or version not found.
@@ -2433,6 +2447,7 @@ class AsyncBaseDb(ABC):
         links: Optional[List[Dict[str, Any]]] = None,
         expected_latest_version: Optional[int] = None,
         expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError(
             "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
@@ -2442,6 +2457,7 @@ class AsyncBaseDb(ABC):
         self,
         component_id: str,
         version: int,
+        user_id: Optional[str] = None,
     ) -> bool:
         raise NotImplementedError(
             "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
@@ -2462,6 +2478,7 @@ class AsyncBaseDb(ABC):
         component_id: str,
         version: int,
         expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         raise NotImplementedError(
             "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
