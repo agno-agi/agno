@@ -260,9 +260,19 @@ class xAIResponses(OpenResponses):
         """OAuth-mode 403s get subscription guidance; API-key mode passes through untouched."""
         return self._using_oauth() and exc.status_code == 403
 
-    def _should_retry_401(self, exc: ModelProviderError) -> bool:
-        """The 401 one-shot leg applies in OAuth mode with a manager to refresh through [A2]."""
-        return self._using_oauth() and exc.status_code == 401 and self.token_manager is not None
+    def _should_retry_401(self, exc: ModelProviderError, explicit_provider: Optional[Callable]) -> bool:
+        """The 401 one-shot leg applies when the manager actually feeds the failing client [A2].
+
+        An explicit provider wins over the manager in the callable resolution, so
+        refreshing the manager would not change the bearer the retry sends - the
+        caller passes the provider field its client type resolves first.
+        """
+        return (
+            self._using_oauth()
+            and exc.status_code == 401
+            and self.token_manager is not None
+            and explicit_provider is None
+        )
 
     def invoke(
         self,
@@ -291,7 +301,7 @@ class xAIResponses(OpenResponses):
         except ModelProviderError as exc:
             if self._should_decorate_403(exc):
                 raise self._decorated_403(exc) from exc
-            if not self._should_retry_401(exc):
+            if not self._should_retry_401(exc, self.token_provider):
                 raise
             # One-shot 401 recovery: refresh, rebuild the client, retry exactly once
             self.token_manager.force_refresh()  # type: ignore[union-attr]
@@ -330,7 +340,7 @@ class xAIResponses(OpenResponses):
         except ModelProviderError as exc:
             if self._should_decorate_403(exc):
                 raise self._decorated_403(exc) from exc
-            if not self._should_retry_401(exc):
+            if not self._should_retry_401(exc, self.async_token_provider):
                 raise
             # One-shot 401 recovery: refresh, rebuild the client, retry exactly once
             await self.token_manager.aforce_refresh()  # type: ignore[union-attr]
@@ -374,7 +384,7 @@ class xAIResponses(OpenResponses):
             if self._should_decorate_403(exc):
                 raise self._decorated_403(exc) from exc
             # Retry only if nothing was yielded yet: deltas must not replay
-            if yielded_anything or not self._should_retry_401(exc):
+            if yielded_anything or not self._should_retry_401(exc, self.token_provider):
                 raise
         self.token_manager.force_refresh()  # type: ignore[union-attr]
         self.client = None  # the rebuild re-inserts the token callable
@@ -417,7 +427,7 @@ class xAIResponses(OpenResponses):
             if self._should_decorate_403(exc):
                 raise self._decorated_403(exc) from exc
             # Retry only if nothing was yielded yet: deltas must not replay
-            if yielded_anything or not self._should_retry_401(exc):
+            if yielded_anything or not self._should_retry_401(exc, self.async_token_provider):
                 raise
         await self.token_manager.aforce_refresh()  # type: ignore[union-attr]
         self.async_client = None  # the rebuild re-inserts the token callable

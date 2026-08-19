@@ -6,6 +6,8 @@ runs through the injectable clock, so these tests never sleep on real time.
 """
 
 import asyncio
+import threading
+import time as time_module
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -133,6 +135,106 @@ def test_concurrent_calls_trigger_single_refresh(sqlite_db, encryption_key, toke
 
     assert tokens == {"access-token-2"}
     assert len(token_endpoint.refresh_requests) == 1
+
+
+def test_async_lock_fetch_does_not_wait_on_the_sync_refresh_lock():
+    # The sync slow path holds _cache_lock across a blocking HTTP refresh; the
+    # async path must be able to obtain its own per-loop lock without waiting
+    # behind it (its registry has a dedicated guard)
+    release = threading.Event()
+
+    def hold_sync_lock():
+        with oauth._cache_lock:
+            release.wait(timeout=5)
+
+    holder = threading.Thread(target=hold_sync_lock)
+    holder.start()
+    time_module.sleep(0.1)  # let the holder acquire
+
+    async def fetch_lock() -> float:
+        start = time_module.monotonic()
+        oauth._get_async_cache_lock()
+        return time_module.monotonic() - start
+
+    try:
+        elapsed = asyncio.run(fetch_lock())
+    finally:
+        release.set()
+        holder.join(timeout=5)
+    assert elapsed < 0.5
+
+
+def test_async_lock_is_stable_per_loop_across_concurrent_loops():
+    # Two live loops in separate threads must each keep their own lock; a
+    # single global slot would churn loop A's lock when loop B runs,
+    # breaking per-loop single-flight
+    a_first = threading.Event()
+    b_done = threading.Event()
+    ids = {}
+
+    def loop_a():
+        async def run():
+            ids["a1"] = id(oauth._get_async_cache_lock())
+            a_first.set()
+            await asyncio.to_thread(b_done.wait, 5)
+            ids["a2"] = id(oauth._get_async_cache_lock())
+
+        asyncio.run(run())
+
+    def loop_b():
+        a_first.wait(5)
+
+        async def run():
+            ids["b"] = id(oauth._get_async_cache_lock())
+
+        asyncio.run(run())
+        b_done.set()
+
+    thread_a, thread_b = threading.Thread(target=loop_a), threading.Thread(target=loop_b)
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(10)
+    thread_b.join(10)
+
+    assert ids["a1"] == ids["a2"]  # loop A's lock survived loop B running
+    assert ids["b"] != ids["a1"]  # each loop has its own lock
+
+
+def test_cache_never_serves_a_token_across_different_stores(
+    sqlite_db, tmp_path, encryption_key, token_endpoint, fake_clock
+):
+    # Two managers on different stores can hold different accounts; the
+    # module cache must be scoped to the store, never one shared slot
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    other_db = SqliteDb(db_file=str(tmp_path / "other-store.db"))
+    manager_a = XAITokenManager(
+        db=sqlite_db,
+        encryption_key=encryption_key,
+        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        now_fn=fake_clock,
+    )
+    manager_b = XAITokenManager(
+        db=other_db,
+        encryption_key=encryption_key,
+        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        now_fn=fake_clock,
+    )
+    manager_a.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
+
+    with pytest.raises(ModelAuthenticationError):
+        manager_b.get_access_token()
+
+
+def test_refresh_200_with_error_body_raises_clean(sqlite_db, encryption_key, token_endpoint, fake_clock):
+    # An HTTP 200 carrying an error body must surface as a clean auth error,
+    # not a KeyError from envelope construction
+    manager = _seeded_manager(sqlite_db, encryption_key, token_endpoint, fake_clock)
+    token_endpoint.refresh_json = {"error": "server_error"}
+    fake_clock.advance(21600 - 100)
+
+    with pytest.raises(ModelAuthenticationError, match="missing access_token"):
+        manager.get_access_token()
 
 
 def test_contended_refresh_across_two_event_loops(sqlite_db, encryption_key, token_endpoint, fake_clock):

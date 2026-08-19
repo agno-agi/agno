@@ -391,6 +391,60 @@ async def test_ainvoke_stream_403_decorated_in_oauth_mode():
     assert exc_info.value.message == _decorated_403_message(raw)
 
 
+def test_401_not_retried_when_token_provider_overrides_manager():
+    # The sync client's bearer comes from the user's token_provider, which wins
+    # over the manager - refreshing the manager would not change what the retry
+    # sends, so the retry must not fire
+    manager = MagicMock()
+    error = ModelProviderError("unauthorized", status_code=401)
+    parent = MagicMock(side_effect=error)
+
+    with patch.object(OpenAIResponses, "invoke", parent):
+        model = xAIResponses(token_provider=lambda: "user-owned-token", token_manager=manager)
+        with pytest.raises(ModelProviderError):
+            model.invoke(messages=_messages(), assistant_message=_assistant())
+
+    assert parent.call_count == 1
+    assert manager.force_refresh.call_count == 0
+
+
+async def test_401_not_retried_when_async_token_provider_overrides_manager():
+    manager = MagicMock()
+    manager.aforce_refresh = AsyncMock()
+
+    async def aprovider() -> str:
+        return "user-owned-token"
+
+    error = ModelProviderError("unauthorized", status_code=401)
+    parent = AsyncMock(side_effect=error)
+
+    with patch.object(OpenAIResponses, "ainvoke", parent):
+        model = xAIResponses(async_token_provider=aprovider, token_manager=manager)
+        with pytest.raises(ModelProviderError):
+            await model.ainvoke(messages=_messages(), assistant_message=_assistant())
+
+    assert parent.call_count == 1
+    assert manager.aforce_refresh.await_count == 0
+
+
+async def test_401_retried_on_async_path_when_manager_wins_over_sync_provider():
+    # On the async path the manager outranks a sync-only token_provider in the
+    # callable resolution, so a manager refresh DOES change the bearer: retry fires
+    manager = MagicMock()
+    manager.aforce_refresh = AsyncMock()
+    error = ModelProviderError("unauthorized", status_code=401)
+    response = MagicMock(name="model_response")
+    parent = AsyncMock(side_effect=[error, response])
+
+    with patch.object(OpenAIResponses, "ainvoke", parent):
+        model = xAIResponses(token_provider=lambda: "sync-token", token_manager=manager)
+        result = await model.ainvoke(messages=_messages(), assistant_message=_assistant())
+
+    assert result is response
+    assert parent.call_count == 2
+    assert manager.aforce_refresh.await_count == 1
+
+
 def test_401_api_key_mode_not_retried():
     error = ModelProviderError("unauthorized", status_code=401)
     parent = MagicMock(side_effect=error)

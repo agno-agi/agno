@@ -5,6 +5,7 @@ import json
 import os
 import threading
 import time
+import weakref
 from dataclasses import dataclass, field
 from inspect import isawaitable, iscoroutinefunction
 from os import getenv
@@ -36,40 +37,40 @@ _SYNC_PATH_ASYNC_DB_WARNING = (
     "Falling back to file storage."
 )
 
-# Cache for SuperGrok access tokens: {(provider, user_id, service): (access_token, expires_at)}
-# Uses double-checked locking: lock-free fast path for cache hits,
-# lock only on cache miss to coordinate token refresh.
-_token_cache: Dict[Tuple[str, str, str], Tuple[str, float]] = {}
+# Cache for SuperGrok access tokens: {(store scope, provider, user_id, service):
+# (access_token, expires_at)}. Uses double-checked locking: lock-free fast path
+# for cache hits, lock only on cache miss to coordinate token refresh.
+_token_cache: Dict[Tuple[str, str, str, str], Tuple[str, float]] = {}
 _cache_lock = threading.Lock()
-_async_cache_lock: Optional[asyncio.Lock] = None
-_async_cache_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+# Guards only the per-loop lock registry below - deliberately NOT _cache_lock,
+# which get_access_token/force_refresh hold across a blocking HTTP refresh: the
+# async path must never wait on a sync refresh just to obtain its own lock.
+_async_lock_guard = threading.Lock()
+_async_cache_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
 
 
 def _reset_cache_for_tests() -> None:
     """Clear the module-level token cache and lock state so tests stay order-independent."""
-    global _async_cache_lock, _async_cache_lock_loop
     _token_cache.clear()
-    _async_cache_lock = None
-    _async_cache_lock_loop = None
+    _async_cache_locks.clear()
 
 
 def _get_async_cache_lock() -> asyncio.Lock:
-    """The asyncio lock for the RUNNING loop (sync lock guards creation).
+    """The asyncio lock for the RUNNING event loop.
 
     An asyncio.Lock binds to the event loop that first sees contention on it,
-    and one process can run many loops (sync callers wrapping arun in
-    asyncio.run create a fresh loop per call). A stale lock would raise
-    "bound to a different event loop", so a new loop gets a new lock;
-    single-flight stays per loop, which matches the lock-free cross-process
-    design.
+    and one process can run many loops - sequentially (asyncio.run per call)
+    or concurrently in separate threads - so each loop gets its own lock in a
+    weak registry (dead loops fall out on their own). Single-flight stays per
+    loop, which matches the lock-free cross-process design.
     """
-    global _async_cache_lock, _async_cache_lock_loop
     loop = asyncio.get_running_loop()
-    with _cache_lock:
-        if _async_cache_lock is None or _async_cache_lock_loop is not loop:
-            _async_cache_lock = asyncio.Lock()
-            _async_cache_lock_loop = loop
-    return _async_cache_lock
+    with _async_lock_guard:
+        lock = _async_cache_locks.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            _async_cache_locks[loop] = lock
+    return lock
 
 
 async def _maybe_await(result: Any) -> Any:
@@ -113,11 +114,25 @@ class XAITokenManager:
     _memory_row: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
     # PR 1 uses the empty-string single-user slot; per-user resolution lands in a
-    # later PR. The module-level token cache is keyed on this same triple, so it is
-    # process-global: every manager in the process shares the one slot.
+    # later PR.
     @staticmethod
     def _store_key() -> Tuple[str, str, str]:
         return ("xai", "", "supergrok")
+
+    def _cache_scope(self) -> str:
+        """Cache identity of THIS manager's store.
+
+        Managers on the same store share the fast path; managers on different
+        stores must never serve each other's tokens (they can hold different
+        accounts). id() of a live db object is stable; a collected db's id
+        could recur, at worst re-keying a dead cache entry.
+        """
+        if self.db is not None:
+            return f"db-{id(self.db)}"
+        return f"file-{self._token_file()}"
+
+    def _cache_key(self) -> Tuple[str, str, str, str]:
+        return (self._cache_scope(), *self._store_key())
 
     # ------------------------------------------------------------------
     # Device flow (RFC 8628)
@@ -180,7 +195,9 @@ class XAITokenManager:
             device_code=data["device_code"],
             user_code=data["user_code"],
             verification_uri=data["verification_uri"],
-            verification_uri_complete=data["verification_uri_complete"],
+            # RFC 8628 section 3.3.1 makes verification_uri_complete OPTIONAL;
+            # fall back to the plain URI (the user then enters the code manually)
+            verification_uri_complete=data.get("verification_uri_complete") or data["verification_uri"],
             expires_in=data.get("expires_in", 1800),
             interval=data.get("interval", 5),
         )
@@ -292,6 +309,10 @@ class XAITokenManager:
         return {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": XAI_OAUTH_CLIENT_ID}
 
     def _build_envelope(self, response_json: Dict[str, Any], previous: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        # An HTTP 200 does not guarantee a token body (proxies and error-in-200
+        # responses exist): reject cleanly instead of KeyError-ing
+        if "access_token" not in response_json:
+            raise ModelAuthenticationError(f"SuperGrok token response is missing access_token: {response_json}")
         previous = previous or {}
         return {
             "access_token": response_json["access_token"],
@@ -309,7 +330,7 @@ class XAITokenManager:
         return float(expires_at or 0) - self.now_fn() > REFRESH_MARGIN_SECONDS
 
     def _cached_token(self) -> Optional[str]:
-        cached = _token_cache.get(self._store_key())
+        cached = _token_cache.get(self._cache_key())
         if cached is not None:
             access_token, expires_at = cached
             if self._is_fresh(expires_at):
@@ -317,7 +338,7 @@ class XAITokenManager:
         return None
 
     def _cache_put(self, token_data: Dict[str, Any]) -> None:
-        _token_cache[self._store_key()] = (token_data["access_token"], float(token_data.get("expires_at") or 0))
+        _token_cache[self._cache_key()] = (token_data["access_token"], float(token_data.get("expires_at") or 0))
 
     # ------------------------------------------------------------------
     # Storage: db row (Google auth-token shape), 0600 file, or memory
@@ -474,7 +495,7 @@ class XAITokenManager:
 
     def _delete_stored_token(self) -> None:
         self._memory_row = None
-        _token_cache.pop(self._store_key(), None)
+        _token_cache.pop(self._cache_key(), None)
         if self.db is not None:
             if iscoroutinefunction(self.db.delete_auth_token):
                 log_warning(_SYNC_PATH_ASYNC_DB_WARNING)
@@ -495,7 +516,7 @@ class XAITokenManager:
 
     async def _adelete_stored_token(self) -> None:
         self._memory_row = None
-        _token_cache.pop(self._store_key(), None)
+        _token_cache.pop(self._cache_key(), None)
         if self.db is not None:
             try:
                 if not await _maybe_await(self.db.delete_auth_token(*self._store_key())):

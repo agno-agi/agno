@@ -85,6 +85,22 @@ def test_start_device_login_defaults_when_fields_absent():
     assert info.interval == 5
 
 
+def test_start_device_login_falls_back_when_uri_complete_absent():
+    # RFC 8628 section 3.3.1 makes verification_uri_complete OPTIONAL; absence
+    # falls back to the plain URI instead of KeyError
+    minimal = {
+        "device_code": "device-code-1",
+        "user_code": "ABCD-1234",
+        "verification_uri": "https://auth.x.ai/activate",
+        "expires_in": 1800,
+        "interval": 5,
+    }
+
+    info = _manager(lambda request: httpx.Response(200, json=minimal)).start_device_login()
+
+    assert info.verification_uri_complete == "https://auth.x.ai/activate"
+
+
 async def test_astart_device_login_parses_response(device_response):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json=device_response))
@@ -189,6 +205,17 @@ def test_poll_unknown_error_carries_raw_body():
 
     # The complete raw body is appended, not just the parsed error code
     assert response.text in exc_info.value.message
+    assert len(calls) == 1
+
+
+def test_poll_200_with_error_body_raises_clean():
+    # An HTTP 200 carrying an error body must surface as a clean auth error,
+    # not a KeyError from envelope construction
+    handler, calls = _sequence_handler([httpx.Response(200, json={"error": "server_error"})])
+
+    with pytest.raises(ModelAuthenticationError, match="missing access_token"):
+        _manager(handler).poll_for_token("device-code-1", interval=5, deadline=10_000_000_000)
+
     assert len(calls) == 1
 
 
