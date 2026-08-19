@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from agno.db.base import SessionType
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 
@@ -60,7 +60,6 @@ class RemoteDb:
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
-    culture_table_name: Optional[str] = None
 
     @classmethod
     def from_config(
@@ -603,7 +602,7 @@ class BaseRemote:
         self,
         run_id: str,
         stream: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> Union[RunOutput, TeamRunOutput, WorkflowRunOutput]:

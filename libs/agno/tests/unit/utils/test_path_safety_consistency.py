@@ -1,7 +1,7 @@
 """Cross-tool consistency tests for path-safety helpers.
 
 Verifies that the 5 callers (FileGenerationTools, SlackTools, Toolkit._check_path,
-skills.utils.is_safe_path, FileTools.check_escape) handle the same evil inputs
+skills.utils.is_safe_path) handle the same evil inputs
 with consistent semantics — accounting for the deliberate split between
 safe_join_filename (filename-only) and safe_join_relative_path (multi-segment).
 """
@@ -74,7 +74,7 @@ def test_all_callers_reject_universally(evil):
         assert ok is False
         assert path == Path(tmp)
         assert is_safe_path(Path(tmp), evil) is False
-        ok, path = _filetools(tmp).check_escape(evil)
+        ok, path = _filetools(tmp)._check_path(evil, Path(tmp))
         assert ok is False
 
 
@@ -98,7 +98,7 @@ def test_subpath_callers_reject_traversal(evil):
         assert ok is False
         assert path == Path(tmp)
         assert is_safe_path(Path(tmp), evil) is False
-        ok, path = _filetools(tmp).check_escape(evil)
+        ok, path = _filetools(tmp)._check_path(evil, Path(tmp))
         assert ok is False
 
 
@@ -120,7 +120,7 @@ def test_subpath_callers_reject_reserved_segment(evil):
         assert ok is False
         assert path == Path(tmp)
         assert is_safe_path(Path(tmp), evil) is False
-        ok, path = _filetools(tmp).check_escape(evil)
+        ok, path = _filetools(tmp)._check_path(evil, Path(tmp))
         assert ok is False
 
 

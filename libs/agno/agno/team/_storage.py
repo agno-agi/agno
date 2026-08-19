@@ -166,35 +166,35 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionM
 def _read_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
-        return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    """Get a Session from the database.
+
+    Read errors propagate. Do NOT coerce failures to None here: an empty result
+    is indistinguishable from "row does not exist", and the caller will happily
+    create a fresh session with the same id and overwrite the real row on the
+    next write. This is how a transient Postgres failover wiped six weeks of
+    conversation history in a real incident. Let the exception surface and
+    fail the run loudly -- a failed run is recoverable, a wiped session is not.
+    """
+    if not team.db:
+        raise ValueError("Db not initialized")
+    session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    return session  # type: ignore
 
 
 async def _aread_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Async twin of :func:`_read_session`. Same rationale: do NOT swallow errors."""
     from agno.team._init import _has_async_db
 
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        if _has_async_db(team):
-            team.db = cast(AsyncBaseDb, team.db)
-            session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
-        else:
-            session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
-        return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not team.db:
+        raise ValueError("Db not initialized")
+    if _has_async_db(team):
+        team.db = cast(AsyncBaseDb, team.db)
+        session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    else:
+        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
+    return session  # type: ignore
 
 
 def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
@@ -223,6 +223,63 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
     except Exception as e:
         log_warning(f"Error upserting session into db: {str(e)}")
     return None
+
+
+def _upsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Persist a single run to the runs storage (O(1) write).
+
+    Silently no-ops on adapters that have not implemented ``upsert_run`` yet.
+    """
+    try:
+        if not team.db:
+            return
+        from agno.run.status_persist import persist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # member-run saves pass through untouched (their run_ids are never
+        # registered - a zombie leg's member writes orphan, not clobber)
+        if persist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
+            return
+        team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+async def _aupsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Async version of ``_upsert_run``."""
+    from agno.team._init import _has_async_db
+
+    try:
+        if not team.db:
+            return
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # member-run saves pass through untouched (see _upsert_run)
+        if await apersist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
+            return
+        if _has_async_db(team):
+            await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
+        else:
+            team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
@@ -269,17 +326,26 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
         if team.introduction is not None:
             from uuid import uuid4
 
-            team_session.upsert_run(
-                TeamRunOutput(
-                    run_id=str(uuid4()),
-                    team_id=team.id,
-                    session_id=session_id,
-                    user_id=user_id,
-                    team_name=team.name,
-                    content=team.introduction,
-                    messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
-                )
+            introduction_run = TeamRunOutput(
+                run_id=str(uuid4()),
+                team_id=team.id,
+                session_id=session_id,
+                user_id=user_id,
+                team_name=team.name,
+                content=team.introduction,
+                messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
             )
+            team_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+                from agno.team._session import save_session
+                from agno.team._storage import _upsert_run
+
+                save_session(team, session=team_session)
+                _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
@@ -336,17 +402,31 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
         if team.introduction is not None:
             from uuid import uuid4
 
-            team_session.upsert_run(
-                TeamRunOutput(
-                    run_id=str(uuid4()),
-                    team_id=team.id,
-                    session_id=session_id,
-                    user_id=user_id,
-                    team_name=team.name,
-                    content=team.introduction,
-                    messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
-                )
+            introduction_run = TeamRunOutput(
+                run_id=str(uuid4()),
+                team_id=team.id,
+                session_id=session_id,
+                user_id=user_id,
+                team_name=team.name,
+                content=team.introduction,
+                messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
             )
+            team_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+                from agno.team._init import _has_async_db
+                from agno.team._session import asave_session, save_session
+                from agno.team._storage import _aupsert_run, _upsert_run
+
+                if _has_async_db(team):
+                    await asave_session(team, session=team_session)
+                    await _aupsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
+                else:
+                    save_session(team, session=team_session)
+                    _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
@@ -623,8 +703,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     #     config["memory_manager"] = team.memory_manager.to_dict()
     if team.enable_agentic_memory:
         config["enable_agentic_memory"] = team.enable_agentic_memory
-    if team.enable_user_memories:
-        config["enable_user_memories"] = team.enable_user_memories
+    if team.update_memory_on_run:
+        config["update_memory_on_run"] = team.update_memory_on_run
     if team.add_memories_to_context is not None:
         config["add_memories_to_context"] = team.add_memories_to_context
     if team.enable_session_summaries:
@@ -676,8 +756,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     #     config["compression_manager"] = team.compression_manager.to_dict()
 
     # --- Reasoning settings ---
-    if team.reasoning:
-        config["reasoning"] = team.reasoning
     if team.reasoning_model is not None:
         # Mirrors the agent side. from_dict does not read this back yet
         # (#9452), so it is not round-tripped -- but without it the field is
@@ -687,10 +765,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
             config["reasoning_model"] = team.reasoning_model.to_dict()
         else:
             config["reasoning_model"] = str(team.reasoning_model)
-    if team.reasoning_min_steps != 1:  # default is 1
-        config["reasoning_min_steps"] = team.reasoning_min_steps
-    if team.reasoning_max_steps != 10:  # default is 10
-        config["reasoning_max_steps"] = team.reasoning_max_steps
 
     # --- Streaming settings ---
     if team.stream is not None:
@@ -842,6 +916,11 @@ def from_dict(
     members: Optional[List[Union[Agent, "Team"]]] = None
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
+    from agno.utils.component_scope import get_component_owner_scope
+
+    # Resolve DB-backed members as the component owner when a scope is set, so a stored
+    # reference to another user's private component is not rehydrated here.
+    owner_user_id = get_component_owner_scope()
 
     # Member versions pinned by this team version's links (written by save()).
     pinned_versions: Dict[str, Optional[int]] = {}
@@ -870,6 +949,7 @@ def from_dict(
                             db=db,
                             version=pinned,
                             registry=registry,
+                            user_id=owner_user_id,
                             strict=strict,
                         )
                         if db is not None
@@ -899,7 +979,9 @@ def from_dict(
                         "was not found in the db; loading the member's current version instead."
                     )
                     if db is not None:
-                        agent = get_agent_by_id(id=agent_id, db=db, registry=registry, strict=False)
+                        agent = get_agent_by_id(
+                            id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -933,6 +1015,7 @@ def from_dict(
                             db=db,
                             version=pinned,
                             registry=registry,
+                            user_id=owner_user_id,
                             strict=strict,
                         )
                         if db is not None
@@ -962,7 +1045,9 @@ def from_dict(
                         "was not found in the db; loading the member's current version instead."
                     )
                     if db is not None:
-                        nested_team = get_team_by_id(id=team_id, db=db, registry=registry, strict=False)
+                        nested_team = get_team_by_id(
+                            id=team_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:
@@ -1177,11 +1262,9 @@ def from_dict(
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
-            search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
-            num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
-            num_past_session_runs_in_search=config.get(
-                "num_past_session_runs_in_search", config.get("num_past_session_runs")
-            ),
+            search_past_sessions=config.get("search_past_sessions", False),
+            num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
+            num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
             read_chat_history=config.get("read_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
@@ -1230,7 +1313,7 @@ def from_dict(
             # --- Memory settings ---
             # memory_manager=config.get("memory_manager"),  # TODO
             enable_agentic_memory=config.get("enable_agentic_memory", False),
-            enable_user_memories=config.get("enable_user_memories"),
+            update_memory_on_run=config.get("update_memory_on_run", False),
             add_memories_to_context=config.get("add_memories_to_context"),
             enable_session_summaries=config.get("enable_session_summaries", False),
             add_session_summary_to_context=config.get("add_session_summary_to_context"),
@@ -1247,10 +1330,7 @@ def from_dict(
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO
             # --- Reasoning settings ---
-            reasoning=config.get("reasoning", False),
             # reasoning_model=config.get("reasoning_model"),  # TODO
-            reasoning_min_steps=config.get("reasoning_min_steps", 1),
-            reasoning_max_steps=config.get("reasoning_max_steps", 10),
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),

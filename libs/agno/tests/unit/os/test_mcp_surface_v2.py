@@ -403,7 +403,18 @@ def test_home_route_works_with_mcp_enabled():
     client = TestClient(app)
     response = client.get("/")
     assert response.status_code == 200
-    assert "AgentOS" in response.text
+    assert response.json()["info"] == "/info"
+
+
+def test_info_route_works_with_mcp_enabled():
+    os = AgentOS(agents=[_agent()], mcp_server=True)
+    app = os.get_app()
+    client = TestClient(app)
+    response = client.get("/info")
+    assert response.status_code == 200
+    body = response.json()
+    assert "agno_version" in body
+    assert "os_version" in body
 
 
 def test_get_app_idempotent_with_base_app():

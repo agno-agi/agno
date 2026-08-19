@@ -63,6 +63,7 @@ from agno.utils.string import generate_id_from_name
 def __init__(
     team: "Team",
     members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
+    *,
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
     fallback_config: Optional[FallbackConfig] = None,
@@ -87,9 +88,6 @@ def __init__(
     search_past_sessions: Optional[bool] = False,
     num_past_sessions_to_search: Optional[int] = None,
     num_past_session_runs_in_search: Optional[int] = None,
-    # Deprecated params — kept for backward compatibility
-    search_session_history: Optional[bool] = None,
-    num_history_sessions: Optional[int] = None,
     description: Optional[str] = None,
     instructions: Optional[Union[str, List[str], Callable]] = None,
     use_instruction_tags: bool = False,
@@ -147,7 +145,6 @@ def __init__(
     checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
     enable_agentic_memory: bool = False,
     update_memory_on_run: bool = False,
-    enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
     add_memories_to_context: Optional[bool] = None,
     memory_manager: Optional[MemoryManager] = None,
     enable_session_summaries: bool = False,
@@ -158,11 +155,8 @@ def __init__(
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    reasoning: bool = False,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
-    reasoning_min_steps: int = 1,
-    reasoning_max_steps: int = 10,
     followups: bool = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
@@ -253,12 +247,6 @@ def __init__(
     team.add_team_history_to_members = add_team_history_to_members
     team.num_team_history_runs = num_team_history_runs
 
-    # Deprecated param mapping
-    if search_session_history is not None and not search_past_sessions:
-        search_past_sessions = search_session_history
-    if num_history_sessions is not None and num_past_sessions_to_search is None:
-        num_past_sessions_to_search = num_history_sessions
-
     team.search_past_sessions = search_past_sessions
     team.num_past_sessions_to_search = num_past_sessions_to_search
     team.num_past_session_runs_in_search = num_past_session_runs_in_search
@@ -331,12 +319,7 @@ def __init__(
     team.checkpoint = checkpoint
 
     team.enable_agentic_memory = enable_agentic_memory
-
-    if enable_user_memories is not None:
-        team.update_memory_on_run = enable_user_memories
-    else:
-        team.update_memory_on_run = update_memory_on_run
-    team.enable_user_memories = team.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+    team.update_memory_on_run = update_memory_on_run
 
     team.add_memories_to_context = add_memories_to_context
     team.memory_manager = memory_manager
@@ -353,11 +336,8 @@ def __init__(
 
     team.metadata = metadata
 
-    team.reasoning = reasoning
     team.reasoning_model = reasoning_model  # type: ignore[assignment]
     team.reasoning_agent = reasoning_agent
-    team.reasoning_min_steps = reasoning_min_steps
-    team.reasoning_max_steps = reasoning_max_steps
 
     team.followups = followups
     if num_followups < 1:
@@ -420,7 +400,7 @@ def __init__(
     # Internal resolved LearningMachine instance
     team._learning = None
 
-    # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+    # Lazy-initialized shared thread pool executor for background tasks (memory, learning, etc.)
     team._background_executor = None
 
     # Callable factory settings
@@ -440,7 +420,7 @@ def __init__(
 def background_executor(team: "Team") -> Any:
     """Lazy initialization of shared thread pool executor for background tasks.
 
-    Handles both memory creation and cultural knowledge updates concurrently.
+    Handles memory creation and learning updates concurrently.
     Initialized only on first use (runtime, not instantiation) and reused across runs.
     """
     if team._background_executor is None:
@@ -796,10 +776,10 @@ async def _connect_mcp_tools(team: "Team") -> None:
     """Connect the MCP tools to the agent."""
     if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             if (
                 hasattr(type(tool), "__mro__")
-                and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
                 and not tool.initialized  # type: ignore
             ):
                 try:

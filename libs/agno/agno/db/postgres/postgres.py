@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, 
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
 from agno.db import mcp_oauth_store
@@ -15,14 +16,11 @@ from agno.db.postgres.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
-    deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
-    serialize_cultural_knowledge,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.mcp_oauth import (
@@ -38,14 +36,30 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
-from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer, learning_search_patterns
+from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    filter_context_runs,
+    json_serializer,
+    learning_search_patterns,
+    merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
+    validate_pagination,
+)
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
 
 try:
     from sqlalchemy import (
+        BigInteger,
         ForeignKey,
         ForeignKeyConstraint,
         Index,
@@ -60,6 +74,7 @@ try:
         select,
         update,
     )
+    from sqlalchemy import cast as sa_cast
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
     from sqlalchemy.engine import Engine, create_engine
@@ -71,6 +86,23 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
+def _db_epoch() -> Any:
+    """Postgres transaction time as an integer epoch, for LEASE math.
+
+    Lease decisions must be anchored to ONE clock. With app-side time a
+    replica whose clock runs fast sees healthy leases as expired and sweeps
+    live runs - and now that the sweep steals the lock, the victim's own
+    completion is fenced out and its run is reported failed despite having
+    finished. NOW() is transaction-start time, identical for every replica
+    talking to the same database, so claim/heartbeat/sweep all agree.
+
+    Not applied to enqueue's available_at (computed by the accepting replica
+    before any transaction exists) or to queue_stats' age arithmetic; both
+    only shift scheduling/reporting by the skew, never ownership.
+    """
+    return sa_cast(func.floor(func.extract("epoch", func.now())), BigInteger)
+
+
 class PostgresDb(BaseDb):
     def __init__(
         self,
@@ -78,7 +110,7 @@ class PostgresDb(BaseDb):
         db_engine: Optional[Engine] = None,
         db_schema: Optional[str] = None,
         session_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -92,6 +124,7 @@ class PostgresDb(BaseDb):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -116,11 +149,11 @@ class PostgresDb(BaseDb):
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
+            runs_table (Optional[str]): Name of the table to store the runs of each session.
             memory_table (Optional[str]): Name of the table to store memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
-            culture_table (Optional[str]): Name of the table to store cultural knowledge.
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
@@ -130,6 +163,7 @@ class PostgresDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            job_table (Optional[str]): Name of the table to store durable background run jobs.
             mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
             mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
             mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
@@ -166,11 +200,11 @@ class PostgresDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
@@ -180,6 +214,7 @@ class PostgresDb(BaseDb):
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
+            job_table=job_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
@@ -217,7 +252,7 @@ class PostgresDb(BaseDb):
             db_url=data.get("db_url"),
             db_schema=data.get("db_schema"),
             session_table=data.get("session_table"),
-            culture_table=data.get("culture_table"),
+            runs_table=data.get("runs_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
             eval_table=data.get("eval_table"),
@@ -262,6 +297,7 @@ class PostgresDb(BaseDb):
         """Create all tables for the database."""
         tables_to_create = [
             (self.session_table_name, "sessions"),
+            (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
@@ -290,6 +326,17 @@ class PostgresDb(BaseDb):
         - __foreign_keys__: [{"columns":[...], "ref_table":"...", "ref_columns":[...]}]
         - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
         """
+        # The runs table declares a FK to sessions — ensure the sessions
+        # Table is registered in ``self.metadata`` first so SQLAlchemy can
+        # resolve the FK reference at ``Table(...)`` construction.
+        if table_type == "runs":
+            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
+            if fq_sessions not in self.metadata.tables:
+                self._get_or_create_table(
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=True,
+                )
         try:
             # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
@@ -297,6 +344,7 @@ class PostgresDb(BaseDb):
                 traces_table_name=self.trace_table_name,
                 db_schema=self.db_schema,
                 schedules_table_name=self.schedules_table_name,
+                session_table_name=self.session_table_name,
             ).copy()
 
             columns: List[Column] = []
@@ -491,6 +539,7 @@ class PostgresDb(BaseDb):
             "traces": self.trace_table_name,
             "spans": self.span_table_name,
             "sessions": self.session_table_name,
+            "runs": self.runs_table_name,
             "memories": self.memory_table_name,
             "metrics": self.metrics_table_name,
             "evals": self.eval_table_name,
@@ -510,6 +559,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
+
+        if table_type == "runs":
+            self.runs_table = self._get_or_create_table(
+                table_name=self.runs_table_name,
+                table_type="runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.runs_table
 
         if table_type == "memories":
             self.memory_table = self._get_or_create_table(
@@ -542,14 +599,6 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
-
-        if table_type == "culture":
-            self.culture_table = self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.culture_table
 
         if table_type == "versions":
             self.versions_table = self._get_or_create_table(
@@ -625,6 +674,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.schedule_runs_table
+
+        if table_type == "jobs":
+            self.job_table = self._get_or_create_table(
+                table_name=self.job_table_name,
+                table_type="jobs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.job_table
 
         if table_type == "approvals":
             self.approvals_table = self._get_or_create_table(
@@ -733,6 +790,392 @@ class PostgresDb(BaseDb):
             )
             sess.execute(stmt)
 
+    def cleanup_legacy_runs_column(self, force: bool = False) -> bool:
+        """Drop the legacy ``runs`` column from the sessions table.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` column on
+        the sessions table as a backup. Once you have verified the migration
+        and taken a backup, call this to reclaim the storage.
+
+        Args:
+            force: If True, drop the column even if some sessions still hold
+                non-null ``runs`` content (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if the column was dropped, False if it did not exist.
+        """
+        with self.Session() as sess, sess.begin():
+            column_exists = (
+                sess.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_schema = :schema AND table_name = :table AND column_name = 'runs'"
+                    ),
+                    {"schema": self.db_schema, "table": self.session_table_name},
+                ).scalar()
+                is not None
+            )
+            if not column_exists:
+                log_info(f"{self.session_table_name}.runs column does not exist, nothing to clean up")
+                return False
+
+            if not force:
+                pending = (
+                    sess.execute(
+                        text(
+                            f'SELECT COUNT(*) FROM {self.db_schema}."{self.session_table_name}" WHERE runs IS NOT NULL'
+                        )
+                    ).scalar()
+                    or 0
+                )
+                if pending > 0:
+                    raise RuntimeError(
+                        f"Refusing to drop {self.session_table_name}.runs: {pending} session(s) still have "
+                        "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                    )
+
+            log_info(f"Dropping legacy runs column from {self.session_table_name}")
+            sess.execute(text(f'ALTER TABLE {self.db_schema}."{self.session_table_name}" DROP COLUMN runs'))
+            return True
+
+    # -- Run methods --
+    def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
+                )
+                .limit(limit)
+            )
+            rows = [row[0] for row in sess.execute(stmt).fetchall()]
+            rows.reverse()
+            return rows
+        stmt = (
+            select(runs_table.c.run_data)
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        return [row[0] for row in sess.execute(stmt).fetchall()]
+
+    def _get_sessions_runs_data(
+        self, sess, runs_table: Table, session_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Get the raw run_data dicts for the given sessions, grouped by session_id."""
+        if not session_ids:
+            return {}
+        stmt = (
+            select(runs_table.c.session_id, runs_table.c.run_data)
+            .where(runs_table.c.session_id.in_(session_ids))
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+        )
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        for session_id, run_data in sess.execute(stmt).fetchall():
+            runs_by_session.setdefault(session_id, []).append(run_data)
+        return runs_by_session
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to read.
+            deserialize (Optional[bool]): Whether to deserialize the run. Defaults to True.
+
+        Returns:
+            - When deserialize=True: RunOutput, TeamRunOutput or WorkflowRunOutput object
+            - When deserialize=False: Run row dictionary
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.run_id == run_id)).fetchone()
+                if result is None:
+                    return None
+
+                run_row = dict(result._mapping)
+
+            if not deserialize:
+                return run_row
+
+            return deserialize_run(run_row.get("run_type"), run_row["run_data"])
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs table (O(1) operation).
+
+        This is optimized for updating existing runs (e.g., status changes in HITL
+        or background mode) without re-upserting all runs in the session.
+
+        For new runs, the run_index should be provided or will be read from run_data.
+        For updates to existing runs, run_index is preserved from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs. If not provided for new runs,
+                will attempt to read from run_data.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+
+            with self.Session() as sess, sess.begin():
+                # Backfill a monotonic run_index when the run arrives without one
+                # (e.g. a background/continue save that couldn't resolve its position).
+                # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
+                # preserves the existing index, so this only sets it on a genuine insert.
+                if row.get("run_index") is None:
+                    # Serialize same-session backfills: under READ COMMITTED two
+                    # concurrent max-reads can both see the same MAX and land
+                    # duplicate indexes. The advisory lock is transaction-scoped
+                    # (released at COMMIT/ROLLBACK) and keyed on session_id, so
+                    # only same-session backfilling inserts queue behind it.
+                    sess.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                        {"sid": session_id},
+                    )
+                    current_max = sess.execute(
+                        select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                    ).scalar()
+                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+
+                stmt = postgresql.insert(runs_table).values(**row)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["run_id"],
+                    set_=dict(
+                        status=stmt.excluded.status,
+                        run_data=stmt.excluded.run_data,
+                        user_id=stmt.excluded.user_id,
+                        parent_run_id=stmt.excluded.parent_run_id,
+                        updated_at=stmt.excluded.updated_at,
+                        # Preserve a non-null run_index; only fill it in for a legacy row
+                        # that was stored as NULL (COALESCE keeps the existing value if set).
+                        run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
+                    ),
+                )
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Exception upserting run to runs table: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get all runs matching the given filters.
+
+        Args:
+            session_id (Optional[str]): The ID of the session to filter by.
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            status (Optional[RunStatus]): The run status to filter by.
+            limit (Optional[int]): The maximum number of runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
+            sort_order (Optional[str]): The sort order.
+            deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+
+        Returns:
+            - When deserialize=True: List of run output objects
+            - When deserialize=False: Tuple of (run row dictionaries, total count)
+        """
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess:
+                stmt = select(table)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if status is not None:
+                    status_value = status.value if isinstance(status, RunStatus) else status
+                    stmt = stmt.where(table.c.status == status_value)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                if sort_by is not None:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                else:
+                    stmt = stmt.order_by(table.c.run_index.asc(), table.c.created_at.asc())
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                records = sess.execute(stmt).fetchall()
+                run_rows = [dict(record._mapping) for record in records]
+
+            if not deserialize:
+                return run_rows, total_count
+
+            return [deserialize_run(row.get("run_type"), row["run_data"]) for row in run_rows]
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
+
+        Partial-migration state: v3 migration copied runs into the ``agno_runs``
+        table but preserved the legacy embedded blob as a backup. Deleting a run
+        row alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
+        resurrects it on the next read. Skip cleanly on a fully-migrated DB
+        (no ``runs`` column). Best-effort: a failure here must not roll back
+        the primary runs-table delete.
+        """
+        if not run_ids:
+            return
+        try:
+            sessions_table = self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            # Table name is trusted (came from adapter config, not user input);
+            # run_ids are parameterized via bindparam to avoid SQL injection.
+            stmt = text(
+                f"""
+                UPDATE {sessions_table.name}
+                SET runs = COALESCE(
+                    (SELECT jsonb_agg(elem)
+                     FROM jsonb_array_elements(runs) elem
+                     WHERE elem->>'run_id' <> ALL(:ids)),
+                    '[]'::jsonb
+                )
+                WHERE runs IS NOT NULL
+                  AND jsonb_typeof(runs) = 'array'
+                  AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements(runs) elem
+                      WHERE elem->>'run_id' = ANY(:ids)
+                  )
+                """
+            )
+            with self.Session() as sess, sess.begin():
+                sess.execute(stmt, {"ids": list(run_ids)})
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to delete.
+
+        Returns:
+            bool: True if the run was deleted, False otherwise.
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.run_id == run_id))
+                deleted = result.rowcount > 0
+
+            # Also scrub the legacy blob so the merge helper doesn't resurrect
+            # the deleted run on the next read (partial-migration state).
+            self._scrub_run_ids_from_legacy_blob([run_id])
+            return deleted
+
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs from the runs table.
+
+        Args:
+            run_ids (List[str]): The IDs of the runs to delete.
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+
+            self._scrub_run_ids_from_legacy_blob(list(run_ids))
+            log_debug(f"Successfully deleted {result.rowcount} runs")
+
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
+
     # -- Session methods --
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
@@ -752,6 +1195,7 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return False
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -763,9 +1207,12 @@ class PostgresDb(BaseDb):
                     log_debug(f"No session found to delete with session_id: {session_id} in table {table.name}")
                     return False
 
-                else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
-                    return True
+                # Also delete the runs belonging to the session
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+
+                log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
+                return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -786,12 +1233,20 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
+
+                # Also delete the runs belonging to the sessions
+                if runs_table is not None:
+                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(session_ids))
+                    if user_id is not None:
+                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
@@ -805,6 +1260,7 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -814,6 +1270,11 @@ class PostgresDb(BaseDb):
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -827,6 +1288,7 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return None
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -839,6 +1301,29 @@ class PostgresDb(BaseDb):
                     return None
 
                 session = dict(result._mapping)
+
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                legacy_runs = session.get("runs")
+                if runs_table is not None and runs_limit is not None and not legacy_runs:
+                    # Fully migrated: push "most recent N" down to the DB (indexed).
+                    session["runs"] = self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                    )
+                elif runs_table is not None:
+                    # Full load + merge. Also the un-migrated fallback: the legacy blob
+                    # holds the whole history in one column, so "last N" can't be pushed
+                    # to SQL — load all, merge, then filter+slice to match the migrated path.
+                    runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
+                    merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                    if runs_limit is not None:
+                        merged = filter_context_runs(merged)[-runs_limit:]
+                    session["runs"] = merged
+                elif runs_limit is not None:
+                    # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                    merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                    session["runs"] = filter_context_runs(merged)[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -862,9 +1347,15 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and component_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
 
         Args:
             session_type (Optional[SessionType]): The type of session to get.
@@ -887,10 +1378,12 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
             if table is None:
                 return [] if deserialize else ([], 0)
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -940,6 +1433,21 @@ class PostgresDb(BaseDb):
                     return [], 0
 
                 session = [dict(record._mapping) for record in records]
+
+                # Attach the runs stored in the runs table. If a session has no rows in the
+                # runs table, fall back to its legacy `runs` column content, if any.
+                if include_runs and runs_table is not None:
+                    runs_by_session = self._get_sessions_runs_data(
+                        sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in session]
+                    )
+                    for s in session:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in session:
+                        s["runs"] = None
+
                 if not deserialize:
                     return session, total_count
 
@@ -979,6 +1487,7 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return None
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 # Sanitize session_name to remove null bytes
@@ -1007,9 +1516,17 @@ class PostgresDb(BaseDb):
                 if not row:
                     return None
 
+                session = dict(row._mapping)
+
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                if runs_table is not None:
+                    runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
+                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+
             log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
-            session = dict(row._mapping)
             if not deserialize:
                 return session
 
@@ -1023,7 +1540,12 @@ class PostgresDb(BaseDb):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
-        Insert or update a session in the database.
+        Insert or update the session row.
+
+        Runs are persisted independently via ``upsert_run()`` — this method does
+        not touch the ``agno_runs`` table. Callers that want to write the full
+        session (row + runs) should iterate ``upsert_run`` over ``session.runs``
+        themselves.
 
         Args:
             session (Session): The session data to upsert.
@@ -1042,7 +1564,7 @@ class PostgresDb(BaseDb):
             if table is None:
                 return None
 
-            session_dict = session.to_dict()
+            session_dict = session.to_dict(include_runs=False)
             # Sanitize JSON/dict fields to remove null bytes from nested strings
             if session_dict.get("agent_data"):
                 session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
@@ -1056,128 +1578,72 @@ class PostgresDb(BaseDb):
                 session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
             if session_dict.get("metadata"):
                 session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
-            if session_dict.get("runs"):
-                session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
             if isinstance(session, AgentSession):
-                with self.Session() as sess, sess.begin():
-                    stmt = postgresql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
-                        session_type=SessionType.AGENT.value,
-                        agent_id=session_dict.get("agent_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        agent_data=session_dict.get("agent_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
-                        set_=dict(
-                            agent_id=session_dict.get("agent_id"),
-                            user_id=session_dict.get("user_id"),
-                            agent_data=session_dict.get("agent_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
-                    ).returning(table)
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
-                    if row is None:
-                        return None
-                    session_dict = dict(row._mapping)
-
-                    if session_dict is None or not deserialize:
-                        return session_dict
-                    return AgentSession.from_dict(session_dict)
-
+                values = dict(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    user_id=session_dict.get("user_id"),
+                    agent_data=session_dict.get("agent_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
             elif isinstance(session, TeamSession):
-                with self.Session() as sess, sess.begin():
-                    stmt = postgresql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
-                        session_type=SessionType.TEAM.value,
-                        team_id=session_dict.get("team_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        team_data=session_dict.get("team_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
-                        set_=dict(
-                            team_id=session_dict.get("team_id"),
-                            user_id=session_dict.get("user_id"),
-                            team_data=session_dict.get("team_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
-                    ).returning(table)
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
-                    if row is None:
-                        return None
-                    session_dict = dict(row._mapping)
-
-                    if session_dict is None or not deserialize:
-                        return session_dict
-                    return TeamSession.from_dict(session_dict)
-
+                values = dict(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    user_id=session_dict.get("user_id"),
+                    team_data=session_dict.get("team_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
             elif isinstance(session, WorkflowSession):
-                with self.Session() as sess, sess.begin():
-                    stmt = postgresql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
-                        session_type=SessionType.WORKFLOW.value,
-                        workflow_id=session_dict.get("workflow_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        workflow_data=session_dict.get("workflow_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
-                        set_=dict(
-                            workflow_id=session_dict.get("workflow_id"),
-                            user_id=session_dict.get("user_id"),
-                            workflow_data=session_dict.get("workflow_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
-                    ).returning(table)
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
-                    if row is None:
-                        return None
-                    session_dict = dict(row._mapping)
-
-                    if session_dict is None or not deserialize:
-                        return session_dict
-                    return WorkflowSession.from_dict(session_dict)
-
+                values = dict(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    user_id=session_dict.get("user_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
             else:
                 raise ValueError(f"Invalid session type: {session.session_type}")
+
+            update_values = {k: v for k, v in values.items() if k != "session_type"}
+            # The legacy `runs` column is intentionally left untouched here. Runs now
+            # live in the runs table; the legacy column stays as a frozen backup and is
+            # only reclaimed by the explicit cleanup_legacy_runs_column() helper. Nulling
+            # it on write would lose history for sessions not yet migrated to the runs table.
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    session_id=session_dict.get("session_id"),
+                    created_at=session_dict.get("created_at"),
+                    updated_at=session_dict.get("created_at"),
+                    **values,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["session_id"],
+                    set_=dict(updated_at=int(time.time()), **update_values),
+                    where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
+                ).returning(table)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                session_dict = dict(row._mapping)
+
+            if not deserialize:
+                session_dict["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+                return session_dict
+
+            session_dict.pop("runs", None)
+            upserted_session = deserialize_session(None, session_dict)
+            upserted_session.runs = session.runs  # type: ignore[union-attr]
+            return upserted_session
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {str(e)}")
@@ -1213,13 +1679,23 @@ class PostgresDb(BaseDb):
             team_sessions = [s for s in sessions if isinstance(s, TeamSession)]
             workflow_sessions = [s for s in sessions if isinstance(s, WorkflowSession)]
 
+            sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions}
+
+            def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
+                original_session = sessions_by_id.get(session_dict.get("session_id"))  # type: ignore[arg-type]
+                session_dict["runs"] = [
+                    run if isinstance(run, dict) else run.to_dict()
+                    for run in (original_session.runs if original_session else None) or []
+                ]
+                return session_dict
+
             results: List[Union[Session, Dict[str, Any]]] = []
 
             # Bulk upsert agent sessions
             if agent_sessions:
                 session_records = []
                 for agent_session in agent_sessions:
-                    session_dict = agent_session.to_dict()
+                    session_dict = agent_session.to_dict(include_runs=False)
                     # Sanitize JSON/dict fields to remove null bytes from nested strings
                     if session_dict.get("agent_data"):
                         session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
@@ -1229,8 +1705,6 @@ class PostgresDb(BaseDb):
                         session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
                     if session_dict.get("metadata"):
                         session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
-                    if session_dict.get("runs"):
-                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
@@ -1244,7 +1718,6 @@ class PostgresDb(BaseDb):
                             "session_data": session_dict.get("session_data"),
                             "summary": session_dict.get("summary"),
                             "metadata": session_dict.get("metadata"),
-                            "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
                             "updated_at": updated_at,
                         }
@@ -1255,7 +1728,7 @@ class PostgresDb(BaseDb):
                     update_columns = {
                         col.name: stmt.excluded[col.name]
                         for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
+                        if col.name not in ["id", "session_id", "created_at", "runs"]
                     }
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
@@ -1264,21 +1737,23 @@ class PostgresDb(BaseDb):
                     ).returning(table)
 
                     result = sess.execute(stmt, session_records)
-                    for row in result.fetchall():
-                        session_dict = dict(row._mapping)
-                        if deserialize:
-                            deserialized_agent_session = AgentSession.from_dict(session_dict)
-                            if deserialized_agent_session is None:
-                                continue
-                            results.append(deserialized_agent_session)
-                        else:
-                            results.append(session_dict)
+                    rows = result.fetchall()
+
+                for row in rows:
+                    session_dict = dict(row._mapping)
+                    if deserialize:
+                        deserialized_agent_session = AgentSession.from_dict(_attach_runs(session_dict))
+                        if deserialized_agent_session is None:
+                            continue
+                        results.append(deserialized_agent_session)
+                    else:
+                        results.append(_attach_runs(session_dict))
 
             # Bulk upsert team sessions
             if team_sessions:
                 session_records = []
                 for team_session in team_sessions:
-                    session_dict = team_session.to_dict()
+                    session_dict = team_session.to_dict(include_runs=False)
                     # Sanitize JSON/dict fields to remove null bytes from nested strings
                     if session_dict.get("team_data"):
                         session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
@@ -1288,8 +1763,6 @@ class PostgresDb(BaseDb):
                         session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
                     if session_dict.get("metadata"):
                         session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
-                    if session_dict.get("runs"):
-                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
@@ -1303,7 +1776,6 @@ class PostgresDb(BaseDb):
                             "session_data": session_dict.get("session_data"),
                             "summary": session_dict.get("summary"),
                             "metadata": session_dict.get("metadata"),
-                            "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
                             "updated_at": updated_at,
                         }
@@ -1314,7 +1786,7 @@ class PostgresDb(BaseDb):
                     update_columns = {
                         col.name: stmt.excluded[col.name]
                         for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
+                        if col.name not in ["id", "session_id", "created_at", "runs"]
                     }
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
@@ -1323,21 +1795,23 @@ class PostgresDb(BaseDb):
                     ).returning(table)
 
                     result = sess.execute(stmt, session_records)
-                    for row in result.fetchall():
-                        session_dict = dict(row._mapping)
-                        if deserialize:
-                            deserialized_team_session = TeamSession.from_dict(session_dict)
-                            if deserialized_team_session is None:
-                                continue
-                            results.append(deserialized_team_session)
-                        else:
-                            results.append(session_dict)
+                    rows = result.fetchall()
+
+                for row in rows:
+                    session_dict = dict(row._mapping)
+                    if deserialize:
+                        deserialized_team_session = TeamSession.from_dict(_attach_runs(session_dict))
+                        if deserialized_team_session is None:
+                            continue
+                        results.append(deserialized_team_session)
+                    else:
+                        results.append(_attach_runs(session_dict))
 
             # Bulk upsert workflow sessions
             if workflow_sessions:
                 session_records = []
                 for workflow_session in workflow_sessions:
-                    session_dict = workflow_session.to_dict()
+                    session_dict = workflow_session.to_dict(include_runs=False)
                     # Sanitize JSON/dict fields to remove null bytes from nested strings
                     if session_dict.get("workflow_data"):
                         session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
@@ -1347,8 +1821,6 @@ class PostgresDb(BaseDb):
                         session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
                     if session_dict.get("metadata"):
                         session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
-                    if session_dict.get("runs"):
-                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
@@ -1362,7 +1834,6 @@ class PostgresDb(BaseDb):
                             "session_data": session_dict.get("session_data"),
                             "summary": session_dict.get("summary"),
                             "metadata": session_dict.get("metadata"),
-                            "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
                             "updated_at": updated_at,
                         }
@@ -1373,7 +1844,7 @@ class PostgresDb(BaseDb):
                     update_columns = {
                         col.name: stmt.excluded[col.name]
                         for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
+                        if col.name not in ["id", "session_id", "created_at", "runs"]
                     }
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
@@ -1382,15 +1853,17 @@ class PostgresDb(BaseDb):
                     ).returning(table)
 
                     result = sess.execute(stmt, session_records)
-                    for row in result.fetchall():
-                        session_dict = dict(row._mapping)
-                        if deserialize:
-                            deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
-                            if deserialized_workflow_session is None:
-                                continue
-                            results.append(deserialized_workflow_session)
-                        else:
-                            results.append(session_dict)
+                    rows = result.fetchall()
+
+                for row in rows:
+                    session_dict = dict(row._mapping)
+                    if deserialize:
+                        deserialized_workflow_session = WorkflowSession.from_dict(_attach_runs(session_dict))
+                        if deserialized_workflow_session is None:
+                            continue
+                        results.append(deserialized_workflow_session)
+                    else:
+                        results.append(_attach_runs(session_dict))
 
             return results
 
@@ -1599,6 +2072,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -1689,6 +2163,7 @@ class PostgresDb(BaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -1915,14 +2390,20 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return []
+            runs_table = self._get_table(table_type="runs")
 
-            stmt = select(
+            columns = [
+                table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
-                table.c.runs,
                 table.c.created_at,
                 table.c.session_type,
-            )
+            ]
+            # Include the legacy runs column if it still exists, to count not yet migrated runs
+            if "runs" in table.c:
+                columns.append(table.c.runs)
+
+            stmt = select(*columns)
 
             if start_timestamp is not None:
                 stmt = stmt.where(table.c.created_at >= start_timestamp)
@@ -1931,8 +2412,29 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
+                sessions = [dict(record._mapping) for record in result]
 
-                return [record._mapping for record in result]
+                # Attach lightweight run info (model and provider) from the runs table
+                if runs_table is not None and sessions:
+                    session_ids = [s["session_id"] for s in sessions]
+                    runs_stmt = select(
+                        runs_table.c.session_id,
+                        runs_table.c.run_data["model"].astext.label("model"),
+                        runs_table.c.run_data["model_provider"].astext.label("model_provider"),
+                    ).where(runs_table.c.session_id.in_(session_ids))
+
+                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                    for session_id, model, model_provider in sess.execute(runs_stmt).fetchall():
+                        runs_by_session.setdefault(session_id, []).append(
+                            {"model": model, "model_provider": model_provider}
+                        )
+
+                    for s in sessions:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        if runs_data or not s.get("runs"):
+                            s["runs"] = runs_data
+
+                return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {str(e)}")
@@ -1952,15 +2454,20 @@ class PostgresDb(BaseDb):
             Optional[date]: The starting date for which metrics calculation is needed.
         """
         with self.Session() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = sess.execute(stmt).fetchone()
+            # resume at the earliest incomplete day after the latest completed one, otherwise the
+            # day after that one: a day holding a completed row was rebuilt after it ended, so an
+            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
+            # be rebuilt
+            latest_completed = sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True))).scalar()
 
-            # 1. Return the date of the first day without a complete metrics record.
-            if result is not None:
-                if result.completed:
-                    return result._mapping["date"] + timedelta(days=1)
-                else:
-                    return result._mapping["date"]
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = sess.execute(incomplete_stmt).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2032,9 +2539,8 @@ class PostgresDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                metrics_records.append(metrics_record)
+                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 with self.Session() as sess, sess.begin():
@@ -2052,6 +2558,7 @@ class PostgresDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -2061,6 +2568,8 @@ class PostgresDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When set, return only this user's bucket. ``None`` returns every
+                bucket, including the empty-string one holding unowned sessions.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -2087,26 +2596,39 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchall()
                 if not result:
                     return [], None
 
-                # Get the latest updated_at
+                # Get the latest updated_at, scoped to the same user filter
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_updated_at = sess.execute(latest_stmt).scalar()
 
-            return [row._mapping for row in result], latest_updated_at
+            # Map the empty-string owner sentinel back to None for API consumers
+            rows: List[dict] = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only delete the row if owned by this user. Shared
+                (``user_id IS NULL``) rows are not deleted.
         """
         try:
             table = self._get_table(table_type="knowledge")
@@ -2115,17 +2637,21 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, only return the row if owned by this user or shared
+                (``user_id IS NULL``).
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2137,6 +2663,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2154,6 +2682,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2163,6 +2692,8 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, return rows owned by this user plus shared
+                (``user_id IS NULL``) rows.
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2170,6 +2701,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="knowledge")
             if table is None:
@@ -2181,6 +2713,10 @@ class PostgresDb(BaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply owner scoping if provided
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -2217,6 +2753,12 @@ class PostgresDb(BaseDb):
                 return None
 
             with self.Session() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id)).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -2239,6 +2781,7 @@ class PostgresDb(BaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",
+                    "user_id": "user_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
@@ -2360,11 +2903,12 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = self._get_table(table_type="evals")
@@ -2373,6 +2917,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt)
 
                 if result.rowcount == 0:
@@ -2385,13 +2931,14 @@ class PostgresDb(BaseDb):
             raise e
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2408,6 +2955,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2435,6 +2984,7 @@ class PostgresDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2450,6 +3000,7 @@ class PostgresDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -2460,6 +3011,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="evals")
             if table is None:
@@ -2469,6 +3021,8 @@ class PostgresDb(BaseDb):
                 stmt = select(table)
 
                 # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
@@ -2518,13 +3072,14 @@ class PostgresDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
@@ -2545,9 +3100,11 @@ class PostgresDb(BaseDb):
                     .where(table.c.run_id == eval_run_id)
                     .values(name=sanitized_name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
             if not eval_run_raw or not deserialize:
                 return eval_run_raw
 
@@ -2557,243 +3114,24 @@ class PostgresDb(BaseDb):
             log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
             raise e
 
-    # -- Culture methods --
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
 
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
         """
         try:
-            table = self._get_table(table_type="culture")
+            table = self._get_table(table_type="evals")
             if table is None:
                 return
 
             with self.Session() as sess, sess.begin():
-                sess.execute(table.delete())
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                sess.execute(stmt)
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural knowledge entry from the database.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.id == id)
-                result = sess.execute(delete_stmt)
-
-                success = result.rowcount > 0
-                if success:
-                    log_debug(f"Successfully deleted cultural knowledge id: {id}")
-                else:
-                    log_debug(f"No cultural knowledge found with id: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural knowledge entry from the database.
-
-        Args:
-            id (str): The ID of the cultural knowledge to get.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge entry, or None if it doesn't exist.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table).where(table.c.id == id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
-                    return None
-
-                db_row = dict(result._mapping)
-                if not db_row or not deserialize:
-                    return db_row
-
-            return deserialize_cultural_knowledge(db_row)
-
-        except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge from the database as CulturalKnowledge objects.
-
-        Args:
-            name (Optional[str]): The name of the cultural knowledge to filter by.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            limit (Optional[int]): The maximum number of cultural knowledge entries to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: List of CulturalKnowledge dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return [] if deserialize else ([], 0)
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table)
-
-                # Filtering
-                if name is not None:
-                    stmt = stmt.where(table.c.name == name)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-
-                # Get total count after applying filtering
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
-
-                # Sorting
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-                # Paginating
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [] if deserialize else ([], 0)
-
-                db_rows = [dict(record._mapping) for record in result]
-
-                if not deserialize:
-                    return db_rows, total_count
-
-            return [deserialize_cultural_knowledge(row) for row in db_rows]
-
-        except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural knowledge entry into the database.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Optional[CulturalKnowledge]: The upserted cultural knowledge entry.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="culture", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            if cultural_knowledge.id is None:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge(cultural_knowledge)
-            # Sanitize content_dict to remove null bytes from nested strings
-            if content_dict:
-                content_dict = cast(Dict[str, Any], sanitize_postgres_strings(content_dict))
-
-            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
-            sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
-            sanitized_summary = sanitize_postgres_string(cultural_knowledge.summary)
-            sanitized_input = sanitize_postgres_string(cultural_knowledge.input)
-
-            with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table).values(
-                    id=cultural_knowledge.id,
-                    name=sanitized_name,
-                    summary=sanitized_summary,
-                    content=content_dict if content_dict else None,
-                    metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
-                    if cultural_knowledge.metadata
-                    else None,
-                    input=sanitized_input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-                stmt = stmt.on_conflict_do_update(  # type: ignore
-                    index_elements=["id"],
-                    set_=dict(
-                        name=sanitized_name,
-                        summary=sanitized_summary,
-                        content=content_dict if content_dict else None,
-                        metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
-                        if cultural_knowledge.metadata
-                        else None,
-                        input=sanitized_input,
-                        updated_at=int(time.time()),
-                        agent_id=cultural_knowledge.agent_id,
-                        team_id=cultural_knowledge.team_id,
-                    ),
-                ).returning(table)
-
-                result = sess.execute(stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-            db_row = dict(row._mapping)
-            if not db_row or not deserialize:
-                return db_row
-
-            return deserialize_cultural_knowledge(db_row)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Migrations --
@@ -3627,6 +3965,7 @@ class PostgresDb(BaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="components")
@@ -3641,6 +3980,9 @@ class PostgresDb(BaseDb):
 
                 if component_type is not None:
                     stmt = stmt.where(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    # Unowned components are shared: visible to every scoped caller
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 row = sess.execute(stmt).mappings().one_or_none()
                 return dict(row) if row else None
@@ -3657,6 +3999,7 @@ class PostgresDb(BaseDb):
         description: Optional[str] = None,
         current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
 
@@ -3667,6 +4010,7 @@ class PostgresDb(BaseDb):
             description: Optional description.
             current_version: Optional current version.
             metadata: Optional metadata dict.
+            user_id: Owner to set when creating; scopes the update to this user when set.
 
         Returns:
             Created/updated component dictionary.
@@ -3680,8 +4024,19 @@ class PostgresDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
+                existing_stmt = select(table).where(table.c.component_id == component_id)
+                if user_id is not None:
+                    existing_stmt = existing_stmt.where(table.c.user_id == user_id)
+                existing = sess.execute(existing_stmt).fetchone()
                 if existing is None:
+                    # The row may exist under another owner: fail closed rather than collide on the PK
+                    if user_id is not None:
+                        unscoped = sess.execute(
+                            select(table.c.component_id).where(table.c.component_id == component_id)
+                        ).fetchone()
+                        if unscoped is not None:
+                            raise ValueError(f"Component {component_id} not found")
+
                     # Create new component
                     if component_type is None:
                         raise ValueError("component_type is required when creating a new component")
@@ -3691,6 +4046,7 @@ class PostgresDb(BaseDb):
                             component_id=component_id,
                             component_type=component_type.value,
                             name=name,
+                            user_id=user_id,
                             description=description,
                             current_version=None,
                             metadata=metadata,
@@ -3736,7 +4092,7 @@ class PostgresDb(BaseDb):
                     sess.execute(table.update().where(table.c.component_id == component_id).values(**updates))
                     log_debug(f"Updated component {component_id}")
 
-            result = self.get_component(component_id)
+            result = self.get_component(component_id, user_id=user_id)
             if result is None:
                 raise ValueError(f"Failed to get component {component_id} after upsert")
             return result
@@ -3749,12 +4105,14 @@ class PostgresDb(BaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
         Args:
             component_id: The component ID.
             hard_delete: If True, permanently delete. Otherwise soft-delete.
+            user_id: If set, only delete the component if owned by this user.
 
         Returns:
             True if deleted, False if not found or already deleted.
@@ -3766,6 +4124,13 @@ class PostgresDb(BaseDb):
 
             if components_table is None:
                 return False
+
+            # Scope to owner: a non-owner must not delete the component or its configs/links.
+            if user_id is not None:
+                # Reads treat unowned as shared, but delete stays strict: only the owner (or admin) removes it
+                component = self.get_component(component_id, user_id=user_id)
+                if component is None or component.get("user_id") != user_id:
+                    return False
 
             with self.Session() as sess, sess.begin():
                 # Verify component exists (and not already soft-deleted for soft-delete)
@@ -3816,6 +4181,7 @@ class PostgresDb(BaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
         name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
@@ -3826,6 +4192,7 @@ class PostgresDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            user_id: If set, list components owned by this user plus shared ones.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 
@@ -3842,6 +4209,9 @@ class PostgresDb(BaseDb):
                 where_clauses = []
                 if component_type is not None:
                     where_clauses.append(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    # Unowned components are shared: they list for every scoped caller
+                    where_clauses.append(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:
@@ -3883,6 +4253,7 @@ class PostgresDb(BaseDb):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Create a component with its initial config atomically.
 
@@ -3897,12 +4268,13 @@ class PostgresDb(BaseDb):
             stage: "draft" or "published".
             notes: Optional notes.
             links: Optional list of links. Each must have child_version set.
+            user_id: Owner to attribute the component to.
 
         Returns:
             Tuple of (component dict, config dict).
 
         Raises:
-            ValueError: If component already exists, invalid stage, or link missing child_version.
+            ValueError: If component ID is already taken, invalid stage, or link missing child_version.
         """
         if stage not in {"draft", "published"}:
             raise ValueError(f"Invalid stage: {stage}")
@@ -3930,7 +4302,8 @@ class PostgresDb(BaseDb):
                 ).scalar_one_or_none()
 
                 if existing is not None:
-                    raise ValueError(f"Component {component_id} already exists")
+                    # Deliberately vague: the message must not confirm another user's component exists
+                    raise ValueError(f"Component ID {component_id} is not available")
 
                 # Check label uniqueness
                 if label is not None:
@@ -3952,6 +4325,7 @@ class PostgresDb(BaseDb):
                         component_id=component_id,
                         component_type=component_type.value,
                         name=name,
+                        user_id=user_id,
                         description=description,
                         metadata=metadata,
                         current_version=version if stage == "published" else None,
@@ -5075,6 +5449,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="learnings")
             if table is None:
@@ -5123,25 +5498,37 @@ class PostgresDb(BaseDb):
             raise e
 
     # -- Schedule methods --
-    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # User-facing methods take an optional ``user_id`` filter. ``claim_due_schedule`` and
+    # ``release_schedule`` intentionally don't: the poller fires schedules for every user.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                stmt = select(table).where(table.c.name == name)
+                # Names are unique per owner: ``None`` addresses the unowned bucket,
+                # never another owner's schedule of the same name.
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule by name: {e}")
@@ -5152,6 +5539,7 @@ class PostgresDb(BaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedules")
@@ -5162,6 +5550,8 @@ class PostgresDb(BaseDb):
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -5190,20 +5580,31 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating schedule: {str(e)}")
             raise
 
-    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
-                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
-            return self.get_schedule(schedule_id)
+                stmt = table.update().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                sess.execute(stmt.values(**kwargs))
+            return self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    def delete_schedule(self, schedule_id: str) -> bool:
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
@@ -5211,8 +5612,15 @@ class PostgresDb(BaseDb):
             runs_table = self._get_table(table_type="schedule_runs")
             with self.Session() as sess, sess.begin():
                 if runs_table is not None:
-                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                    # Mirror the owner guard on the cascade so another user's runs aren't deleted
+                    runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                    if user_id is not None:
+                        runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete)
+                delete_stmt = table.delete().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
@@ -5296,13 +5704,16 @@ class PostgresDb(BaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
@@ -5313,32 +5724,765 @@ class PostgresDb(BaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return [], 0
             with self.Session() as sess:
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = and_(base_filter, table.c.user_id == user_id)
+
                 # Get total count
-                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
                 total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Calculate offset from page
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(table.c.schedule_id == schedule_id)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
             return [], 0
+
+    # -- Job queue methods --
+    #
+    # Durable background job queue: one row per accepted run. Claim/lease with
+    # SKIP LOCKED (modeled on claim_due_schedule), stale-lock reclaim gated on
+    # the attempt budget, and terminal writes fenced on (locked_by, attempt) so
+    # a zombie executor that finishes after reclaim has its write discarded.
+
+    def update_run_in_session(
+        self,
+        session_id: str,
+        run_id: str,
+        fields: Dict[str, Any],
+        expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
+        content_if_absent: Optional[str] = None,
+    ) -> "RunPersistOutcome":
+        """Sync twin of AsyncPostgresDb.update_run_in_session - ported to the
+        denormalized runs table (v3.0); see that docstring."""
+        from agno.db.utils import canonical_run_status
+        from agno.run.status_persist import RunPersistOutcome
+
+        if fields.get("status") is not None:
+            # Same normalization as the async twin: the indexed column and
+            # run_data store the canonical uppercase RunStatus.value
+            fields = {**fields, "status": canonical_run_status(fields["status"])}
+        try:
+            runs_table = self._get_table(table_type="runs")
+            if runs_table is None:
+                return RunPersistOutcome.MISSING
+            with self.Session() as sess, sess.begin():
+                row = sess.execute(
+                    select(runs_table.c.run_data, runs_table.c.status)
+                    .where(runs_table.c.run_id == run_id)
+                    .where(runs_table.c.session_id == session_id)
+                    .where((runs_table.c.user_id == user_id) | (runs_table.c.user_id.is_(None)))
+                    .with_for_update()
+                ).fetchone()
+                if row is None or row[0] is None:
+                    return RunPersistOutcome.MISSING
+                run = dict(row[0])
+                stored_attempt = run.get("queue_attempt")
+                if expected_attempt is not None and stored_attempt is not None and stored_attempt > expected_attempt:
+                    return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
+                stored_status = str(run.get("status") or row[1] or "").lower()
+                incoming_status = str(fields.get("status") or "").lower()
+                if stored_status in ("completed", "cancelled") and incoming_status and incoming_status != stored_status:
+                    return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                run.update(fields)
+                if content_if_absent is not None and not run.get("content"):
+                    run["content"] = content_if_absent
+                if expected_attempt is not None:
+                    run["queue_attempt"] = expected_attempt
+                values: Dict[str, Any] = {
+                    "run_data": sanitize_postgres_strings(run),
+                    "updated_at": int(time.time()),
+                }
+                if fields.get("status") is not None:
+                    values["status"] = fields["status"]
+                sess.execute(update(runs_table).where(runs_table.c.run_id == run_id).values(**values))
+                return RunPersistOutcome.UPDATED
+        except Exception as e:
+            log_warning(f"Error updating run in runs table: {e}")
+            raise
+
+    def append_run_to_session_if_absent(
+        self,
+        session_id: str,
+        run_dict: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> Optional[bool]:
+        """Sync twin of AsyncPostgresDb.append_run_to_session_if_absent -
+        ported to the denormalized runs table (v3.0); see that docstring."""
+        from sqlalchemy.exc import IntegrityError
+
+        from agno.db.utils import build_single_run_row
+
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return None
+            row = build_single_run_row(run=run_dict, session_id=session_id, user_id=user_id, run_index=None)
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+            try:
+                with self.Session() as sess, sess.begin():
+                    if row.get("run_index") is None:
+                        # Same-session backfill serialization - see upsert_run
+                        sess.execute(
+                            text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                            {"sid": session_id},
+                        )
+                        current_max = sess.execute(
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                        ).scalar()
+                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    stmt = (
+                        postgresql.insert(runs_table)
+                        .values(**row)
+                        .on_conflict_do_nothing(index_elements=["run_id"])
+                        .returning(runs_table.c.run_id)
+                    )
+                    inserted = sess.execute(stmt).fetchone()
+                    return inserted is not None
+            except IntegrityError:
+                # FK violation: no session row yet - caller creates it and retries
+                return None
+        except Exception as e:
+            log_warning(f"Error appending run to runs table (caller falls back): {e}")
+            return None
+
+    def insert_session_if_absent(self, session: Session) -> Optional[bool]:
+        """Insert the session row only when no row with this session_id exists
+        (INSERT ... ON CONFLICT DO NOTHING).
+
+        The missing half of the atomic queued-run prepare: when the session
+        does not exist yet, append_run_to_session_if_absent has no row to
+        lock, and the legacy create-and-save fallback re-opened the unlocked
+        read-check-save window (a worker completing the run inside it was
+        clobbered back to PENDING). Creating the row this way instead makes
+        the append primitive always applicable - no whole-session save
+        remains on the prepare path.
+
+        Returns True (inserted), False (a row already existed - the
+        concurrent writer's row is authoritative), None (error - the caller
+        falls back to the legacy path).
+        """
+        try:
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+            session_dict = session.to_dict()
+            for data_field in ("agent_data", "team_data", "workflow_data", "session_data", "summary", "metadata"):
+                if session_dict.get(data_field):
+                    session_dict[data_field] = sanitize_postgres_strings(session_dict[data_field])
+            values: Dict[str, Any] = dict(
+                session_id=session_dict.get("session_id"),
+                user_id=session_dict.get("user_id"),
+                session_data=session_dict.get("session_data"),
+                summary=session_dict.get("summary"),
+                metadata=session_dict.get("metadata"),
+                created_at=session_dict.get("created_at"),
+                updated_at=session_dict.get("created_at"),
+            )
+            if isinstance(session, AgentSession):
+                values.update(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    agent_data=session_dict.get("agent_data"),
+                )
+            elif isinstance(session, TeamSession):
+                values.update(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    team_data=session_dict.get("team_data"),
+                )
+            elif isinstance(session, WorkflowSession):
+                values.update(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                )
+            else:
+                return None
+            with self.Session() as sess, sess.begin():
+                # RETURNING yields a row only when the insert landed; rowcount
+                # is unreliable here (psycopg3 reports -1 for this statement)
+                stmt = (
+                    postgresql.insert(table)
+                    .values(**values)
+                    .on_conflict_do_nothing(index_elements=["session_id"])
+                    .returning(table.c.session_id)
+                )
+                result = sess.execute(stmt)
+                return result.fetchone() is not None
+        except Exception as e:
+            log_warning(f"Error inserting session if absent (caller falls back): {e}")
+            return None
+
+    def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+        """Insert an accepted run job.
+
+        Returns {"accepted": bool, "reason": None | "queue_full" | "duplicate",
+        "job": row}. On an idempotency-key conflict the existing row is
+        returned with reason "duplicate" (client resubmit dedup). The depth
+        gate is best-effort (count + insert, not serialized) per the queue's
+        portability contract.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        table = self._get_table(table_type="jobs", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create job queue table")
+        # Empty-string keys are "no key": the falsy pre-check would skip dedup
+        # while the partial-unique index still covered '', turning the second
+        # empty-header submit into an IntegrityError -> 500
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
+        try:
+            with self.Session() as sess, sess.begin():
+                # Idempotency FIRST: resubmitting an already-accepted job
+                # must return the existing run even when the queue is full
+                if job.get("idempotency_key"):
+                    row = sess.execute(
+                        select(table).where(
+                            table.c.idempotency_key == job["idempotency_key"],
+                            table.c.user_id.is_not_distinct_from(job.get("user_id")),
+                        )
+                    ).fetchone()
+                    if row is not None:
+                        return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+                if max_depth and max_depth > 0:
+                    count_stmt = select(func.count()).select_from(table).where(table.c.status == "queued")
+                    queued = sess.execute(count_stmt).scalar() or 0
+                    if queued >= max_depth:
+                        return {"accepted": False, "reason": "queue_full", "job": None}
+                sess.execute(table.insert().values(**job))
+            return {"accepted": True, "reason": None, "job": job}
+        except IntegrityError:
+            # Without an idempotency key this is a primary-key collision - a
+            # programming error, never a client dedup. Swallowing it as
+            # "duplicate" would 202 a run that was never enqueued.
+            if not job.get("idempotency_key"):
+                raise
+            # Race on the partial-unique idempotency index: return the winner
+            with self.Session() as sess:
+                row = sess.execute(
+                    select(table).where(
+                        table.c.idempotency_key == job["idempotency_key"],
+                        table.c.user_id.is_not_distinct_from(job.get("user_id")),
+                    )
+                ).fetchone()
+                if row is not None:
+                    return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+            raise
+
+    def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the oldest executable job for this worker.
+
+        Executable: queued, or running with a stale lock while the attempt
+        budget is not exhausted (crash reclaim). Claiming increments attempt,
+        which doubles as the fencing generation. Deployment affinity filters
+        BOTH branches (a reclaim executes too): NULL rides anywhere, stamped
+        jobs only on matching workers; deployment_id=None degenerates to
+        claiming only unstamped jobs.
+        """
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            now = _db_epoch()
+            stale = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                subq = (
+                    select(table.c.id)
+                    .where(
+                        table.c.available_at <= now,
+                        or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
+                        or_(
+                            table.c.status == "queued",
+                            and_(
+                                table.c.status == "running",
+                                table.c.locked_at <= stale,
+                                table.c.attempt < table.c.max_attempts,
+                            ),
+                        ),
+                    )
+                    .order_by(table.c.created_at.asc())
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                    .scalar_subquery()
+                )
+                stmt = (
+                    update(table)
+                    .where(table.c.id == subq)
+                    .values(
+                        status="running",
+                        locked_by=worker_id,
+                        locked_at=now,
+                        attempt=table.c.attempt + 1,
+                        updated_at=now,
+                    )
+                    .returning(*table.c)
+                )
+                row = sess.execute(stmt).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_error(f"Job queue store: claim failed for worker {worker_id} (deployment={deployment_id}): {e}")
+            return None
+
+    def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+        """Refresh locked_at for this worker's in-flight jobs (keeps the lock
+        grace small without long runs being reclaimed while alive)."""
+        if not job_ids:
+            return 0
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id.in_(job_ids),
+                        table.c.locked_by == worker_id,
+                        table.c.status == "running",
+                    )
+                    .values(locked_at=now)
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_error(
+                f"Job queue store: heartbeat failed for worker {worker_id} ({len(job_ids)} jobs, e.g. {job_ids[0]}): {e}"
+            )
+            return 0
+
+    def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
+        """Fenced terminal transition: only the claim holder of this attempt
+        may complete the job. A zombie's late write is silently discarded."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(
+                f"Job queue store: settle failed for job {job_id} (worker={worker_id}, attempt={attempt}, status={status!r}): {e}"
+            )
+            return False
+
+    def retry_or_fail_job(
+        self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
+    ) -> Optional[str]:
+        """Fenced failure handling: requeue with backoff while the attempt
+        budget lasts, else fail terminally. Returns the resulting status
+        ("queued" | "failed") or None if the fence rejected the write."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                fence = (
+                    select(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .with_for_update()
+                )
+                row = sess.execute(fence).fetchone()
+                if row is None:
+                    return None
+                job = dict(row._mapping)
+                if job["attempt"] < job["max_attempts"]:
+                    new_status = "queued"
+                    values: Dict[str, Any] = {
+                        "status": new_status,
+                        "error": error,
+                        "locked_by": None,
+                        "locked_at": None,
+                        "available_at": now + retry_delay_seconds,
+                        "updated_at": now,
+                    }
+                else:
+                    new_status = "failed"
+                    values = {
+                        "status": new_status,
+                        "error": error,
+                        "locked_by": None,
+                        "locked_at": None,
+                        "completed_at": now,
+                        "updated_at": now,
+                    }
+                sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                return new_status
+        except Exception as e:
+            log_error(
+                f"Job queue store: retry-or-fail failed for job {job_id} (worker={worker_id}, attempt={attempt}): {e}"
+            )
+            return None
+
+    def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). Single conditional
+        UPDATE on status='paused'; a queued/claimed continuation owns the
+        ticket and is never clobbered."""
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status == "paused")
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: paused-settle failed for job {job_id} (status={status!r}): {e}")
+            return False
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Tombstone cancellation: only jobs still waiting can be cancelled
+        here (contract: 'this job will not execute'). Claimed jobs fall
+        through to the running-run cancellation path. Paused tickets count as
+        waiting - nothing is executing them, and without this a cancelled
+        paused run stayed a paused ticket forever, resurrectable by a later
+        continue."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status.in_(["queued", "paused"]))
+                    .values(status="cancelled", completed_at=now, updated_at=now)
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: cancel failed for job {job_id}: {e}")
+            return False
+
+    def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return stale running jobs whose attempt budget is exhausted.
+
+        These are NOT claimable (attempt >= max_attempts): the worker persists
+        a terminal error on the run row first, then calls
+        settle_swept_job — ordering + idempotence instead of cross-store
+        atomicity."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return []
+            stale = _db_epoch() - lock_grace_seconds
+            with self.Session() as sess:
+                result = sess.execute(
+                    select(table)
+                    .where(
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt >= table.c.max_attempts,
+                    )
+                    .order_by(table.c.locked_at.asc())
+                    .limit(limit)
+                )
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_warning(f"Job queue store: sweep scan failed (lock_grace={lock_grace_seconds}s): {e}")
+            return []
+
+    def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        """Take ownership of a stale, budget-exhausted running job BEFORE any
+        run-row write (conditional UPDATE = the CAS). A live heartbeat
+        between the sweep's select and this acquisition wins here, with the
+        run row still untouched. Refreshing locked_at doubles as the retry
+        backoff for a failing terminalization."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            stale = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt >= table.c.max_attempts,
+                    )
+                    .values(locked_by=worker_id, locked_at=now, updated_at=now)
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: sweep-lock acquisition failed for job {job_id} (worker={worker_id}): {e}")
+            return False
+
+    def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the sweeper - see the in-memory store's
+        docstring: the sweep reconciles the ticket with what the run row
+        says (completed/cancelled/paused/failed), never blind-fails it."""
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.status == "running",
+                        table.c.locked_by == worker_id,
+                    )
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: swept-job settle failed for job {job_id} (worker={worker_id}): {e}")
+            return False
+
+    def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket - sync twin of the async adapter's get_job; see
+        that docstring for the strict/lenient contract."""
+        if strict:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+                return dict(row._mapping) if row is not None else None
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_warning(f"Job queue store: get_job failed for job {job_id}: {e}")
+            return None
+
+    def count_queued_jobs(self) -> int:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                result = sess.execute(select(func.count()).select_from(table).where(table.c.status == "queued"))
+                return result.scalar() or 0
+        except Exception as e:
+            log_warning(f"Job queue store: queued-count failed: {e}")
+            return 0
+
+    def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return [], 0
+            stmt = select(table)
+            if status is not None:
+                statuses = [status] if isinstance(status, str) else list(status)
+                stmt = stmt.where(table.c.status.in_(statuses))
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            stmt = apply_sorting(stmt, table, sort_by, sort_order)
+            # Deterministic tiebreaker: timestamps are epoch seconds, so ties
+            # are common and would let rows move between pages otherwise
+            stmt = stmt.order_by(table.c.id)
+            stmt = stmt.limit(limit).offset(max(page - 1, 0) * limit)
+            with self.Session() as sess:
+                total_count = sess.execute(count_stmt).scalar() or 0
+                result = sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()], total_count
+        except Exception as e:
+            log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
+            return [], 0
+
+    def requeue_job(self, job_id: str) -> bool:
+        """Operator requeue for a terminally failed/cancelled job: grants
+        exactly one more execution by raising max_attempts to attempt + 1."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
+                    .values(
+                        status="queued",
+                        max_attempts=table.c.attempt + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
+            return False
+
+    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's transition (row-locked read + conditional
+        update in one transaction). No new rows, ever - id == run_id is
+        load-bearing. Submit-time payload fields are kept; payload["continue"]
+        is REPLACED WHOLESALE with this continue's inputs (never accumulated
+        across pause cycles). Budget grant: max_attempts = attempt + 1 -
+        exactly one more execution, regardless of the configured retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        Exceptions propagate (like enqueue_job, unlike the ops-surface
+        requeue_job): this CAS is the durable acceptance of the continue, and
+        a DB failure must surface as a 500, never masquerade as "conflict".
+        """
+        table = self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table not found")
+        now = _db_epoch()
+        with self.Session() as sess, sess.begin():
+            row = sess.execute(select(table).where(table.c.id == job_id).with_for_update()).fetchone()
+            if row is None:
+                return {"outcome": "conflict", "job": None}
+            job = dict(row._mapping)
+            if job["status"] in ("completed", "failed", "cancelled"):
+                return {"outcome": "conflict", "job": job}
+            if job["status"] in ("queued", "running"):
+                return {"outcome": "attach", "job": job}
+            payload = dict(job.get("payload") or {})
+            payload["continue"] = dict(continue_payload)
+            values: Dict[str, Any] = {
+                "status": "queued",
+                "payload": payload,
+                "max_attempts": job["attempt"] + 1,
+                "available_at": now,
+                "locked_by": None,
+                "locked_at": None,
+                "completed_at": None,
+                "updated_at": now,
+            }
+            # RETURNING resolves the DB-clock stamps to concrete ints: the
+            # timestamp values are SQL expressions (_db_epoch), and copying
+            # them into the returned dict verbatim would hand callers
+            # unserializable Cast objects where Redis/InMemory return ints.
+            stamped = sess.execute(
+                update(table)
+                .where(table.c.id == job_id)
+                .values(**values)
+                .returning(table.c.available_at, table.c.updated_at)
+            ).fetchone()
+            job.update(values)
+            if stamped is not None:
+                job["available_at"], job["updated_at"] = stamped[0], stamped[1]
+            return {"outcome": "queued", "job": job}
+
+    def queue_stats(self) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return {"counts": {}, "oldest_queued_age_seconds": None}
+            now = int(time.time())
+            with self.Session() as sess:
+                counts_result = sess.execute(select(table.c.status, func.count()).group_by(table.c.status))
+                counts = {row[0]: row[1] for row in counts_result.fetchall()}
+                oldest_result = sess.execute(select(func.min(table.c.created_at)).where(table.c.status == "queued"))
+                oldest_created = oldest_result.scalar()
+                oldest_age = (now - oldest_created) if oldest_created is not None else None
+                return {"counts": counts, "oldest_queued_age_seconds": oldest_age}
+        except Exception as e:
+            log_warning(f"Job queue store: stats failed: {e}")
+            return {"counts": {}, "oldest_queued_age_seconds": None}
+
+    def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Delete terminal jobs whose completed_at is older than the retention
+        window. Returns the number of rows removed. Paused tickets are
+        deliberately EXEMPT: they must outlive arbitrary human latency to stay
+        continuable; cancelling the run is the remedy for abandoned ones."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            cutoff = int(time.time()) - older_than_seconds
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.delete().where(
+                        table.c.status.in_(["completed", "failed", "cancelled"]),
+                        table.c.completed_at.is_not(None),
+                        table.c.completed_at <= cutoff,
+                    )
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_warning(f"Job queue store: retention cleanup failed: {e}")
+            return 0
 
     # -- Approval methods --
 
@@ -5690,13 +6834,16 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating service account: {str(e)}")
             raise
 
-    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="service_accounts")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == service_account_id)).fetchone()
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting service account: {e}")
@@ -5748,6 +6895,7 @@ class PostgresDb(BaseDb):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="service_accounts")
@@ -5758,6 +6906,8 @@ class PostgresDb(BaseDb):
                 base_query = select(table)
                 if not include_revoked:
                     base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())

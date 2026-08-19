@@ -104,11 +104,21 @@ def test_build_filter_condition(surrealdb_vector):
     result = surrealdb_vector._build_filter_condition(None)
     assert result == ""
 
-    # Test with filters
+    # Test with filters. Keys are bound, not interpolated, so a crafted key cannot widen the scope.
     filters = {"cuisine": "Thai", "type": "soup"}
     result = surrealdb_vector._build_filter_condition(filters)
-    assert "AND meta_data.cuisine = $cuisine" in result
-    assert "AND meta_data.type = $type" in result
+    assert "AND meta_data[$filter_key_0] = $filter_value_0" in result
+    assert "AND meta_data[$filter_key_1] = $filter_value_1" in result
+    assert "cuisine" not in result
+    assert "type" not in result
+
+    params = surrealdb_vector._build_filter_params(filters)
+    assert params == {
+        "filter_key_0": "cuisine",
+        "filter_value_0": "Thai",
+        "filter_key_1": "type",
+        "filter_value_1": "soup",
+    }
 
 
 def test_create(surrealdb_vector, mock_surrealdb_client):
@@ -129,12 +139,12 @@ def test_create(surrealdb_vector, mock_surrealdb_client):
 def test_exists(surrealdb_vector, mock_surrealdb_client):
     """Test exists method"""
     # Test when collection exists
-    mock_surrealdb_client.query.return_value = [{"result": {"tables": {"test_collection": {}}}}]
+    mock_surrealdb_client.query.return_value = {"tables": {"test_collection": {}}}
 
     assert surrealdb_vector.exists() is True
 
     # Test when collection doesn't exist
-    mock_surrealdb_client.query.return_value = [{"result": {"tables": {}}}]
+    mock_surrealdb_client.query.return_value = {"tables": {}}
 
     assert surrealdb_vector.exists() is False
 
@@ -142,12 +152,12 @@ def test_exists(surrealdb_vector, mock_surrealdb_client):
 def test_name_exists(surrealdb_vector, mock_surrealdb_client):
     """Test name existence check"""
     # Test when name exists
-    mock_surrealdb_client.query.return_value = [{"result": [{"name": "tom_kha"}]}]
+    mock_surrealdb_client.query.return_value = [{"meta_data": {"name": "tom_kha"}}]
 
     assert surrealdb_vector.name_exists("tom_kha") is True
 
     # Test when name doesn't exist
-    mock_surrealdb_client.query.return_value = [{"result": []}]
+    mock_surrealdb_client.query.return_value = []
 
     assert surrealdb_vector.name_exists("nonexistent") is False
 
@@ -168,18 +178,26 @@ def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
 
 
 def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
-    surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents)
+    # Assign ids so the record id is deterministic
+    for i, doc in enumerate(sample_documents):
+        doc.id = f"doc-{i}"
+    surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents, user_id="user1")
 
-    # Verify query was called for each document
-    assert mock_surrealdb_client.query.call_count == 3
+    # Schema DEFINEs first, then the scoped dedup check, then one UPSERT per document
+    assert mock_surrealdb_client.query.call_count == 5
+    assert "SELECT * FROM" in mock_surrealdb_client.query.call_args_list[1][0][0]
 
-    # Check args for first call
-    args, _ = mock_surrealdb_client.query.call_args_list[0]
-    assert "UPSERT test_collection" in args[0]
+    # Check args for the first upsert
+    args, _ = mock_surrealdb_client.query.call_args_list[2]
+    assert "UPSERT type::record($table, $record_id)" in args[0]
     assert "SET content = $content" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    # Owner threaded and folded into the record id
+    assert args[1]["table"] == "test_collection"
+    assert args[1]["record_id"] == "doc-0:user1"
+    assert args[1]["user_id"] == "user1"
 
 
 def test_search(surrealdb_vector: SurrealDb, mock_surrealdb_client: MagicMock) -> None:
@@ -238,9 +256,11 @@ def test_delete(surrealdb_vector, mock_surrealdb_client):
 
 def test_extract_result(surrealdb_vector):
     """Test extract result method"""
-    query_result = [{"result": [{"id": 1}, {"id": 2}]}]
-    result = surrealdb_vector._extract_result(query_result)
-    assert result == [{"id": 1}, {"id": 2}]
+    # surrealdb >= 1.0 returns the rows directly, not the legacy {"result": ...} envelope
+    assert surrealdb_vector._extract_result([{"id": 1}, {"id": 2}]) == [{"id": 1}, {"id": 2}]
+    assert surrealdb_vector._extract_result([]) == []
+    assert surrealdb_vector._extract_result({"tables": {}}) == {"tables": {}}
+    assert surrealdb_vector._extract_result(None) == []
 
 
 def test_upsert_available(surrealdb_vector):
@@ -265,13 +285,13 @@ async def test_async_create(async_surrealdb_vector, mock_async_surrealdb_client)
 async def test_async_name_exists(async_surrealdb_vector, mock_async_surrealdb_client):
     """Test async name existence check"""
     # Test when name exists
-    mock_async_surrealdb_client.query.return_value = [{"result": [{"name": "tom_kha"}]}]
+    mock_async_surrealdb_client.query.return_value = [{"meta_data": {"name": "tom_kha"}}]
 
     result = await async_surrealdb_vector.async_name_exists("tom_kha")
     assert result is True
 
     # Test when name doesn't exist
-    mock_async_surrealdb_client.query.return_value = [{"result": []}]
+    mock_async_surrealdb_client.query.return_value = []
 
     result = await async_surrealdb_vector.async_name_exists("nonexistent")
     assert result is False
@@ -296,18 +316,25 @@ async def test_async_insert(async_surrealdb_vector, mock_async_surrealdb_client,
 @pytest.mark.asyncio
 async def test_async_upsert(async_surrealdb_vector, mock_async_surrealdb_client, sample_documents):
     """Test async upserting documents"""
-    await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents)
+    for i, doc in enumerate(sample_documents):
+        doc.id = f"doc-{i}"
+    await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents, user_id="user1")
 
-    # Verify query was called for each document
-    assert mock_async_surrealdb_client.query.await_count == 3
+    # Schema DEFINEs first, then the scoped dedup check, then one UPSERT per document
+    assert mock_async_surrealdb_client.query.await_count == 5
+    assert "SELECT * FROM" in mock_async_surrealdb_client.query.await_args_list[1][0][0]
 
-    # Check args for first call
-    args, kwargs = mock_async_surrealdb_client.query.await_args_list[0]
-    assert "UPSERT test_collection" in args[0]
+    # Check args for the first upsert
+    args, kwargs = mock_async_surrealdb_client.query.await_args_list[2]
+    assert "UPSERT type::record($table, $record_id)" in args[0]
     assert "SET content = $content" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    # Owner threaded and folded into the record id
+    assert args[1]["table"] == "test_collection"
+    assert args[1]["record_id"] == "doc-0:user1"
+    assert args[1]["user_id"] == "user1"
 
 
 @pytest.mark.asyncio
@@ -357,13 +384,13 @@ async def test_async_drop(async_surrealdb_vector, mock_async_surrealdb_client):
 async def test_async_exists(async_surrealdb_vector: SurrealDb, mock_async_surrealdb_client: MagicMock) -> None:
     """Test async exists method"""
     # Test when collection exists
-    mock_async_surrealdb_client.query.return_value = [{"result": {"tables": {"test_collection": {}}}}]
+    mock_async_surrealdb_client.query.return_value = {"tables": {"test_collection": {}}}
 
     result = await async_surrealdb_vector.async_exists()
     assert result is True
 
     # Test when collection doesn't exist
-    mock_async_surrealdb_client.query.return_value = [{"result": {"tables": {}}}]
+    mock_async_surrealdb_client.query.return_value = {"tables": {}}
 
     result = await async_surrealdb_vector.async_exists()
     assert result is False
