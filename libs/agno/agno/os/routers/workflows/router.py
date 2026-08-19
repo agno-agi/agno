@@ -685,6 +685,7 @@ async def handle_workflow_continue_via_websocket(
     websocket: WebSocket,
     message: dict,
     os: "AgentOS",
+    ws_user_context: Optional[Dict[str, Any]] = None,
     ws_auth: Optional[WebSocketAuthContext] = None,
 ):
     """Handle continuing a paused workflow run via WebSocket"""
@@ -694,6 +695,27 @@ async def handle_workflow_continue_via_websocket(
         session_id = message.get("session_id")
         user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
+
+        # Defense-in-depth: an authenticated caller's identity is the token,
+        # never the client frame. The WS dispatcher in router.py already forces
+        # this, but the handler must not trust a client-supplied user_id if
+        # called from any other code path. Mirrors the HTTP route's rule
+        # (request.state.user_id, i.e. the JWT sub): a non-admin token pins
+        # user_id to its sub EVEN WHEN THE SUB IS ABSENT - a sub-less token
+        # under isolation-off must not keep a client-chosen value, or the
+        # client could claim a draft owner's identity at the stamped-version
+        # preview gate below (which the HTTP route denies with actor=None).
+        if ws_user_context:
+            from agno.os.scopes import AgentOSScope
+
+            jwt_user_id = ws_user_context.get("user_id")
+            scopes = ws_user_context.get("scopes", [])
+            is_admin = AgentOSScope.ADMIN.value in scopes or bool(ws_auth and ws_auth.is_admin)
+            if is_admin:
+                user_id = user_id or jwt_user_id
+            else:
+                user_id = jwt_user_id
+
         # Owner scope for DB-backed workflow components on continue.
         # Fails closed (403) for an identity-less token under isolation, like the REST routes.
         try:

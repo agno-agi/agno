@@ -231,3 +231,135 @@ class TestStartWorkflowNeverAdoptsTheClientFrameIdentity:
         )
         assert ws.sent == [{"event": "error", "error": "Workflow wf-draft not found"}]
         assert resolutions == []
+
+
+@pytest.mark.asyncio
+class TestContinueNeverAdoptsTheClientFrameIdentity:
+    """The continue twin derives identity exactly like the start path. A run
+    started against a pinned draft carries that version as a stamp, and continue
+    re-runs the draft-preview gate before trusting it. Without the same pin, a
+    sub-less token under isolation-OFF kept the client frame's user_id and the
+    gate matched the draft OWNER's identity - so naming the owner in the frame
+    resumed their unpublished draft."""
+
+    @staticmethod
+    def _draft_db(tmp_path, owner="victim"):
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="ws-continue-db", db_file=str(tmp_path / "ws_continue.db"))
+        db.create_component_with_config(
+            component_id="wf-draft",
+            component_type=ComponentType.WORKFLOW,
+            name="wf-draft",
+            config={"name": "wf-draft"},
+            stage="draft",
+            user_id=owner,
+        )
+        return db
+
+    @staticmethod
+    def _record_resolution(monkeypatch):
+        """The unpinned call returns the paused-run handle; a version-pinned
+        call means the stamped-draft re-gate PASSED."""
+        from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY
+
+        calls: List[dict] = []
+
+        class PausedWorkflowStub:
+            id = "wf-draft"
+
+            async def aget_run_output(self, **kwargs):
+                return SimpleNamespace(is_paused=True, status=None, metadata={COMPONENT_VERSION_METADATA_KEY: 1})
+
+        def fake_get_workflow_by_id(**kwargs):
+            calls.append(kwargs)
+            if kwargs.get("version") is not None:
+                return None
+            return PausedWorkflowStub()
+
+        monkeypatch.setattr("agno.os.routers.workflows.router.get_workflow_by_id", fake_get_workflow_by_id)
+        return calls
+
+    async def _continue(self, db, frame_user_id, token_user_id):
+        """Continue a stamped paused run as a non-admin JWT caller, isolation OFF."""
+        ws = FakeWebSocket()
+        frame = {"workflow_id": "wf-draft", "run_id": "r-1", "session_id": "s-1"}
+        if frame_user_id is not None:
+            frame["user_id"] = frame_user_id
+        await handle_workflow_continue_via_websocket(
+            ws,
+            frame,
+            SimpleNamespace(workflows=[], db=db, registry=None),
+            ws_user_context={"user_id": token_user_id, "scopes": ["workflows:run"], "payload": {}},
+            ws_auth=WebSocketAuthContext(jwt_enabled=True, is_admin=False, user_isolation_enabled=False),
+        )
+        return ws
+
+    async def test_subless_token_isolation_off_does_not_adopt_the_client_user_id(self, tmp_path, monkeypatch):
+        db = self._draft_db(tmp_path)
+        resolutions = self._record_resolution(monkeypatch)
+        # The client frame claims the draft owner's identity; the token has no sub.
+        ws = await self._continue(db, "victim", None)
+        # Denied at the stamped-version preview gate (actor is the token's None,
+        # not "victim"), and the stamped draft is never resolved.
+        assert ws.sent == [{"event": "error", "error": "Workflow wf-draft not found"}]
+        assert len(resolutions) == 1
+
+    async def test_empty_string_sub_does_not_adopt_the_client_user_id(self, tmp_path, monkeypatch):
+        db = self._draft_db(tmp_path)
+        resolutions = self._record_resolution(monkeypatch)
+        ws = await self._continue(db, "victim", "")
+        assert ws.sent == [{"event": "error", "error": "Workflow wf-draft not found"}]
+        assert len(resolutions) == 1
+
+    async def test_client_frame_never_overrides_a_token_sub(self, tmp_path, monkeypatch):
+        db = self._draft_db(tmp_path)
+        resolutions = self._record_resolution(monkeypatch)
+        ws = await self._continue(db, "victim", "mallory")
+        assert ws.sent == [{"event": "error", "error": "Workflow wf-draft not found"}]
+        assert len(resolutions) == 1
+
+    async def test_token_sub_still_continues_its_own_draft(self, tmp_path, monkeypatch):
+        # Control: the owner's own token clears the gate and reaches the
+        # stamped-draft resolution (which the stub reports as gone) - proving
+        # the pin uses the token identity rather than blanket-denying drafts.
+        db = self._draft_db(tmp_path, owner="victim")
+        resolutions = self._record_resolution(monkeypatch)
+        ws = await self._continue(db, None, "victim")
+        assert ws.sent and "no longer available" in ws.sent[0]["error"]
+        assert len(resolutions) == 2
+
+
+@pytest.mark.asyncio
+class TestDispatcherPassesTheTokenContextToContinue:
+    """The pin only fires when the dispatcher hands the token context down, so
+    pin the wiring as well as the handler."""
+
+    async def test_continue_branch_forwards_ws_user_context(self, tmp_path, monkeypatch):
+        import agno.os.router as os_router
+        from agno.db.sqlite import SqliteDb
+        from agno.os import AgentOS
+        from fastapi.testclient import TestClient
+
+        captured: List[dict] = []
+
+        async def fake_handler(websocket, message, os, **kwargs):
+            captured.append(kwargs)
+            await websocket.send_text(json.dumps({"event": "captured"}))
+
+        monkeypatch.setattr(os_router, "handle_workflow_continue_via_websocket", fake_handler)
+
+        app = AgentOS(
+            db=SqliteDb(id="ws-dispatch-db", db_file=str(tmp_path / "ws_dispatch.db")), telemetry=False
+        ).get_app()
+        with TestClient(app).websocket_connect("/workflows/ws") as ws:
+            ws.send_text(json.dumps({"action": "continue-workflow", "workflow_id": "wf-1", "run_id": "r-1"}))
+            for _ in range(10):
+                frame = json.loads(ws.receive_text())
+                if frame.get("event") == "captured":
+                    break
+            else:
+                raise AssertionError("handler was never reached")
+
+        assert captured and "ws_user_context" in captured[0]
