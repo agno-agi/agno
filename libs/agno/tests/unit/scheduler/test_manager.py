@@ -184,6 +184,13 @@ class TestManagerCallMissingMethod:
             mgr2._call("nonexistent_method")
 
 
+class TestManagerClose:
+    def test_close_handles_partially_initialized_manager(self):
+        manager = ScheduleManager.__new__(ScheduleManager)
+
+        manager.close()
+
+
 # =============================================================================
 # Async API Tests
 # =============================================================================
