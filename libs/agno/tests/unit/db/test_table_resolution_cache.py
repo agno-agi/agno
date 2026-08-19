@@ -156,7 +156,64 @@ def test_create_all_tables_recreates_externally_dropped_table(db):
 
     db._create_all_tables()
     with db.Session() as sess:
-        exists = sess.execute(
-            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agno_memories'")
-        ).scalar()
+        exists = sess.execute(text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agno_memories'")).scalar()
     assert exists == 1
+
+
+def test_fk_dependency_map_covers_every_schema_fk():
+    """Every FK declared in the postgres schemas (the superset across adapters)
+    must have its parent listed in _fk_dependencies, or first-time creation of
+    the dependent table breaks after the parent is invalidated."""
+    from agno.db.postgres.schemas import get_table_schema_definition
+
+    db = SqliteDb(db_url="sqlite:///:memory:")
+    table_types = [
+        "sessions",
+        "runs",
+        "memories",
+        "metrics",
+        "evals",
+        "knowledge",
+        "versions",
+        "components",
+        "component_configs",
+        "component_links",
+        "learnings",
+        "schedules",
+        "schedule_runs",
+        "approvals",
+        "traces",
+        "spans",
+    ]
+    for table_type in table_types:
+        try:
+            schema = get_table_schema_definition(
+                table_type,
+                traces_table_name="agno_traces",
+                db_schema="ai",
+                schedules_table_name="agno_schedules",
+                session_table_name="agno_sessions",
+            )
+        except (ValueError, KeyError):
+            continue
+        declares_fk = bool(schema.get("__foreign_keys__")) or any(
+            isinstance(cfg, dict) and "foreign_key" in cfg for cfg in schema.values()
+        )
+        if declares_fk:
+            assert db._fk_dependencies(table_type), (
+                f"{table_type} declares a foreign key but _fk_dependencies has no entry for it"
+            )
+
+
+def test_down_migration_invalidates_resolved_table(db):
+    """Reverts change table shape too (e.g. dropping user_id); the down path
+    must evict the cached resolution just like up does."""
+    import asyncio
+
+    from agno.db.migrations.manager import MigrationManager
+
+    db._get_table(table_type="sessions", create_table_if_not_found=True)
+    assert db.session_table_name in db._table_cache
+
+    asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="sessions"))
+    assert db.session_table_name not in db._table_cache
