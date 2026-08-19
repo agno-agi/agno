@@ -8,6 +8,7 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass, field
+from enum import Enum
 from inspect import isawaitable, iscoroutinefunction
 from os import getenv
 from pathlib import Path
@@ -111,6 +112,25 @@ class DeviceLoginInfo:
     interval: int
 
 
+class DevicePollStatus(str, Enum):
+    """Outcome of one device-flow poll iteration (RFC 8628 section 3.5)."""
+
+    pending = "PENDING"
+    success = "SUCCESS"
+    denied = "DENIED"
+    expired = "EXPIRED"
+
+
+@dataclass
+class DevicePollResult:
+    """One poll_once outcome: what happened and how long to wait before the next poll."""
+
+    status: DevicePollStatus
+    interval: int  # wait this long before the next poll (bumped +5 after a slow_down)
+    token_data: Optional[Dict[str, Any]] = None  # SUCCESS only: the stored envelope
+    message: Optional[str] = None  # DENIED/EXPIRED: the drafted terminal string
+
+
 @dataclass
 class XAITokenManager:
     """Manages SuperGrok OAuth tokens: device sign-in, encrypted storage, and refresh.
@@ -180,18 +200,44 @@ class XAITokenManager:
         )
         return self._parse_device_response(response)
 
+    def poll_once(self, device_code: str, interval: int = 5) -> DevicePollResult:
+        """One poll of the token endpoint (RFC 8628 section 3.5): no sleeping, no loop.
+
+        The caller owns pacing and deadlines; result.interval is the wait
+        before the next poll. SUCCESS persists through the normal save path.
+        """
+        response = self._post_form(XAI_TOKEN_URL, self._poll_form(device_code))
+        if response.status_code == 200:
+            token_data = self._build_envelope(response.json(), previous=None)
+            self._save(token_data)
+            return DevicePollResult(status=DevicePollStatus.success, interval=interval, token_data=token_data)
+        return self._classify_poll_error(response, interval)
+
+    async def apoll_once(self, device_code: str, interval: int = 5) -> DevicePollResult:
+        """One poll of the token endpoint (RFC 8628 section 3.5): no sleeping, no loop.
+
+        The caller owns pacing and deadlines; result.interval is the wait
+        before the next poll. SUCCESS persists through the normal save path.
+        """
+        response = await self._apost_form(XAI_TOKEN_URL, self._poll_form(device_code))
+        if response.status_code == 200:
+            token_data = self._build_envelope(response.json(), previous=None)
+            await self._asave(token_data)
+            return DevicePollResult(status=DevicePollStatus.success, interval=interval, token_data=token_data)
+        return self._classify_poll_error(response, interval)
+
     def poll_for_token(self, device_code: str, interval: int, deadline: float) -> Dict[str, Any]:
         """Poll the token endpoint until the user approves, per RFC 8628 section 3.5."""
         current_interval = interval
         while True:
             if self.now_fn() > deadline:
                 raise ModelAuthenticationError(_EXPIRED_LOGIN_MESSAGE)
-            response = self._post_form(XAI_TOKEN_URL, self._poll_form(device_code))
-            if response.status_code == 200:
-                token_data = self._build_envelope(response.json(), previous=None)
-                self._save(token_data)
-                return token_data
-            current_interval = self._handle_poll_error(response, current_interval)
+            result = self.poll_once(device_code, current_interval)
+            if result.status == DevicePollStatus.success and result.token_data is not None:
+                return result.token_data
+            if result.status in (DevicePollStatus.denied, DevicePollStatus.expired) and result.message is not None:
+                raise ModelAuthenticationError(result.message)
+            current_interval = result.interval
             time.sleep(current_interval)
 
     async def apoll_for_token(self, device_code: str, interval: int, deadline: float) -> Dict[str, Any]:
@@ -200,12 +246,12 @@ class XAITokenManager:
         while True:
             if self.now_fn() > deadline:
                 raise ModelAuthenticationError(_EXPIRED_LOGIN_MESSAGE)
-            response = await self._apost_form(XAI_TOKEN_URL, self._poll_form(device_code))
-            if response.status_code == 200:
-                token_data = self._build_envelope(response.json(), previous=None)
-                await self._asave(token_data)
-                return token_data
-            current_interval = self._handle_poll_error(response, current_interval)
+            result = await self.apoll_once(device_code, current_interval)
+            if result.status == DevicePollStatus.success and result.token_data is not None:
+                return result.token_data
+            if result.status in (DevicePollStatus.denied, DevicePollStatus.expired) and result.message is not None:
+                raise ModelAuthenticationError(result.message)
+            current_interval = result.interval
             await asyncio.sleep(current_interval)
 
     @staticmethod
@@ -233,17 +279,23 @@ class XAITokenManager:
         )
 
     @staticmethod
-    def _handle_poll_error(response: httpx.Response, current_interval: int) -> int:
-        """Apply RFC 8628 section 3.5: wait on pending, back off on slow_down, raise on the rest."""
+    def _classify_poll_error(response: httpx.Response, interval: int) -> DevicePollResult:
+        """Classify a non-200 poll response per RFC 8628 section 3.5; unknown errors raise."""
         error = XAITokenManager._error_code(response)
         if error == "authorization_pending":
-            return current_interval
+            return DevicePollResult(status=DevicePollStatus.pending, interval=interval)
         if error == "slow_down":
-            return current_interval + 5  # RFC 8628 section 3.5 mandates +5 seconds
+            # RFC 8628 section 3.5 mandates +5 seconds; same caller action as
+            # pending (wait, poll again), so not a separate status
+            return DevicePollResult(status=DevicePollStatus.pending, interval=interval + 5)
         if error == "access_denied":
-            raise ModelAuthenticationError("SuperGrok sign-in was denied in the browser.")
+            return DevicePollResult(
+                status=DevicePollStatus.denied,
+                interval=interval,
+                message="SuperGrok sign-in was denied in the browser.",
+            )
         if error == "expired_token":
-            raise ModelAuthenticationError(_EXPIRED_LOGIN_MESSAGE)
+            return DevicePollResult(status=DevicePollStatus.expired, interval=interval, message=_EXPIRED_LOGIN_MESSAGE)
         raise ModelAuthenticationError(f"SuperGrok sign-in failed: {response.text}")
 
     @staticmethod
@@ -523,9 +575,43 @@ class XAITokenManager:
         except OSError as e:
             log_warning(f"Could not persist SuperGrok token to {path}: {e}. Token kept in memory only.")
 
+    def sign_out(self) -> None:
+        """Forget the stored SuperGrok session on this machine.
+
+        Wipes the stored row (db or file), the process cache entry, and the
+        in-memory copy - durable copy first. Idempotent when nothing is
+        stored. Never calls the revocation endpoint: the grant lives on
+        server-side until it expires or is revoked from the account page.
+        """
+        self._delete_stored_token()
+
+    async def asign_out(self) -> None:
+        """Forget the stored SuperGrok session on this machine.
+
+        Wipes the stored row (db or file), the process cache entry, and the
+        in-memory copy - durable copy first. Idempotent when nothing is
+        stored. Never calls the revocation endpoint: the grant lives on
+        server-side until it expires or is revoked from the account page.
+        """
+        await self._adelete_stored_token()
+
     def _delete_stored_token(self) -> None:
-        self._memory_row = None
+        # Durable copy first: the persisted row dies before the in-process
+        # copies, so no later process can resurrect a session whose live
+        # state is already gone
+        self._delete_stored_row()
         _token_cache.pop(self._cache_key(), None)
+        self._memory_row = None
+
+    async def _adelete_stored_token(self) -> None:
+        # Durable copy first: the persisted row dies before the in-process
+        # copies, so no later process can resurrect a session whose live
+        # state is already gone
+        await self._adelete_stored_row()
+        _token_cache.pop(self._cache_key(), None)
+        self._memory_row = None
+
+    def _delete_stored_row(self) -> None:
         if self.db is not None:
             if iscoroutinefunction(self.db.delete_auth_token):
                 log_warning(_SYNC_PATH_ASYNC_DB_WARNING)
@@ -544,9 +630,7 @@ class XAITokenManager:
         except OSError as e:
             log_debug(f"Could not delete SuperGrok token file: {e}")
 
-    async def _adelete_stored_token(self) -> None:
-        self._memory_row = None
-        _token_cache.pop(self._cache_key(), None)
+    async def _adelete_stored_row(self) -> None:
         if self.db is not None:
             try:
                 if not await _maybe_await(self.db.delete_auth_token(*self._store_key())):
