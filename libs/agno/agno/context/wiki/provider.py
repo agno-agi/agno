@@ -209,6 +209,17 @@ class WikiContextProvider(ContextProvider):
         return self._ensure_read_agent()
 
     def _update_tool(self):
+        """Override base _update_tool for wiki's sync → run → commit lifecycle.
+
+        Base class _update_tool just runs the sub-agent and returns. Wiki needs:
+        1. Sync before writing (pull latest from remote)
+        2. Hold git_lock during write (prevent race with scheduled syncs)
+        3. Commit after writing (auto-generate commit message, push)
+        4. Append commit note to the result
+
+        Uses the same streaming gating as base: stream_sub_agent_events=True
+        streams via _arun_sub_agent_stream, False runs via _arun_sub_agent.
+        """
         from agno.context.provider import serialize_answer
 
         provider = self
