@@ -4207,6 +4207,7 @@ class SqliteDb(BaseDb):
                         target_type=component_type,
                         target_id=component_id,
                         reason=f"target_archived:{component_type}:{component_id}",
+                        any_type=True,
                     )
                     if cascade_stats is not None:
                         cascade_stats["schedules_disabled"] = disabled
@@ -6459,6 +6460,7 @@ class SqliteDb(BaseDb):
         target_type: str,
         target_id: str,
         reason: Optional[str] = None,
+        any_type: bool = False,
     ) -> int:
         """The cascade write, run on a session the caller already holds.
 
@@ -6467,16 +6469,32 @@ class SqliteDb(BaseDb):
         """
         from agno.db.schemas.scheduler import build_run_endpoint
 
-        endpoint = build_run_endpoint(target_type, target_id)
-        # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
-        # "/agents/x/runs/" is a valid run endpoint that plain equality would
-        # miss - matching both spellings keeps the cascade from leaking rows.
-        endpoints = [endpoint, endpoint + "/"]
+        # A component's type is rewritable (upsert_component takes one, and the
+        # storage layer re-upserts it on every save), while component_id is the
+        # primary key and unique across all three types. A cascade keyed on the
+        # CURRENT type therefore matches nothing once the type has changed --
+        # neither the provenance pair nor the endpoint -- and the archive
+        # leaves the schedule armed at a target that is gone. ``any_type``
+        # keys on the id alone, which is what a delete means.
+        types = ("agent", "team", "workflow") if any_type else (target_type,)
+        endpoints = []
+        for candidate in types:
+            endpoint = build_run_endpoint(candidate, target_id)
+            # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+            # "/agents/x/runs/" is a valid run endpoint that plain equality
+            # would miss - matching both spellings keeps the cascade from
+            # leaking rows.
+            endpoints.extend((endpoint, endpoint + "/"))
+        target_match = (
+            table.c.target_id == target_id
+            if any_type
+            else and_(table.c.target_type == target_type, table.c.target_id == target_id)
+        )
         result = sess.execute(
             table.update()
             .where(
                 or_(
-                    and_(table.c.target_type == target_type, table.c.target_id == target_id),
+                    target_match,
                     table.c.endpoint.in_(endpoints),
                 ),
                 table.c.enabled.is_(True),

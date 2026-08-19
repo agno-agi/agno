@@ -634,3 +634,112 @@ def test_dependents_read_shares_one_query_with_the_public_reader(db):
 
     assert [d["parent_component_id"] for d in in_session] == ["root"]
     assert in_session == db.get_dependents("leaf", active_parents_only=True)
+
+
+class TestTheCascadeSurvivesATypeChange:
+    """A component's type is rewritable; its id is not.
+
+    upsert_component takes a component_type, and the storage layer re-upserts
+    one on every save, so the type recorded when a schedule was created can
+    stop matching the row. A cascade -- or a liveness read -- keyed on the
+    type then matches nothing, reports zero disabled, and leaves the poller
+    firing at a component that is gone. component_id is the primary key and
+    unique across all three types, which is what a delete actually means.
+    """
+
+    def test_the_cascade_still_disables_after_a_type_flip(self, db):
+        _agent(db, "shifter")
+        _arm_schedule(db, "sched-flip", "agent", "shifter")
+
+        db.upsert_component(component_id="shifter", component_type=ComponentType.TEAM, name="shifter")
+        assert db.delete_component("shifter") is True
+
+        assert db.get_schedule("sched-flip")["enabled"] in (False, 0)
+
+    def test_an_untagged_row_on_the_old_endpoint_is_disabled_too(self, db):
+        _agent(db, "shifter2")
+        _arm_schedule(db, "sched-flip-2", "agent", "shifter2", tagged=False)
+
+        db.upsert_component(component_id="shifter2", component_type=ComponentType.TEAM, name="shifter2")
+        assert db.delete_component("shifter2") is True
+
+        assert db.get_schedule("sched-flip-2")["enabled"] in (False, 0)
+
+    def test_an_unrelated_schedule_is_left_alone(self, db):
+        """Keying on the id must not widen the blast radius."""
+        _agent(db, "shifter3")
+        _agent(db, "bystander")
+        _arm_schedule(db, "sched-flip-3", "agent", "shifter3")
+        _arm_schedule(db, "sched-bystander", "agent", "bystander")
+
+        assert db.delete_component("shifter3") is True
+
+        assert db.get_schedule("sched-bystander")["enabled"] in (True, 1)
+
+    def test_the_enable_guard_still_sees_the_archived_target(self, db):
+        """The refusal reads the row, and must not filter on the stale type."""
+        from agno.db.schemas.scheduler import Schedule
+        from agno.tools.scheduler import archived_target_refusal
+
+        _agent(db, "shifter4")
+        _arm_schedule(db, "sched-flip-4", "agent", "shifter4")
+        db.upsert_component(component_id="shifter4", component_type=ComponentType.TEAM, name="shifter4")
+        assert db.delete_component("shifter4") is True
+
+        schedule = Schedule.from_dict(db.get_schedule("sched-flip-4"))
+        assert archived_target_refusal(db, schedule) == ("agent", "shifter4")
+
+
+class TestTheEnableGuardCrossesOwnersLikeTheCascadeDoes:
+    """The cascade disables every schedule aimed at the archived component,
+    whoever owns it. The enable guard has to read the same target the same
+    way, or the one caller whose schedule was disabled is exactly the caller
+    allowed to re-arm it.
+
+    Share-on-publish makes this reachable: bob may legitimately schedule
+    alice's published agent, and an archived row is invisible to bob.
+    """
+
+    def _bobs_schedule_on_alices_archived_agent(self, db):
+        db.create_component_with_config(
+            component_id="alice-pub",
+            component_type=ComponentType.AGENT,
+            name="alice-pub",
+            config={"name": "alice-pub"},
+            stage="published",
+            user_id="alice",
+        )
+        _arm_schedule(db, "bob-sched", "agent", "alice-pub")
+        assert db.delete_component("alice-pub", user_id="alice") is True
+        return "bob-sched"
+
+    def test_the_cascade_reaches_the_other_owners_schedule(self, db):
+        schedule_id = self._bobs_schedule_on_alices_archived_agent(db)
+        assert db.get_schedule(schedule_id)["enabled"] in (False, 0)
+
+    def test_the_other_owner_cannot_re_arm_it(self, db):
+        from agno.db.schemas.scheduler import Schedule
+        from agno.tools.scheduler import archived_target_refusal
+
+        schedule_id = self._bobs_schedule_on_alices_archived_agent(db)
+        schedule = Schedule.from_dict(db.get_schedule(schedule_id))
+
+        # bob cannot see the archived row at all -- that is the whole point.
+        assert db.get_component("alice-pub", user_id="bob", include_deleted=True) is None
+        assert archived_target_refusal(db, schedule, user_id="bob") == ("agent", "alice-pub")
+
+    def test_a_live_target_is_still_enableable(self, db):
+        from agno.db.schemas.scheduler import Schedule
+        from agno.tools.scheduler import archived_target_refusal
+
+        db.create_component_with_config(
+            component_id="alice-live",
+            component_type=ComponentType.AGENT,
+            name="alice-live",
+            config={"name": "alice-live"},
+            stage="published",
+            user_id="alice",
+        )
+        _arm_schedule(db, "bob-live", "agent", "alice-live")
+        schedule = Schedule.from_dict(db.get_schedule("bob-live"))
+        assert archived_target_refusal(db, schedule, user_id="bob") is None
