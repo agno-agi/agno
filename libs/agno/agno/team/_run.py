@@ -16,6 +16,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -134,6 +135,8 @@ _MEMBER_CANCEL_BYPASS_EVENT_TYPES = (
 )
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
+    from agno.run.requirement import RunRequirement
     from agno.team._run_options import ResolvedRunOptions
     from agno.team.team import Team
 
@@ -5309,34 +5312,183 @@ def _merge_tools_preserving_approval(
     return merged
 
 
+def _fill_user_input_answers(stored_schema: Optional[List[Any]], wire_schema: Optional[List[Any]]) -> bool:
+    """Fill the stored schema's open fields from the wire copy, keyed by field name.
+
+    Returns True if a field the model had left open was filled.
+    """
+    if not stored_schema or not wire_schema:
+        return False
+    answers = {field.name: field.value for field in wire_schema if getattr(field, "value", None) is not None}
+    filled = False
+    for field in stored_schema:
+        if field.value is None and field.name in answers:
+            field.value = answers[field.name]
+            filled = True
+    return filled
+
+
+def _fill_user_feedback_answers(stored_schema: Optional[List[Any]], wire_schema: Optional[List[Any]]) -> bool:
+    """Fill the stored schema's unanswered questions from the wire copy, keyed by question.
+
+    Returns True if a question the model had left open was answered.
+    """
+    if not stored_schema or not wire_schema:
+        return False
+    selections = {
+        question.question: question.selected_options
+        for question in wire_schema
+        if getattr(question, "selected_options", None) is not None
+    }
+    filled = False
+    for question in stored_schema:
+        if question.selected_options is None and question.question in selections:
+            question.selected_options = selections[question.question]
+            if question.options:
+                for option in question.options:
+                    option.selected = option.label in question.selected_options
+            filled = True
+    return filled
+
+
+def _merge_requirement_decision(stored: Any, wire: Any) -> None:
+    """Copy the client's decision state onto the canonical stored requirement.
+
+    Only decision fields cross over: confirmation, user input and feedback
+    answers, and — solely for external-execution tools — the result. Identity
+    and routing (tool_execution, tool_args, member provenance) stay the
+    stored requirement's own; a result on a non-external tool is dropped
+    because honoring it would suppress the confirmed tool's execution.
+
+    The schemas are filled field by field, never rebound. The wire copy is a
+    client document: rebinding it would put client-chosen field NAMES into the
+    schema that ``handle_user_input_update`` writes into ``tool_args``
+    immediately before the call, so a renamed field overwrites an argument the
+    model fixed at pause time. Answers therefore land by stored field name, and
+    only in fields the model left open.
+
+    ``answered`` is inferred from the stored schema — when this merge fills
+    the last open field — and never copied off the wire while a field is
+    still open, which would otherwise run the gated tool with its fields
+    still empty. Once nothing is open (the schema was answered here, was
+    fully prefilled by the model at pause time, or never existed) the wire's
+    explicit flag stands: a prefilled pause has no open field to fill, so
+    the flag is its only accept gesture.
+    """
+    stored_te = getattr(stored, "tool_execution", None)
+    wire_te = getattr(wire, "tool_execution", None)
+
+    # Whether the model left anything open, read before any answer lands. The
+    # requirement-level schema and tool_execution's are often the same list
+    # object, so "did this call fill something" cannot carry the signal — the
+    # first fill would consume it and the run would never read as answered.
+    stored_input_schema = getattr(stored_te, "user_input_schema", None) if stored_te is not None else None
+    stored_feedback_schema = getattr(stored_te, "user_feedback_schema", None) if stored_te is not None else None
+    input_was_open = any(field.value is None for field in stored_input_schema or [])
+    feedback_was_open = any(question.selected_options is None for question in stored_feedback_schema or [])
+
+    for attr in ("confirmation", "confirmation_note"):
+        if getattr(wire, attr, None) is not None:
+            setattr(stored, attr, getattr(wire, attr))
+    _fill_user_input_answers(getattr(stored, "user_input_schema", None), getattr(wire, "user_input_schema", None))
+    _fill_user_feedback_answers(
+        getattr(stored, "user_feedback_schema", None), getattr(wire, "user_feedback_schema", None)
+    )
+    if stored_te is not None and wire_te is not None:
+        for attr in ("confirmed", "confirmation_note"):
+            if getattr(wire_te, attr, None) is not None:
+                setattr(stored_te, attr, getattr(wire_te, attr))
+        # Dispatch reads only tool_execution's schema, so answers sent at either
+        # level have to reach it.
+        _fill_user_input_answers(stored_input_schema, wire_te.user_input_schema)
+        _fill_user_input_answers(stored_input_schema, getattr(wire, "user_input_schema", None))
+        _fill_user_feedback_answers(stored_feedback_schema, wire_te.user_feedback_schema)
+        _fill_user_feedback_answers(stored_feedback_schema, getattr(wire, "user_feedback_schema", None))
+        if stored_te.answered is None:
+            input_open_now = any(field.value is None for field in stored_input_schema or [])
+            feedback_open_now = any(question.selected_options is None for question in stored_feedback_schema or [])
+            if input_was_open and not input_open_now:
+                stored_te.answered = True
+            elif feedback_was_open and not feedback_open_now:
+                stored_te.answered = True
+            elif getattr(wire_te, "answered", None) is True and not input_open_now and not feedback_open_now:
+                # A schema the model prefilled completely was never open, so
+                # the fill-based inference above can never fire for it. The
+                # client's explicit flag is the accept gesture for such a
+                # pause; without honoring it the run could never resume. A
+                # still-open field keeps the flag ignored — answering is the
+                # schema's job, not the flag's.
+                #
+                # Only True is a gesture. Writing a wire False would close the
+                # `answered is None` guard above for good, and nothing ever
+                # re-opens it: the pause would stay unresumable for the rest of
+                # the session, with no way for the client to recover.
+                stored_te.answered = wire_te.answered
+        if getattr(stored_te, "external_execution_required", None):
+            if getattr(wire_te, "result", None) is not None:
+                stored_te.result = wire_te.result
+            # The result and the flag that says it is a failure travel together:
+            # binding the result alone rebinds a frontend's reported error as a
+            # success, and the tool message renders it as one.
+            if getattr(wire_te, "tool_call_error", None) is not None:
+                stored_te.tool_call_error = wire_te.tool_call_error
+    if (
+        stored_te is not None
+        and getattr(stored_te, "external_execution_required", None)
+        and getattr(wire, "external_execution_result", None) is not None
+    ):
+        stored.external_execution_result = wire.external_execution_result
+
+
 def _backfill_approval_to_requirements(
     run_response: Any,
     old_requirements: Optional[List[Any]] = None,
 ) -> None:
-    """Restore approval metadata on requirements' tool_execution objects after a continue payload merge.
+    """Bind the continue payload's requirements to the stored originals.
 
-    During continue_run the client's requirements replace the session originals,
-    but approval_type/approval_id are typically absent from the client payload.
-    This function copies those fields back from two sources (checked in priority order):
+    Requirements arrive from the wire (to_dict() strips None values, raw
+    dicts are accepted), so every field on them is unverified client input.
+    When the pre-overwrite stored requirements are available, each payload
+    entry must bind one-to-one to a stored requirement — matched by
+    requirement id, falling back to tool_call_id only when the supplied id
+    matches no stored requirement (ids are client-optional and regenerate on
+    deserialization, so an unknown id is indistinguishable from an absent
+    one) and exactly one stored requirement carries that tool call — and
+    the STORED requirement becomes the object routing sees, with only the
+    client's decision state merged onto it (_merge_requirement_decision).
+    Trusting the wire copy instead mis-executes: a swapped or duplicated id
+    binds one member's approved arguments to another member's tool.
 
-    1. run_response.tools — covers team-level approval tools whose metadata was
-       already preserved by _merge_tools_preserving_approval.
-    2. old_requirements (the pre-overwrite session requirements) — covers member-level
-       approval tools where run_response.tools only contains delegate_task_to_member
-       entries that have no approval_type. The original session requirements carry it.
+    Raises RunNotContinuableError — with the run left paused — for a payload
+    entry whose matched id names a different tool call than the entry carries
+    (a conflicting identity must not fall back to the tool call), that is
+    ambiguous (several stored requirements share its tool_call_id and no id
+    matches), matches no stored requirement, or maps a stored requirement
+    that another entry already claimed.
+
+    Without stored requirements (a caller-supplied bare run object), the
+    payload is kept as-is and only approval metadata is backfilled from
+    run_response.tools, whose approval fields _merge_tools_preserving_approval
+    already preserved.
     """
     reqs = getattr(run_response, "requirements", None)
     if not reqs:
         return
 
-    # Build lookup from both sources
+    # Build lookups from both sources
     by_id: Dict[str, Any] = {}
+    old_by_req_id: Dict[str, Any] = {}
+    old_by_tool_call_id: Dict[str, List[Any]] = {}
     # Old requirements first (lower priority)
     if old_requirements:
         for old_req in old_requirements:
+            old_req_id = getattr(old_req, "id", None)
+            if old_req_id:
+                old_by_req_id[old_req_id] = old_req
             old_te = getattr(old_req, "tool_execution", None)
             if old_te and old_te.tool_call_id:
                 by_id[old_te.tool_call_id] = old_te
+                old_by_tool_call_id.setdefault(old_te.tool_call_id, []).append(old_req)
     # run_response.tools second (higher priority, overwrites)
     for t in getattr(run_response, "tools", None) or []:
         if t.tool_call_id and getattr(t, "approval_type", None) is not None:
@@ -5349,6 +5501,207 @@ def _backfill_approval_to_requirements(
             for attr in ("approval_type", "approval_id"):
                 if getattr(te, attr, None) is None and getattr(src, attr, None) is not None:
                     setattr(te, attr, getattr(src, attr))
+
+    if not old_requirements:
+        return
+
+    run_id = getattr(run_response, "run_id", None)
+    matched: Set[int] = set()
+    bindings: List[Tuple[Any, Any]] = []
+    for req in reqs:
+        te = getattr(req, "tool_execution", None)
+        tool_call_id = te.tool_call_id if te is not None else None
+        old_req = old_by_req_id.get(getattr(req, "id", None) or "")
+        if old_req is not None and tool_call_id:
+            old_te = getattr(old_req, "tool_execution", None)
+            if old_te is not None and old_te.tool_call_id and old_te.tool_call_id != tool_call_id:
+                # A matched id whose tool call disagrees is a conflicting
+                # identity, not a fallback case: dropping the id match here
+                # would bind the client's decision to whichever requirement
+                # owns the payload's tool call — another member's tool.
+                raise RunNotContinuableError(
+                    f"Cannot continue run {run_id}: the requirement with id '{getattr(req, 'id', None)}' "
+                    f"names tool call '{tool_call_id}', but the stored requirement with that id belongs "
+                    f"to tool call '{old_te.tool_call_id}'. Resend the requirements exactly as issued. "
+                    "The run remains paused."
+                )
+        if old_req is None and tool_call_id:
+            candidates = old_by_tool_call_id.get(tool_call_id, [])
+            if len(candidates) == 1:
+                old_req = candidates[0]
+            elif len(candidates) > 1:
+                raise RunNotContinuableError(
+                    f"Cannot continue run {run_id}: the requirement for tool call '{tool_call_id}' "
+                    f"matches {len(candidates)} stored requirements and carries no matching "
+                    "requirement id. Resend the requirements with their original 'id' values. "
+                    "The run remains paused."
+                )
+        if old_req is None:
+            raise RunNotContinuableError(
+                f"Cannot continue run {run_id}: the requirement with id '{getattr(req, 'id', None)}' "
+                f"and tool call '{tool_call_id}' matches no stored requirement of this run. "
+                "The run remains paused."
+            )
+        if id(old_req) in matched:
+            raise RunNotContinuableError(
+                f"Cannot continue run {run_id}: two payload requirements both resolve to the stored "
+                f"requirement '{getattr(old_req, 'id', None)}'. The run remains paused."
+            )
+        matched.add(id(old_req))
+        bindings.append((old_req, req))
+
+    # Nothing is written until the whole payload has bound. Merging inside the
+    # loop above would leave the entries before a refusal holding the client's
+    # decision, and the refusal restores list references, not field values — so
+    # a bare retry of a rejected request would execute the tools that bound
+    # before the bad entry.
+    for old_req, req in bindings:
+        _merge_requirement_decision(old_req, req)
+    run_response.requirements = [old_req for old_req, _ in bindings]
+
+
+_REQUIREMENT_DECISION_FIELDS = ("confirmation", "confirmation_note", "external_execution_result")
+_TOOL_EXECUTION_DECISION_FIELDS = ("confirmed", "confirmation_note", "answered", "result", "tool_call_error")
+
+
+def _requirement_decision_slots(requirements: Optional[List[Any]]) -> Iterator[Tuple[Any, str]]:
+    """Yield every (object, attribute) pair _merge_requirement_decision writes.
+
+    The merge fills schemas in place and never rebinds a list, so the objects
+    reached here before the merge are the same ones it writes to.
+    """
+    for req in requirements or []:
+        for attr in _REQUIREMENT_DECISION_FIELDS:
+            yield req, attr
+        for holder in (req, getattr(req, "tool_execution", None)):
+            if holder is None:
+                continue
+            if holder is not req:
+                for attr in _TOOL_EXECUTION_DECISION_FIELDS:
+                    yield holder, attr
+            for field in getattr(holder, "user_input_schema", None) or []:
+                yield field, "value"
+            for question in getattr(holder, "user_feedback_schema", None) or []:
+                yield question, "selected_options"
+                for option in getattr(question, "options", None) or []:
+                    yield option, "selected"
+
+
+def _snapshot_requirement_decisions(requirements: Optional[List[Any]]) -> List[Tuple[Any, str, Any]]:
+    """Record the stored requirements' decision state before a payload is merged."""
+    return [(obj, attr, getattr(obj, attr, None)) for obj, attr in _requirement_decision_slots(requirements)]
+
+
+def _restore_requirement_decisions(snapshot: List[Tuple[Any, str, Any]]) -> None:
+    """Put the decision state recorded by _snapshot_requirement_decisions back.
+
+    Restoring the requirements list alone is not enough for a gate that refuses
+    a continue after the payload has bound: the entries on that list are the
+    stored requirements the merge wrote into, so the client's decision would
+    survive a refusal the caller was told left the run untouched.
+    """
+    for obj, attr, value in snapshot:
+        setattr(obj, attr, value)
+
+
+def _apply_requirements_payload(
+    run_response: TeamRunOutput,
+    requirements: List[Any],
+) -> Tuple[Optional[List["RunRequirement"]], Optional[List[Any]], List[Tuple[Any, str, Any]]]:
+    """Apply a continue payload to the run object, keeping it intact on refusal.
+
+    Normalizes the payload, binds it to the stored requirements
+    (_backfill_approval_to_requirements), and merges the bound tool
+    executions into run_response.tools. On a refusal the run object gets its
+    requirements, tools, and decision fields back before the raise: the
+    refusal asks the client to resend the stored ids, which a caller-supplied
+    live run object only still has if nothing was overwritten — and a merge
+    that raised mid-payload has already banked the earlier entries' decisions
+    onto the stored requirements.
+
+    Returns (old_requirements, old_tools, decisions) so the caller can restore
+    all three if a later step of its payload apply raises.
+    """
+    old_requirements = run_response.requirements
+    old_tools = run_response.tools
+    decisions = _snapshot_requirement_decisions(old_requirements)
+    run_response.requirements = _normalize_requirements_payload(requirements)
+    try:
+        _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+    except Exception:
+        run_response.requirements = old_requirements
+        run_response.tools = old_tools
+        # The merge loop can raise on a malformed entry after earlier entries
+        # already wrote their decisions onto the stored requirements; the list
+        # references alone leave those banked.
+        _restore_requirement_decisions(decisions)
+        raise
+    # Merge the bound tool executions into the run's tools, preserving
+    # approval fields the FE omits. After binding these are the stored
+    # requirements' own tool executions carrying the client's decisions.
+    updated_tools = [req.tool_execution for req in run_response.requirements or [] if req.tool_execution is not None]
+    if updated_tools and run_response.tools:
+        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools if tool.tool_call_id}
+        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
+    elif updated_tools:
+        run_response.tools = updated_tools
+    return old_requirements, old_tools, decisions
+
+
+def _reclaim_own_requirements(
+    team: "Team", requirements: Optional[List[Any]], continuing_run_id: Optional[str]
+) -> Optional[List[Any]]:
+    """Clear the member stamp from requirements that belong to this team itself.
+
+    When a sub-team's OWN tool pauses, _propagate_member_pause stamps the
+    sub-team's member id on the lifted requirement so the parent can route it
+    back down. Once the requirement arrives at the team it names, the stamp's
+    job is done: the requirement is this team's own, team-level requirement.
+    Without reclaiming it, member routing looks the team's own id up among
+    its members, finds nothing, and refuses the continue.
+
+    A matching id alone does not prove ownership: a member may share the
+    team's id, or its url-safe name (get_member_id falls back to the name).
+    The requirement is the team's own only if it also points at the run being
+    continued at this dispatch level — _propagate_member_pause stamps
+    member_run_id alongside member_agent_id, and for a member's requirement
+    that is the member's run id, never this team's. A requirement without
+    member_run_id is never reclaimed: to_dict() strips None values, so a wire
+    payload may omit the field, and _backfill_approval_to_requirements
+    restores it from the stored session requirements before dispatch reaches
+    this function.
+
+    Returns the list to route with. A reclaimed requirement is de-stamped on a
+    COPY: when a parent team routes a sub-team's lifted requirement down, the
+    objects on the sub-team's run are the parent's own, and the parent still
+    lists them. De-stamping in place would leave the parent holding what looks
+    like a team-level requirement of its own, so if anything below this
+    dispatch refuses, the caller's run object comes back mis-routed — the very
+    retry the refusal promises would then skip the approved tool."""
+    from copy import copy
+
+    from agno.utils.team import get_member_id
+
+    if not requirements:
+        return requirements
+    if not any(getattr(req, "member_agent_id", None) is not None for req in requirements):
+        return requirements
+    own_id = get_member_id(team)
+    if not own_id:
+        return requirements
+    reclaimed: List[Any] = []
+    for req in requirements:
+        member_run_id = getattr(req, "member_run_id", None)
+        if (
+            getattr(req, "member_agent_id", None) == own_id
+            and member_run_id is not None
+            and member_run_id == continuing_run_id
+        ):
+            req = copy(req)
+            req.member_agent_id = None
+            req.member_agent_name = None
+        reclaimed.append(req)
+    return reclaimed
 
 
 def _has_member_requirements(requirements: List[Any]) -> bool:
@@ -5383,6 +5736,227 @@ def _member_continue_kwargs_from_run_context(run_context: Optional[RunContext]) 
     return kwargs
 
 
+def _team_run_references_member_run(team_run: TeamRunOutput, member_run_id: str) -> bool:
+    """True if the team run owns member_run_id — as a run in its
+    member-response subtree or as a requirement it carries."""
+    stack: List[Union[TeamRunOutput, RunOutput]] = list(team_run.member_responses or [])
+    while stack:
+        candidate = stack.pop()
+        if getattr(candidate, "run_id", None) == member_run_id:
+            return True
+        stack.extend(getattr(candidate, "member_responses", None) or [])
+    for req in team_run.requirements or []:
+        if getattr(req, "member_run_id", None) == member_run_id:
+            return True
+    return False
+
+
+def _resolve_member_run_output_for_continue(
+    member: Union["Agent", "Team"],
+    reqs: List["RunRequirement"],
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> Optional[Union[RunOutput, TeamRunOutput]]:
+    """Resolve the paused run output to hand to the routed member's continue_run.
+
+    For an agent member this is its paused RunOutput; for a sub-team member it
+    is the sub-team's paused TeamRunOutput (the sub-team's own continue_run
+    routes deeper from there). Sources, in order:
+
+    1. The ``_member_run_response`` reference stored by _propagate_member_pause,
+       which resolves without a session or DB lookup. The reference is validated
+       by IDENTITY against the routed member: each propagation level points it
+       at the run that surfaced the pause AT that level, so below the top level
+       it references an ancestor team run, not the routed member's run. An
+       invalid reference falls through to the lookups below, which resolve
+       level by level.
+    2. Same-process resume: the paused member output still held on the live
+       team run's member_responses.
+    3. After process restart: the team session's sibling runs persisted in the
+       DB (member_responses is only assembled at runtime).
+    4. Sub-team members only: the direct child team run that owns the
+       requirement — the deep member's paused run lives inside it, persisted
+       there by save_session's paused-run exemption.
+    """
+    from agno.team.team import Team
+    from agno.utils.team import get_member_id
+
+    member_run_output = getattr(reqs[0], "_member_run_response", None) if reqs else None
+    member_run_id = reqs[0].member_run_id if reqs else None
+    routed_to_team = isinstance(member, Team)
+
+    if member_run_output is not None and member_run_id is not None:
+        if routed_to_team:
+            valid = (
+                isinstance(member_run_output, TeamRunOutput)
+                and member_run_output.run_id != run_response.run_id
+                and (
+                    member_run_output.run_id == member_run_id
+                    or (member_run_output.team_id is not None and member_run_output.team_id == get_member_id(member))
+                )
+            )
+        else:
+            valid = getattr(member_run_output, "run_id", None) == member_run_id
+        if not valid:
+            member_run_output = None
+
+    if member_run_output is None and member_run_id:
+        if run_response.member_responses:
+            for sibling_response in run_response.member_responses:
+                if getattr(sibling_response, "run_id", None) == member_run_id:
+                    member_run_output = sibling_response
+                    break
+        if member_run_output is None and session is not None and session.runs:
+            for session_run in session.runs:
+                if getattr(session_run, "run_id", None) == member_run_id:
+                    member_run_output = session_run  # type: ignore[assignment]
+                    break
+        if member_run_output is None and routed_to_team:
+            candidates: List[Union[TeamRunOutput, RunOutput]] = list(run_response.member_responses or [])
+            if session is not None and session.runs:
+                candidates.extend(r for r in session.runs if getattr(r, "parent_run_id", None) == run_response.run_id)
+            for candidate in candidates:
+                if not isinstance(candidate, TeamRunOutput) or candidate.run_id == run_response.run_id:
+                    continue
+                if _team_run_references_member_run(candidate, member_run_id):
+                    member_run_output = candidate
+                    break
+
+    return member_run_output
+
+
+def _group_requirements_for_continue(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext],
+    _depth: int = 0,
+) -> List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]]:
+    """Group HITL requirements by the paused run that will continue them.
+
+    Requirements are keyed by (deep member agent id, deep member run id) and
+    resolved to their target run up front. Groups whose requirements resolve
+    to the SAME sub-team run are merged into one continue_run call — that
+    run's own dispatch routes them deeper; a second call on the same run
+    would hit an already-completed run and drop its confirmations. Groups
+    that resolve to DIFFERENT runs of the same sub-team (the leader delegated
+    to it more than once in one turn) stay separate — merging them would
+    strand every run but the first.
+
+    Raises RunNotContinuableError if a requirement routes to a member id
+    that is not in the team: the run stays paused and resumable instead of
+    completing with the approved tool silently skipped.
+
+    The leaf-id route and run ownership can disagree: sibling sub-teams may
+    contain members with the same leaf id, and _find_member_route_by_id picks
+    the first match in member order while the paused run lives under another
+    sibling. The resolved run's owner is authoritative for where the continue
+    dispatches — following the leaf-id pick would hand one sibling's paused
+    run to the other and execute the wrong tool implementation. When the
+    owner cannot be resolved to exactly one direct member (it was removed
+    from the team, or several direct members share its id), the continue is
+    refused and the run stays paused.
+
+    Returns entries of (routed_member, resolved_target_run_or_None, requirements).
+    """
+    from agno.team._tools import _find_member_route_by_id
+    from agno.utils.callables import get_resolved_members
+    from agno.utils.team import get_member_id
+
+    member_reqs: Dict[Tuple[str, Optional[str]], List["RunRequirement"]] = {}
+    for req in run_response.requirements or []:
+        mid = getattr(req, "member_agent_id", None)
+        if mid is not None:
+            member_reqs.setdefault((mid, getattr(req, "member_run_id", None)), []).append(req)
+
+    entries: List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]] = []
+    for (member_id, _), reqs in member_reqs.items():
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
+        if route_result is None:
+            raise RunNotContinuableError(
+                f"Cannot continue run {run_response.run_id}: requirement routes to member "
+                f"'{member_id}', which is not a member of team '{team.name or team.id}'. "
+                "The run remains paused."
+            )
+        _, member = route_result
+        target = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
+        owner_id: Optional[str] = None
+        if isinstance(target, TeamRunOutput):
+            owner_id = target.team_id
+        elif isinstance(target, RunOutput):
+            owner_id = target.agent_id
+        if owner_id is not None:
+            owners = [m for m in get_resolved_members(team, run_context) or [] if get_member_id(m) == owner_id]
+            if len(owners) == 1:
+                member = owners[0]
+            elif not owners:
+                raise RunNotContinuableError(
+                    f"Cannot continue run {run_response.run_id}: the paused run for requirement "
+                    f"'{member_id}' belongs to member '{owner_id}', which is not a member of "
+                    f"team '{team.name or team.id}'. The run remains paused."
+                )
+            else:
+                raise RunNotContinuableError(
+                    f"Cannot continue run {run_response.run_id}: the paused run for requirement "
+                    f"'{member_id}' belongs to member id '{owner_id}', which matches "
+                    f"{len(owners)} members of team '{team.name or team.id}'. The run remains paused."
+                )
+        merged = False
+        if target is not None:
+            for existing_member, existing_target, existing_reqs in entries:
+                if (
+                    existing_member is member
+                    and existing_target is not None
+                    and (existing_target is target or existing_target.run_id == target.run_id)
+                ):
+                    existing_reqs.extend(reqs)
+                    merged = True
+                    break
+        if not merged:
+            entries.append((member, target, list(reqs)))
+
+    if _depth < _MAX_CONTINUE_PREFLIGHT_DEPTH:
+        _preflight_subteam_routes(entries, session, _depth)
+    return entries
+
+
+_MAX_CONTINUE_PREFLIGHT_DEPTH = 12
+
+
+def _preflight_subteam_routes(
+    entries: List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]],
+    session: TeamSession,
+    depth: int,
+) -> None:
+    """Raise now if any sub-team in these entries could not route its own share.
+
+    Refusals at this level are all-or-nothing: nothing has run when they fire.
+    A sub-team's refusal is not, because the sub-team only reaches its own
+    grouping once its continue_run is already under way — by then the members
+    scheduled alongside it have executed their approved tools. The caller is
+    then told the run is still paused, which is false for those members, and
+    the retry it invites runs them again.
+
+    Descending here moves that refusal back to where it is still free. The
+    sub-team's grouping is a pure resolution pass over stored state — it
+    executes nothing — so running it early costs a lookup and buys the
+    all-or-nothing guarantee the refusal message claims.
+
+    This closes resolution drift, which is what a reload can introduce: a
+    member renamed or removed while the run sat paused. It cannot close a
+    failure that strikes mid-execution, so routing stays best-effort past this
+    point.
+    """
+    from agno.team.team import Team
+
+    for member, target, _reqs in entries:
+        if not isinstance(member, Team) or not isinstance(target, TeamRunOutput):
+            continue
+        if not _has_member_requirements(target.requirements or []):
+            continue
+        _group_requirements_for_continue(member, target, session, None, _depth=depth + 1)
+
+
 def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
@@ -5397,48 +5971,14 @@ def _route_requirements_to_members(
     Returns:
         List of member result strings.
     """
-    from agno.run.requirement import RunRequirement
-    from agno.team._tools import _find_member_route_by_id
+    from agno.utils.team import get_member_id
 
-    # Group requirements by member
-    member_reqs: Dict[str, List[RunRequirement]] = {}
-    for req in run_response.requirements or []:
-        mid = getattr(req, "member_agent_id", None)
-        if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
-
+    groups = _group_requirements_for_continue(team, run_response, session, run_context)
     member_results: List[str] = []
 
-    for member_id, reqs in member_reqs.items():
-        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
-        if route_result is None:
-            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
-            member_results.append(f"[{member_id}]: Could not route requirement — member not found")
-            continue
-
-        _, member = route_result
-
-        # Get the member's paused RunOutput from the requirement.
-        # This is stored by _propagate_member_pause and avoids needing a
-        # session/DB lookup (which fails without a database since
-        # initialize_team clears the cached session).
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
+    for member, member_run_output, reqs in groups:
+        member_id = get_member_id(member) or ""
         member_run_id = reqs[0].member_run_id if reqs else None
-
-        if member_run_output is None and member_run_id:
-            # Same-process resume: the paused member output is still held on the live team run.
-            if run_response.member_responses:
-                for sibling_response in run_response.member_responses:
-                    if getattr(sibling_response, "run_id", None) == member_run_id:
-                        member_run_output = sibling_response
-                        break
-            # After process restart: member_responses is empty (it's only assembled at runtime),
-            # so fall back to the team session's sibling runs persisted in the DB.
-            if member_run_output is None and session is not None and session.runs:
-                for session_run in session.runs:
-                    if getattr(session_run, "run_id", None) == member_run_id:
-                        member_run_output = session_run  # type: ignore[assignment]
-                        break
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
@@ -5514,42 +6054,13 @@ def _route_requirements_to_members_stream(
     Yields:
         Member streaming events (RunOutputEvent, TeamRunOutputEvent).
     """
-    from agno.run.requirement import RunRequirement
-    from agno.team._tools import _find_member_route_by_id
+    from agno.utils.team import get_member_id
 
-    # Group requirements by member
-    member_reqs: Dict[str, List[RunRequirement]] = {}
-    for req in run_response.requirements or []:
-        mid = getattr(req, "member_agent_id", None)
-        if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
+    groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
-    for member_id, reqs in member_reqs.items():
-        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
-        if route_result is None:
-            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
-            member_results.append(f"[{member_id}]: Could not route requirement — member not found")
-            continue
-
-        _, member = route_result
-
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
+    for member, member_run_output, reqs in groups:
+        member_id = get_member_id(member) or ""
         member_run_id = reqs[0].member_run_id if reqs else None
-
-        if member_run_output is None and member_run_id:
-            # Same-process resume: the paused member output is still held on the live team run.
-            if run_response.member_responses:
-                for sibling_response in run_response.member_responses:
-                    if getattr(sibling_response, "run_id", None) == member_run_id:
-                        member_run_output = sibling_response
-                        break
-            # After process restart: member_responses is empty (it's only assembled at runtime),
-            # so fall back to the team session's sibling runs persisted in the DB.
-            if member_run_output is None and session is not None and session.runs:
-                for session_run in session.runs:
-                    if getattr(session_run, "run_id", None) == member_run_id:
-                        member_run_output = session_run  # type: ignore[assignment]
-                        break
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
@@ -5639,43 +6150,20 @@ async def _aroute_requirements_to_members(
     Returns:
         List of member result strings.
     """
-    from agno.run.requirement import RunRequirement
-    from agno.team._tools import _find_member_route_by_id
+    from agno.utils.team import get_member_id
 
-    # Group requirements by member
-    member_reqs: Dict[str, List[RunRequirement]] = {}
-    for req in run_response.requirements or []:
-        mid = getattr(req, "member_agent_id", None)
-        if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
+    groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
-    if not member_reqs:
+    if not groups:
         return []
 
-    async def _continue_member(member_id: str, reqs: List[RunRequirement]) -> Optional[str]:
-        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
-        if route_result is None:
-            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
-            return f"[{member_id}]: Could not route requirement — member not found"
-
-        _, member = route_result
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
+    async def _continue_member(
+        member: Union["Agent", "Team"],
+        member_run_output: Optional[Union[RunOutput, TeamRunOutput]],
+        reqs: List["RunRequirement"],
+    ) -> Optional[str]:
+        member_id = get_member_id(member) or ""
         member_run_id = reqs[0].member_run_id if reqs else None
-
-        if member_run_output is None and member_run_id:
-            # Same-process resume: the paused member output is still held on the live team run.
-            if run_response.member_responses:
-                for sibling_response in run_response.member_responses:
-                    if getattr(sibling_response, "run_id", None) == member_run_id:
-                        member_run_output = sibling_response
-                        break
-            # After process restart: member_responses is empty (it's only assembled at runtime),
-            # so fall back to the team session's sibling runs persisted in the DB.
-            if member_run_output is None and session is not None and session.runs:
-                for session_run in session.runs:
-                    if getattr(session_run, "run_id", None) == member_run_id:
-                        member_run_output = session_run  # type: ignore[assignment]
-                        break
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
@@ -5724,11 +6212,16 @@ async def _aroute_requirements_to_members(
             content = getattr(member_response, "content", None) or "Task completed"
             return f"[{member.name or member_id}]: {content}"
 
-    tasks = [_continue_member(mid, reqs) for mid, reqs in member_reqs.items()]
+    tasks = [_continue_member(member, member_run_output, reqs) for member, member_run_output, reqs in groups]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     member_results: List[str] = []
     for r in results:
+        if isinstance(r, RunNotContinuableError):
+            # A member (e.g. a sub-team) refused the continue outright; the
+            # paused state is intact, so surface it instead of completing
+            # the team run without the approved tool.
+            raise r
         if isinstance(r, BaseException):
             log_warning(f"Member continue_run failed: {r}")
         elif isinstance(r, str):
@@ -5761,42 +6254,13 @@ async def _aroute_requirements_to_members_stream(
     Yields:
         Member streaming events (RunOutputEvent, TeamRunOutputEvent).
     """
-    from agno.run.requirement import RunRequirement
-    from agno.team._tools import _find_member_route_by_id
+    from agno.utils.team import get_member_id
 
-    # Group requirements by member
-    member_reqs: Dict[str, List[RunRequirement]] = {}
-    for req in run_response.requirements or []:
-        mid = getattr(req, "member_agent_id", None)
-        if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
+    groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
-    for member_id, reqs in member_reqs.items():
-        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
-        if route_result is None:
-            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
-            member_results.append(f"[{member_id}]: Could not route requirement — member not found")
-            continue
-
-        _, member = route_result
-
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
+    for member, member_run_output, reqs in groups:
+        member_id = get_member_id(member) or ""
         member_run_id = reqs[0].member_run_id if reqs else None
-
-        if member_run_output is None and member_run_id:
-            # Same-process resume: the paused member output is still held on the live team run.
-            if run_response.member_responses:
-                for sibling_response in run_response.member_responses:
-                    if getattr(sibling_response, "run_id", None) == member_run_id:
-                        member_run_output = sibling_response
-                        break
-            # After process restart: member_responses is empty (it's only assembled at runtime),
-            # so fall back to the team session's sibling runs persisted in the DB.
-            if member_run_output is None and session is not None and session.runs:
-                for session_run in session.runs:
-                    if getattr(session_run, "run_id", None) == member_run_id:
-                        member_run_output = session_run  # type: ignore[assignment]
-                        break
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
@@ -6589,21 +7053,9 @@ def continue_run_dispatch(
             )
     # --- End snapshot dispatch ----------------------------------------------
 
-    # Save old requirements before overwriting — needed to preserve approval fields for member-level tools
-    old_requirements = run_response.requirements
-
     # Normalize and apply requirements
     if requirements:
-        requirements = _normalize_requirements_payload(requirements)
-        run_response.requirements = requirements
-        # Update tools from requirements, preserving approval fields the FE omits
-        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-        if updated_tools and run_response.tools:
-            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-            run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
-        elif updated_tools:
-            run_response.tools = updated_tools
-        _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+        old_requirements, old_tools, decisions = _apply_requirements_payload(run_response, requirements)
 
         # Also apply any resolved approval
         if run_response.tools:
@@ -6611,11 +7063,13 @@ def continue_run_dispatch(
 
             try:
                 check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
-            except RuntimeError:
-                raise ValueError(
-                    "To continue a run from a given run_id, the requirements parameter must be provided "
-                    "(or resolve an admin approval first)."
-                )
+            except RuntimeError as e:
+                run_response.requirements = old_requirements
+                run_response.tools = old_tools
+                _restore_requirement_decisions(decisions)
+                # The payload was supplied; the approval gate is what refused.
+                # Surface its reason instead of asking for a payload again.
+                raise ValueError(str(e))
     elif run_response.tools:
         from agno.run.approval import check_and_apply_approval_resolution
 
@@ -6645,8 +7099,40 @@ def continue_run_dispatch(
         _did_snapshot_dispatch = True
 
     # Determine what kind of pause we're continuing from
+    run_response.requirements = _reclaim_own_requirements(team, run_response.requirements, run_response.run_id)
     has_member = _has_member_requirements(run_response.requirements or [])
     has_team_level = _has_team_level_requirements(run_response.requirements or [])
+
+    # Guard: a member requirement the client left unresolved has to re-pause,
+    # not dispatch. Routing hands it to the member's continue_run, which reads
+    # the pause as settled and runs the gated tool with whatever the schema
+    # holds -- for a requested field left untouched, with None. The team-level
+    # lane already re-pauses on its own unresolved requirements; a requirement
+    # addressed to a member is no less unresolved for being addressed to one.
+    unresolved_member = [
+        r
+        for r in (run_response.requirements or [])
+        if getattr(r, "member_agent_id", None) is not None and not r.is_resolved()
+    ]
+    if unresolved_member:
+        from agno.team import _hooks
+
+        if opts.stream:
+
+            def _member_paused_stream_with_final() -> Iterator[
+                Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]
+            ]:
+                yield from _hooks.handle_team_run_paused_stream(
+                    team, run_response=run_response, session=team_session, run_context=run_context
+                )
+                if opts.yield_run_output:
+                    yield run_response
+
+            return _member_paused_stream_with_final()
+        else:
+            return _hooks.handle_team_run_paused(
+                team, run_response=run_response, session=team_session, run_context=run_context
+            )
 
     # Route member requirements to member agents
     member_results: List[str] = []
@@ -6672,12 +7158,18 @@ def continue_run_dispatch(
             )
         else:
             member_event_stream = None
-            member_results = _route_requirements_to_members(
-                team,
-                run_response=run_response,
-                session=team_session,
-                run_context=run_context,
-            )
+            try:
+                member_results = _route_requirements_to_members(
+                    team,
+                    run_response=run_response,
+                    session=team_session,
+                    run_context=run_context,
+                )
+            except Exception:
+                # Routing failed mid-flight; put the team-level requirements
+                # back so the caller's run object stays complete for a retry.
+                run_response.requirements = team_level_reqs + (run_response.requirements or [])
+                raise
 
         # For non-streaming, member routing is done eagerly above.
         # For streaming, we must consume member events lazily inside a returned generator.
@@ -6729,9 +7221,15 @@ def continue_run_dispatch(
             from agno.team import _hooks
 
             if opts.stream:
-                return _hooks.handle_team_run_paused_stream(
-                    team, run_response=run_response, session=team_session, run_context=run_context
-                )  # type: ignore
+
+                def _paused_stream_with_final() -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+                    yield from _hooks.handle_team_run_paused_stream(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    )
+                    if opts.yield_run_output:
+                        yield run_response
+
+                return _paused_stream_with_final()
             else:
                 return _hooks.handle_team_run_paused(
                     team, run_response=run_response, session=team_session, run_context=run_context
@@ -6905,7 +7403,14 @@ def _continue_run_dispatch_stream_with_member_events(
 
     # Phase 1: Yield member streaming events
     try:
-        yield from member_event_stream
+        try:
+            yield from member_event_stream
+        except BaseException:
+            # Phase 1 runs with the team-level requirements stripped off the
+            # run object; every non-normal exit puts them back before anything
+            # persists or returns it.
+            run_response.requirements = team_level_reqs + (run_response.requirements or [])
+            raise
     except RunCancelledException as e:
         run_response = _handle_team_run_cancellation(run_response, e, session=team_session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
@@ -6945,6 +7450,8 @@ def _continue_run_dispatch_stream_with_member_events(
         yield from _hooks.handle_team_run_paused_stream(
             team, run_response=run_response, session=team_session, run_context=run_context
         )
+        if opts.yield_run_output:
+            yield run_response
         return
 
     # Phase 3: Continue the team run with member results
@@ -6960,6 +7467,8 @@ def _continue_run_dispatch_stream_with_member_events(
             yield from _hooks.handle_team_run_paused_stream(
                 team, run_response=run_response, session=team_session, run_context=run_context
             )
+            if opts.yield_run_output:
+                yield run_response
             return
 
         response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
@@ -7494,6 +8003,8 @@ def _continue_run_stream(
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
+                if yield_run_output:
+                    yield run_response
                 break
 
             except KeyboardInterrupt:
@@ -7537,9 +8048,22 @@ def _continue_run_stream(
                 log_error(f"Error in Team continue_run stream: {str(e)}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
+                if yield_run_output:
+                    yield run_response
     finally:
         _disconnect_connectable_tools(team)
         cleanup_run(run_response.run_id)  # type: ignore
+
+
+def _as_run_status(value: Union[RunStatus, str, None]) -> Union[RunStatus, str, None]:
+    """Coerce a stored status to RunStatus. A run loaded from the DB carries its
+    status as a plain string; an unrecognized value is returned unchanged."""
+    if value is None or isinstance(value, RunStatus):
+        return value
+    try:
+        return RunStatus(value)
+    except ValueError:
+        return value
 
 
 async def _acontinue_run_background_stream(
@@ -7582,7 +8106,7 @@ async def _acontinue_run_background_stream(
     4. Yields SSE-formatted strings via an asyncio.Queue
     """
     from agno.team._session import asave_session
-    from agno.team._storage import _aread_or_create_session, _update_metadata
+    from agno.team._storage import _aread_or_create_session, _aread_session, _update_metadata
 
     _run_id = run_id or (run_response.run_id if run_response else None)
     if not _run_id:
@@ -7592,9 +8116,35 @@ async def _acontinue_run_background_stream(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
 
+    stored_run = next((r for r in team_session.runs or [] if getattr(r, "run_id", None) == _run_id), None)
+    status_before_takeover = _as_run_status(getattr(stored_run, "status", None))
+    # The status the caller's object carries at entry; the write below replaces
+    # it with RUNNING. When the session has no stored entry for this run, this
+    # is the only record of the pre-continue state.
+    prior_object_status = _as_run_status(getattr(run_response, "status", None)) if run_response is not None else None
+
     if run_response is not None:
-        run_response.status = RunStatus.running
-        team_session.upsert_run(run_response=run_response)
+        # Continuability is decided from the STORED run, never from the caller's
+        # object: a stale paused object over a finished run would republish it
+        # as a pending approval, and a gated tool could then be approved a
+        # second time. fork and regenerate branch off a finished run and stay
+        # allowed. The run_id-only shape resolves the stored run downstream and
+        # has its own cancelled refusal.
+        if (
+            isinstance(status_before_takeover, RunStatus)
+            and status_before_takeover in (RunStatus.completed, RunStatus.cancelled)
+            and not (fork or regenerate)
+        ):
+            raise RunNotContinuableError(
+                f"Cannot continue run {_run_id}: the stored run has status {status_before_takeover.value} "
+                "and cannot be continued in place. Use acontinue_run(run_id=..., fork=True) to branch off a "
+                "finished run. The stored run is unchanged."
+            )
+        # A fork or regenerate executes under a NEW run id; writing RUNNING
+        # under the original id would strand the original run at RUNNING.
+        if not (fork or regenerate):
+            run_response.status = RunStatus.running
+            team_session.upsert_run(run_response=run_response)
     await asave_session(team, session=team_session)
 
     log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
@@ -7606,6 +8156,32 @@ async def _acontinue_run_background_stream(
     async def _background_producer() -> None:
         from agno.os.managers import event_buffer, sse_subscriber_manager
         from agno.os.utils import format_sse_event_with_index
+
+        producer_error: Optional[BaseException] = None
+        # The run object the continue actually produced. The caller-supplied
+        # run_response is not updated on the run_id-only path, so the terminal
+        # buffer status below reads this instead.
+        final_output: Optional[TeamRunOutput] = None
+
+        async def _dispatch_sse(event: Any) -> None:
+            """Buffer an event, hand it to the original client, and fan it out."""
+            event_index: Optional[int] = None
+            try:
+                event_index = event_buffer.add_event(_run_id, event)
+            except Exception:
+                log_warning(f"Failed to buffer event for continue-run {_run_id}")
+
+            sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
+
+            try:
+                await sse_queue.put(sse_data)
+            except Exception:
+                log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
+
+            try:
+                await sse_subscriber_manager.publish(_run_id, event_index if event_index is not None else -1, sse_data)
+            except Exception:
+                log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
 
         try:
             async for event in _acontinue_run_stream(
@@ -7624,51 +8200,117 @@ async def _acontinue_run_background_stream(
                 session_id=session_id,
                 response_format=response_format,
                 stream_events=stream_events,
-                yield_run_output=yield_run_output or False,
+                # Always request the final run object; it is captured below and
+                # never forwarded to the client.
+                yield_run_output=True,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
                 **kwargs,
             ):
                 if isinstance(event, TeamRunOutput):
+                    final_output = event
                     continue
 
-                # Buffer event for reconnection support
-                event_index: Optional[int] = None
-                try:
-                    event_index = event_buffer.add_event(_run_id, event)
-                except Exception:
-                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
+                await _dispatch_sse(event)
 
-                # Format as SSE
-                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
-
-                # Push to primary queue (original client)
+        except Exception as e:
+            producer_error = e
+            refused = isinstance(e, RunNotContinuableError)
+            if refused:
+                # A refusal is an answer, not a crash: the run keeps the status
+                # it had before step 1 wrote RUNNING. status_before_takeover is
+                # the stored run's pre-continue status; with no stored entry,
+                # the caller object's own pre-write status is the only record.
+                log_info(f"Background continue-run stream {_run_id} refused the continue: {e}")
                 try:
-                    await sse_queue.put(sse_data)
-                except Exception:
-                    log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
-
-                # Publish to SSE subscribers (resumed clients)
-                try:
-                    await sse_subscriber_manager.publish(
-                        _run_id, event_index if event_index is not None else -1, sse_data
+                    restore_status = (
+                        status_before_takeover if status_before_takeover is not None else prior_object_status
                     )
+                    if run_response is not None and restore_status is not None:
+                        # Persist into a fresh, uncached session read so runs
+                        # persisted by others since step 1 survive this write,
+                        # and only while the stored run still carries step 1's
+                        # RUNNING marker; any other value means another request
+                        # owns the run now. The read comes FIRST: with
+                        # cache_session the session's entry for this run IS
+                        # run_response, so mutating it before the read would
+                        # erase the marker being tested.
+                        fresh_session = cast(
+                            Optional[TeamSession],
+                            await _aread_session(team, session_id=session_id, user_id=user_id),
+                        )
+                        if fresh_session is None:
+                            # The read failed. The restore lands in the step-1
+                            # session: a run left RUNNING can never be resumed.
+                            run_response.status = cast(RunStatus, restore_status)
+                            team_session.upsert_run(run_response=run_response)
+                            await asave_session(team, session=team_session)
+                        else:
+                            fresh_run = next(
+                                (r for r in fresh_session.runs or [] if getattr(r, "run_id", None) == _run_id),
+                                None,
+                            )
+                            if fresh_run is not None and _as_run_status(fresh_run.status) == RunStatus.running:
+                                # A legacy string status is restored as-is;
+                                # to_dict serializes both shapes.
+                                run_response.status = cast(RunStatus, restore_status)
+                                fresh_session.upsert_run(run_response=run_response)
+                                await asave_session(team, session=fresh_session)
+                                if team.cache_session:
+                                    team._cached_session = fresh_session
                 except Exception:
-                    log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
+                    log_error(
+                        f"Failed to restore the pre-continue state for background continue-run stream {_run_id}",
+                        exc_info=True,
+                    )
+            else:
+                log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
+                # Persist ERROR status. Same rules as the restore above: write
+                # into a fresh session read, and only over step 1's RUNNING
+                # marker, so a state another request persisted meanwhile stays.
+                try:
+                    if run_response is not None:
+                        # Same rules as the restore above, including read
+                        # before mutation.
+                        fresh_session = cast(
+                            Optional[TeamSession],
+                            await _aread_session(team, session_id=session_id, user_id=user_id),
+                        )
+                        run_response.status = RunStatus.error
+                        if fresh_session is None:
+                            team_session.upsert_run(run_response=run_response)
+                            await asave_session(team, session=team_session)
+                        else:
+                            fresh_run = next(
+                                (r for r in fresh_session.runs or [] if getattr(r, "run_id", None) == _run_id),
+                                None,
+                            )
+                            if fresh_run is not None and _as_run_status(fresh_run.status) == RunStatus.running:
+                                fresh_session.upsert_run(run_response=run_response)
+                                await asave_session(team, session=fresh_session)
+                                if team.cache_session:
+                                    team._cached_session = fresh_session
+                except Exception:
+                    log_error(
+                        f"Failed to persist error state for background continue-run stream {_run_id}",
+                        exc_info=True,
+                    )
 
-        except Exception:
-            log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-            # Persist ERROR status
+            # Tell the client. Without this the producer dies inside its detached
+            # task and the caller is left holding a 200 with an empty body — for a
+            # refusal, the single most misleading outcome available, since the
+            # request it refused looks like the one that worked.
             try:
-                if run_response is not None:
-                    run_response.status = RunStatus.error
-                    team_session.upsert_run(run_response=run_response)
-                    await asave_session(team, session=team_session)
-            except Exception:
-                log_error(
-                    f"Failed to persist error state for background continue-run stream {_run_id}",
-                    exc_info=True,
+                error_source = run_response
+                if error_source is None:
+                    error_source = TeamRunOutput(
+                        run_id=_run_id, session_id=session_id, team_id=team.id, team_name=team.name
+                    )
+                await _dispatch_sse(
+                    create_team_run_error_event(error_source, error=str(e), error_type=error_type_of(e))
                 )
+            except Exception:
+                log_warning(f"Failed to emit error event for continue-run {_run_id}")
 
         finally:
             # Signal primary queue FIRST — unblocks the original client
@@ -7677,9 +8319,57 @@ async def _acontinue_run_background_stream(
             except Exception:
                 log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
 
-            # Mark run completed in event buffer
+            # Mark the run's terminal state in the event buffer. The value must
+            # be a RunStatus and must not be RUNNING: /resume formats it with
+            # .value, and treats RUNNING as an in-flight run to keep waiting on.
             try:
-                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                if isinstance(producer_error, RunNotContinuableError):
+                    # A refused run keeps the status it had before the takeover.
+                    refused_status = (
+                        status_before_takeover if status_before_takeover is not None else prior_object_status
+                    )
+                    if isinstance(refused_status, RunStatus) and refused_status not in (
+                        RunStatus.running,
+                        RunStatus.pending,
+                    ):
+                        final_status = refused_status
+                    else:
+                        final_status = RunStatus.paused
+                elif producer_error is not None:
+                    final_status = RunStatus.error
+                else:
+                    if fork or regenerate:
+                        # The executed run carries a DIFFERENT id; this key
+                        # keeps the original run's own stored status, never the
+                        # fork's status and never the caller object's.
+                        if isinstance(status_before_takeover, RunStatus) and status_before_takeover in (
+                            RunStatus.paused,
+                            RunStatus.cancelled,
+                            RunStatus.error,
+                        ):
+                            final_status = status_before_takeover
+                        else:
+                            final_status = RunStatus.completed
+                    else:
+                        # The run that actually executed. final_output covers
+                        # the run_id-only path, where run_response stays None;
+                        # a re-pause or cancellation must not be advertised as
+                        # completed.
+                        produced_status = (
+                            final_output.status
+                            if final_output is not None and getattr(final_output, "run_id", None) == _run_id
+                            else None
+                        )
+                        if produced_status is None and run_response is not None:
+                            produced_status = run_response.status
+                        if isinstance(produced_status, RunStatus) and produced_status in (
+                            RunStatus.paused,
+                            RunStatus.cancelled,
+                            RunStatus.error,
+                        ):
+                            final_status = produced_status
+                        else:
+                            final_status = RunStatus.completed
                 event_buffer.set_run_completed(_run_id, final_status)
             except Exception:
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
@@ -7901,6 +8591,17 @@ async def _acontinue_run(
     log_debug(f"Team Continue Run: {run_response.run_id if run_response else run_id}", center=True)
 
     team_session: Optional[TeamSession] = None
+    # The payload binds to the stored requirements exactly once. A retry after a
+    # transient failure re-enters the loop with the run already carrying the
+    # bound requirements, and the member-level ones consumed by the dispatch —
+    # re-binding the same payload against what is left refuses a run the retry
+    # was meant to rescue.
+    requirements_applied = False
+    # Member results survive retries for the same reason: routing consumed the
+    # member requirements, so a retry after a transient leader failure re-enters
+    # with nothing to route. Without the banked results every dispatch branch is
+    # skipped and the run would complete without the leader ever being called.
+    routed_member_results: List[str] = []
 
     try:
         num_attempts = team.retries + 1
@@ -7967,9 +8668,6 @@ async def _acontinue_run(
                     _maybe_append_input_message_team(run_response, input, team)
                 # --- End snapshot dispatch ---
 
-                # Save old requirements before overwriting — needed for member-level approval fields
-                old_requirements = run_response.requirements
-
                 # A freshly-forked run has no PAUSED requirements contract;
                 # skip the HITL machinery entirely. The fork is a fresh
                 # attempt seeded from the snapshot — no tools/approvals to
@@ -7982,29 +8680,25 @@ async def _acontinue_run(
                     run_response.content = None
                 # Normalize and apply requirements
                 elif requirements:
-                    requirements = _normalize_requirements_payload(requirements)
-                    run_response.requirements = requirements
-                    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                    if updated_tools and run_response.tools:
-                        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
-                    elif updated_tools:
-                        run_response.tools = updated_tools
-                    _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+                    if not requirements_applied:
+                        old_requirements, old_tools, decisions = _apply_requirements_payload(run_response, requirements)
+                        requirements_applied = True
 
-                    # Also apply any resolved approval
-                    if run_response.tools:
-                        from agno.run.approval import acheck_and_apply_approval_resolution
+                        # Also apply any resolved approval
+                        if run_response.tools:
+                            from agno.run.approval import acheck_and_apply_approval_resolution
 
-                        try:
-                            await acheck_and_apply_approval_resolution(
-                                team.db, run_response.run_id or run_id or "", run_response
-                            )
-                        except RuntimeError:
-                            raise ValueError(
-                                "To continue a run from a given run_id, the requirements parameter must be provided "
-                                "(or resolve an admin approval first)."
-                            )
+                            try:
+                                await acheck_and_apply_approval_resolution(
+                                    team.db, run_response.run_id or run_id or "", run_response
+                                )
+                            except RuntimeError as e:
+                                run_response.requirements = old_requirements
+                                run_response.tools = old_tools
+                                _restore_requirement_decisions(decisions)
+                                # The payload was supplied; the approval gate is
+                                # what refused. Surface its reason.
+                                raise ValueError(str(e))
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -8045,11 +8739,32 @@ async def _acontinue_run(
                     store_events=team.store_events,
                 )
 
+                run_response.requirements = _reclaim_own_requirements(
+                    team, run_response.requirements, run_response.run_id
+                )
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
+                # Guard: a member requirement the client left unresolved has to re-pause,
+                # not dispatch. Routing hands it to the member's continue_run, which reads
+                # the pause as settled and runs the gated tool with whatever the schema
+                # holds -- for a requested field left untouched, with None. The team-level
+                # lane already re-pauses on its own unresolved requirements; a requirement
+                # addressed to a member is no less unresolved for being addressed to one.
+                unresolved_member = [
+                    r
+                    for r in (run_response.requirements or [])
+                    if getattr(r, "member_agent_id", None) is not None and not r.is_resolved()
+                ]
+                if unresolved_member:
+                    from agno.team import _hooks
+
+                    return await _hooks.ahandle_team_run_paused(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    )
+
                 # Route member requirements
-                member_results: List[str] = []
+                member_results: List[str] = list(routed_member_results)
                 if has_member:
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
@@ -8059,17 +8774,28 @@ async def _acontinue_run(
                     ]
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
-                    member_results = await _aroute_requirements_to_members(
-                        team,
-                        run_response=run_response,
-                        session=team_session,
-                        run_context=run_context,
-                    )
+                    try:
+                        member_results = await _aroute_requirements_to_members(
+                            team,
+                            run_response=run_response,
+                            session=team_session,
+                            run_context=run_context,
+                        )
+                    except Exception:
+                        # Routing failed mid-flight; put the team-level requirements
+                        # back so the caller's run object stays complete for a retry.
+                        run_response.requirements = team_level_reqs + (run_response.requirements or [])
+                        raise
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
                         r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
                     ]
                     run_response.requirements = team_level_reqs + newly_propagated
+                    # This attempt's routing succeeded; bank its results so a
+                    # transient leader failure below retries the leader with
+                    # them instead of completing a leaderless run.
+                    member_results = routed_member_results + member_results
+                    routed_member_results = member_results
 
                     # Check if still paused
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -8268,8 +8994,9 @@ async def _acontinue_run(
                     raise
                 return run_response
 
-            except ValueError:
-                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+            except (ValueError, RunNotFoundError):
+                # Validation errors (e.g. cancelled run, unknown run id, missing
+                # args) propagate to the caller
                 raise
             except Exception as e:
                 run_response = cast(TeamRunOutput, run_response)
@@ -8338,6 +9065,12 @@ async def _acontinue_run_stream(
     log_debug(f"Team Continue Run Stream: {run_response.run_id if run_response else run_id}", center=True)
 
     team_session: Optional[TeamSession] = None
+    # See _acontinue_run: the payload binds once, not once per retry, and
+    # member results from a routing pass that succeeded are banked so a
+    # transient leader failure retries the leader instead of completing a
+    # run that skipped it.
+    requirements_applied = False
+    routed_member_results: List[str] = []
 
     try:
         num_attempts = team.retries + 1
@@ -8404,9 +9137,6 @@ async def _acontinue_run_stream(
                     _maybe_append_input_message_team(run_response, input, team)
                 # --- End snapshot dispatch ---
 
-                # Save old requirements before overwriting — needed for member-level approval fields
-                old_requirements = run_response.requirements
-
                 # A freshly-forked run has no PAUSED requirements contract;
                 # skip the HITL machinery entirely. The fork is a fresh
                 # attempt seeded from the snapshot — no tools/approvals to
@@ -8419,29 +9149,25 @@ async def _acontinue_run_stream(
                     run_response.content = None
                 # Normalize and apply requirements
                 elif requirements:
-                    requirements = _normalize_requirements_payload(requirements)
-                    run_response.requirements = requirements
-                    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                    if updated_tools and run_response.tools:
-                        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
-                    elif updated_tools:
-                        run_response.tools = updated_tools
-                    _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+                    if not requirements_applied:
+                        old_requirements, old_tools, decisions = _apply_requirements_payload(run_response, requirements)
+                        requirements_applied = True
 
-                    # Also apply any resolved approval
-                    if run_response.tools:
-                        from agno.run.approval import acheck_and_apply_approval_resolution
+                        # Also apply any resolved approval
+                        if run_response.tools:
+                            from agno.run.approval import acheck_and_apply_approval_resolution
 
-                        try:
-                            await acheck_and_apply_approval_resolution(
-                                team.db, run_response.run_id or run_id or "", run_response
-                            )
-                        except RuntimeError:
-                            raise ValueError(
-                                "To continue a run from a given run_id, the requirements parameter must be provided "
-                                "(or resolve an admin approval first)."
-                            )
+                            try:
+                                await acheck_and_apply_approval_resolution(
+                                    team.db, run_response.run_id or run_id or "", run_response
+                                )
+                            except RuntimeError as e:
+                                run_response.requirements = old_requirements
+                                run_response.tools = old_tools
+                                _restore_requirement_decisions(decisions)
+                                # The payload was supplied; the approval gate is
+                                # what refused. Surface its reason.
+                                raise ValueError(str(e))
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -8472,11 +9198,38 @@ async def _acontinue_run_stream(
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
+                run_response.requirements = _reclaim_own_requirements(
+                    team, run_response.requirements, run_response.run_id
+                )
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
-                # Route member requirements
-                member_results: List[str] = []
+                # Guard: a member requirement the client left unresolved has to re-pause,
+                # not dispatch. Routing hands it to the member's continue_run, which reads
+                # the pause as settled and runs the gated tool with whatever the schema
+                # holds -- for a requested field left untouched, with None. The team-level
+                # lane already re-pauses on its own unresolved requirements; a requirement
+                # addressed to a member is no less unresolved for being addressed to one.
+                unresolved_member = [
+                    r
+                    for r in (run_response.requirements or [])
+                    if getattr(r, "member_agent_id", None) is not None and not r.is_resolved()
+                ]
+                if unresolved_member:
+                    from agno.team import _hooks
+
+                    async for item in _hooks.ahandle_team_run_paused_stream(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    ):
+                        yield item
+                    if yield_run_output:
+                        yield run_response
+                    return
+
+                # Route member requirements. The routing generator appends into
+                # this list in place, so seeding it with the banked results
+                # keeps earlier attempts' routing and this attempt's together.
+                member_results: List[str] = list(routed_member_results)
                 if has_member:
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
@@ -8486,21 +9239,29 @@ async def _acontinue_run_stream(
                     ]
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
-                    # Streaming: use the async generator variant that yields member events
-                    async for event in _aroute_requirements_to_members_stream(
-                        team,
-                        run_response=run_response,
-                        session=team_session,
-                        member_results=member_results,
-                        run_context=run_context,
-                        stream_events=stream_events,
-                    ):
-                        yield event
+                    try:
+                        # Streaming: use the async generator variant that yields member events
+                        async for event in _aroute_requirements_to_members_stream(
+                            team,
+                            run_response=run_response,
+                            session=team_session,
+                            member_results=member_results,
+                            run_context=run_context,
+                            stream_events=stream_events,
+                        ):
+                            yield event
+                    except Exception:
+                        # Routing failed mid-flight; put the team-level requirements
+                        # back so the caller's run object stays complete for a retry.
+                        run_response.requirements = team_level_reqs + (run_response.requirements or [])
+                        raise
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
                         r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
                     ]
                     run_response.requirements = team_level_reqs + newly_propagated
+                    # Routing succeeded; bank the accumulated results for a retry.
+                    routed_member_results = member_results
 
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                         from agno.team import _hooks
@@ -8892,6 +9653,8 @@ async def _acontinue_run_stream(
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 yield run_error
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
@@ -8955,6 +9718,8 @@ async def _acontinue_run_stream(
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 yield run_error
+                if yield_run_output:
+                    yield run_response
 
     finally:
         _disconnect_connectable_tools(team)

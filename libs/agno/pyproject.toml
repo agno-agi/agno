@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.8.6"
+version = "2.9.0"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -68,6 +68,7 @@ dev = [
   "agno[microsoft-teams]",
   "agno[agui]",
   "agno[a2a]",
+  "agno[scheduler]",
 ]
 
 # AgentOS server bundle
@@ -113,7 +114,10 @@ arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
-confluence = ["atlassian-python-api"]
+# Pinned below 5.0: that release split Confluence into Cloud and Server classes and left the
+# base ``Confluence`` with no space or page methods, so ConfluenceTools raises AttributeError.
+# Lift once the tools are ported to the split classes.
+confluence = ["atlassian-python-api<5"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 daytona = ["daytona"]
 ddg = ["ddgs"]
