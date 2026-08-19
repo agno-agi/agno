@@ -1558,6 +1558,14 @@ def get_workflow_router(
         if factory:
             return WorkflowResponse.from_factory(factory)
 
+        # An explicit version is a control-plane preview, and this is the one
+        # read route that takes one: publishing shares a component for reading,
+        # so without this gate any actor who can see it could pin - and read -
+        # the owner's unpublished drafts. Same 404 the run routes raise, so a
+        # denial is indistinguishable from the component being absent.
+        if not allow_draft_preview(os.db, workflow_id, version, *draft_preview_identity(request)):
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
         try:
             workflow = get_workflow_by_id(
                 workflow_id=workflow_id,

@@ -11,6 +11,7 @@ The Studio 3.0 dispatch contract:
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 from agno.db.base import ComponentType
@@ -148,3 +149,69 @@ class TestRestSurfaces:
         _mk(db, "draft-bot", "draft")
         r = client.get("/components/draft-bot")
         assert r.status_code == 200, (r.status_code, r.text)
+
+
+def _scoped_app(db, user_id):
+    """An AgentOS whose requests carry a scoped, non-privileged identity."""
+    agent_os = AgentOS(db=db, registry=Registry(name="r", dbs=[db]), telemetry=False)
+    app = agent_os.get_app()
+
+    class _Scope(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            request.state.user_id = user_id
+            request.state.scopes = ["workflows:read", "agents:read", "teams:read", "components:read"]
+            request.state.user_isolation_enabled = True
+            request.state.authorization_enabled = False
+            return await call_next(request)
+
+    app.add_middleware(_Scope)
+    return TestClient(app)
+
+
+def _mk_workflow(db, component_id, user_id, description, stage):
+    db.create_component_with_config(
+        component_id=component_id,
+        component_type=ComponentType.WORKFLOW,
+        name=component_id,
+        description=description,
+        config={"name": component_id, "description": description, "steps": []},
+        stage=stage,
+        user_id=user_id,
+    )
+
+
+class TestVersionPinnedDetailRoute:
+    """The one read route that takes a version must gate it like the run routes.
+
+    Share-on-publish makes a published component readable by everyone, so a
+    detail route that honours an explicit version without the preview gate
+    hands out the owner's unpublished drafts.
+    """
+
+    def test_owner_may_pin_their_own_draft(self, db):
+        _mk_workflow(db, "wf", "alice", "v1 public", "published")
+        db.upsert_config("wf", config={"name": "wf", "description": "SECRET draft", "steps": []})
+        r = _scoped_app(db, "alice").get("/workflows/wf", params={"version": 2})
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert r.json()["description"] == "SECRET draft"
+
+    def test_non_owner_still_reads_the_published_version(self, db):
+        _mk_workflow(db, "wf", "alice", "v1 public", "published")
+        db.upsert_config("wf", config={"name": "wf", "description": "SECRET draft", "steps": []})
+        r = _scoped_app(db, "bob").get("/workflows/wf")
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert r.json()["description"] == "v1 public"
+
+    def test_non_owner_cannot_pin_the_owners_draft(self, db):
+        _mk_workflow(db, "wf", "alice", "v1 public", "published")
+        db.upsert_config("wf", config={"name": "wf", "description": "SECRET draft", "steps": []})
+        r = _scoped_app(db, "bob").get("/workflows/wf", params={"version": 2})
+        assert r.status_code == 404, (r.status_code, r.text)
+        assert "SECRET draft" not in r.text
+
+    def test_non_owner_may_still_pin_a_published_version(self, db):
+        _mk_workflow(db, "wf", "alice", "v1 public", "published")
+        db.upsert_config("wf", config={"name": "wf", "description": "v2 public", "steps": []}, stage="published")
+        r = _scoped_app(db, "bob").get("/workflows/wf", params={"version": 1})
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert r.json()["description"] == "v1 public"
