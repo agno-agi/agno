@@ -3477,9 +3477,11 @@ class StudioTools(Toolkit):
             # treat them as live rather than failing the create.
             row = None
             if self.db is not None:
+                from agno.db.base import ComponentType
+
                 try:
-                    row = self.db.get_component(component_id)
-                except NotImplementedError:
+                    row = self.db.get_component(component_id, component_type=ComponentType(target_type))
+                except (NotImplementedError, ValueError):
                     row = None
             if row is not None and row.get("current_version") is None:
                 return error_result(
