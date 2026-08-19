@@ -13,7 +13,7 @@ import asyncio
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=Groq(id="llama-3.3-70b-versatile"), markdown=True)
+agent = Agent(model=Groq(id="openai/gpt-oss-120b"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")
