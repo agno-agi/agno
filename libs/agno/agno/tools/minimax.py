@@ -16,6 +16,10 @@ MINIMAX_VIDEO_URLS = {
     "cn_zh": "https://api.minimaxi.com/v2/video_generation",
 }
 
+# Minimum budget required to start another poll request. Polling stops instead of
+# issuing a request that cannot complete before max_wait_time elapses.
+MIN_POLL_REQUEST_SECONDS = 1.0
+
 
 class MiniMaxTools(Toolkit):
     """Tools for generating videos with the MiniMax API."""
@@ -105,12 +109,16 @@ class MiniMaxTools(Toolkit):
             if not task_id:
                 return ToolResult(content="Failed to generate video: No task ID returned")
 
-            started_at = time.monotonic()
-            while time.monotonic() - started_at < self.max_wait_time:
+            deadline = time.monotonic() + self.max_wait_time
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining < MIN_POLL_REQUEST_SECONDS:
+                    break
+
                 task_response = httpx.get(
                     f"{self._query_url}/{task_id}",
                     headers=self._headers,
-                    timeout=self.request_timeout,
+                    timeout=min(self.request_timeout, remaining),
                 )
                 task_response.raise_for_status()
                 task = task_response.json().get("task", {})
@@ -132,8 +140,12 @@ class MiniMaxTools(Toolkit):
                     message = error.get("message") or status
                     return ToolResult(content=f"Failed to generate video: {message}")
 
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+
                 log_info(f"Video generation in progress: {status or 'pending'}")
-                time.sleep(self.poll_interval)
+                time.sleep(min(self.poll_interval, remaining))
 
             return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
         except httpx.HTTPError as e:
@@ -172,9 +184,17 @@ class MiniMaxTools(Toolkit):
                 if not task_id:
                     return ToolResult(content="Failed to generate video: No task ID returned")
 
-                started_at = time.monotonic()
-                while time.monotonic() - started_at < self.max_wait_time:
-                    task_response = await client.get(f"{self._query_url}/{task_id}", headers=self._headers)
+                deadline = time.monotonic() + self.max_wait_time
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining < MIN_POLL_REQUEST_SECONDS:
+                        break
+
+                    task_response = await client.get(
+                        f"{self._query_url}/{task_id}",
+                        headers=self._headers,
+                        timeout=min(self.request_timeout, remaining),
+                    )
                     task_response.raise_for_status()
                     task = task_response.json().get("task", {})
                     status = task.get("status")
@@ -195,8 +215,12 @@ class MiniMaxTools(Toolkit):
                         message = error.get("message") or status
                         return ToolResult(content=f"Failed to generate video: {message}")
 
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+
                     log_info(f"Video generation in progress: {status or 'pending'}")
-                    await asyncio.sleep(self.poll_interval)
+                    await asyncio.sleep(min(self.poll_interval, remaining))
 
             return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
         except httpx.HTTPError as e:
