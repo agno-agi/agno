@@ -22,7 +22,7 @@ import asyncio
 import json
 import time
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, Schedule, match_run_endpoint
 from agno.run import RunContext
@@ -77,6 +77,46 @@ def _component_type_arg(target_type: str) -> Optional[Any]:
         return ComponentType(target_type)
     except ValueError:
         return None
+
+
+# ``(target_type, target_id) -> True`` when that component is defined in code and
+# served from the running process. Pure in-memory lookup: the async refusal paths
+# call it directly rather than handing it to a worker thread.
+CodeDefinedProbe = Callable[[str, str], bool]
+
+
+def code_defined_probe(
+    agents: Optional[Sequence[Any]] = None,
+    teams: Optional[Sequence[Any]] = None,
+    workflows: Optional[Sequence[Any]] = None,
+) -> Optional[CodeDefinedProbe]:
+    """A probe over the in-process components, or None when none were given.
+
+    The component catalog cannot see a component that is defined in code: the run
+    routes resolve those from the in-process lists BEFORE they consult the
+    catalog, so a code-defined target answers its run endpoint no matter what a
+    catalog row of the same id holds. A caller that owns those lists builds a
+    probe here and hands it to the draft-only refusal; a caller that owns none
+    passes nothing, and the catalog stands alone.
+
+    The answer is per (type, id), never per id: a code-defined AGENT and a
+    draft-only TEAM row can share an id, and exempting the team on the agent's
+    account would arm a schedule that resolves to nothing.
+
+    The lists are read on every probe call, not snapshotted here, so a list that
+    is still empty when the probe is built - AgentOS fills its own lists after
+    the toolkits and routers are wired - answers for whatever it holds at
+    refusal time. Passing no list at all is the "no evidence" case and yields
+    None, which leaves the catalog to decide alone.
+    """
+    if agents is None and teams is None and workflows is None:
+        return None
+    by_type: Dict[str, Optional[Sequence[Any]]] = {"agent": agents, "team": teams, "workflow": workflows}
+
+    def probe(target_type: str, target_id: str) -> bool:
+        return any(getattr(entry, "id", None) == target_id for entry in by_type.get(target_type) or [])
+
+    return probe
 
 
 def _archived_component_refusal(
@@ -212,7 +252,11 @@ def _has_any_config(db: Any, component_id: str) -> bool:
 
 
 def _draft_only_component_refusal(
-    db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
+    db: Any,
+    target_type: str,
+    target_id: str,
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
 ) -> Optional[Tuple[str, str]]:
     """(type, id) iff that component has an unpublished config and no live version.
 
@@ -221,8 +265,17 @@ def _draft_only_component_refusal(
     it behaves like a code-defined target - there is nothing to publish, so
     refusing it would brick schedules that work today. Only a component that
     actually carries a config, none of which is live, is a draft-only target.
+
+    A target the caller reports as code-defined is exempt outright, catalog row
+    and all: the run routes resolve it in process, so its draft configs never
+    decide whether the endpoint answers, and "publish it first" names a remedy
+    that would not change the run either way. The exemption is settled before
+    the catalog is read, so it can neither depend on nor disclose a row the
+    caller may not see.
     """
     if db is None:
+        return None
+    if is_code_defined is not None and is_code_defined(target_type, target_id):
         return None
     get_component = getattr(db, "get_component", None)
     if get_component is None:
@@ -239,10 +292,16 @@ def _draft_only_component_refusal(
 
 
 async def _adraft_only_component_refusal(
-    db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
+    db: Any,
+    target_type: str,
+    target_id: str,
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
 ) -> Optional[Tuple[str, str]]:
     """Async variant of ``_draft_only_component_refusal``; same predicate."""
     if db is None:
+        return None
+    if is_code_defined is not None and is_code_defined(target_type, target_id):
         return None
     get_component = getattr(db, "get_component", None)
     if get_component is None:
@@ -265,41 +324,59 @@ async def _adraft_only_component_refusal(
 
 
 def draft_endpoint_refusal(
-    db: Any, endpoint: Optional[str], user_id: Optional[str] = None
+    db: Any,
+    endpoint: Optional[str],
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
 ) -> Optional[Tuple[str, str]]:
     """(type, id) when *endpoint* is aimed at a draft-only component, else None."""
     target = _endpoint_target(endpoint)
     if target is None:
         return None
-    return _draft_only_component_refusal(db, target[0], target[1], user_id=user_id)
+    return _draft_only_component_refusal(db, target[0], target[1], user_id=user_id, is_code_defined=is_code_defined)
 
 
 async def adraft_endpoint_refusal(
-    db: Any, endpoint: Optional[str], user_id: Optional[str] = None
+    db: Any,
+    endpoint: Optional[str],
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
 ) -> Optional[Tuple[str, str]]:
     """Async variant of ``draft_endpoint_refusal``; same predicate."""
     target = _endpoint_target(endpoint)
     if target is None:
         return None
-    return await _adraft_only_component_refusal(db, target[0], target[1], user_id=user_id)
+    return await _adraft_only_component_refusal(
+        db, target[0], target[1], user_id=user_id, is_code_defined=is_code_defined
+    )
 
 
-def draft_target_refusal(db: Any, schedule: Schedule, user_id: Optional[str] = None) -> Optional[Tuple[str, str]]:
-    """(type, id) of the draft-only component that blocks enabling *schedule*."""
-    target = _schedule_component_target(schedule)
-    if target is None:
-        return None
-    return _draft_only_component_refusal(db, target[0], target[1], user_id=user_id)
-
-
-async def adraft_target_refusal(
-    db: Any, schedule: Schedule, user_id: Optional[str] = None
+def draft_target_refusal(
+    db: Any,
+    schedule: Schedule,
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
 ) -> Optional[Tuple[str, str]]:
     """(type, id) of the draft-only component that blocks enabling *schedule*."""
     target = _schedule_component_target(schedule)
     if target is None:
         return None
-    return await _adraft_only_component_refusal(db, target[0], target[1], user_id=user_id)
+    return _draft_only_component_refusal(db, target[0], target[1], user_id=user_id, is_code_defined=is_code_defined)
+
+
+async def adraft_target_refusal(
+    db: Any,
+    schedule: Schedule,
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
+) -> Optional[Tuple[str, str]]:
+    """(type, id) of the draft-only component that blocks enabling *schedule*."""
+    target = _schedule_component_target(schedule)
+    if target is None:
+        return None
+    return await _adraft_only_component_refusal(
+        db, target[0], target[1], user_id=user_id, is_code_defined=is_code_defined
+    )
 
 
 def endpoint_drift_refusal(schedule: Schedule) -> Optional[str]:
@@ -346,6 +423,15 @@ class SchedulerTools(Toolkit):
             owner is taken from the run's ``user_id`` (injected via
             ``run_context``), so each user's agent only sees and edits that
             user's schedules.
+        agents_list: Optional live list (e.g. ``agent_os.agents``) of the
+            code-defined agents this process serves. Schedules aimed at one are
+            exempt from the draft-only refusal: run routes resolve code-defined
+            components before they consult the component catalog, so a catalog
+            row of the same id never decides whether the endpoint answers.
+            Without the list the catalog is the only evidence there is, and a
+            code-defined target that also carries a draft row is refused.
+        teams_list: Same as ``agents_list`` but for teams.
+        workflows_list: Same as ``agents_list`` but for workflows.
     """
 
     def __init__(
@@ -356,6 +442,9 @@ class SchedulerTools(Toolkit):
         default_timezone: str = "UTC",
         default_payload: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        agents_list: Optional[Sequence[Any]] = None,
+        teams_list: Optional[Sequence[Any]] = None,
+        workflows_list: Optional[Sequence[Any]] = None,
         **kwargs: Any,
     ):
         self.manager = ScheduleManager(db=db)
@@ -364,6 +453,9 @@ class SchedulerTools(Toolkit):
         self.default_method = default_method
         self.default_timezone = default_timezone
         self.default_payload = default_payload
+        self.agents_list = agents_list
+        self.teams_list = teams_list
+        self.workflows_list = workflows_list
 
         tools: List[Callable] = [
             self.create_schedule,
@@ -413,6 +505,17 @@ class SchedulerTools(Toolkit):
         if self.user_id is not None:
             return self.user_id
         return run_context.user_id if run_context is not None else None
+
+    @property
+    def _code_defined(self) -> Optional[CodeDefinedProbe]:
+        """Probe over this toolkit's in-process components, or None when it has none.
+
+        Built from the attributes on every refusal rather than fixed at
+        construction: the toolkit is usually created before the AgentOS whose
+        component lists it is handed, so those lists are commonly assigned
+        afterwards.
+        """
+        return code_defined_probe(self.agents_list, self.teams_list, self.workflows_list)
 
     # ------------------------------------------------------------------
     # Sync tools
@@ -485,9 +588,14 @@ class SchedulerTools(Toolkit):
             )
         # A schedule fires the live published version, so a draft-only target
         # can only 404 on every tick - and once the cascade disables the row,
-        # the enable guard refuses to re-arm it. The REST create route refuses
-        # this identically; keep the two surfaces in step.
-        draft_target = draft_endpoint_refusal(self.manager.db, resolved_endpoint, user_id=self._owner(run_context))
+        # the enable guard refuses to re-arm it. The REST create route applies
+        # the same predicate; keep the two surfaces in step.
+        draft_target = draft_endpoint_refusal(
+            self.manager.db,
+            resolved_endpoint,
+            user_id=self._owner(run_context),
+            is_code_defined=self._code_defined,
+        )
         if draft_target is not None:
             target_type, target_id = draft_target
             return json.dumps(
@@ -637,9 +745,14 @@ class SchedulerTools(Toolkit):
                     }
                 )
             # A schedule fires the live published version, so a draft-only
-            # target can only 404 on every tick. The REST enable route refuses
-            # this identically; keep the two surfaces in step.
-            draft_target = draft_target_refusal(self.manager.db, existing, user_id=self._owner(run_context))
+            # target can only 404 on every tick. The REST enable route applies
+            # the same predicate; keep the two surfaces in step.
+            draft_target = draft_target_refusal(
+                self.manager.db,
+                existing,
+                user_id=self._owner(run_context),
+                is_code_defined=self._code_defined,
+            )
             if draft_target is not None:
                 target_type, target_id = draft_target
                 return json.dumps(
@@ -838,10 +951,13 @@ class SchedulerTools(Toolkit):
             )
         # A schedule fires the live published version, so a draft-only target
         # can only 404 on every tick - and once the cascade disables the row,
-        # the enable guard refuses to re-arm it. The REST create route refuses
-        # this identically; keep the two surfaces in step.
+        # the enable guard refuses to re-arm it. The REST create route applies
+        # the same predicate; keep the two surfaces in step.
         draft_target = await adraft_endpoint_refusal(
-            self.manager.db, resolved_endpoint, user_id=self._owner(run_context)
+            self.manager.db,
+            resolved_endpoint,
+            user_id=self._owner(run_context),
+            is_code_defined=self._code_defined,
         )
         if draft_target is not None:
             target_type, target_id = draft_target
@@ -992,9 +1108,14 @@ class SchedulerTools(Toolkit):
                     }
                 )
             # A schedule fires the live published version, so a draft-only
-            # target can only 404 on every tick. The REST enable route refuses
-            # this identically; keep the two surfaces in step.
-            draft_target = await adraft_target_refusal(self.manager.db, existing, user_id=self._owner(run_context))
+            # target can only 404 on every tick. The REST enable route applies
+            # the same predicate; keep the two surfaces in step.
+            draft_target = await adraft_target_refusal(
+                self.manager.db,
+                existing,
+                user_id=self._owner(run_context),
+                is_code_defined=self._code_defined,
+            )
             if draft_target is not None:
                 target_type, target_id = draft_target
                 return json.dumps(

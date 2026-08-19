@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, Sequence
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -34,20 +34,36 @@ _SchedulerDbMethod = Literal[
 ]
 
 
-def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
+def get_schedule_router(
+    os_db: Any,
+    settings: Any,
+    agents_list: Optional[Sequence[Any]] = None,
+    teams_list: Optional[Sequence[Any]] = None,
+    workflows_list: Optional[Sequence[Any]] = None,
+) -> APIRouter:
     """Factory that creates and returns the schedule router.
 
     Args:
         os_db: The AgentOS-level DB adapter (must support scheduler methods).
         settings: AgnoAPISettings instance.
+        agents_list: The code-defined agents this process serves. The run routes
+            resolve those in process before they consult the component catalog,
+            so a schedule aimed at one is exempt from the draft-only refusal: a
+            catalog row of the same id never decides whether the endpoint
+            answers. Without the list the catalog is the only evidence there is,
+            and a code-defined target that also carries a draft row is refused.
+        teams_list: Same as ``agents_list`` but for teams.
+        workflows_list: Same as ``agents_list`` but for workflows.
 
     Returns:
         An APIRouter with all schedule endpoints attached.
     """
     from agno.os.auth import get_authentication_dependency
+    from agno.tools.scheduler import code_defined_probe
 
     router = APIRouter(tags=["Schedules"])
     auth_dependency = get_authentication_dependency(settings)
+    is_code_defined = code_defined_probe(agents_list, teams_list, workflows_list)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -176,7 +192,9 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # A schedule fires the live published version, so a draft-only target
         # would 404 on every tick. StudioTools.create_schedule already refuses
         # this; the REST surface must refuse it identically.
-        draft_target = await adraft_endpoint_refusal(os_db, body.endpoint, user_id=scoped_user_id)
+        draft_target = await adraft_endpoint_refusal(
+            os_db, body.endpoint, user_id=scoped_user_id, is_code_defined=is_code_defined
+        )
         if draft_target is not None:
             raise HTTPException(
                 status_code=409,
@@ -281,7 +299,9 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
                     detail=f"Cannot repoint schedule '{existing.get('name') or schedule_id}' at "
                     f"{refusal[0]} '{refusal[1]}': it is archived. Restore the component first.",
                 )
-            draft_target = await adraft_endpoint_refusal(os_db, updates["endpoint"], user_id=scoped_user_id)
+            draft_target = await adraft_endpoint_refusal(
+                os_db, updates["endpoint"], user_id=scoped_user_id, is_code_defined=is_code_defined
+            )
             if draft_target is not None:
                 raise HTTPException(
                     status_code=409,
@@ -369,7 +389,9 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
                 f"{target_type} '{target_id}' is archived. Restore the component first.",
             )
 
-        draft_target = await adraft_target_refusal(os_db, existing_schedule, user_id=scoped_user_id)
+        draft_target = await adraft_target_refusal(
+            os_db, existing_schedule, user_id=scoped_user_id, is_code_defined=is_code_defined
+        )
         if draft_target is not None:
             raise HTTPException(
                 status_code=409,
