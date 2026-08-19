@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -500,8 +501,6 @@ def update_metadata(agent: Agent, session: AgentSession):
     Only the session is updated; the shared Agent instance is never mutated.
     """
     if session.metadata is not None and agent.metadata is not None:
-        from copy import deepcopy
-
         merged = deepcopy(agent.metadata)
         merge_dictionaries(merged, session.metadata)
         session.metadata.clear()
@@ -573,8 +572,6 @@ def read_or_create_session(
     if agent_session is None:
         # Creating new session if none found
         log_debug(f"Creating new AgentSession: {session_id}")
-        from copy import deepcopy
-
         session_data = {}
         if agent.session_state is not None:
             session_data["session_state"] = deepcopy(agent.session_state)
@@ -648,8 +645,6 @@ async def aread_or_create_session(
     if agent_session is None:
         # Creating new session if none found
         log_debug(f"Creating new AgentSession: {session_id}")
-        from copy import deepcopy
-
         session_data = {}
         if agent.session_state is not None:
             session_data["session_state"] = deepcopy(agent.session_state)

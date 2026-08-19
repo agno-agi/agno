@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import time
 from collections import deque
+from copy import deepcopy
 from time import time as unix_time
 from typing import (
     TYPE_CHECKING,
@@ -1354,8 +1355,6 @@ def run_dispatch(
 
     # Read the existing session so session-stored metadata is visible to
     # resolve_run_options via session_metadata.
-    from copy import deepcopy
-
     from agno.agent._storage import read_or_create_session, update_metadata
 
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -2861,8 +2860,6 @@ def arun_dispatch(  # type: ignore
     # Note: arun_dispatch is NOT async, so we can only pre-read with a sync DB.
     # For async DB, _arun/_arun_stream read the session AFTER options are resolved,
     # so session metadata does not reach this run's resolved options there.
-    from copy import deepcopy
-
     from agno.agent._init import has_async_db
     from agno.agent._storage import update_metadata
 
@@ -3393,8 +3390,6 @@ def continue_run_dispatch(
     agent.initialize_agent(debug_mode=debug_mode)
 
     # Read existing session from storage
-    from copy import deepcopy
-
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
     # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
     # so the session layer keeps the session's own values (agent < session < call-site).
@@ -4261,8 +4256,6 @@ def acontinue_run_dispatch(  # type: ignore
     _pre_session: Optional[AgentSession] = None
     _session_metadata: Optional[Dict[str, Any]] = None
     if not has_async_db(agent):
-        from copy import deepcopy
-
         from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
 
         _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
