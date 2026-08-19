@@ -233,9 +233,11 @@ class TestStepFromDict:
         with patch("agno.agent.agent.get_agent_by_id") as mock_get_agent:
             mock_get_agent.return_value = mock_db_agent
             mock_db = MagicMock()
-            step = Step.from_dict(data, registry=registry, db=mock_db)
+            step = Step.from_dict(data, registry=registry, db=mock_db, strict=True)
 
-            mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", registry=registry)
+            mock_get_agent.assert_called_once_with(
+                db=mock_db, id="db-agent", version=None, registry=registry, strict=True
+            )
             assert step.agent is mock_db_agent
 
     def test_from_dict_team_resolved_from_registry(self):
@@ -262,26 +264,66 @@ class TestStepFromDict:
             mock_team.deep_copy.assert_called_once()
 
     def test_from_dict_unresolvable_agent_raises(self):
-        """Test from_dict raises ValueError when agent can't be resolved."""
+        """Test from_dict fails loudly when the agent can't be resolved."""
+        from agno.exceptions import ComponentRehydrationError
+
         data = {
             "type": "Step",
             "name": "broken-step",
             "agent_id": "nonexistent-agent",
         }
 
-        with pytest.raises(ValueError, match="must have one executor"):
-            Step.from_dict(data)
+        with pytest.raises(ComponentRehydrationError, match="nonexistent-agent"):
+            Step.from_dict(data, strict=True)
+
+    def test_from_dict_unresolvable_agent_builds_a_refusing_placeholder_when_lenient(self):
+        """A lenient load stays constructible so reads work; the placeholder
+        refuses at execution and a round trip keeps the original reference."""
+        data = {
+            "type": "Step",
+            "name": "broken-step",
+            "agent_id": "nonexistent-agent",
+        }
+
+        from agno.workflow.step import UnresolvableCallableError
+
+        step = Step.from_dict(data, strict=False)
+
+        assert step.agent is None
+        with pytest.raises(UnresolvableCallableError, match="nonexistent-agent"):
+            step.executor(MagicMock())
+        assert step.to_dict().get("agent_id") == "nonexistent-agent"
+        assert "executor_ref" not in step.to_dict()
 
     def test_from_dict_unresolvable_team_raises(self):
-        """Test from_dict raises ValueError when team can't be resolved."""
+        """Test from_dict fails loudly when the team can't be resolved."""
+        from agno.exceptions import ComponentRehydrationError
+
         data = {
             "type": "Step",
             "name": "broken-step",
             "team_id": "nonexistent-team",
         }
 
-        with pytest.raises(ValueError, match="must have one executor"):
-            Step.from_dict(data)
+        with pytest.raises(ComponentRehydrationError, match="nonexistent-team"):
+            Step.from_dict(data, strict=True)
+
+    def test_from_dict_unresolvable_team_builds_a_refusing_placeholder_when_lenient(self):
+        """Same lenient contract for team references."""
+        data = {
+            "type": "Step",
+            "name": "broken-step",
+            "team_id": "nonexistent-team",
+        }
+
+        from agno.workflow.step import UnresolvableCallableError
+
+        step = Step.from_dict(data, strict=False)
+
+        assert step.team is None
+        with pytest.raises(UnresolvableCallableError, match="nonexistent-team"):
+            step.executor(MagicMock())
+        assert step.to_dict().get("team_id") == "nonexistent-team"
 
     def test_from_dict_with_executor(self, registry_with_functions):
         """Test from_dict reconstructs step with executor function."""
@@ -413,3 +455,77 @@ class TestStepSerializationRoundtrip:
 
         assert restored.description is None
         assert restored.add_workflow_history is None
+
+
+class TestStrictExecutorRefs:
+    def test_from_dict_unresolvable_executor_raises_under_strict(self):
+        """A function-step whose executor is not in the registry must refuse
+        under strict instead of degrading to a generic validation error."""
+        from agno.exceptions import ComponentRehydrationError
+
+        data = {"type": "Step", "name": "fn-step", "executor_ref": "missing_fn"}
+
+        with pytest.raises(ComponentRehydrationError, match="missing_fn"):
+            Step.from_dict(data, registry=Registry(), strict=True)
+
+    def test_from_dict_unresolvable_executor_builds_a_refusing_placeholder_when_lenient(self):
+        data = {"type": "Step", "name": "fn-step", "executor_ref": "missing_fn"}
+
+        from agno.workflow.step import UnresolvableCallableError
+
+        step = Step.from_dict(data, registry=Registry(), strict=False)
+
+        with pytest.raises(UnresolvableCallableError, match="missing_fn"):
+            step.executor(MagicMock())
+        assert step.to_dict().get("executor_ref") == "missing_fn"
+
+
+class TestNestedWorkflowRefs:
+    def test_from_dict_nested_workflow_raises_under_strict(self):
+        """A nested workflow cannot be reconstructed yet, so strict refuses
+        instead of fabricating a step that reports failure as completion."""
+        from agno.exceptions import ComponentRehydrationError
+
+        data = {"type": "Step", "name": "nested", "workflow_id": "inner-wf"}
+
+        with pytest.raises(ComponentRehydrationError, match="inner-wf"):
+            Step.from_dict(data, strict=True)
+
+    def test_from_dict_nested_workflow_placeholder_round_trips_when_lenient(self):
+        data = {"type": "Step", "name": "nested", "workflow_id": "inner-wf"}
+
+        from agno.workflow.step import UnresolvableCallableError
+
+        step = Step.from_dict(data, strict=False)
+
+        with pytest.raises(UnresolvableCallableError, match="inner-wf"):
+            step.executor(MagicMock())
+        assert step.to_dict().get("workflow_id") == "inner-wf"
+        assert "executor_ref" not in step.to_dict()
+
+
+class TestPinKindSafety:
+    def test_a_step_team_pin_never_applies_to_an_agent_step(self, tmp_path):
+        """Pin lookup is scoped by link kind: a team pin for a shared child id
+        must not bind an agent step to the team's version."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "kind.db"))
+        agent = Agent(id="shared", name="A", description="current")
+        agent.save(db=db)
+        links = [
+            {
+                "link_kind": "step_team",
+                "link_key": "other-step",
+                "child_component_id": "shared",
+                "child_version": 99,
+                "position": 0,
+            }
+        ]
+        data = {"type": "Step", "step_id": "mine", "name": "mine", "agent_id": "shared"}
+
+        step = Step.from_dict(data, db=db, links=links, strict=True)
+
+        assert step.agent is not None
+        assert step.agent.description == "current"
