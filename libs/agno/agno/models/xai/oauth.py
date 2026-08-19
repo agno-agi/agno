@@ -59,16 +59,25 @@ _db_scope_registry: "weakref.WeakKeyDictionary[Any, str]" = weakref.WeakKeyDicti
 _db_scope_counter = itertools.count()
 _scope_guard = threading.Lock()
 
+# Serializes cache MUTATIONS (put/pop/evict/reset): an unguarded finalizer
+# eviction raced concurrent pops/puts, raised mid-iteration, and silently
+# stranded the dead scope's entries. Reads stay lock-free; held only around
+# dict operations, never during I/O.
+_cache_mutation_guard = threading.Lock()
+
 
 def _evict_scope(scope: str) -> None:
     """Drop a collected store's cache entries (finalizer target - must not raise)."""
-    for key in [k for k in _token_cache if k[0] == scope]:
-        _token_cache.pop(key, None)
+    with _cache_mutation_guard:
+        for key in list(_token_cache):
+            if key[0] == scope:
+                _token_cache.pop(key, None)
 
 
 def _reset_cache_for_tests() -> None:
     """Clear the module-level token cache and lock state so tests stay order-independent."""
-    _token_cache.clear()
+    with _cache_mutation_guard:
+        _token_cache.clear()
     _async_cache_locks.clear()
     _db_scope_registry.clear()
 
@@ -420,7 +429,8 @@ class XAITokenManager:
         return None
 
     def _cache_put(self, token_data: Dict[str, Any]) -> None:
-        _token_cache[self._cache_key()] = (token_data["access_token"], float(token_data.get("expires_at") or 0))
+        with _cache_mutation_guard:
+            _token_cache[self._cache_key()] = (token_data["access_token"], float(token_data.get("expires_at") or 0))
 
     # ------------------------------------------------------------------
     # Storage: db row (Google auth-token shape), 0600 file, or memory
@@ -600,7 +610,8 @@ class XAITokenManager:
         # copies, so no later process can resurrect a session whose live
         # state is already gone
         self._delete_stored_row()
-        _token_cache.pop(self._cache_key(), None)
+        with _cache_mutation_guard:
+            _token_cache.pop(self._cache_key(), None)
         self._memory_row = None
 
     async def _adelete_stored_token(self) -> None:
@@ -608,7 +619,8 @@ class XAITokenManager:
         # copies, so no later process can resurrect a session whose live
         # state is already gone
         await self._adelete_stored_row()
-        _token_cache.pop(self._cache_key(), None)
+        with _cache_mutation_guard:
+            _token_cache.pop(self._cache_key(), None)
         self._memory_row = None
 
     def _delete_stored_row(self) -> None:
