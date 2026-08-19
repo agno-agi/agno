@@ -2057,6 +2057,50 @@ class TestArchive:
         assert "radar-scout" in error["message"]
         assert _loads(studio.archive_component("radar-scout"))["status"] == "archived"
 
+    def test_archive_by_another_owners_display_name_answers_as_if_absent(self, studio):
+        from agno.run.base import RunContext
+
+        alice = RunContext(run_id="r1", session_id="s1", user_id="alice")
+        bob = RunContext(run_id="r2", session_id="s2", user_id="bob")
+
+        # Bob's answer for a name that exists nowhere is the control.
+        absent = studio.archive_component("Quarterly Secrets", _agno_run_context=bob)
+        studio.create_agent(
+            name="Quarterly Secrets", instructions="i", model_id="gpt-5.4", publish=True, _agno_run_context=alice
+        )
+
+        # The same call once Alice owns the name must be byte-identical: a
+        # differing refusal would report whose names exist.
+        assert studio.archive_component("Quarterly Secrets", _agno_run_context=bob) == absent
+        assert _error(absent)["code"] == "component_not_found"
+
+        # The owner still resolves her own display name.
+        owner_error = _error(studio.archive_component("Quarterly Secrets", _agno_run_context=alice))
+        assert owner_error["code"] == "invalid_request"
+        assert "quarterly-secrets" in owner_error["message"]
+        assert _loads(studio.archive_component("quarterly-secrets", _agno_run_context=alice))["status"] == "archived"
+
+    @pytest.mark.asyncio
+    async def test_async_archive_by_another_owners_display_name_answers_as_if_absent(self, studio):
+        from agno.run.base import RunContext
+
+        alice = RunContext(run_id="r1", session_id="s1", user_id="alice")
+        bob = RunContext(run_id="r2", session_id="s2", user_id="bob")
+
+        absent = await studio.aarchive_component("Quarterly Secrets", _agno_run_context=bob)
+        studio.create_agent(
+            name="Quarterly Secrets", instructions="i", model_id="gpt-5.4", publish=True, _agno_run_context=alice
+        )
+
+        assert await studio.aarchive_component("Quarterly Secrets", _agno_run_context=bob) == absent
+        assert _error(absent)["code"] == "component_not_found"
+
+        owner_error = _error(await studio.aarchive_component("Quarterly Secrets", _agno_run_context=alice))
+        assert owner_error["code"] == "invalid_request"
+        assert "quarterly-secrets" in owner_error["message"]
+        archived = await studio.aarchive_component("quarterly-secrets", _agno_run_context=alice)
+        assert _loads(archived)["status"] == "archived"
+
     def test_archive_refuses_while_a_dependent_pins_the_component(self, registry, db):
         tool = StudioTools(registry=registry, db=db, teams=True)
         tool.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True)
@@ -2441,6 +2485,103 @@ class TestEditPreservation:
         row = db.get_config(component_id="schema-agent", version=_edit_version(out))
         assert row["config"]["output_schema"] == "Report"
         assert row["config"]["description"] == "edited"
+
+    def test_description_edit_preserves_unresolved_memory_manager(self, tmp_path):
+        from agno.memory.manager import MemoryManager
+
+        class FakeKnowledge:
+            name = "handbook"
+
+        db = SqliteDb(db_file=str(tmp_path / "preserve_mm.db"))
+        Agent(
+            id="mm-agent",
+            name="M",
+            model=OpenAIResponses(id="gpt-5.5"),
+            memory_manager=MemoryManager(id="mm-stable"),
+            knowledge=FakeKnowledge(),
+        ).save(db=db)
+
+        # Empty registry: neither reference resolves, so the lenient load drops both.
+        studio = StudioTools(registry=Registry(), db=db)
+        out = _loads(studio.edit_agent("mm-agent", description="edited"))
+        assert out.get("status") == "edited"
+
+        row = db.get_config(component_id="mm-agent", version=_edit_version(out))
+        assert row["config"]["memory_manager"] == {"registry_id": "mm-stable"}
+        assert row["config"]["knowledge"] == {"name": "handbook"}
+
+    @pytest.mark.asyncio
+    async def test_async_description_edit_preserves_unresolved_memory_manager(self, tmp_path):
+        from agno.memory.manager import MemoryManager
+
+        class FakeKnowledge:
+            name = "handbook"
+
+        db = SqliteDb(db_file=str(tmp_path / "preserve_mm_async.db"))
+        Agent(
+            id="mm-agent-async",
+            name="M",
+            model=OpenAIResponses(id="gpt-5.5"),
+            memory_manager=MemoryManager(id="mm-stable"),
+            knowledge=FakeKnowledge(),
+        ).save(db=db)
+
+        studio = StudioTools(registry=Registry(), db=db)
+        out = _loads(await studio.aedit_agent("mm-agent-async", description="edited"))
+        assert out.get("status") == "edited"
+
+        row = db.get_config(component_id="mm-agent-async", version=_edit_version(out))
+        assert row["config"]["memory_manager"] == {"registry_id": "mm-stable"}
+        assert row["config"]["knowledge"] == {"name": "handbook"}
+
+    def test_team_description_edit_preserves_unresolved_memory_manager(self, tmp_path):
+        from agno.memory.manager import MemoryManager
+        from agno.team.team import Team
+
+        class FakeKnowledge:
+            name = "handbook"
+
+        db = SqliteDb(db_file=str(tmp_path / "preserve_mm_team.db"))
+        Team(
+            id="mm-team",
+            name="T",
+            members=[Agent(id="mm-team-member", name="Member")],
+            memory_manager=MemoryManager(id="mm-stable"),
+            knowledge=FakeKnowledge(),
+        ).save(db=db)
+
+        studio = StudioTools(registry=Registry(), db=db, teams=True)
+        out = _loads(studio.edit_team("mm-team", description="edited"))
+        assert out.get("status") == "edited"
+
+        row = db.get_config(component_id="mm-team", version=_edit_version(out))
+        assert row["config"]["memory_manager"] == {"registry_id": "mm-stable"}
+        assert row["config"]["knowledge"] == {"name": "handbook"}
+
+    @pytest.mark.asyncio
+    async def test_async_team_description_edit_preserves_unresolved_memory_manager(self, tmp_path):
+        from agno.memory.manager import MemoryManager
+        from agno.team.team import Team
+
+        class FakeKnowledge:
+            name = "handbook"
+
+        db = SqliteDb(db_file=str(tmp_path / "preserve_mm_team_async.db"))
+        Team(
+            id="mm-team-async",
+            name="T",
+            members=[Agent(id="mm-team-member-async", name="Member")],
+            memory_manager=MemoryManager(id="mm-stable"),
+            knowledge=FakeKnowledge(),
+        ).save(db=db)
+
+        studio = StudioTools(registry=Registry(), db=db, teams=True)
+        out = _loads(await studio.aedit_team("mm-team-async", description="edited"))
+        assert out.get("status") == "edited"
+
+        row = db.get_config(component_id="mm-team-async", version=_edit_version(out))
+        assert row["config"]["memory_manager"] == {"registry_id": "mm-stable"}
+        assert row["config"]["knowledge"] == {"name": "handbook"}
 
     def test_team_edit_repins_members(self, tmp_path):
         from agno.team.team import Team

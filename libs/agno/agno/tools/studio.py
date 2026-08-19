@@ -2714,7 +2714,9 @@ class StudioTools(Toolkit):
                 try:
                     resolved = None
                     for type_name in ("agent", "team", "workflow"):
-                        resolved = self._runner_tools._resolve_db_id_by_name_or_slug(type_name, component_id)
+                        resolved = self._runner_tools._resolve_db_id_by_name_or_slug(
+                            type_name, component_id, actor=_actor_id(_agno_run_context)
+                        )
                         if resolved is not None:
                             break
                 except AmbiguousComponentNameError:
@@ -4076,6 +4078,7 @@ class StudioTools(Toolkit):
         "input_schema",
         "output_schema",
         "knowledge",
+        "memory_manager",
         "reasoning_model",
         "parser_model",
         "output_model",
