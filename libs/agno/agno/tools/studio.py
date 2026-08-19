@@ -893,19 +893,30 @@ class StudioTools(Toolkit):
             from agno.run import RunContext
             from agno.utils.callables import invoke_callable_factory
 
-            try:
-                produced = invoke_callable_factory(
-                    value, component, RunContext(run_id="studio-guard", session_id="studio-guard")
-                )
-            except Exception:
-                logger.debug(f"StudioTools: unresolvable {name} factory treated as privileged", exc_info=True)
-                return [_UNRESOLVED_FACTORY]
-            if produced is None:
-                return []
-            try:
-                return list(produced)
-            except TypeError:
-                return [_UNRESOLVED_FACTORY]
+            # A factory may branch on the run context, so one probe sees only
+            # one branch: a factory that hands out StudioTools to an identified
+            # user and something harmless to nobody would read as unprivileged
+            # under a single identity-free probe, and the guard exists to stop
+            # exactly that composition. Probe with and without an identity and
+            # judge the union.
+            probes = (
+                RunContext(run_id="studio-guard", session_id="studio-guard"),
+                RunContext(run_id="studio-guard", session_id="studio-guard", user_id="studio-guard-probe"),
+            )
+            collected: List[Any] = []
+            for probe_context in probes:
+                try:
+                    produced = invoke_callable_factory(value, component, probe_context)
+                except Exception:
+                    logger.debug(f"StudioTools: unresolvable {name} factory treated as privileged", exc_info=True)
+                    return [_UNRESOLVED_FACTORY]
+                if produced is None:
+                    continue
+                try:
+                    collected.extend(list(produced))
+                except TypeError:
+                    return [_UNRESOLVED_FACTORY]
+            return collected
         try:
             return list(value)
         except TypeError:
