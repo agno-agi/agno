@@ -27,6 +27,10 @@ db = SqliteDb(db_file="tmp/xai_oauth.db")
 # One manager for both roles: the toolkit signs in, the model spends the session
 token_manager = XAITokenManager(db=db)
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=xAIResponses(token_manager=token_manager),
     tools=[XAIAuth(token_manager=token_manager)],

@@ -4,6 +4,8 @@ from os import getenv
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+import httpx
+
 from agno.exceptions import ModelAuthenticationError
 from agno.run import RunContext
 from agno.tools import Toolkit
@@ -50,6 +52,10 @@ class XAIAuth(Toolkit):
 
     Signing in provisions the deployment's SuperGrok credential (single-user
     mode): the token is stored on the slot the xAI model already reads.
+
+    That slot is shared, so every user of this toolkit signs in to, and spends,
+    the SAME subscription - and ``force=True`` signs the deployment out, not one
+    user. Keep it to single-tenant deployments until per-user tokens land.
     """
 
     def __init__(
@@ -158,11 +164,16 @@ class XAIAuth(Toolkit):
         return json.dumps({"message": _SIGNED_IN + self._degrade_note()})
 
     def _is_signed_in(self) -> bool:
-        """Whether a usable SuperGrok session already exists, refreshing it if needed."""
+        """Whether a usable SuperGrok session already exists, refreshing it if needed.
+
+        A refresh here reaches the network, so a transport failure counts as "no
+        usable session": the sign-in that follows surfaces the real error as JSON
+        rather than letting an exception escape a tool that never raises.
+        """
         try:
             self.token_manager.get_access_token()
             return True
-        except ModelAuthenticationError:
+        except (ModelAuthenticationError, httpx.HTTPError):
             return False
 
     def _degrade_note(self) -> str:
@@ -170,6 +181,11 @@ class XAIAuth(Toolkit):
         db = self.token_manager.db
         if db is None:
             return ""
+        if iscoroutinefunction(db.get_auth_token):
+            # An async backend cannot be read from these sync tools - and the
+            # manager's own sync path fell through to the file store for exactly
+            # that reason, so the note is the accurate answer here.
+            return _FILE_DEGRADE_NOTE
         try:
             # The manager owns the deployment slot; read it rather than restate it
             if db.get_auth_token(*self.token_manager._store_key()) is not None:

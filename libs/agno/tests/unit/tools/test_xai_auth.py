@@ -521,6 +521,29 @@ def test_a_db_without_token_storage_degrades_to_a_file_and_says_so(endpoint, tmp
     assert decrypt_dict(stored, key=encryption_key)["access_token"] == "access-token-1"
 
 
+def test_an_async_db_degrades_to_a_file_and_says_so(endpoint, tmp_path, encryption_key):
+    """These tools are sync: an async backend cannot be read here, so the manager wrote a file."""
+
+    class AsyncOnlyDb:
+        async def get_auth_token(self, provider, user_id, service):  # pragma: no cover - never awaited
+            return None
+
+        async def upsert_auth_token(self, token):  # pragma: no cover - never awaited
+            return None
+
+        async def delete_auth_token(self, provider, user_id, service):  # pragma: no cover - never awaited
+            return True
+
+    auth = _toolkit(endpoint, db=AsyncOnlyDb(), token_path=str(tmp_path / "token.json"), encryption_key=encryption_key)
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+
+    payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"message": SIGNED_IN + FILE_DEGRADE_NOTE}
+    stored = json.loads((tmp_path / "token.json").read_text())
+    assert decrypt_dict(stored, key=encryption_key)["access_token"] == "access-token-1"
+
+
 def test_a_pending_login_survives_a_db_that_cannot_store_it(endpoint, tmp_path, encryption_key):
     db = MagicMock()
     db.upsert_auth_token.side_effect = NotImplementedError
