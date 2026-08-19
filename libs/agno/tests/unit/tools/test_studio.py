@@ -1791,9 +1791,12 @@ class TestSchedules:
         assert "Agent not found: ghost" in out["error"]["message"]
 
     def test_bad_target_type_returns_error(self, studio_schedules):
+        # A malformed target_type is a malformed argument, not a missing
+        # component: nothing was looked up, so component_not_found said
+        # something untrue and disagreed with the message beside it.
         self._create_target_agent(studio_schedules)
         out = self._create_schedule(studio_schedules, target_type="cron-job")
-        assert out["error"]["code"] == "component_not_found"
+        assert out["error"]["code"] == "invalid_request"
         assert "Invalid target_type" in out["error"]["message"]
 
     def test_invalid_cron_returns_error(self, studio_schedules):

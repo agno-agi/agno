@@ -556,10 +556,28 @@ class TestConcurrentCASWrites:
             lambda: db.set_current_version(cid, 1, expected_current_version=2),
             lambda: db.delete_component(cid, hard_delete=False, expected_current_version=2),
         )
-        outcomes = sorted(r[0] for r in results)
-        assert outcomes == ["err", "ok"], results
-        errs = [r[1] for r in results if r[0] == "err"]
-        assert isinstance(errs[0], ComponentVersionConflictError)
+
+        # Either order is legitimate, and which one runs is a scheduling
+        # detail, so the invariant is that exactly one MUTATION lands - not
+        # that a particular call raised.
+        #
+        # Pointer move first: the archive's CAS sees current_version moved and
+        # raises. Archive first: the pointer move finds an archived row and
+        # reports False, the same verdict its pre-check gives for a row that
+        # was already archived (pinned in test_component_archive_race.py).
+        landed = [r for r in results if r[0] == "ok" and r[1] is not False]
+        assert len(landed) == 1, results
+
+        archived = db.get_component(cid, include_deleted=True)["deleted_at"] is not None
+        if archived:
+            # The archive won, so the pointer must not have moved onto it.
+            assert db.get_component(cid, include_deleted=True)["current_version"] == 2
+            assert any(r[0] == "ok" and r[1] is False for r in results), results
+        else:
+            # The pointer move won, so the archive must have reported the conflict.
+            errs = [r[1] for r in results if r[0] == "err"]
+            assert errs and isinstance(errs[0], ComponentVersionConflictError), results
+            assert db.get_component(cid)["current_version"] == 1
 
     def test_guarded_publish_race_has_one_winner(self, db):
         from agno.db.base import ComponentVersionConflictError

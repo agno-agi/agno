@@ -577,11 +577,16 @@ class TestDeleteComponent:
 
         assert response.status_code == 404
 
-    def test_delete_component_disables_schedules_for_the_target(self, client, mock_db):
-        """Archiving via REST must run the same cascade StudioTools.archive_component runs.
+    def test_delete_component_delegates_the_cascade_to_the_adapter(self, client, mock_db):
+        """Archiving via REST must run the same cascade every other archive surface runs.
 
         A schedule left pointing at an archived component only 404s on every tick,
-        and retries - the exact failure disable_schedules_for_target exists to stop.
+        and retries - the exact failure the cascade exists to stop. The cascade now
+        rides delete_component inside the archive's own transaction, so the route
+        must not run its own: doing so would disable twice, and a caller-side
+        cascade is precisely what let the SDK deletes bypass it. The cascade itself
+        is pinned in tests/unit/db/test_component_liveness_guards.py, which covers
+        the REST, StudioTools, SDK and hard-delete surfaces together.
         """
         mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
         mock_db.delete_component.return_value = True
@@ -590,9 +595,8 @@ class TestDeleteComponent:
         response = client.delete("/components/agent-1")
 
         assert response.status_code == 204
-        mock_db.disable_schedules_for_target.assert_called_once_with(
-            "agent", "agent-1", reason="target_archived:agent:agent-1"
-        )
+        assert mock_db.delete_component.call_count == 1
+        mock_db.disable_schedules_for_target.assert_not_called()
 
     def test_delete_component_does_not_cascade_when_the_delete_failed(self, client, mock_db):
         """Nothing was archived, so nothing may be disabled."""
