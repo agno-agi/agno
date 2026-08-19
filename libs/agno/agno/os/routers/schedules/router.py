@@ -156,7 +156,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # A schedule aimed at an archived component can only 404 at fire time:
         # refuse the create instead of accepting an armed dead schedule.
         # Identical predicate to the Studio tool (SchedulerTools.create_schedule).
-        from agno.tools.scheduler import aarchived_endpoint_refusal
+        from agno.tools.scheduler import aarchived_endpoint_refusal, adraft_endpoint_refusal
 
         # Owner the schedule to the caller, falling back to the unscoped JWT sub so
         # admin-created schedules still carry a creator id.
@@ -171,6 +171,17 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=409,
                 detail=f"Cannot create schedule '{body.name}': its target "
                 f"{refusal[0]} '{refusal[1]}' is archived. Restore the component first.",
+            )
+
+        # A schedule fires the live published version, so a draft-only target
+        # would 404 on every tick. StudioTools.create_schedule already refuses
+        # this; the REST surface must refuse it identically.
+        draft_target = await adraft_endpoint_refusal(os_db, body.endpoint, user_id=scoped_user_id)
+        if draft_target is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot create schedule '{body.name}': its target "
+                f"{draft_target[0]} '{draft_target[1]}' has no published version. Publish it first.",
             )
         creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
         # Neither owner is safe for the executor's identity: stamping it misattributes every
@@ -261,7 +272,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # Repointing at an archived component is refused for the same reason
         # creating against one is: the schedule could only 404 at fire time.
         if "endpoint" in updates:
-            from agno.tools.scheduler import aarchived_endpoint_refusal
+            from agno.tools.scheduler import aarchived_endpoint_refusal, adraft_endpoint_refusal
 
             refusal = await aarchived_endpoint_refusal(os_db, updates["endpoint"], user_id=scoped_user_id)
             if refusal is not None:
@@ -269,6 +280,13 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
                     status_code=409,
                     detail=f"Cannot repoint schedule '{existing.get('name') or schedule_id}' at "
                     f"{refusal[0]} '{refusal[1]}': it is archived. Restore the component first.",
+                )
+            draft_target = await adraft_endpoint_refusal(os_db, updates["endpoint"], user_id=scoped_user_id)
+            if draft_target is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot repoint schedule '{existing.get('name') or schedule_id}' at "
+                    f"{draft_target[0]} '{draft_target[1]}': it has no published version. Publish it first.",
                 )
 
         # Validate cron/timezone if changing
@@ -339,7 +357,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # refuse the re-arm until the component is restored. Identical
         # predicate to the Studio tool (SchedulerTools.enable_schedule).
         from agno.db.schemas.scheduler import Schedule
-        from agno.tools.scheduler import aarchived_target_refusal, endpoint_drift_refusal
+        from agno.tools.scheduler import aarchived_target_refusal, adraft_target_refusal, endpoint_drift_refusal
 
         existing_schedule = Schedule.from_dict(existing)
         refusal = await aarchived_target_refusal(os_db, existing_schedule, user_id=scoped_user_id)
@@ -349,6 +367,14 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=409,
                 detail=f"Cannot enable schedule '{existing.get('name') or schedule_id}': its target "
                 f"{target_type} '{target_id}' is archived. Restore the component first.",
+            )
+
+        draft_target = await adraft_target_refusal(os_db, existing_schedule, user_id=scoped_user_id)
+        if draft_target is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot enable schedule '{existing.get('name') or schedule_id}': its target "
+                f"{draft_target[0]} '{draft_target[1]}' has no published version. Publish it first.",
             )
 
         # A drift-disabled row re-arms only once its endpoint matches its

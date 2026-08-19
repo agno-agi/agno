@@ -200,6 +200,78 @@ async def aarchived_endpoint_refusal(
     return await _aarchived_component_refusal(db, target[0], target[1], user_id=user_id)
 
 
+def _draft_only_component_refusal(
+    db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """(type, id) iff that component exists but has no published version."""
+    if db is None:
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+    try:
+        row = get_component(target_id, component_type=_component_type_arg(target_type), user_id=user_id)
+    except NotImplementedError:
+        return None
+    if isinstance(row, dict) and row.get("current_version") is None:
+        return target_type, target_id
+    return None
+
+
+async def _adraft_only_component_refusal(
+    db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """Async variant of ``_draft_only_component_refusal``; same predicate."""
+    if db is None:
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+    component_type = _component_type_arg(target_type)
+    try:
+        if asyncio.iscoroutinefunction(get_component):
+            row = await get_component(target_id, component_type=component_type, user_id=user_id)
+        else:
+            row = await asyncio.to_thread(
+                partial(get_component, target_id, component_type=component_type, user_id=user_id)
+            )
+    except NotImplementedError:
+        return None
+    if isinstance(row, dict) and row.get("current_version") is None:
+        return target_type, target_id
+    return None
+
+
+def draft_endpoint_refusal(
+    db: Any, endpoint: Optional[str], user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """(type, id) when *endpoint* is aimed at a draft-only component, else None."""
+    target = _endpoint_target(endpoint)
+    if target is None:
+        return None
+    return _draft_only_component_refusal(db, target[0], target[1], user_id=user_id)
+
+
+async def adraft_endpoint_refusal(
+    db: Any, endpoint: Optional[str], user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """Async variant of ``draft_endpoint_refusal``; same predicate."""
+    target = _endpoint_target(endpoint)
+    if target is None:
+        return None
+    return await _adraft_only_component_refusal(db, target[0], target[1], user_id=user_id)
+
+
+async def adraft_target_refusal(
+    db: Any, schedule: Schedule, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """(type, id) of the draft-only component that blocks enabling *schedule*."""
+    target = _schedule_component_target(schedule)
+    if target is None:
+        return None
+    return await _adraft_only_component_refusal(db, target[0], target[1], user_id=user_id)
+
+
 def endpoint_drift_refusal(schedule: Schedule) -> Optional[str]:
     """Why enable must stay refused for an endpoint_drift-disabled row, else None.
 
