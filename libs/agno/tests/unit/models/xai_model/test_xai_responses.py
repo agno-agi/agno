@@ -44,6 +44,17 @@ def _fake_client() -> MagicMock:
     return client
 
 
+def _decorated_403_message(raw: str) -> str:
+    """The full drafted 403 decoration with the provider's raw body appended."""
+    return (
+        "xAI rejected this request (403). When signed in with SuperGrok this usually means "
+        "the subscription tier does not include this model or API access, the subscription "
+        "is inactive, or its quota is exhausted — note X Premium does not include xAI API "
+        "access. Retrying or re-logging-in will not help. To use pay-per-token access "
+        "instead, set XAI_API_KEY. Provider message: " + raw
+    )
+
+
 # ---------------------------------------------------------------------------
 # T12/T13: callable wiring - the provider reaches the SDK client as api_key
 # ---------------------------------------------------------------------------
@@ -60,7 +71,8 @@ def test_sync_client_receives_token_provider():
     client = model.get_client()
 
     # The openai SDK stores a callable api_key on the private _api_key_provider
-    # attribute (verified in the installed 2.45.0; revisit if the SDK moves it)
+    # attribute - present from the 1.106.0 floor (introduced with callable api_key
+    # support) through the installed 2.45.0
     assert client._api_key_provider is provider
     assert calls == []  # never invoked at build
 
@@ -144,8 +156,13 @@ def test_version_guard_blocks_oauth_on_old_sdk():
 def test_version_guard_blocks_oauth_async_client_on_old_sdk():
     with patch("importlib.metadata.version", return_value="1.99.0"):
         model = xAIResponses(token_provider=lambda: "tok")
-        with pytest.raises(ImportError, match="openai>=1.106.0"):
+        with pytest.raises(ImportError) as exc_info:
             model.get_async_client()
+
+    assert str(exc_info.value) == (
+        "SuperGrok OAuth needs openai>=1.106.0 (callable api_key support). "
+        "Found 1.99.0. Please upgrade using `pip install -U openai`."
+    )
 
 
 def test_version_guard_skips_api_key_mode():
@@ -189,6 +206,13 @@ def test_include_absent_with_reasoning_replay_on_non_reasoning_slug():
     model = xAIResponses(api_key="test-key", id="grok-4-1-fast-non-reasoning-latest", reasoning_replay=True)
     params = model.get_request_params(messages=_messages())
     assert "include" not in params
+
+
+def test_include_present_with_reasoning_replay_on_named_reasoning_slug():
+    # A reasoning-suffixed slug from the live catalog: the substring branch of the slug set
+    model = xAIResponses(api_key="test-key", id="grok-4.20-0309-reasoning", reasoning_replay=True)
+    params = model.get_request_params(messages=_messages())
+    assert params.get("include") == ["reasoning.encrypted_content"]
 
 
 def test_credential_precedence_explicit_key_first():
@@ -256,7 +280,8 @@ def test_403_untouched_in_api_key_mode():
         with pytest.raises(ModelProviderError) as exc_info:
             model.invoke(messages=_messages(), assistant_message=_assistant())
 
-    assert exc_info.value.message == "Tier does not allow this model"
+    assert exc_info.value is error  # untouched: the original exception object
+    assert exc_info.value.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -310,8 +335,60 @@ def test_403_after_401_retry_is_decorated():
 
     assert parent.call_count == 2
     assert manager.force_refresh.call_count == 1
+    decorated = exc_info.value
+    assert type(decorated) is ModelProviderError
+    assert decorated.status_code == 403
+    assert decorated.message == _decorated_403_message("Tier does not allow this model")
+    assert model._is_retryable_error(decorated) is False
+
+
+async def test_ainvoke_403_decorated_in_oauth_mode():
+    raw = "Tier does not allow this model"
+    error = ModelProviderError(raw, status_code=403)
+
+    with patch.object(OpenAIResponses, "ainvoke", AsyncMock(side_effect=error)):
+        model = xAIResponses(token_manager=MagicMock())
+        with pytest.raises(ModelProviderError) as exc_info:
+            await model.ainvoke(messages=_messages(), assistant_message=_assistant())
+
+    assert type(exc_info.value) is ModelProviderError
     assert exc_info.value.status_code == 403
-    assert "X Premium does not include xAI API access" in exc_info.value.message
+    assert exc_info.value.message == _decorated_403_message(raw)
+
+
+def test_invoke_stream_403_decorated_in_oauth_mode():
+    raw = "Tier does not allow this model"
+    error = ModelProviderError(raw, status_code=403)
+
+    def failing():
+        raise error
+        yield  # pragma: no cover - makes this a generator
+
+    with patch.object(OpenAIResponses, "invoke_stream", MagicMock(side_effect=[failing()])):
+        model = xAIResponses(token_manager=MagicMock())
+        with pytest.raises(ModelProviderError) as exc_info:
+            list(model.invoke_stream(messages=_messages(), assistant_message=_assistant()))
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.message == _decorated_403_message(raw)
+
+
+async def test_ainvoke_stream_403_decorated_in_oauth_mode():
+    raw = "Tier does not allow this model"
+    error = ModelProviderError(raw, status_code=403)
+
+    async def failing():
+        raise error
+        yield  # pragma: no cover - makes this an async generator
+
+    with patch.object(OpenAIResponses, "ainvoke_stream", MagicMock(side_effect=[failing()])):
+        model = xAIResponses(token_manager=MagicMock())
+        with pytest.raises(ModelProviderError) as exc_info:
+            async for _ in model.ainvoke_stream(messages=_messages(), assistant_message=_assistant()):
+                pass
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.message == _decorated_403_message(raw)
 
 
 def test_401_api_key_mode_not_retried():
@@ -385,6 +462,30 @@ def test_stream_401_after_first_yield_propagates():
     assert collected == [chunk]
     assert parent.call_count == 1
     assert manager.force_refresh.call_count == 0  # deltas must not replay
+
+
+async def test_astream_401_after_first_yield_propagates():
+    manager = MagicMock()
+    manager.aforce_refresh = AsyncMock()
+    error = ModelProviderError("unauthorized", status_code=401)
+    chunk = MagicMock(name="chunk-1")
+
+    async def yielding_then_failing():
+        yield chunk
+        raise error
+
+    parent = MagicMock(side_effect=[yielding_then_failing()])
+
+    with patch.object(OpenAIResponses, "ainvoke_stream", parent):
+        model = xAIResponses(token_manager=manager)
+        collected = []
+        with pytest.raises(ModelProviderError):
+            async for item in model.ainvoke_stream(messages=_messages(), assistant_message=_assistant()):
+                collected.append(item)
+
+    assert collected == [chunk]
+    assert parent.call_count == 1
+    assert manager.aforce_refresh.await_count == 0  # deltas must not replay
 
 
 async def test_astream_401_before_first_yield_retries_once():

@@ -181,11 +181,14 @@ def test_poll_expired_token_is_terminal():
 
 def test_poll_unknown_error_carries_raw_body():
     body = {"error": "pizza_error", "error_description": "the oven is off"}
-    handler, calls = _sequence_handler([httpx.Response(400, json=body)])
+    response = httpx.Response(400, json=body)
+    handler, calls = _sequence_handler([response])
 
-    with pytest.raises(ModelAuthenticationError, match="pizza_error"):
+    with pytest.raises(ModelAuthenticationError) as exc_info:
         _manager(handler).poll_for_token("device-code-1", interval=5, deadline=10_000_000_000)
 
+    # The complete raw body is appended, not just the parsed error code
+    assert response.text in exc_info.value.message
     assert len(calls) == 1
 
 
@@ -233,4 +236,6 @@ def test_poll_past_deadline_is_terminal(fake_clock):
             manager.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
 
     assert exc_info.value.message == EXPIRED_MESSAGE
-    assert len(calls) >= 1
+    # Advancing 1000s per sleep against an 1800s deadline permits exactly two
+    # pre-deadline polls; none may happen after the deadline passes
+    assert len(calls) == 2

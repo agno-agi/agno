@@ -205,7 +205,7 @@ def test_not_implemented_backend_falls_back_to_file(tmp_path, encryption_key, to
     with patch("agno.models.xai.oauth.log_warning") as mock_warning:
         manager.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
 
-    assert any("does not support auth token storage" in str(call) for call in mock_warning.call_args_list)
+    mock_warning.assert_any_call("Database does not support auth token storage")
     assert token_file.exists()
     assert is_encrypted(json.loads(token_file.read_text()))
 
@@ -238,7 +238,8 @@ def test_memory_only_when_file_unwritable(tmp_path, encryption_key, token_endpoi
     with patch("agno.models.xai.oauth.log_warning") as mock_warning:
         manager.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
 
-    assert mock_warning.called
+    # The warning must carry the persistence-loss meaning, not just exist
+    assert any("Token kept in memory only" in str(call) for call in mock_warning.call_args_list)
     assert not token_file.exists()
     # Still functional for the process lifetime
     assert manager.get_access_token() == "access-token-1"
