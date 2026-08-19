@@ -59,7 +59,7 @@ python cookbook/92_models/xai/image_agent_bytes.py
 
 ```shell
 python cookbook/92_models/xai/image_agent_with_memory.py
-``
+```
 
 ### 9. Run Agent with SuperGrok sign-in (no API key)
 

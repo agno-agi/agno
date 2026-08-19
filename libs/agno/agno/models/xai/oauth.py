@@ -319,6 +319,7 @@ class XAITokenManager:
             return
         if self.db is not None:
             if iscoroutinefunction(self.db.upsert_auth_token):
+                # Falls through to the file store, like an unsupported backend
                 log_warning(_SYNC_PATH_ASYNC_DB_WARNING)
             else:
                 try:

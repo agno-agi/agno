@@ -40,7 +40,8 @@ class xAIResponses(OpenResponses):
     Supports two auth modes: an API key (pay-per-token, identical to the chat
     provider) or a SuperGrok subscription via OAuth token providers. In OAuth
     mode the openai SDK receives a callable api_key, so every request carries a
-    freshly resolved bearer token.
+    freshly resolved bearer token. When both are configured, the explicit
+    api_key wins (the credential order in _get_client_params).
 
     Attributes:
         id (str): The model id. Defaults to "grok-4-1-fast-non-reasoning-latest".
