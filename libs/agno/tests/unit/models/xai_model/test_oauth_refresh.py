@@ -5,6 +5,7 @@ rotation grace window) with in-process single-flight. Every expiry comparison
 runs through the injectable clock, so these tests never sleep on real time.
 """
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -132,6 +133,34 @@ def test_concurrent_calls_trigger_single_refresh(sqlite_db, encryption_key, toke
 
     assert tokens == {"access-token-2"}
     assert len(token_endpoint.refresh_requests) == 1
+
+
+def test_contended_refresh_across_two_event_loops(sqlite_db, encryption_key, token_endpoint, fake_clock):
+    # An asyncio.Lock binds to the event loop that first sees contention on it,
+    # and sync callers wrapping arun in asyncio.run() give one process many
+    # loops over its lifetime - a fresh loop must get a fresh lock
+    async def slow_handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.01)  # real suspension so the second task contends
+        return token_endpoint(request)
+
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encryption_key=encryption_key,
+        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(slow_handler)),
+        now_fn=fake_clock,
+    )
+    manager.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
+
+    async def contended_refresh():
+        await asyncio.gather(manager.aforce_refresh(), manager.aforce_refresh())
+
+    asyncio.run(contended_refresh())  # loop 1: contention binds the lock
+    asyncio.run(contended_refresh())  # loop 2: must not raise "bound to a different event loop"
+
+    # force_refresh always refreshes: two POSTs per contended pair
+    assert len(token_endpoint.refresh_requests) == 4
+    assert manager.get_access_token() == "access-token-2"
 
 
 # ---------------------------------------------------------------------------

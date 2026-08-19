@@ -42,21 +42,33 @@ _SYNC_PATH_ASYNC_DB_WARNING = (
 _token_cache: Dict[Tuple[str, str, str], Tuple[str, float]] = {}
 _cache_lock = threading.Lock()
 _async_cache_lock: Optional[asyncio.Lock] = None
+_async_cache_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _reset_cache_for_tests() -> None:
     """Clear the module-level token cache and lock state so tests stay order-independent."""
-    global _async_cache_lock
+    global _async_cache_lock, _async_cache_lock_loop
     _token_cache.clear()
     _async_cache_lock = None
+    _async_cache_lock_loop = None
 
 
 def _get_async_cache_lock() -> asyncio.Lock:
-    """Lazily create the asyncio lock (sync lock guards initialization)."""
-    global _async_cache_lock
+    """The asyncio lock for the RUNNING loop (sync lock guards creation).
+
+    An asyncio.Lock binds to the event loop that first sees contention on it,
+    and one process can run many loops (sync callers wrapping arun in
+    asyncio.run create a fresh loop per call). A stale lock would raise
+    "bound to a different event loop", so a new loop gets a new lock;
+    single-flight stays per loop, which matches the lock-free cross-process
+    design.
+    """
+    global _async_cache_lock, _async_cache_lock_loop
+    loop = asyncio.get_running_loop()
     with _cache_lock:
-        if _async_cache_lock is None:
+        if _async_cache_lock is None or _async_cache_lock_loop is not loop:
             _async_cache_lock = asyncio.Lock()
+            _async_cache_lock_loop = loop
     return _async_cache_lock
 
 
