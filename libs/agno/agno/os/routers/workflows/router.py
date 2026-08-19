@@ -193,11 +193,14 @@ async def handle_workflow_via_websocket(
         # client could claim a draft owner's identity at the preview gate
         # below (which the HTTP route denies with actor=None).
         if ws_user_context:
-            from agno.os.scopes import AgentOSScope
-
             jwt_user_id = ws_user_context.get("user_id")
-            scopes = ws_user_context.get("scopes", [])
-            is_admin = AgentOSScope.ADMIN.value in scopes or bool(ws_auth and ws_auth.is_admin)
+            # The admin decision belongs to the WS dispatcher, which evaluates the
+            # deployment's CONFIGURED admin scope. Re-deriving it here from the
+            # default scope name diverges as soon as a deployment configures a
+            # custom admin scope, and it diverges in the attacker's favour: a
+            # token carrying the literal default scope name as an ordinary scope
+            # would take the admin branch and keep the client frame's user_id.
+            is_admin = bool(ws_auth and ws_auth.is_admin)
             if is_admin:
                 user_id = user_id or jwt_user_id
             else:
@@ -706,11 +709,14 @@ async def handle_workflow_continue_via_websocket(
         # client could claim a draft owner's identity at the stamped-version
         # preview gate below (which the HTTP route denies with actor=None).
         if ws_user_context:
-            from agno.os.scopes import AgentOSScope
-
             jwt_user_id = ws_user_context.get("user_id")
-            scopes = ws_user_context.get("scopes", [])
-            is_admin = AgentOSScope.ADMIN.value in scopes or bool(ws_auth and ws_auth.is_admin)
+            # The admin decision belongs to the WS dispatcher, which evaluates the
+            # deployment's CONFIGURED admin scope. Re-deriving it here from the
+            # default scope name diverges as soon as a deployment configures a
+            # custom admin scope, and it diverges in the attacker's favour: a
+            # token carrying the literal default scope name as an ordinary scope
+            # would take the admin branch and keep the client frame's user_id.
+            is_admin = bool(ws_auth and ws_auth.is_admin)
             if is_admin:
                 user_id = user_id or jwt_user_id
             else:
