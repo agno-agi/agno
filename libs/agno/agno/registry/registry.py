@@ -58,6 +58,18 @@ def _memory_manager_resource_name(manager: Any) -> Optional[str]:
     return getattr(manager, "name", None) or getattr(manager, "id", None)
 
 
+def _tool_resource_name(tool: Any) -> Optional[str]:
+    """The top-level name a tool is claimed and judged under.
+
+    Toolkits and Functions carry ``name``; a plain callable is known by
+    ``__name__``. This is the key the build palette reads, so foldedness is
+    tracked under exactly this string. A non-string name is no name at all:
+    it can never match a requested tool name.
+    """
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
+    return name if isinstance(name, str) and name else None
+
+
 @dataclass
 class Registry:
     """
@@ -78,9 +90,12 @@ class Registry:
     # Names claimed by two distinct knowledge instances: lenient resolution
     # keeps the first, strict resolution refuses the ambiguity.
     _ambiguous_knowledge_names: Set[str] = field(default_factory=set, init=False, repr=False)
-    # Names of tools that arrived via the AgentOS fold rather than the
-    # declaration. Resolvable at rehydration, but not buildable by default:
-    # Studio's palette policy reads this set.
+    # Tool names claimed only by the AgentOS fold, never by a declaration.
+    # Resolvable at rehydration, but not buildable by default: Studio's palette
+    # policy reads this set. Foldedness is a property of the NAME, not of an
+    # instance -- the palette selects tools by name, and a declaration of that
+    # name is the deployer saying the name is buildable, whatever order the
+    # fold and the declaration arrived in.
     folded_tool_names: Set[str] = field(default_factory=set, init=False, repr=False)
     # Knowledge a framework sync mirrored in for name resolution, as opposed to
     # the user registering it. Kept on the registry, not on the AgentOS that
@@ -393,6 +408,14 @@ class Registry:
         discovered on a registered component. The equivalent plain strings are
         accepted for backward compatibility.
 
+        The source decides one thing: whether the tool's *name* is in the build
+        palette (``folded_tool_names``). A declaration always wins over a fold,
+        in either order, so the name a deployer registers directly -- in the
+        constructor or through this method -- stays buildable even when a
+        component carries a same-named tool the AgentOS walk folds in. A fold
+        marks a name only when no other tool already claims it, which is what
+        keeps that rule order-independent.
+
         Deduplication depends on the kind of tool, because they duplicate for
         different reasons:
 
@@ -416,43 +439,70 @@ class Registry:
           additionally catching bound methods, which build a fresh object on every
           attribute access but compare equal by ``(__self__, __func__)``.
 
+        Deduplication and the source decision are independent. A tool that
+        dedupes away still records its source, because a deployer declaring a
+        toolkit an agent already carries is declaring the name buildable --
+        whether or not the equivalent instance was folded in first.
+
         Adding a tool invalidates the ``_entrypoint_lookup`` cache so that
         ``rehydrate_function`` rebuilds it and sees the new tool.
         """
         if not (isinstance(tool, (Toolkit, Function)) or callable(tool)):
             return
 
+        name = _tool_resource_name(tool)
+        # Read before the add, so the tool being added never counts as its own
+        # claim: this asks whether some *other* tool already owns the name.
+        # Only a fold consults it, so the scan is skipped on declarations.
+        name_already_claimed = (
+            source == ToolSource.FOLDED and name is not None and any(_tool_resource_name(t) == name for t in self.tools)
+        )
+
+        if not self._is_duplicate_tool(tool):
+            self.tools.append(tool)
+            self.__dict__.pop("_entrypoint_lookup", None)
+
+        if name is None:
+            return
+        if source == ToolSource.FOLDED:
+            # The fold makes every registered agent's own tools resolvable at
+            # rehydration; resolvable is not the same as buildable. A name a
+            # declaration already claims stays buildable: two toolkits can
+            # share a name without sharing a function set, and folding the
+            # second must not take the declared one out of the palette.
+            if not name_already_claimed:
+                self.folded_tool_names.add(name)
+        elif source == ToolSource.DECLARED:
+            # Declaring is the deployer putting the name in the palette, even
+            # when the fold got there first and even when this instance dedupes
+            # against the folded one.
+            self.folded_tool_names.discard(name)
+
+    def _is_duplicate_tool(self, tool: Any) -> bool:
+        """Whether an equivalent tool is already registered (see ``add_tool``)."""
         if isinstance(tool, Toolkit):
             key = (type(tool), tool.name, frozenset(tool.functions))
             for existing in self.tools:
                 if existing is tool:
-                    return
+                    return True
                 if (
                     isinstance(existing, Toolkit)
                     and (type(existing), existing.name, frozenset(existing.functions)) == key
                 ):
-                    return
-        else:
-            for existing in self.tools:
-                if existing is tool:
-                    return
-                try:
-                    if existing == tool:
-                        return
-                except Exception:
-                    # A callable with a pathological __eq__ should not block the add;
-                    # fall back to keeping both, which is the safe direction.
-                    continue
+                    return True
+            return False
 
-        self.tools.append(tool)
-        if source == ToolSource.FOLDED:
-            # The fold makes every registered agent's own tools resolvable at
-            # rehydration; resolvable is not the same as buildable. Studio's
-            # palette policy reads this set.
-            name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
-            if name:
-                self.folded_tool_names.add(name)
-        self.__dict__.pop("_entrypoint_lookup", None)
+        for existing in self.tools:
+            if existing is tool:
+                return True
+            try:
+                if existing == tool:
+                    return True
+            except Exception:
+                # A callable with a pathological __eq__ should not block the add;
+                # fall back to keeping both, which is the safe direction.
+                continue
+        return False
 
     def add_db(self, db: Any) -> None:
         """Add a database unless one with the same id (or the same instance) is already present.
@@ -690,6 +740,21 @@ class Registry:
             return False
         matches = [m for m in self.memory_managers if _memory_manager_resource_name(m) == name]
         return len(matches) > 1 and any(match is not matches[0] for match in matches)
+
+    def memory_manager_ids_for_name(self, name: str) -> List[str]:
+        """The ids of every memory manager listed under ``name``, in registration order.
+
+        A caller that found a name ambiguous uses this to say which managers
+        competed for it. A manager with no id contributes nothing: it cannot be
+        named in an answer, and it is already reachable by the name itself.
+        """
+        if not self.memory_managers:
+            return []
+        return [
+            str(mid)
+            for m in self.memory_managers
+            if _memory_manager_resource_name(m) == name and (mid := getattr(m, "id", None)) is not None
+        ]
 
     def get_session_summary_manager(self, manager_id: str) -> Optional[Any]:
         """Get a session summary manager by id."""
