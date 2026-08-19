@@ -353,9 +353,7 @@ def test_an_unknown_poll_error_is_reported_as_a_failed_sign_in(endpoint, sqlite_
     assert sqlite_db.get_auth_token("xai", "u1", PENDING_SERVICE) is None
 
 
-def test_a_failed_device_start_is_reported_as_json(sqlite_db, encryption_key, token_response, device_response):
-    endpoint = AuthEndpoint(device_response, token_response)
-
+def test_a_failed_device_start_is_reported_as_json(sqlite_db, encryption_key):
     def failing(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"error": "unavailable"})
 
