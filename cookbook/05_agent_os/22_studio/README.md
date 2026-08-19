@@ -36,9 +36,10 @@ persistence and only requires `AgentOS(registry=...)`.
 
 ## The component lifecycle
 
-Every `create_*` writes version 1 as a **draft** unless `publish=True`. A draft
-is readable, editable, and previewable, but never serves users, schedules, or
-dispatch until published. The full ladder:
+Every `create_*` writes version 1 as a **draft** unless `publish=True`, or
+unless the toolkit was built with `versions=False`, which publishes every
+write. A draft is readable, editable, and previewable, but never serves users,
+schedules, or dispatch until published. The full ladder:
 
 1. `create_agent` / `create_team` / `create_workflow` — draft version 1
 2. `validate_component` — dry-run the stored config against the live registry,
@@ -55,10 +56,33 @@ concurrent edits. `set_current_version` re-points among published versions;
 refuse) and `restore_component` reverses it; only unpublished drafts can be
 deleted with `delete_version`.
 
-Every tool returns one `StudioResult` JSON envelope:
+The control-plane tools return one `StudioResult` JSON envelope:
 `{ok, status, data, error: {code, message, details, retryable}, warnings}`.
 Drivers branch on `error.code` (stable, machine-readable), never on message
 text.
+
+The run tools are the deliberate exception, because a run result is the
+component's output rather than a control-plane response. `run_agent`,
+`run_team`, and `run_workflow` return the runner's flat payload:
+`{agent_id | team_id | workflow_id, run_id, session_id, status, content}`,
+which StudioTools also aliases onto `id`, with `status` one of `COMPLETED`,
+`ERROR`, or `PAUSED`, plus `requirements` on a paused run and `media` counts
+when the run produced artifacts. An id that does not resolve comes back as a
+flat `{"error": "<message>"}` — that `error` is a prose string, not an object,
+so it carries no `code`.
+
+`run_*(version=N)` answers in both shapes. The preview gate refuses in the
+envelope (`component_not_found`, `version_not_found`, `validation_failed`),
+while a preview it admits runs and returns the flat payload. A driver reads
+`ok` when the key is present and falls back to the flat `status` and `error`
+string when it is not.
+
+The schedule tools mounted from `SchedulerTools` when `schedules=True`
+(`list_schedules`, `get_schedule`, `get_schedule_runs`, `trigger_schedule`,
+`enable_schedule`, `disable_schedule`, `delete_schedule`) return the
+scheduler's flat payloads for the same reason, error included. Studio's own
+`create_schedule` and `update_schedule` are control-plane tools and return
+envelopes.
 
 Changes from the 2.x flat API: `delete_agent/team/workflow` are replaced by
 `archive_component` + `restore_component` (exact id required);

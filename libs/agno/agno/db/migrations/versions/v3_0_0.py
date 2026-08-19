@@ -3894,6 +3894,57 @@ async def _restore_async_mysql_metrics_unique(sess, db, db_schema: str, table_na
     return True
 
 
+def _drop_postgres_schedule_provenance(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
+    """Drop the schedule provenance columns and their lookup indexes for PostgreSQL.
+
+    Each drop is guarded on its own: the forward migration adds a column only when
+    the table lacks it, so a table an older build migrated can carry some of them
+    and not others. The indexes are dropped by name rather than left to the
+    column drop's cascade, so the revert names exactly what the forward
+    migration created.
+    """
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    applied = False
+
+    for column in SCHEDULE_PROVENANCE_INDEXED:
+        index = f"idx_{table_name}_{column}"
+        if _index_exists(sess, db_schema, table_name, index, db_type):
+            log_info(f"-- Dropping index {index} from {table_name}")
+            sess.execute(text(f"DROP INDEX IF EXISTS {quoted_schema}.{quote_db_identifier(db_type, index)}"))
+            applied = True
+
+    for column in SCHEDULE_PROVENANCE_COLUMNS:
+        if _column_exists(sess, db_schema, table_name, column, db_type):
+            log_info(f"-- Dropping {column} column from {table_name}")
+            sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN IF EXISTS {column}"))
+            applied = True
+
+    return applied
+
+
+async def _drop_async_postgres_schedule_provenance(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
+    """Async PostgreSQL variant of :func:`_drop_postgres_schedule_provenance`."""
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    applied = False
+
+    for column in SCHEDULE_PROVENANCE_INDEXED:
+        index = f"idx_{table_name}_{column}"
+        if await _async_index_exists(sess, db_schema, table_name, index, db_type):
+            log_info(f"-- Dropping index {index} from {table_name}")
+            await sess.execute(text(f"DROP INDEX IF EXISTS {quoted_schema}.{quote_db_identifier(db_type, index)}"))
+            applied = True
+
+    for column in SCHEDULE_PROVENANCE_COLUMNS:
+        if await _async_column_exists(sess, db_schema, table_name, column, db_type):
+            log_info(f"-- Dropping {column} column from {table_name}")
+            await sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN IF EXISTS {column}"))
+            applied = True
+
+    return applied
+
+
 def _revert_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Drop the user_id column from the given table for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
@@ -3934,6 +3985,11 @@ def _revert_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bo
         if column_exists:
             log_info(f"-- Dropping user_id column from {table_name}")
             sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN user_id"))
+            applied = True
+
+        if table_type == "schedules" and _drop_postgres_schedule_provenance(
+            sess, db, db_schema, table_name, full_table
+        ):
             applied = True
 
         if is_metrics and _restore_postgres_metrics_unique(sess, db, db_schema, table_name, full_table):
@@ -3982,6 +4038,11 @@ async def _revert_async_postgres_user_id(db: AsyncBaseDb, table_type: str, table
         if column_exists:
             log_info(f"-- Dropping user_id column from {table_name}")
             await sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN user_id"))
+            applied = True
+
+        if table_type == "schedules" and await _drop_async_postgres_schedule_provenance(
+            sess, db, db_schema, table_name, full_table
+        ):
             applied = True
 
         if is_metrics and await _restore_async_postgres_metrics_unique(sess, db, db_schema, table_name, full_table):
@@ -4247,6 +4308,60 @@ async def _revert_async_sqlite_metrics_table(db: AsyncBaseDb, table_type: str, t
     return True
 
 
+def _drop_sqlite_schedule_provenance(sess, table_name: str, quoted_table: str, db_type: str) -> bool:
+    """Drop the schedule provenance columns and their lookup indexes for SQLite.
+
+    The indexes go first: SQLite refuses DROP COLUMN while an index still covers
+    the column. Each drop is guarded on its own, because the forward migration
+    adds a column only when the table lacks it, so a table an older build
+    migrated can carry some of them and not others.
+    """
+    applied = False
+
+    indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
+    existing_indexes = {idx[1] for idx in indexes}
+    for column in SCHEDULE_PROVENANCE_INDEXED:
+        index = f"idx_{table_name}_{column}"
+        if index in existing_indexes:
+            log_info(f"-- Dropping index {index} from {table_name}")
+            sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index)}"))
+            applied = True
+
+    columns_info = sess.execute(text(f"PRAGMA table_info({quoted_table})")).fetchall()
+    existing_columns = {col[1] for col in columns_info}
+    for column in SCHEDULE_PROVENANCE_COLUMNS:
+        if column in existing_columns:
+            log_info(f"-- Dropping {column} column from {table_name}")
+            sess.execute(text(f"ALTER TABLE {quoted_table} DROP COLUMN {column}"))
+            applied = True
+
+    return applied
+
+
+async def _drop_async_sqlite_schedule_provenance(sess, table_name: str, quoted_table: str, db_type: str) -> bool:
+    """Async SQLite variant of :func:`_drop_sqlite_schedule_provenance`."""
+    applied = False
+
+    result = await sess.execute(text(f"PRAGMA index_list({quoted_table})"))
+    existing_indexes = {idx[1] for idx in result.fetchall()}
+    for column in SCHEDULE_PROVENANCE_INDEXED:
+        index = f"idx_{table_name}_{column}"
+        if index in existing_indexes:
+            log_info(f"-- Dropping index {index} from {table_name}")
+            await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index)}"))
+            applied = True
+
+    result = await sess.execute(text(f"PRAGMA table_info({quoted_table})"))
+    existing_columns = {col[1] for col in result.fetchall()}
+    for column in SCHEDULE_PROVENANCE_COLUMNS:
+        if column in existing_columns:
+            log_info(f"-- Dropping {column} column from {table_name}")
+            await sess.execute(text(f"ALTER TABLE {quoted_table} DROP COLUMN {column}"))
+            applied = True
+
+    return applied
+
+
 def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Drop the user_id column from the given table for SQLite."""
     db_type = type(db).__name__
@@ -4305,6 +4420,9 @@ def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool
                         text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
                     )
                 raise
+            applied = True
+
+        if table_type == "schedules" and _drop_sqlite_schedule_provenance(sess, table_name, quoted_table, db_type):
             applied = True
 
         return applied
@@ -4368,6 +4486,11 @@ async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_n
                         text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
                     )
                 raise
+            applied = True
+
+        if table_type == "schedules" and await _drop_async_sqlite_schedule_provenance(
+            sess, table_name, quoted_table, db_type
+        ):
             applied = True
 
         return applied
