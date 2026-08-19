@@ -158,17 +158,20 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # Identical predicate to the Studio tool (SchedulerTools.create_schedule).
         from agno.tools.scheduler import aarchived_endpoint_refusal
 
-        refusal = await aarchived_endpoint_refusal(os_db, body.endpoint)
+        # Owner the schedule to the caller, falling back to the unscoped JWT sub so
+        # admin-created schedules still carry a creator id.
+        scoped_user_id = get_scoped_user_id(request)
+
+        # Scoped to the caller: an unscoped probe answers "archived" for another
+        # owner's component and "fine" for an id that does not exist, which tells
+        # the caller the component exists.
+        refusal = await aarchived_endpoint_refusal(os_db, body.endpoint, user_id=scoped_user_id)
         if refusal is not None:
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot create schedule '{body.name}': its target "
                 f"{refusal[0]} '{refusal[1]}' is archived. Restore the component first.",
             )
-
-        # Owner the schedule to the caller, falling back to the unscoped JWT sub so
-        # admin-created schedules still carry a creator id.
-        scoped_user_id = get_scoped_user_id(request)
         creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
         # Neither owner is safe for the executor's identity: stamping it misattributes every
         # fired run, leaving it unowned hands the schedule the executor's unscoped reach.
@@ -260,7 +263,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if "endpoint" in updates:
             from agno.tools.scheduler import aarchived_endpoint_refusal
 
-            refusal = await aarchived_endpoint_refusal(os_db, updates["endpoint"])
+            refusal = await aarchived_endpoint_refusal(os_db, updates["endpoint"], user_id=scoped_user_id)
             if refusal is not None:
                 raise HTTPException(
                     status_code=409,
@@ -339,7 +342,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         from agno.tools.scheduler import aarchived_target_refusal, endpoint_drift_refusal
 
         existing_schedule = Schedule.from_dict(existing)
-        refusal = await aarchived_target_refusal(os_db, existing_schedule)
+        refusal = await aarchived_target_refusal(os_db, existing_schedule, user_id=scoped_user_id)
         if refusal is not None:
             target_type, target_id = refusal
             raise HTTPException(

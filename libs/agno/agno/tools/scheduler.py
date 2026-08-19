@@ -21,6 +21,7 @@ Example:
 import asyncio
 import json
 import time
+from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, Schedule, match_run_endpoint
@@ -68,15 +69,37 @@ def _schedule_component_target(schedule: Schedule) -> Optional[Tuple[str, str]]:
     return _endpoint_target(schedule.endpoint)
 
 
-def _archived_component_refusal(db: Any, target_type: str, target_id: str) -> Optional[Tuple[str, str]]:
-    """(type, id) iff that component's catalog row exists with ``deleted_at`` set."""
+def _component_type_arg(target_type: str) -> Optional[Any]:
+    """``target_type`` as a ComponentType, or None when it names no real type."""
+    from agno.db.base import ComponentType
+
+    try:
+        return ComponentType(target_type)
+    except ValueError:
+        return None
+
+
+def _archived_component_refusal(
+    db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """(type, id) iff that component's catalog row exists with ``deleted_at`` set.
+
+    ``user_id`` scopes the read to the caller: without it a scoped caller gets a
+    different answer for another owner's archived component than for an id that
+    does not exist, which discloses that the component exists.
+    """
     if db is None:
         return None
     get_component = getattr(db, "get_component", None)
     if get_component is None:
         return None
     try:
-        row = get_component(target_id, include_deleted=True)
+        row = get_component(
+            target_id,
+            component_type=_component_type_arg(target_type),
+            user_id=user_id,
+            include_deleted=True,
+        )
     except NotImplementedError:
         return None
     if _is_archived_component(row):
@@ -84,19 +107,32 @@ def _archived_component_refusal(db: Any, target_type: str, target_id: str) -> Op
     return None
 
 
-async def _aarchived_component_refusal(db: Any, target_type: str, target_id: str) -> Optional[Tuple[str, str]]:
+async def _aarchived_component_refusal(
+    db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
     """Async variant of ``_archived_component_refusal``; same predicate."""
     if db is None:
         return None
     get_component = getattr(db, "get_component", None)
     if get_component is None:
         return None
+    component_type = _component_type_arg(target_type)
     try:
         if asyncio.iscoroutinefunction(get_component):
-            row = await get_component(target_id, include_deleted=True)
+            row = await get_component(
+                target_id, component_type=component_type, user_id=user_id, include_deleted=True
+            )
         else:
             # A sync adapter would hold the event loop for the whole query
-            row = await asyncio.to_thread(get_component, target_id, include_deleted=True)
+            row = await asyncio.to_thread(
+                partial(
+                    get_component,
+                    target_id,
+                    component_type=component_type,
+                    user_id=user_id,
+                    include_deleted=True,
+                )
+            )
     except NotImplementedError:
         return None
     if _is_archived_component(row):
@@ -104,7 +140,9 @@ async def _aarchived_component_refusal(db: Any, target_type: str, target_id: str
     return None
 
 
-def archived_target_refusal(db: Any, schedule: Schedule) -> Optional[Tuple[str, str]]:
+def archived_target_refusal(
+    db: Any, schedule: Schedule, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
     """(type, id) of the still-archived component that blocks enabling *schedule*, else None.
 
     The verdict is the target's ACTUAL liveness, never the disabled_reason: the
@@ -124,18 +162,22 @@ def archived_target_refusal(db: Any, schedule: Schedule) -> Optional[Tuple[str, 
     target = _schedule_component_target(schedule)
     if target is None:
         return None
-    return _archived_component_refusal(db, target[0], target[1])
+    return _archived_component_refusal(db, target[0], target[1], user_id=user_id)
 
 
-async def aarchived_target_refusal(db: Any, schedule: Schedule) -> Optional[Tuple[str, str]]:
+async def aarchived_target_refusal(
+    db: Any, schedule: Schedule, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
     """Async variant of ``archived_target_refusal``; same predicate."""
     target = _schedule_component_target(schedule)
     if target is None:
         return None
-    return await _aarchived_component_refusal(db, target[0], target[1])
+    return await _aarchived_component_refusal(db, target[0], target[1], user_id=user_id)
 
 
-def archived_endpoint_refusal(db: Any, endpoint: Optional[str]) -> Optional[Tuple[str, str]]:
+def archived_endpoint_refusal(
+    db: Any, endpoint: Optional[str], user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
     """(type, id) when *endpoint* is a run endpoint aimed at an archived component, else None.
 
     Create-side twin of ``archived_target_refusal``: a schedule pointed at an
@@ -145,15 +187,17 @@ def archived_endpoint_refusal(db: Any, endpoint: Optional[str]) -> Optional[Tupl
     target = _endpoint_target(endpoint)
     if target is None:
         return None
-    return _archived_component_refusal(db, target[0], target[1])
+    return _archived_component_refusal(db, target[0], target[1], user_id=user_id)
 
 
-async def aarchived_endpoint_refusal(db: Any, endpoint: Optional[str]) -> Optional[Tuple[str, str]]:
+async def aarchived_endpoint_refusal(
+    db: Any, endpoint: Optional[str], user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
     """Async variant of ``archived_endpoint_refusal``; same predicate."""
     target = _endpoint_target(endpoint)
     if target is None:
         return None
-    return await _aarchived_component_refusal(db, target[0], target[1])
+    return await _aarchived_component_refusal(db, target[0], target[1], user_id=user_id)
 
 
 def endpoint_drift_refusal(schedule: Schedule) -> Optional[str]:
@@ -457,7 +501,7 @@ class SchedulerTools(Toolkit):
             # A schedule aimed at an archived component can only 404 at fire
             # time; restoring the component is the way to turn it back on. A
             # target without a catalog row is a live code-defined component.
-            refusal = archived_target_refusal(self.manager.db, existing)
+            refusal = archived_target_refusal(self.manager.db, existing, user_id=self._owner(run_context))
             if refusal is not None:
                 target_type, target_id = refusal
                 return json.dumps(
@@ -774,7 +818,7 @@ class SchedulerTools(Toolkit):
             # A schedule aimed at an archived component can only 404 at fire
             # time; restoring the component is the way to turn it back on. A
             # target without a catalog row is a live code-defined component.
-            refusal = await aarchived_target_refusal(self.manager.db, existing)
+            refusal = await aarchived_target_refusal(self.manager.db, existing, user_id=self._owner(run_context))
             if refusal is not None:
                 target_type, target_id = refusal
                 return json.dumps(
