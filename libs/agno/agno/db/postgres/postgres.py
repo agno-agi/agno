@@ -234,25 +234,6 @@ class PostgresDb(BaseDb):
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
 
-        # Resolved Table objects, keyed by table name. Avoids re-running the
-        # existence check and schema validation on every query. Only successful
-        # resolutions are cached: a missing table is re-checked on the next call,
-        # so a table created later (or by another replica) is still picked up.
-        self._table_cache: Dict[str, Table] = {}
-
-    def _invalidate_table_cache(self, table_name: str) -> None:
-        """Forget a resolved table after an in-process schema change (ALTER/DROP).
-
-        Clears both the resolution cache and the SQLAlchemy metadata entry so
-        the next access re-reflects the current shape. Other processes hold
-        their own cache: restart replicas after cross-process schema changes.
-        """
-        self._table_cache.pop(table_name, None)
-        fq_name = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
-        existing = self.metadata.tables.get(fq_name)
-        if existing is not None:
-            self.metadata.remove(existing)
-
     # -- Serialization methods --
     def to_dict(self):
         base = super().to_dict()
@@ -333,6 +314,9 @@ class PostgresDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-check even previously resolved tables, so this call still
+            # recreates tables that were dropped externally
+            self._invalidate_table_cache(table_name)
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -345,15 +329,14 @@ class PostgresDb(BaseDb):
         - __foreign_keys__: [{"columns":[...], "ref_table":"...", "ref_columns":[...]}]
         - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
         """
-        # The runs table declares a FK to sessions — ensure the sessions
-        # Table is registered in ``self.metadata`` first so SQLAlchemy can
-        # resolve the FK reference at ``Table(...)`` construction.
-        if table_type == "runs":
-            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
-            if fq_sessions not in self.metadata.tables:
+        # Register FK parent tables on the metadata first, so SQLAlchemy can
+        # resolve the FK references at ``Table(...)`` construction.
+        registered = {t.name for t in self.metadata.tables.values()}
+        for ref_type, ref_name in self._fk_dependencies(table_type):
+            if ref_name not in registered:
                 self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
+                    table_name=ref_name,
+                    table_type=ref_type,
                     create_table_if_not_found=True,
                 )
         try:
@@ -748,7 +731,7 @@ class PostgresDb(BaseDb):
         Returns:
             Optional[Table]: SQLAlchemy Table object representing the schema.
         """
-        cached = self._table_cache.get(table_name)
+        cached = self._get_cached_table(table_name)
         if cached is not None:
             return cached
 
@@ -759,8 +742,7 @@ class PostgresDb(BaseDb):
             if not create_table_if_not_found:
                 return None
             table = self._create_table(table_name=table_name, table_type=table_type)
-            if table is not None:
-                self._table_cache[table_name] = table
+            self._store_resolved_table(table_name, table)
             return table
 
         if not is_valid_table(
@@ -773,7 +755,7 @@ class PostgresDb(BaseDb):
 
         try:
             table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
-            self._table_cache[table_name] = table
+            self._store_resolved_table(table_name, table)
             return table
 
         except Exception as e:

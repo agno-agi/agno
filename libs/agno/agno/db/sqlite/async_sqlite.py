@@ -176,26 +176,13 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
+
+        # In-memory SQLite gives every connection thread its own private
+        # database, so "this table exists" is not a process-wide fact there.
+        if getattr(self.db_engine.url, "database", None) in (None, ":memory:"):
+            self._cache_tables = False
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
-
-        # Resolved Table objects, keyed by table name. Avoids re-running the
-        # existence check and schema validation on every query. Only successful
-        # resolutions are cached: a missing table is re-checked on the next call,
-        # so a table created later (or by another process) is still picked up.
-        self._table_cache: Dict[str, Table] = {}
-
-    def _invalidate_table_cache(self, table_name: str) -> None:
-        """Forget a resolved table after an in-process schema change (ALTER/DROP).
-
-        Clears both the resolution cache and the SQLAlchemy metadata entry so
-        the next access re-reflects the current shape. Other processes hold
-        their own cache: restart replicas after cross-process schema changes.
-        """
-        self._table_cache.pop(table_name, None)
-        existing = self.metadata.tables.get(table_name)
-        if existing is not None:
-            self.metadata.remove(existing)
 
     async def close(self) -> None:
         """Close database connections and dispose of the connection pool.
@@ -237,6 +224,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-check even previously resolved tables, so this call still
+            # recreates tables that were dropped externally
+            self._invalidate_table_cache(table_name)
             await self._get_or_create_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
             )
@@ -253,12 +243,16 @@ class AsyncSqliteDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         # Ensure sessions Table is registered on metadata so the runs FK can resolve.
-        if table_type == "runs" and self.session_table_name not in self.metadata.tables:
-            await self._get_or_create_table(
-                table_name=self.session_table_name,
-                table_type="sessions",
-                create_table_if_not_found=True,
-            )
+        # Register FK parent tables on the metadata first, so SQLAlchemy can
+        # resolve the FK references at ``Table(...)`` construction.
+        registered = {t.name for t in self.metadata.tables.values()}
+        for ref_type, ref_name in self._fk_dependencies(table_type):
+            if ref_name not in registered:
+                await self._get_or_create_table(
+                    table_name=ref_name,
+                    table_type=ref_type,
+                    create_table_if_not_found=True,
+                )
         try:
             # Pass table names for foreign key resolution
             table_schema = get_table_schema_definition(
@@ -519,7 +513,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
-        cached = self._table_cache.get(table_name)
+        cached = self._get_cached_table(table_name)
         if cached is not None:
             return cached
 
@@ -530,8 +524,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             if not create_table_if_not_found:
                 return None
             table = await self._create_table(table_name=table_name, table_type=table_type)
-            if table is not None:
-                self._table_cache[table_name] = table
+            self._store_resolved_table(table_name, table)
             return table
 
         # SQLite version of table validation (no schema)
@@ -545,7 +538,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return Table(table_name, self.metadata, autoload_with=connection)
 
                 table = await conn.run_sync(load_table)
-                self._table_cache[table_name] = table
+                self._store_resolved_table(table_name, table)
                 return table
 
         except Exception as e:

@@ -101,6 +101,71 @@ class BaseDb(ABC):
         self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
         self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
 
+        # Table objects resolved by this adapter, keyed by table name. Avoids
+        # re-running the existence check and schema validation on every query.
+        # Only successful resolutions are cached: a missing table is re-checked
+        # on the next call, so a table created later (including by another
+        # process) is still picked up.
+        self._table_cache: Dict[str, Any] = {}
+        # Adapters where table existence is not a process-wide fact
+        # (e.g. in-memory SQLite) set this to False to disable caching.
+        self._cache_tables: bool = True
+
+    def _get_cached_table(self, table_name: str) -> Optional[Any]:
+        if not self._cache_tables:
+            return None
+        return self._table_cache.get(table_name)
+
+    def _store_resolved_table(self, table_name: str, table: Any) -> None:
+        """Cache a resolved table.
+
+        Only fully built, still-registered tables are stored, so a concurrent
+        invalidation cannot pin a stale object.
+        """
+        if not self._cache_tables or table is None:
+            return
+        metadata = getattr(self, "metadata", None)
+        if metadata is not None and not any(t.name == table_name for t in metadata.tables.values()):
+            return
+        self._table_cache[table_name] = table
+
+    def _invalidate_table_cache(self, table_name: str) -> None:
+        """Forget a resolved table after a schema change (ALTER/DROP).
+
+        Also unregisters the table from the SQLAlchemy metadata, which
+        otherwise pins the first reflection. Other processes hold their own
+        cache: restart replicas after cross-process schema changes.
+        """
+        self._table_cache.pop(table_name, None)
+        metadata = getattr(self, "metadata", None)
+        if metadata is not None:
+            for table in list(metadata.tables.values()):
+                if table.name == table_name:
+                    metadata.remove(table)
+
+    def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:
+        """(table_type, table_name) pairs the given table type declares foreign keys to.
+
+        Each parent must be registered on the metadata before the dependent
+        table can be constructed.
+        """
+        edges = {
+            "runs": [("sessions", "session_table_name")],
+            "spans": [("traces", "trace_table_name")],
+            "schedule_runs": [("schedules", "schedules_table_name")],
+            "component_configs": [("components", "components_table_name")],
+            "component_links": [
+                ("components", "components_table_name"),
+                ("component_configs", "component_configs_table_name"),
+            ],
+        }
+        dependencies = []
+        for ref_type, attr in edges.get(table_type, []):
+            ref_name = getattr(self, attr, None)
+            if ref_name:
+                dependencies.append((ref_type, ref_name))
+        return dependencies
+
     def to_dict(self) -> Dict[str, Any]:
         """
         Serialize common DB fields (table names + id). Subclasses may extend this.
@@ -1655,6 +1720,15 @@ class AsyncBaseDb(ABC):
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+
+        # See BaseDb._table_cache: same contract for async adapters.
+        self._table_cache: Dict[str, Any] = {}
+        self._cache_tables: bool = True
+
+    _get_cached_table = BaseDb._get_cached_table
+    _store_resolved_table = BaseDb._store_resolved_table
+    _invalidate_table_cache = BaseDb._invalidate_table_cache
+    _fk_dependencies = BaseDb._fk_dependencies
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
