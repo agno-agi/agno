@@ -322,3 +322,70 @@ class TestOwnerScopingSurvivesTheExemption:
         _draft_only(db, "shared-draft")
         out = _create(self._tools(db, "scoped-owner", agents_list=[]), "shared", "/agents/shared-draft/runs")
         assert out.get("error_type") == "target_not_published", out
+
+
+class TestTheDeploymentActuallyWiresTheProbe:
+    """The exemption is only real if the lists reach the router.
+
+    Every refusal builds its probe from the lists it was constructed with, so
+    an AgentOS that omits them refuses a code-defined target on all three
+    schedule surfaces -- and the remedy it names ("publish it first") would
+    not change how the run resolves. These pin the wiring, not the predicate.
+    """
+
+    @pytest.fixture
+    def wired(self, tmp_path):
+        from agno.os import AgentOS
+        from agno.registry import Registry
+
+        db = SqliteDb(id="wire-db", db_file=str(tmp_path / "wire.db"))
+        agent = Agent(id="news-agent", name="News")
+        agent_os = AgentOS(db=db, agents=[agent], registry=Registry(name="r", dbs=[db]), telemetry=False)
+        return db, agent_os
+
+    def test_create_allows_a_schedule_on_a_code_defined_target(self, wired):
+        from fastapi.testclient import TestClient
+
+        db, agent_os = wired
+        _draft_only(db, "news-agent")
+        client = TestClient(agent_os.get_app())
+        r = client.post(
+            "/schedules",
+            json={"name": "nightly", "endpoint": "/agents/news-agent/runs", "cron_expr": "0 0 * * *"},
+        )
+        assert r.status_code == 201, (r.status_code, r.text)
+
+    def test_a_catalog_only_draft_target_is_still_refused(self, wired):
+        """The exemption is for code-defined targets, not for every target."""
+        from fastapi.testclient import TestClient
+
+        db, agent_os = wired
+        _draft_only(db, "catalog-only")
+        client = TestClient(agent_os.get_app())
+        r = client.post(
+            "/schedules",
+            json={"name": "nightly", "endpoint": "/agents/catalog-only/runs", "cron_expr": "0 0 * * *"},
+        )
+        assert r.status_code == 409, (r.status_code, r.text)
+
+    def test_studio_enable_agrees_with_studio_create(self, tmp_path):
+        """StudioTools' embedded scheduler must not refuse what Studio allowed."""
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(id="wire-db-2", db_file=str(tmp_path / "wire2.db"))
+        studio = StudioTools(
+            registry=Registry(name="r", dbs=[db]),
+            db=db,
+            agents_list=[Agent(id="news-agent", name="News")],
+            schedules=True,
+        )
+        assert studio._scheduler_tools is not None
+        assert studio._scheduler_tools.agents_list is studio.agents_list
+        _draft_only(db, "news-agent")
+        probe = code_defined_probe(
+            studio._scheduler_tools.agents_list,
+            studio._scheduler_tools.teams_list,
+            studio._scheduler_tools.workflows_list,
+        )
+        assert probe("agent", "news-agent") is True

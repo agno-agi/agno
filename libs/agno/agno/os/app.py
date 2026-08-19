@@ -602,7 +602,15 @@ class AgentOS:
                 updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 updated_routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
-            updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            updated_routers.append(
+                get_schedule_router(
+                    os_db=self.db,
+                    settings=self.settings,
+                    agents_list=self.agents,
+                    teams_list=self.teams,
+                    workflows_list=self.workflows,
+                )
+            )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
@@ -1141,7 +1149,15 @@ class AgentOS:
                 routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
-            routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            routers.append(
+                get_schedule_router(
+                    os_db=self.db,
+                    settings=self.settings,
+                    agents_list=self.agents,
+                    teams_list=self.teams,
+                    workflows_list=self.workflows,
+                )
+            )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
