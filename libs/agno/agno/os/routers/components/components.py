@@ -1,8 +1,9 @@
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import (
     AsyncBaseDb,
@@ -38,34 +39,91 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id_from_name, hash_string_sha256
 
 logger = logging.getLogger(__name__)
 
 
-# Typed catalog errors that map to 409 Conflict. They are ValueError
-# subclasses, so routes must catch them before any generic ValueError clause
-# or they would surface with the wrong status code.
-def _conflict_detail(db: Any, component_id: Optional[str], scoped_user_id: Optional[str], exc: Exception) -> str:
-    """409 detail for a conflict, with a scoped caller's foreign dependents
-    redacted to a count. A ComponentDependencyError embeds the parent ids in
-    its message; a scoped caller must not learn another owner's ids from it."""
-    if not isinstance(exc, ComponentDependencyError) or scoped_user_id is None:
-        return str(exc)
+def _related_component_ids(db: BaseDb, component_id: str, version: Optional[int] = None) -> Set[str]:
+    """The ids the graph around a component can name in a conflict message.
+
+    Both directions matter: the parents that pin this component (a delete or
+    an archive names them) and the children its live - or explicitly named -
+    version pins (a restore or a publish names those instead).
+    """
+    related: Set[str] = set()
+    for link in db.get_dependents(component_id) or []:
+        parent_component_id = link.get("parent_component_id")
+        if isinstance(parent_component_id, str):
+            related.add(parent_component_id)
+
+    versions: Set[int] = set()
+    component = db.get_component(component_id, include_deleted=True)
+    current_version = component.get("current_version") if isinstance(component, dict) else None
+    if isinstance(current_version, int):
+        versions.add(current_version)
+    if version is not None:
+        versions.add(version)
+    for pinned_version in versions:
+        try:
+            child_links = db.get_links(component_id, version=pinned_version) or []
+        except NotImplementedError:
+            continue
+        for link in child_links:
+            child_component_id = link.get("child_component_id")
+            if isinstance(child_component_id, str):
+                related.add(child_component_id)
+    return related
+
+
+def _conflict_detail(
+    db: BaseDb,
+    component_id: Optional[str],
+    scoped_user_id: Optional[str],
+    exc: Exception,
+    version: Optional[int] = None,
+) -> str:
+    """409 detail for a conflict, with the ids a scoped caller may not see
+    redacted out of it.
+
+    ``db`` is typed sync on purpose: the routes reject an async database, and
+    this helper reads the graph inline. An async catalog needs its own branch
+    here, not a coroutine handed to ``get_dependents``.
+
+    A ComponentDependencyError embeds component ids in its message and a
+    scoped caller must not learn another owner's ids from one. Only those ids
+    are substituted: the message itself is preserved, because the true cause
+    differs per raise site - a blocking parent, an archived child to restore,
+    a draft child to publish - and each carries the remedy the caller needs.
+    Re-authoring it as a dependents claim asserts something that is false
+    wherever the conflict points at a child.
+    """
+    detail = str(exc)
+    if not isinstance(exc, ComponentDependencyError) or scoped_user_id is None or component_id is None:
+        return detail
     try:
-        links = db.get_dependents(component_id) or []
+        related = _related_component_ids(db, component_id, version)
+        foreign = sorted(
+            (
+                related_id
+                for related_id in related
+                if related_id != component_id
+                and db.get_component(related_id, user_id=scoped_user_id, include_deleted=True) is None
+            ),
+            key=lambda related_id: (-len(related_id), related_id),
+        )
     except Exception:
-        return f"Cannot modify {component_id}: it is referenced by other components."
-    parent_ids = sorted({str(link.get("parent_component_id")) for link in links if link.get("parent_component_id")})
-    visible = [pid for pid in parent_ids if db.get_component(pid, user_id=scoped_user_id) is not None]
-    hidden = len(parent_ids) - len(visible)
-    parts = []
-    if visible:
-        parts.append(f"referenced by {', '.join(visible)}")
-    if hidden:
-        parts.append(f"and {hidden} other component(s)" if visible else f"referenced by {hidden} component(s)")
-    return f"Cannot modify {component_id}: {' '.join(parts) or 'it is referenced by other components'}."
+        # Without the graph there is no telling which ids the caller may see,
+        # so none of them can be shown.
+        return f"Cannot modify {component_id}: blocked by a related component."
+    if not foreign:
+        return detail
+    # One pass over the whole alternation: substituting id by id could rewrite
+    # text a previous substitution just inserted. The lookarounds keep an id
+    # that is a prefix of a visible one from matching inside it.
+    pattern = re.compile(r"(?<![\w.-])(" + "|".join(re.escape(related_id) for related_id in foreign) + r")(?![\w.-])")
+    return pattern.sub("another component", detail)
 
 
 def _reject_unsupported_guard(guard: Any, supported: str) -> None:
@@ -84,6 +142,9 @@ def _reject_unsupported_guard(guard: Any, supported: str) -> None:
         )
 
 
+# Typed catalog errors that map to 409 Conflict. They are ValueError
+# subclasses, so routes must catch them before any generic ValueError clause
+# or they would surface with the wrong status code.
 _CONFLICT_ERRORS = (
     ComponentVersionConflictError,
     ComponentArchivedError,
@@ -259,7 +320,9 @@ def _resolve_member_links(
         else:
             continue
 
-        if not child_id:
+        # A member reference is a component id; anything else is caller garbage
+        # that would reach the db layer as a bind parameter and 500 there.
+        if not child_id or not isinstance(child_id, str):
             continue
 
         # Prefer a persisted DB component: create a link so the graph is complete.
@@ -289,36 +352,123 @@ def _resolve_member_links(
     return links, unresolved
 
 
-def _member_links_for_config(
+def _resolve_step_links(
+    config: Dict[str, Any],
+    db: BaseDb,
+    registry: Optional[Registry] = None,
+) -> List[Dict[str, Any]]:
+    """Build ``component_links`` rows for a workflow config's ``steps``.
+
+    The traversal, the link keys and the collision rule are shared with
+    ``Workflow.save`` so a workflow written here pins exactly what the same
+    workflow written through the SDK pins. The archive and publish guards read
+    these rows, and a write that skips them lets a step's agent archive while
+    a published workflow still points at it.
+
+    A step whose child is not a persisted component gets no row: it is a
+    code-defined component, resolved from the registry at load time. A child
+    that exists but has no current version gets none either - a link pins one
+    published version, and pinning a draft would refuse the parent's own
+    publish.
+
+    Raises:
+        WorkflowLinkCollisionError: If two steps share a link key but pin
+            different children. It is a ValueError, so the routes answer 400.
+    """
+    from agno.workflow.workflow import derive_step_links
+
+    def pin_child(link: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        child_component_id = link.get("child_component_id")
+        # A step reference is a component id; anything else is caller garbage
+        # that would reach the db layer as a bind parameter and 500 there.
+        if not child_component_id or not isinstance(child_component_id, str):
+            return None
+        child_component = db.get_component(child_component_id)
+        if child_component is None:
+            return None
+        child_version = child_component.get("current_version")
+        if child_version is None:
+            return None
+        link["child_version"] = child_version
+        return link
+
+    return derive_step_links(
+        config.get("steps"),
+        pin_child=pin_child,
+        workflow_id=config.get("id"),
+    )
+
+
+def _derived_links_for_config(
     component_id: str,
     config: Optional[Dict[str, Any]],
     links: Optional[List[Dict[str, Any]]],
     db: BaseDb,
     registry: Optional[Registry] = None,
 ) -> Optional[List[Dict[str, Any]]]:
-    """Member link rows for a team config saved through the config routes.
+    """Link rows for a team or workflow config saved through the config routes.
 
-    ``create_component`` derives these from ``config["members"]``; the config
-    routes only persisted caller-supplied ``links``, so a member added by
-    editing a team's config got no link row. Without one the member is not a
-    dependent: it archives freely and the team keeps a reference that resolves
-    to nothing, while the same member at create time correctly conflicts.
+    ``create_component`` derives these from the config; the config routes only
+    persisted caller-supplied ``links``, so a member or step added by editing a
+    config got no link row. Without one the child is not a dependent: it
+    archives freely and the parent keeps a reference that resolves to nothing,
+    while the same child at create time correctly conflicts.
 
     Explicit links win - a caller that sent its own link set is authoritative.
-    Returns None when there is nothing to derive, so callers pass their own
-    value through unchanged.
+    None means "nothing to derive from", which leaves the version's existing
+    rows alone; a config that derives nothing returns an empty list, which
+    clears them. Collapsing the two would leave a version storing an empty
+    composition next to a live link row, and the ex-child could never be
+    archived.
     """
-    if links:
+    if links is not None:
         return links
-    if not isinstance(config, dict) or not config.get("members"):
-        return links
+    if not isinstance(config, dict):
+        return None
     existing = db.get_component(component_id)
-    if existing is None or str(existing.get("component_type")) != ComponentType.TEAM.value:
-        return links
-    derived, _unresolved = _resolve_member_links(config, db, registry)
-    # Unresolved members are not raised here: unlike create, an edit may
-    # legitimately reference a code-defined member this process cannot see.
-    return derived or links
+    if existing is None:
+        return None
+    component_type = str(existing.get("component_type"))
+    if component_type == ComponentType.TEAM.value:
+        derived, _unresolved = _resolve_member_links(config, db, registry)
+        # Unresolved members are not raised here: unlike create, an edit may
+        # legitimately reference a code-defined member this process cannot see.
+        return derived
+    if component_type == ComponentType.WORKFLOW.value:
+        return _resolve_step_links(config, db, registry)
+    return None
+
+
+def _project_live_version(
+    db: BaseDb,
+    component_id: str,
+    scoped_user_id: Optional[str],
+) -> Dict[str, Any]:
+    """The catalog row fields the component's live config version owns.
+
+    Publishing re-projects name/description/metadata onto the row inside the
+    pointer transaction, so a pointer moved any other way - a rollback - has to
+    do the same or listings keep serving the identity of a version that is no
+    longer live. The live version is read back from the row rather than taken
+    from the version that was asked for: a pointer that moved on since must not
+    be projected over.
+    """
+    component = db.get_component(component_id, user_id=scoped_user_id)
+    if component is None:
+        return {}
+    live_version = component.get("current_version")
+    if live_version is None:
+        return {}
+    row = db.get_config(component_id=component_id, version=live_version)
+    config = row.get("config") if isinstance(row, dict) else None
+    if not isinstance(config, dict):
+        return {}
+    projection: Dict[str, Any] = {}
+    for field in ("name", "description", "metadata"):
+        value = config.get(field)
+        if value is not None:
+            projection[field] = value
+    return projection
 
 
 def get_components_router(
@@ -451,6 +601,12 @@ def attach_routes(
                             ),
                         )
                     links = member_links or None
+            elif body.component_type == ComponentType.WORKFLOW:
+                # A workflow's steps pin their children the same way a team's
+                # members do. Unresolved step references are not rejected the
+                # way unresolved members are: a step may name a code-defined
+                # executor this process cannot see.
+                links = _resolve_step_links(config, db, registry) or None
 
             # Falls back to the unscoped JWT sub so admin-created components still carry an owner.
             creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
@@ -582,6 +738,10 @@ def attach_routes(
                         status_code=404,
                         detail=f"Config {component_id} v{body.current_version} not found",
                     )
+                # The row's identity follows the version that is now live,
+                # except where this request sets those fields itself.
+                for field, value in _project_live_version(db, component_id, scoped_user_id).items():
+                    update_kwargs.setdefault(field, value)
 
             component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
             return ComponentResponse(**component)
@@ -606,7 +766,6 @@ def attach_routes(
     )
     async def delete_component(
         request: Request,
-        response: Response,
         component_id: str = Path(description="Component ID"),
         expected_current_version: Optional[int] = Query(
             None, description="Optional compare-and-set guard on the current version"
@@ -639,33 +798,14 @@ def attach_routes(
             # Non-admins can read shared (unowned) components but not delete them.
             if scoped_user_id is not None and existing.get("user_id") is None:
                 raise HTTPException(status_code=403, detail="Cannot delete shared component")
-            component_type = str(existing.get("component_type"))
+            # The schedule cascade rides the delete inside the adapter, so every
+            # delete surface carries it and a cascade failure rolls the archive
+            # back rather than leaving an archived component with live schedules.
             deleted = db.delete_component(
                 component_id, user_id=scoped_user_id, expected_current_version=expected_current_version
             )
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-
-            try:
-                disabled = db.disable_schedules_for_target(
-                    component_type,
-                    component_id,
-                    reason=f"target_archived:{component_type}:{component_id}",
-                )
-                if disabled:
-                    log_info(f"Disabled {disabled} schedule(s) targeting archived {component_type} '{component_id}'")
-            except NotImplementedError:
-                # Database without scheduler support: nothing could be scheduled against it.
-                pass
-            except Exception as e:
-                # The archive committed; do not fail the request, but do not
-                # report a clean 204 either - the caller must know schedules
-                # aimed at the archived target may still be live.
-                log_error(f"Failed to disable schedules for archived component {component_id}: {e}")
-                response.headers["X-Agno-Warning"] = (
-                    f"archived, but schedules targeting {component_type} '{component_id}' "
-                    "could not be disabled; check them manually"
-                )
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
@@ -778,7 +918,7 @@ def attach_routes(
             )
 
             _reject_unsupported_guard(body.guard, "latest_version")
-            links = _member_links_for_config(component_id, config_data, body.links, db, registry)
+            links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
             config = db.upsert_config(
                 component_id=component_id,
                 version=None,  # Always create new
@@ -839,7 +979,7 @@ def attach_routes(
             )
 
             _reject_unsupported_guard(body.guard, "latest_version")
-            links = _member_links_for_config(component_id, config_data, body.links, db, registry)
+            links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
             config = db.upsert_config(
                 component_id=component_id,
                 version=version,  # Always update existing
@@ -854,7 +994,9 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
+            raise HTTPException(
+                status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e, version=version)
+            )
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
@@ -944,7 +1086,9 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
+            raise HTTPException(
+                status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e, version=version)
+            )
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
@@ -987,6 +1131,16 @@ def attach_routes(
                     status_code=404, detail=f"Component {component_id} or config version {version} not found"
                 )
 
+            # The pointer moved, so the row's name/description/metadata must
+            # follow it. The rollback itself is committed either way: a failure
+            # here leaves the row stale, which must not fail the request.
+            projection = _project_live_version(db, component_id, scoped_user_id)
+            if projection:
+                try:
+                    db.upsert_component(component_id=component_id, **projection, user_id=scoped_user_id)
+                except Exception as e:
+                    log_warning(f"Rolled back {component_id} to v{version} but could not re-project its row: {e}")
+
             # Fetch and return updated component
             component = db.get_component(component_id, user_id=scoped_user_id)
             if component is None:
@@ -996,7 +1150,9 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
+            raise HTTPException(
+                status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e, version=version)
+            )
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:

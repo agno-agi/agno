@@ -339,6 +339,147 @@ class WorkflowLinkCollisionError(ValueError):
     """Raised when a save produces two different pins for one link key."""
 
 
+# Container step types, as serialized by each container's ``to_dict``. A
+# config walked from the db has dicts where an in-process workflow has step
+# objects, and both must produce the same links.
+_CONTAINER_STEP_TYPES = {"parallel", "loop", "steps", "condition"}
+
+
+def _step_link_children(step: Any) -> Optional[Tuple[List[Any], List[Any]]]:
+    """The nested steps of a container step, as (steps, else_steps).
+
+    Returns None for a leaf step, which is what carries the links. Accepts
+    either a step object or its serialized dict.
+    """
+    if isinstance(step, dict):
+        step_type = str(step.get("type") or "Step").strip().lower()
+        if step_type == "router":
+            return list(step.get("choices") or []), []
+        if step_type in _CONTAINER_STEP_TYPES:
+            return list(step.get("steps") or []), list(step.get("else_steps") or [])
+        return None
+    if isinstance(step, Router):
+        return list(getattr(step, "choices", None) or []), []
+    if isinstance(step, (Parallel, Loop, Steps, Condition)):
+        return list(getattr(step, "steps", None) or []), list(getattr(step, "else_steps", None) or [])
+    return None
+
+
+def _step_link_specs(step: Any, position: int) -> List[Dict[str, Any]]:
+    """Unpinned links for one leaf step, from a step object or its dict.
+
+    The dict branch mirrors ``Step.get_links`` exactly - same order, same
+    ``step_id or name`` key - so a workflow written from a config produces the
+    same rows as one written from live objects.
+    """
+    if isinstance(step, Step):
+        return step.get_links(position=position)
+    if not isinstance(step, dict):
+        return []
+    link_key = step.get("step_id") or step.get("name")
+    links: List[Dict[str, Any]] = []
+    for config_key, link_kind in (
+        ("agent_id", "step_agent"),
+        ("team_id", "step_team"),
+        ("workflow_id", "step_workflow"),
+    ):
+        child_component_id = step.get(config_key)
+        if not child_component_id:
+            continue
+        links.append(
+            {
+                "link_kind": link_kind,
+                "link_key": link_key,
+                "child_component_id": child_component_id,
+                "child_version": None,
+                "position": position,
+            }
+        )
+    return links
+
+
+def derive_step_links(
+    steps: Any,
+    *,
+    pin_child: Callable[[Dict[str, Any]], Optional[Dict[str, Any]]],
+    on_step: Optional[Callable[[Any], None]] = None,
+    workflow_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Build a workflow version's ``component_links`` rows from its steps.
+
+    Every surface that persists a workflow config - the SDK save, the studio
+    tools and the REST config routes - must derive the same rows, or the same
+    workflow pins different children depending on how it was written and the
+    archive/publish guards that read those rows disagree with each other. The
+    traversal, the link keys, the positions and the collision rule live here so
+    there is one answer; each caller supplies only how a child is pinned.
+
+    Args:
+        steps: The workflow's steps, as step objects or serialized dicts.
+        pin_child: Called with each unpinned link; returns the link to keep
+            (usually with ``child_version`` filled in) or None to drop it.
+        on_step: Called with each leaf step before its links are pinned, for
+            callers that persist a step's children first.
+        workflow_id: The parent workflow id, named in the collision error.
+
+    Returns:
+        The links to persist, deduplicated on (link_kind, link_key).
+
+    Raises:
+        WorkflowLinkCollisionError: If one link key would pin two different
+            children or versions.
+    """
+    collected: List[Dict[str, Any]] = []
+
+    def walk(step: Any, position: int, key_suffix: str) -> None:
+        children = _step_link_children(step)
+        if children is None:
+            if on_step is not None:
+                on_step(step)
+            for link in _step_link_specs(step, position):
+                if key_suffix:
+                    link["link_key"] = f"{link.get('link_key')}{key_suffix}"
+                pinned = pin_child(link)
+                if pinned is not None:
+                    collected.append(pinned)
+            return
+        nested_steps, else_steps = children
+        for nested_position, nested_step in enumerate(nested_steps):
+            walk(nested_step, nested_position, key_suffix)
+        # The links table keys on (link_kind, link_key); an else-step that
+        # shares a name with an if-step must not collide with it.
+        for nested_position, nested_step in enumerate(else_steps):
+            walk(nested_step, nested_position, f"{key_suffix}#else")
+
+    for position, step in enumerate(steps if isinstance(steps, list) else []):
+        walk(step, position, "")
+
+    # A remaining duplicate (steps sharing a name across containers) would fail
+    # the whole write, and silently dropping one of two different pins would
+    # float that child to its latest version forever.
+    seen_links: Dict[tuple, Dict[str, Any]] = {}
+    deduped_links: List[Dict[str, Any]] = []
+    for link in collected:
+        dedupe_key = (link.get("link_kind"), link.get("link_key"))
+        existing = seen_links.get(dedupe_key)
+        if existing is not None:
+            if (existing.get("child_component_id"), existing.get("child_version")) == (
+                link.get("child_component_id"),
+                link.get("child_version"),
+            ):
+                continue
+            raise WorkflowLinkCollisionError(
+                f"Workflow '{workflow_id}' produces two different links for key "
+                f"'{link.get('link_key')}' ('{existing.get('child_component_id')}' "
+                f"v{existing.get('child_version')} and "
+                f"'{link.get('child_component_id')}' v{link.get('child_version')}); "
+                "give steps distinct names so every pin is kept."
+            )
+        seen_links[dedupe_key] = link
+        deduped_links.append(link)
+    return deduped_links
+
+
 def _step_from_dict(
     data: Dict[str, Any],
     registry: Optional["Registry"] = None,
@@ -1091,95 +1232,49 @@ class Workflow:
         # Track saved entity versions for pinning links
         saved_versions: Dict[str, int] = {}
 
-        # Collect all links
-        all_links: List[Dict[str, Any]] = []
+        def _save_step_children(step: Any) -> None:
+            """Save a step's agent/team/workflow so its link can pin a version."""
+            if not isinstance(step, Step):
+                return
 
-        def _save_step_agents(
-            step: Any,
-            position: int,
-            saved_versions: Dict[str, int],
-            all_links: List[Dict[str, Any]],
-        ) -> None:
-            """Recursively save agents/teams in steps, including nested containers."""
-            if isinstance(step, Step):
-                # Save agent if present
-                if step.agent and isinstance(step.agent, Agent):
-                    agent_version = step.agent.save(
-                        db=db_,
-                        stage=stage,
-                        label=label,
-                        notes=notes,
-                    )
-                    if step.agent.id is not None and agent_version is not None:
-                        saved_versions[step.agent.id] = agent_version
+            # Save agent if present
+            if step.agent and isinstance(step.agent, Agent):
+                agent_version = step.agent.save(
+                    db=db_,
+                    stage=stage,
+                    label=label,
+                    notes=notes,
+                )
+                if step.agent.id is not None and agent_version is not None:
+                    saved_versions[step.agent.id] = agent_version
 
-                # Save team if present
-                if step.team and isinstance(step.team, Team):
-                    team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
-                    if step.team.id is not None and team_version is not None:
-                        saved_versions[step.team.id] = team_version
+            # Save team if present
+            if step.team and isinstance(step.team, Team):
+                team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
+                if step.team.id is not None and team_version is not None:
+                    saved_versions[step.team.id] = team_version
 
-                # Save nested workflow if present; without a saved version its
-                # step_workflow link cannot be written and the save would fail.
-                if step.workflow is not None and isinstance(step.workflow, Workflow):
-                    workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
-                    if step.workflow.id is not None and workflow_version is not None:
-                        saved_versions[step.workflow.id] = workflow_version
+            # Save nested workflow if present; without a saved version its
+            # step_workflow link cannot be written and the save would fail.
+            if step.workflow is not None and isinstance(step.workflow, Workflow):
+                workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
+                if step.workflow.id is not None and workflow_version is not None:
+                    saved_versions[step.workflow.id] = workflow_version
 
-                # Add links with position and pinned version
-                for link in step.get_links(position=position):
-                    if link["child_component_id"] in saved_versions:
-                        link["child_version"] = saved_versions[link["child_component_id"]]
-                    all_links.append(link)
-
-            elif isinstance(step, (Parallel, Loop, Steps, Condition)):
-                # Recursively process nested steps, including a Condition's else branch
-                for nested_position, nested_step in enumerate(step.steps):
-                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
-                for nested_position, nested_step in enumerate(getattr(step, "else_steps", None) or []):
-                    else_link_start = len(all_links)
-                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
-                    # The links table keys on (link_kind, link_key); an else-step
-                    # that shares a name with an if-step must not collide with it.
-                    for link in all_links[else_link_start:]:
-                        link["link_key"] = f"{link.get('link_key')}#else"
-
-            elif isinstance(step, Router):
-                # Router uses 'choices' instead of 'steps'
-                for nested_position, nested_step in enumerate(step.choices):
-                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
+        def _pin_saved_version(link: Dict[str, Any]) -> Dict[str, Any]:
+            """Pin a link at the version this save just wrote for that child."""
+            child_component_id = link.get("child_component_id")
+            if child_component_id in saved_versions:
+                link["child_version"] = saved_versions[child_component_id]
+            return link
 
         try:
-            steps_to_save = self.steps if isinstance(self.steps, list) else []
-            for position, step in enumerate(steps_to_save):
-                _save_step_agents(step, position, saved_versions, all_links)
-
-            # The links table keys on (link_kind, link_key): a remaining
-            # duplicate (steps sharing a name across containers) would fail
-            # the whole save, so keep the first and say what was dropped.
-            seen_links: Dict[tuple, Dict[str, Any]] = {}
-            deduped_links: List[Dict[str, Any]] = []
-            for link in all_links:
-                dedupe_key = (link.get("link_kind"), link.get("link_key"))
-                existing = seen_links.get(dedupe_key)
-                if existing is not None:
-                    if (existing.get("child_component_id"), existing.get("child_version")) == (
-                        link.get("child_component_id"),
-                        link.get("child_version"),
-                    ):
-                        continue
-                    # A save that silently drops one of two different pins
-                    # would float that child to its latest version forever.
-                    raise WorkflowLinkCollisionError(
-                        f"Workflow '{self.id}' produces two different links for key "
-                        f"'{link.get('link_key')}' ('{existing.get('child_component_id')}' "
-                        f"v{existing.get('child_version')} and "
-                        f"'{link.get('child_component_id')}' v{link.get('child_version')}); "
-                        "give steps distinct names so every pin is kept."
-                    )
-                seen_links[dedupe_key] = link
-                deduped_links.append(link)
-            all_links = deduped_links
+            all_links = derive_step_links(
+                self.steps,
+                pin_child=_pin_saved_version,
+                on_step=_save_step_children,
+                workflow_id=self.id,
+            )
 
             db_.upsert_component(
                 component_id=self.id,
@@ -5269,6 +5364,10 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            # Caller metadata persists on the run, as the non-agent workflow
+            # paths already do: the run routes read it back, e.g. the pinned
+            # component version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Yield WorkflowAgentStartedEvent at the beginning (stored in direct_reply_run_response)
@@ -5458,6 +5557,10 @@ class Workflow:
                 content=agent_response.content,
                 status=RunStatus.completed,
                 workflow_agent_run=agent_response,
+                # Caller metadata persists on the run, as the non-agent workflow
+                # paths already do: the run routes read it back, e.g. the pinned
+                # component version a draft preview must continue on.
+                metadata=run_context.metadata,
             )
 
             # Store the full agent RunOutput and establish parent-child relationship
@@ -5508,6 +5611,7 @@ class Workflow:
                     created_at=int(datetime.now().timestamp()),
                     content="Error: Workflow execution failed",
                     status=RunStatus.error,
+                    metadata=run_context.metadata,
                 )
 
     def _async_initialize_workflow_agent(
@@ -5666,6 +5770,10 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            # Caller metadata persists on the run, as the non-agent workflow
+            # paths already do: the run routes read it back, e.g. the pinned
+            # component version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Yield WorkflowAgentStartedEvent at the beginning (stored in direct_reply_run_response)
@@ -5872,6 +5980,10 @@ class Workflow:
                 content=agent_response.content,
                 status=RunStatus.completed,
                 workflow_agent_run=agent_response,
+                # Caller metadata persists on the run, as the non-agent workflow
+                # paths already do: the run routes read it back, e.g. the pinned
+                # component version a draft preview must continue on.
+                metadata=run_context.metadata,
             )
 
             # Store the full agent RunOutput and establish parent-child relationship
@@ -5941,6 +6053,7 @@ class Workflow:
                     created_at=int(datetime.now().timestamp()),
                     content="Error: Workflow execution failed",
                     status=RunStatus.error,
+                    metadata=run_context.metadata,
                 )
 
     def cancel_run(self, run_id: str) -> bool:
