@@ -49,6 +49,15 @@ def _model_identity(model: Model) -> tuple:
     return (cls.__module__, cls.__qualname__, getattr(model, "provider", None), getattr(model, "id", None))
 
 
+def _memory_manager_resource_name(manager: Any) -> Optional[str]:
+    """The name a memory manager is listed under in the registry listing.
+
+    A manager without a name is listed under its id, so that is the string a
+    caller selecting from the listing writes into a config.
+    """
+    return getattr(manager, "name", None) or getattr(manager, "id", None)
+
+
 @dataclass
 class Registry:
     """
@@ -665,6 +674,22 @@ class Registry:
                 None,
             )
         return None
+
+    def get_memory_manager_by_name(self, name: str) -> Optional[Any]:
+        """Get a memory manager by the name it is listed under."""
+        if self.memory_managers:
+            return next(
+                (m for m in self.memory_managers if _memory_manager_resource_name(m) == name),
+                None,
+            )
+        return None
+
+    def memory_manager_name_is_ambiguous(self, name: str) -> bool:
+        """Whether two distinct memory managers are listed under ``name``."""
+        if not self.memory_managers:
+            return False
+        matches = [m for m in self.memory_managers if _memory_manager_resource_name(m) == name]
+        return len(matches) > 1 and any(match is not matches[0] for match in matches)
 
     def get_session_summary_manager(self, manager_id: str) -> Optional[Any]:
         """Get a session summary manager by id."""

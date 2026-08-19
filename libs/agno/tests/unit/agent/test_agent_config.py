@@ -1289,3 +1289,128 @@ class TestMemoryManagerRoundTrip:
 
         loaded = Agent.from_dict(config, registry=Registry(), strict=True)
         assert loaded.memory_manager is None
+
+
+class TestMemoryManagerReferenceShapes:
+    """A memory_manager reference is authored by more than to_dict: a config
+    built against the registry listing carries the resource's name or id, and
+    every shape has to bind the same live manager."""
+
+    def _agent_config(self, manager_ref):
+        return {"id": "mem-agent", "name": "Mem Agent", "memory_manager": manager_ref}
+
+    def test_registry_id_key_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Agent.from_dict(
+            self._agent_config({"registry_id": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_id_key_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Agent.from_dict(
+            self._agent_config({"id": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_name_key_resolves(self):
+        """The registry listing names each manager, and a config authored from
+        that listing carries the name, not the id."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Agent.from_dict(
+            self._agent_config({"name": "Support Memory", "description": "picked in the UI"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_name_key_resolves_to_id_when_manager_is_unnamed(self):
+        """An unnamed manager is listed under its id, so that is the name a
+        config authored from the listing carries."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1")
+        loaded = Agent.from_dict(
+            self._agent_config({"name": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_bare_string_reference_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1")
+        loaded = Agent.from_dict(
+            self._agent_config("mm-1"),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_id_wins_over_name(self):
+        """A reference that is one manager's id and another's name binds the
+        manager owning the id."""
+        from agno.memory.manager import MemoryManager
+
+        by_name = MemoryManager(id="mm-1", name="shared-key")
+        by_id = MemoryManager(id="shared-key", name="Other Memory")
+        loaded = Agent.from_dict(
+            self._agent_config({"name": "shared-key"}),
+            registry=Registry(memory_managers=[by_name, by_id]),
+            strict=True,
+        )
+        assert loaded.memory_manager is by_id
+
+    def test_ambiguous_name_refuses_strict(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        first = MemoryManager(id="mm-1", name="Support Memory")
+        second = MemoryManager(id="mm-2", name="Support Memory")
+        registry = Registry(memory_managers=[first, second])
+
+        with pytest.raises(ComponentRehydrationError, match="two distinct"):
+            Agent.from_dict(self._agent_config({"name": "Support Memory"}), registry=registry, strict=True)
+
+        loaded = Agent.from_dict(self._agent_config({"name": "Support Memory"}), registry=registry, strict=False)
+        assert loaded.memory_manager is first
+
+    def test_unresolvable_name_still_raises_strict_and_drops_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(memory_managers=[MemoryManager(id="mm-1", name="Support Memory")])
+
+        with pytest.raises(ComponentRehydrationError, match="memory manager 'Other Memory'"):
+            Agent.from_dict(self._agent_config({"name": "Other Memory"}), registry=registry, strict=True)
+
+        loaded = Agent.from_dict(self._agent_config({"name": "Other Memory"}), registry=registry, strict=False)
+        assert loaded.memory_manager is None
+
+    def test_keyless_reference_reports_the_payload(self):
+        """A reference carrying no usable key must name what it saw, not the
+        literal string 'None'."""
+        from agno.exceptions import ComponentRehydrationError
+
+        payload = {"class_path": "agno.memory.manager.MemoryManager"}
+
+        with pytest.raises(ComponentRehydrationError) as exc_info:
+            Agent.from_dict(self._agent_config(payload), registry=Registry(), strict=True)
+        message = str(exc_info.value)
+        assert "'None'" not in message
+        assert "class_path" in message
+        assert "serving" in message
+
+        loaded = Agent.from_dict(self._agent_config(payload), registry=Registry(), strict=False)
+        assert loaded.memory_manager is None

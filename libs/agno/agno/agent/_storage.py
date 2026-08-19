@@ -54,6 +54,77 @@ def is_auto_generated_memory_manager_id(manager_id: Any) -> bool:
     return isinstance(manager_id, str) and _AUTO_MEMORY_MANAGER_ID_RE.fullmatch(manager_id) is not None
 
 
+# Keys a serialized memory_manager reference can carry. to_dict writes
+# ``registry_id``; a config authored against the registry listing carries the
+# resource's ``id`` or ``name`` the way a knowledge reference does. A bare
+# string is the id itself.
+_MEMORY_MANAGER_REF_KEYS = ("registry_id", "id", "name")
+
+
+def _memory_manager_ref_key(manager_ref: Any) -> Optional[str]:
+    """The registry key a serialized memory_manager reference points at."""
+    if isinstance(manager_ref, str):
+        return manager_ref or None
+    if isinstance(manager_ref, dict):
+        for key in _MEMORY_MANAGER_REF_KEYS:
+            value = manager_ref.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def resolve_memory_manager_reference(
+    config: Dict[str, Any],
+    registry: Optional[Registry],
+    strict: bool,
+    component_label: str,
+) -> None:
+    """Replace ``config["memory_manager"]`` with the live instance it references.
+
+    Agents and teams write and read the reference identically, so both call
+    this. A reference that cannot be resolved is dropped, or refused under
+    strict when dropping it would lose memory the component asked for.
+    """
+    manager_ref = config.get("memory_manager")
+    if manager_ref is None:
+        return
+
+    ref_key = _memory_manager_ref_key(manager_ref)
+    resolved_manager = None
+    if registry is not None and ref_key:
+        resolved_manager = registry.get_memory_manager(ref_key)
+        if resolved_manager is None:
+            # Ids are matched first; a name only decides what no id claimed. A
+            # name two distinct managers share could bind the wrong one, so a
+            # strict load refuses it rather than taking the first.
+            if strict and registry.memory_manager_name_is_ambiguous(ref_key):
+                raise ComponentRehydrationError(
+                    f"{component_label} references memory manager '{ref_key}', but two distinct "
+                    "managers are registered under that name, so the reference could bind the "
+                    "wrong manager. Give the managers distinct names."
+                )
+            resolved_manager = registry.get_memory_manager_by_name(ref_key)
+
+    if resolved_manager is not None:
+        config["memory_manager"] = resolved_manager
+        return
+
+    # When the component's own settings rebuild a default manager on init,
+    # losing the reference changes nothing - drop it rather than refuse the
+    # whole component. An auto-generated id (written by configs saved before
+    # ids were filtered) can never resolve in a new process, so refusing on it
+    # would 422 the component forever.
+    rebuilds_default = bool(config.get("enable_agentic_memory") or config.get("update_memory_on_run"))
+    if strict and not rebuilds_default and not is_auto_generated_memory_manager_id(ref_key):
+        raise ComponentRehydrationError(
+            f"{component_label} references memory manager {ref_key or manager_ref!r} which was not "
+            "found in the registry. Register the manager in the process serving the component, or "
+            "pass strict=False to load the component without it."
+        )
+    log_warning(f"Memory manager {ref_key or manager_ref!r} not found in registry; loading the component without it.")
+    config.pop("memory_manager", None)
+
+
 # ---------------------------------------------------------------------------
 # Run output accessors
 # ---------------------------------------------------------------------------
@@ -1090,26 +1161,7 @@ def from_dict(
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
-    if config.get("memory_manager") is not None:
-        manager_ref = config["memory_manager"]
-        ref_id = manager_ref.get("registry_id") if isinstance(manager_ref, dict) else manager_ref
-        resolved_manager = registry.get_memory_manager(ref_id) if (registry is not None and ref_id) else None
-        if resolved_manager is not None:
-            config["memory_manager"] = resolved_manager
-        else:
-            # When the agent's own settings rebuild a default manager on init,
-            # losing the reference changes nothing - drop it rather than refuse
-            # the whole component. An auto-generated id (written by configs
-            # saved before ids were filtered) can never resolve in a new
-            # process, so refusing on it would 422 the component forever.
-            rebuilds_default = bool(config.get("enable_agentic_memory") or config.get("update_memory_on_run"))
-            if strict and not rebuilds_default and not is_auto_generated_memory_manager_id(ref_id):
-                raise ComponentRehydrationError(
-                    f"{component_label} references memory manager '{ref_id}' which was not found in the "
-                    "registry. Register the manager, or pass strict=False to load the component without it."
-                )
-            log_warning(f"Memory manager {ref_id!r} not found in registry; loading the component without it.")
-            config.pop("memory_manager", None)
+    resolve_memory_manager_reference(config, registry, strict, component_label)
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization

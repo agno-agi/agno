@@ -20,7 +20,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.agent._storage import is_auto_generated_memory_manager_id
+from agno.agent._storage import is_auto_generated_memory_manager_id, resolve_memory_manager_reference
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
@@ -1201,26 +1201,7 @@ def from_dict(
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
-    if config.get("memory_manager") is not None:
-        manager_ref = config["memory_manager"]
-        ref_id = manager_ref.get("registry_id") if isinstance(manager_ref, dict) else manager_ref
-        resolved_manager = registry.get_memory_manager(ref_id) if (registry is not None and ref_id) else None
-        if resolved_manager is not None:
-            config["memory_manager"] = resolved_manager
-        else:
-            # When the team's own settings rebuild a default manager on init,
-            # losing the reference changes nothing - drop it rather than refuse
-            # the whole component. An auto-generated id (written by configs
-            # saved before ids were filtered) can never resolve in a new
-            # process, so refusing on it would 422 the component forever.
-            rebuilds_default = bool(config.get("enable_agentic_memory") or config.get("update_memory_on_run"))
-            if strict and not rebuilds_default and not is_auto_generated_memory_manager_id(ref_id):
-                raise ComponentRehydrationError(
-                    f"{component_label} references memory manager '{ref_id}' which was not found in the "
-                    "registry. Register the manager, or pass strict=False to load the component without it."
-                )
-            log_warning(f"Memory manager {ref_id!r} not found in registry; loading the component without it.")
-            config.pop("memory_manager", None)
+    resolve_memory_manager_reference(config, registry, strict, component_label)
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization
