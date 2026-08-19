@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
@@ -131,19 +131,6 @@ class FileTools(Toolkit):
         """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""
         return path_matches_exclude(path, self.base_dir, self.exclude_patterns)
 
-    def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
-        """Check if the file path is within the base directory.
-
-        Alias for _check_path maintained for backward compatibility.
-
-        Args:
-            relative_path: The file name or relative path to check.
-
-        Returns:
-            Tuple of (is_safe, resolved_path). If not safe, returns base_dir as the path.
-        """
-        return self._check_path(relative_path, self.base_dir)
-
     def save_file(self, contents: str, file_name: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Saves the contents to a file called `file_name` and returns the file name if successful.
 
@@ -153,7 +140,7 @@ class FileTools(Toolkit):
         :return: The file name if successful, otherwise returns an error message.
         """
         try:
-            safe, file_path = self.check_escape(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to save file: {file_name}")
                 return "Error saving file"
@@ -181,7 +168,7 @@ class FileTools(Toolkit):
         """
         try:
             log_debug(f"Reading file: {file_name}")
-            safe, file_path = self.check_escape(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
@@ -208,7 +195,7 @@ class FileTools(Toolkit):
         """
         try:
             log_debug(f"Patching file: {file_name}")
-            safe, file_path = self.check_escape(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
@@ -232,7 +219,7 @@ class FileTools(Toolkit):
         """
         try:
             log_debug(f"Reading file: {file_name}")
-            safe, file_path = self.check_escape(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
@@ -253,7 +240,7 @@ class FileTools(Toolkit):
 
         :return: Empty string, if operation succeeded, otherwise returns an error message
         """
-        safe, path = self.check_escape(file_name)
+        safe, path = self._check_path(file_name, self.base_dir)
         try:
             if safe:
                 if path.is_dir():
@@ -277,7 +264,7 @@ class FileTools(Toolkit):
         try:
             d = self.base_dir
             if directory:
-                safe, d = self.check_escape(directory)
+                safe, d = self._check_path(directory, self.base_dir)
                 if not safe:
                     return "{}"
             log_debug(f"Reading files in : {d}")
@@ -356,7 +343,7 @@ class FileTools(Toolkit):
 
             search_dir = self.base_dir
             if directory:
-                safe, search_dir = self.check_escape(directory)
+                safe, search_dir = self._check_path(directory, self.base_dir)
                 if not safe:
                     log_error(f"Attempted to search outside base directory: {directory}")
                     return "Error: Directory is outside the allowed base directory"

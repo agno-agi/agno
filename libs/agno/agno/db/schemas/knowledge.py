@@ -18,6 +18,8 @@ class KnowledgeRow(BaseModel):
     access_count: Optional[int] = None
     status: Optional[str] = None
     status_message: Optional[str] = None
+    # Uploader of this knowledge row. ``None`` means shared with all users; routes scope on this column.
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     external_id: Optional[str] = None

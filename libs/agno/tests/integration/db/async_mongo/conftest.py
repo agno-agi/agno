@@ -61,7 +61,6 @@ def async_mongo_db(mock_async_mongo_client) -> AsyncMongoDb:
         metrics_collection="test_metrics",
         eval_collection="test_evals",
         knowledge_collection="test_knowledge",
-        culture_collection="test_culture",
     )
 
 
@@ -87,7 +86,6 @@ async def async_mongo_db_real():
         metrics_collection="test_metrics",
         eval_collection="test_evals",
         knowledge_collection="test_knowledge",
-        culture_collection="test_culture",
     )
 
     yield db

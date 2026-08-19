@@ -639,7 +639,7 @@ class TestGetWorkflows:
 
         get_workflows(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.WORKFLOW)
+        mock_db.list_components.assert_called_once_with(component_type=ComponentType.WORKFLOW, user_id=None)
 
     def test_get_workflows_returns_empty_list_on_error(self, mock_db):
         """Test get_workflows returns empty list on error."""
@@ -947,12 +947,18 @@ def _honesty_cases():
     from agno.workflow.parallel import Parallel
     from agno.workflow.step import Step
     from agno.workflow.steps import Steps
+    from agno.workflow.types import HumanReview
 
     return {
         "plain": lambda: [Step(name="s1", executor=_honesty_enrich)],
         "skip_on_failure": lambda: [Step(name="s1", executor=_honesty_enrich, skip_on_failure=True)],
         "condition_on_error_skip": lambda: [
-            Condition(name="c", evaluator=True, steps=[Step(name="s1", executor=_honesty_enrich)], on_error="skip")
+            Condition(
+                name="c",
+                evaluator=True,
+                steps=[Step(name="s1", executor=_honesty_enrich)],
+                human_review=HumanReview(on_error="skip"),
+            )
         ],
         "steps_container": lambda: [Steps(name="grp", steps=[Step(name="s1", executor=_honesty_enrich)])],
         "parallel_container": lambda: [Parallel(Step(name="s1", executor=_honesty_enrich), name="par")],

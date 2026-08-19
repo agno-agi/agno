@@ -99,7 +99,7 @@ def test_tool_call_requires_user_input_stream(shared_db):
     assert found_user_input, "No tools were found to require user input"
 
     found_user_input = False
-    for response in agent.continue_run(run_id=response.run_id, updated_tools=response.tools, stream=True):
+    for response in agent.continue_run(run_id=response.run_id, requirements=response.requirements, stream=True):
         if response.is_paused:
             found_user_input = True
     assert found_user_input is False, "Some tools still require user input"
@@ -169,7 +169,7 @@ async def test_tool_call_requires_user_input_stream_async(shared_db):
     assert found_user_input, "No tools were found to require user input"
 
     found_user_input = False
-    async for response in agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools, stream=True):
+    async for response in agent.acontinue_run(run_id=response.run_id, requirements=response.requirements, stream=True):
         if response.is_paused:
             found_user_input = True
     await asyncio.sleep(1)
@@ -209,7 +209,7 @@ def test_tool_call_requires_user_input_continue_with_run_id(shared_db):
         telemetry=False,
     )
 
-    response = agent.continue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
+    response = agent.continue_run(run_id=response.run_id, requirements=response.requirements, session_id=session_id)
     assert response.is_paused is False
     assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
@@ -432,7 +432,7 @@ def test_streaming_user_input(shared_db):
     final_output = None
     for run_output in agent.continue_run(
         run_id=paused_run_output.run_id,
-        updated_tools=paused_run_output.tools,  # type: ignore
+        requirements=paused_run_output.requirements,  # type: ignore
         session_id=session_id,
         stream=True,
         yield_run_output=True,
