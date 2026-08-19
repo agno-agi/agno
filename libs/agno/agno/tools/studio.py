@@ -811,12 +811,36 @@ class StudioTools(Toolkit):
     def _iterable_attr(component: Any, name: str) -> List[Any]:
         """A list view of an attribute that may be a list OR a callable factory.
 
-        ``tools`` and ``members`` accept callables (per-run factories); those
-        are not statically inspectable, so the palette treats them as empty
-        here rather than crashing the whole compose call on a TypeError."""
+        ``tools`` and ``members`` accept callables (per-run factories). A
+        factory that needs no arguments is resolved here: treating it as empty
+        let ``tools=lambda: [studio_tools]`` compose where ``tools=[studio_tools]``
+        is refused, handing the composed member the whole control plane. A
+        factory that takes a run context cannot be resolved without one, so it
+        stays empty - the gap narrows to factories that genuinely need a run."""
         value = getattr(component, name, None)
-        if value is None or callable(value):
+        if value is None:
             return []
+        if callable(value):
+            from inspect import Parameter, signature
+
+            try:
+                params = signature(value).parameters.values()
+                needs_args = any(
+                    p.default is Parameter.empty
+                    and p.kind in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD)
+                    for p in params
+                )
+                if needs_args:
+                    return []
+                produced = value()
+            except Exception:
+                # A factory that will not introspect or run here is no worse
+                # off than before: it stays uninspectable, never a crash.
+                return []
+            try:
+                return list(produced)
+            except TypeError:
+                return []
         try:
             return list(value)
         except TypeError:

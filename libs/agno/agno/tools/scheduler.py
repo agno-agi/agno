@@ -119,9 +119,7 @@ async def _aarchived_component_refusal(
     component_type = _component_type_arg(target_type)
     try:
         if asyncio.iscoroutinefunction(get_component):
-            row = await get_component(
-                target_id, component_type=component_type, user_id=user_id, include_deleted=True
-            )
+            row = await get_component(target_id, component_type=component_type, user_id=user_id, include_deleted=True)
         else:
             # A sync adapter would hold the event loop for the whole query
             row = await asyncio.to_thread(
@@ -140,9 +138,7 @@ async def _aarchived_component_refusal(
     return None
 
 
-def archived_target_refusal(
-    db: Any, schedule: Schedule, user_id: Optional[str] = None
-) -> Optional[Tuple[str, str]]:
+def archived_target_refusal(db: Any, schedule: Schedule, user_id: Optional[str] = None) -> Optional[Tuple[str, str]]:
     """(type, id) of the still-archived component that blocks enabling *schedule*, else None.
 
     The verdict is the target's ACTUAL liveness, never the disabled_reason: the
