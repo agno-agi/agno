@@ -224,7 +224,7 @@ class ScheduleExecutor:
                     )
                 except Exception as e:
                     log_warning(
-                        f"Failed to compute next_run_at for schedule {schedule_id}; : {e}"
+                        f"Failed to compute next_run_at for schedule {schedule_id}; "
                         f"disabling schedule to prevent it from becoming stuck: {e}",
                     )
 
@@ -423,7 +423,7 @@ class ScheduleExecutor:
                     params={"session_id": session_id},
                 )
             except Exception as exc:
-                log_warning(f"Poll request failed for run {run_id}: {exc}: {exc}")
+                log_warning(f"Poll request failed for run {run_id}: {exc}")
                 continue
 
             if resp.status_code == 404:
