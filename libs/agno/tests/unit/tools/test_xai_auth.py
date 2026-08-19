@@ -13,10 +13,10 @@ from urllib.parse import parse_qsl
 
 import httpx
 import pytest
-from agno.tools.xai_auth import XAIAuth
 
 from agno.models.xai.oauth import XAI_DEVICE_CODE_URL, XAI_OAUTH_SCOPE, XAITokenManager
 from agno.run import RunContext
+from agno.tools.xai_auth import XAIAuth
 from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key, is_encrypted
 
 STORE_KEY = ("xai", "", "supergrok")
