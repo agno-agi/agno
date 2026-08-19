@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
@@ -99,8 +100,6 @@ def resolve_run_options(
     function; it sits between agent defaults and call-site values in the
     metadata merge (agent < session < call-site).
     """
-    from copy import deepcopy
-
     from agno.agent._utils import get_effective_filters
     from agno.utils.merge_dict import merge_dictionaries
 
