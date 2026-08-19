@@ -2591,6 +2591,7 @@ class StudioTools(Toolkit):
             )
             if not ok:
                 return error_result("version_not_found", f"Component or version not found: {component_id} v{version}")
+            self._sync_component_row(component_id, version)
             return ok_result("set_current", id=component_id, version=version)
         except Exception as e:
             return self._error_from_exception(e, "Failed to set current version")
