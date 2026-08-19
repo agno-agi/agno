@@ -311,3 +311,51 @@ class TestCorruptPointer:
             )
         assert db.get_component(radar, user_id="bob") is not None
         assert _error(studio.get_component(radar, _agno_run_context=BOB))["code"] == "component_not_found"
+
+
+class TestTheWriteItselfIsOwnerScoped:
+    """The python gate is not the only thing standing between a foreign
+    caller and the row.
+
+    ``_check_component_access`` reads the component in one call and the
+    writers run in a later transaction, so a row that appears in that window
+    was never gated. Every writer therefore carries the owner scope into the
+    write itself. These neutralise the gate to prove the second layer holds
+    on its own -- with the gate as the only guard, all four cases mutate
+    Alice's component.
+    """
+
+    @pytest.fixture
+    def ungated(self, studio, monkeypatch):
+        monkeypatch.setattr(type(studio), "_check_component_access", lambda *a, **k: None)
+        return studio
+
+    def test_publish_cannot_promote_another_owners_draft(self, ungated, db, radar):
+        before = db.get_component(radar)["current_version"]
+        out = _loads(ungated.publish_component(radar, _agno_run_context=BOB))
+        assert out.get("ok") is False, out
+        assert db.get_component(radar)["current_version"] == before
+
+    def test_repoint_cannot_move_another_owners_pointer(self, ungated, db, radar):
+        before = db.get_component(radar)["current_version"]
+        out = _loads(ungated.set_current_version(radar, version=1, _agno_run_context=BOB))
+        assert out.get("ok") is False, out
+        assert db.get_component(radar)["current_version"] == before
+
+    def test_delete_version_cannot_tombstone_another_owners_draft(self, ungated, db, radar):
+        before = [(c["version"], c["stage"]) for c in db.list_configs(radar, include_config=False)]
+        draft = max(v for v, stage in before if stage == "draft")
+        out = _loads(ungated.delete_version(radar, version=draft, _agno_run_context=BOB))
+        assert out.get("ok") is False, out
+        assert [(c["version"], c["stage"]) for c in db.list_configs(radar, include_config=False)] == before
+
+    def test_edit_cannot_append_a_draft_to_another_owners_component(self, ungated, db, radar):
+        before = [c["version"] for c in db.list_configs(radar, include_config=False)]
+        out = _loads(ungated.edit_agent(radar, instructions="mine now", _agno_run_context=BOB))
+        assert out.get("ok") is False, out
+        assert [c["version"] for c in db.list_configs(radar, include_config=False)] == before
+
+    def test_the_owner_is_unaffected(self, ungated, db, radar):
+        """The scope refuses a foreign writer, not every writer."""
+        out = _loads(ungated.publish_component(radar, _agno_run_context=ALICE))
+        assert out.get("ok") is True, out

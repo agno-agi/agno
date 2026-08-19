@@ -262,7 +262,15 @@ class StudioTools(Toolkit):
         if self.enable_schedules:
             from agno.tools.scheduler import SchedulerTools
 
-            self._scheduler_tools = SchedulerTools(db=self.db)
+            # The lists ride along: without them the embedded toolkit's own
+            # refusals build a probe from nothing, so enable_schedule would
+            # refuse a code-defined target that create_schedule just allowed.
+            self._scheduler_tools = SchedulerTools(
+                db=self.db,
+                agents_list=self.agents_list,
+                teams_list=self.teams_list,
+                workflows_list=self.workflows_list,
+            )
 
         tools: List[Callable] = [
             # Discovery -- always available regardless of flags.
@@ -2642,7 +2650,8 @@ class StudioTools(Toolkit):
         db_err = self._require_db()
         if db_err is not None:
             return db_err
-        denied = self._check_component_access(component_id, _actor_id(_agno_run_context), "publish")
+        actor = _actor_id(_agno_run_context)
+        denied = self._check_component_access(component_id, actor, "publish")
         if denied is not None:
             return self._denied_error(denied)
         assert self.db is not None
@@ -2695,12 +2704,23 @@ class StudioTools(Toolkit):
                 # the row describe a version that is not live; moving the
                 # pointer backwards is set_current_version's job, not publish's.
                 return ok_result("already_published", id=component_id, version=target)
-            result = self.db.upsert_config(
-                component_id=component_id,
-                version=target,
-                stage="published",
-                expected_current_version=expected_current_version,
-            )
+            try:
+                result = self.db.upsert_config(
+                    component_id=component_id,
+                    version=target,
+                    stage="published",
+                    expected_current_version=expected_current_version,
+                    user_id=actor,
+                )
+            except ValueError:
+                # The write is owner-scoped, so it also refuses a row that
+                # appeared under another owner after the gate read above. Ask
+                # the gate again: it answers with the refusal that read would
+                # have produced, and anything else is a real ValueError.
+                denied = self._check_component_access(component_id, actor, "publish")
+                if denied is not None:
+                    return self._denied_error(denied)
+                raise
             published_version = result.get("version", target)
             self._sync_component_row(component_id, published_version)
             return ok_result("published", id=component_id, version=published_version)
@@ -2729,15 +2749,22 @@ class StudioTools(Toolkit):
         db_err = self._require_db()
         if db_err is not None:
             return db_err
-        denied = self._check_component_access(component_id, _actor_id(_agno_run_context), "re-point")
+        actor = _actor_id(_agno_run_context)
+        denied = self._check_component_access(component_id, actor, "re-point")
         if denied is not None:
             return self._denied_error(denied)
         assert self.db is not None
         try:
             ok = self.db.set_current_version(
-                component_id, version=version, expected_current_version=expected_current_version
+                component_id, version=version, expected_current_version=expected_current_version, user_id=actor
             )
             if not ok:
+                # An owner-scoped refusal reads the same as a missing row, so a
+                # component that appeared under another owner since the gate
+                # read lands here: re-ask the gate before reporting.
+                denied = self._check_component_access(component_id, actor, "re-point")
+                if denied is not None:
+                    return self._denied_error(denied)
                 missing = self._missing_component_error(component_id)
                 if missing is not None:
                     return missing
@@ -2807,13 +2834,20 @@ class StudioTools(Toolkit):
         db_err = self._require_db()
         if db_err is not None:
             return db_err
-        denied = self._check_component_access(component_id, _actor_id(_agno_run_context), "delete a version of")
+        actor = _actor_id(_agno_run_context)
+        denied = self._check_component_access(component_id, actor, "delete a version of")
         if denied is not None:
             return self._denied_error(denied)
         assert self.db is not None
         try:
-            deleted = self.db.delete_config(component_id, version=version)
+            deleted = self.db.delete_config(component_id, version=version, user_id=actor)
             if not deleted:
+                # Owner-scoped refusals answer False exactly as a missing
+                # version does; re-ask the gate so a row that appeared under
+                # another owner since the read is reported as such.
+                denied = self._check_component_access(component_id, actor, "delete a version of")
+                if denied is not None:
+                    return self._denied_error(denied)
                 missing = self._missing_component_error(component_id)
                 if missing is not None:
                     return missing
@@ -4558,6 +4592,7 @@ class StudioTools(Toolkit):
             stage="draft",
             links=links,
             expected_latest_version=expected_latest_version,
+            user_id=user_id,
         )
         return result.get("version")
 
@@ -4725,6 +4760,7 @@ def _persist_only(
             stage=stage,
             links=links,
             expected_latest_version=expected_latest_version,
+            user_id=user_id,
         )
         # Same rule as the publish projection: an absent description/metadata
         # is a cleared field, and None reads as "leave the column alone".
@@ -4746,6 +4782,7 @@ def _persist_only(
         stage=stage,
         links=links,
         expected_latest_version=expected_latest_version,
+        user_id=user_id,
     )
     return result.get("version")
 
