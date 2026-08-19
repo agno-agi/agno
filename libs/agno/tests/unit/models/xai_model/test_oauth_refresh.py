@@ -6,8 +6,10 @@ runs through the injectable clock, so these tests never sleep on real time.
 """
 
 import asyncio
+import gc
 import threading
 import time as time_module
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -224,6 +226,65 @@ def test_cache_never_serves_a_token_across_different_stores(
 
     with pytest.raises(ModelAuthenticationError):
         manager_b.get_access_token()
+
+
+def test_cache_never_serves_a_dead_stores_token_after_id_reuse(tmp_path, encryption_key, fake_clock):
+    # A collected store's cache entry must never be served to a NEW store whose
+    # object happens to reuse the same id
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    db_a = SqliteDb(db_file=str(tmp_path / "a.db"))
+    manager_a = XAITokenManager(db=db_a, encryption_key=encryption_key, now_fn=fake_clock)
+    # Seed the cache directly: the contract under test is the cache scope, and
+    # the full poll path retains enough state to block deterministic id reuse
+    manager_a._cache_put({"access_token": "store-a-token", "expires_at": fake_clock() + 21600})
+    old_id = id(db_a)
+    del manager_a, db_a
+    gc.collect()
+
+    reused = None
+    for _ in range(10000):
+        candidate = SqliteDb(db_file=str(tmp_path / "b.db"))
+        if id(candidate) == old_id:
+            reused = candidate
+            break
+        del candidate
+    if reused is None:
+        pytest.skip("CPython did not reuse the object id in 10000 allocations")
+
+    manager_b = XAITokenManager(db=reused, encryption_key=encryption_key, now_fn=fake_clock)
+    with pytest.raises(ModelAuthenticationError):
+        manager_b.get_access_token()
+
+
+def test_lock_registry_releases_contended_dead_loops():
+    # A contended lock strongly references its loop (registry -> lock -> loop);
+    # the registry must still release the pair once the loop is dead, at the
+    # latest on a later fetch
+    refs = {}
+
+    async def contended():
+        lock = oauth._get_async_cache_lock()
+
+        async def hold():
+            async with lock:
+                await asyncio.sleep(0.02)
+
+        async def wait_too():
+            async with lock:
+                pass
+
+        await asyncio.gather(hold(), wait_too())
+        refs["loop"] = weakref.ref(asyncio.get_running_loop())
+
+    asyncio.run(contended())
+
+    async def later_fetch():
+        oauth._get_async_cache_lock()
+
+    asyncio.run(later_fetch())
+    gc.collect()
+    assert refs["loop"]() is None
 
 
 def test_refresh_200_with_error_body_raises_clean(sqlite_db, encryption_key, token_endpoint, fake_clock):

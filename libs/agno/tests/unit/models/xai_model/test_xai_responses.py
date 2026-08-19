@@ -445,6 +445,53 @@ async def test_401_retried_on_async_path_when_manager_wins_over_sync_provider():
     assert manager.aforce_refresh.await_count == 1
 
 
+def test_stream_401_not_retried_when_token_provider_overrides_manager():
+    # Positive guard (not a red regression): pins the sync stream twin to the
+    # same explicit-provider truth table as invoke
+    manager = MagicMock()
+    error = ModelProviderError("unauthorized", status_code=401)
+
+    def failing():
+        raise error
+        yield  # pragma: no cover - makes this a generator
+
+    parent = MagicMock(side_effect=[failing()])
+
+    with patch.object(OpenAIResponses, "invoke_stream", parent):
+        model = xAIResponses(token_provider=lambda: "user-owned-token", token_manager=manager)
+        with pytest.raises(ModelProviderError):
+            list(model.invoke_stream(messages=_messages(), assistant_message=_assistant()))
+
+    assert parent.call_count == 1
+    assert manager.force_refresh.call_count == 0
+
+
+async def test_astream_401_not_retried_when_async_token_provider_overrides_manager():
+    # Positive guard (not a red regression): pins the async stream twin
+    manager = MagicMock()
+    manager.aforce_refresh = AsyncMock()
+
+    async def aprovider() -> str:
+        return "user-owned-token"
+
+    error = ModelProviderError("unauthorized", status_code=401)
+
+    async def failing():
+        raise error
+        yield  # pragma: no cover - makes this an async generator
+
+    parent = MagicMock(side_effect=[failing()])
+
+    with patch.object(OpenAIResponses, "ainvoke_stream", parent):
+        model = xAIResponses(async_token_provider=aprovider, token_manager=manager)
+        with pytest.raises(ModelProviderError):
+            async for _ in model.ainvoke_stream(messages=_messages(), assistant_message=_assistant()):
+                pass
+
+    assert parent.call_count == 1
+    assert manager.aforce_refresh.await_count == 0
+
+
 def test_401_api_key_mode_not_retried():
     error = ModelProviderError("unauthorized", status_code=401)
     parent = MagicMock(side_effect=error)
