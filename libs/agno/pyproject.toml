@@ -95,7 +95,7 @@ infinity = ["infinity_client"]
 litellm = ["litellm<=1.82.6"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
-mistral = ["mistralai"]
+mistral = ["mistralai>=2.0.0"]
 ollama = ["ollama"]
 openai = ["openai"]
 portkey = ["portkey-ai"]
@@ -252,7 +252,7 @@ models = [
   # "agno[litellm]",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
   "agno[lmstudio]",
   "agno[meta]",
-  # "agno[mistral]",  # Temporarily disabled - mistralai quarantined on PyPI (May 12, 2026)
+  "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
   "agno[portkey]",
