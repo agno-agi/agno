@@ -183,6 +183,8 @@ class TestTracesOnlyContract:
     def test_list_components_returns_empty(self, db: ClickhouseDb):
         # AgentOS calls this at startup; must not raise.
         assert db.list_components() == ([], 0)
+        # The stub accepts the name filter like the other adapters.
+        assert db.list_components(name="alpha") == ([], 0)
         assert db.get_config(component_id="missing") is None
         assert db.get_component(component_id="missing") is None
 

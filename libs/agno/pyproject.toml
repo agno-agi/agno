@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.8.0"
+version = "2.9.0"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -67,11 +67,12 @@ dev = [
   "agno[slack]",
   "agno[agui]",
   "agno[a2a]",
+  "agno[scheduler]",
 ]
 
 # AgentOS server bundle
 os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
-mcp = ["mcp>=1.9.2", "fastmcp>=3.4.3,<4"]
+mcp = ["mcp>=1.9.2,<2", "fastmcp>=3.4.3,<4"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -112,7 +113,10 @@ arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
-confluence = ["atlassian-python-api"]
+# Pinned below 5.0: that release split Confluence into Cloud and Server classes and left the
+# base ``Confluence`` with no space or page methods, so ConfluenceTools raises AttributeError.
+# Lift once the tools are ported to the split classes.
+confluence = ["atlassian-python-api<5"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 daytona = ["daytona"]
 ddg = ["ddgs"]
@@ -181,6 +185,7 @@ couchbase = ["couchbase"]
 lancedb = ["lancedb>=0.26.0"]
 milvusdb = ["pymilvus>=2.5.10"]
 mongodb = ["pymongo[srv]"]
+opensearch = ["opensearch-py"]
 pgvector = ["pgvector"]
 pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
@@ -197,7 +202,9 @@ chonkie = [
 csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
-markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
+# nltk!=3.10.1: its inisec import hook falsely blocks site-packages imports when
+# the venv lives inside the CWD, breaking the unstructured import chain.
+markdown = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown", "aiofiles"]
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
@@ -333,6 +340,7 @@ vectordbs = [
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
+  "agno[opensearch]",
   "agno[pgvector]",
   "agno[pinecone]",
   "agno[pylance]",
@@ -568,6 +576,7 @@ module = [
   "ollama.*",
   "openpyxl.*",
   "openai.*",
+  "opensearchpy.*",
   "cv2.*",
   "openbb.*",
   "pandas.*",

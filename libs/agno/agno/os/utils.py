@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
@@ -11,6 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.exceptions import ComponentRehydrationError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -34,8 +35,8 @@ from agno.utils.log import log_debug, log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
-def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Optional[datetime]:
-    """Convert a timestamp, ISO 8601 string, or datetime to a UTC datetime."""
+def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> Optional[datetime]:
+    """Convert a timestamp, ISO 8601 string, date, or datetime to a UTC datetime."""
     if value is None:
         return None
 
@@ -44,6 +45,10 @@ def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Option
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value
+
+    # datetime is a subclass of date, so this must come after the datetime check
+    if isinstance(value, date):
+        return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
     if isinstance(value, str):
         try:
@@ -845,6 +850,7 @@ def get_agent_by_id(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
@@ -860,9 +866,16 @@ def get_agent_by_id(
         agents: List of agents (and/or AgentFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed agent whose references cannot be rehydrated raises
+            instead of loading degraded
 
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed agent's references
+            cannot be resolved
     """
     if agent_id is None:
         return None
@@ -892,8 +905,11 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
             return db_agent
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
             return None
@@ -909,6 +925,7 @@ async def get_agent_by_id_async(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Async variant of get_agent_by_id that supports async factories."""
     if agent_id is None:
@@ -938,8 +955,11 @@ async def get_agent_by_id_async(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
             return db_agent
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
             return None
@@ -955,6 +975,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -969,9 +990,16 @@ def get_team_by_id(
         teams: List of teams (and/or TeamFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed team whose members or references cannot be rehydrated
+            raises instead of loading degraded
 
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed team's members or
+            references cannot be resolved
     """
     if team_id is None:
         return None
@@ -994,8 +1022,11 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
             return db_team
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
             return None
@@ -1011,6 +1042,7 @@ async def get_team_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Async variant of get_team_by_id that supports async factories."""
     if team_id is None:
@@ -1034,8 +1066,11 @@ async def get_team_by_id_async(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
             return db_team
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
             return None
@@ -1051,6 +1086,7 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
@@ -1068,9 +1104,16 @@ def get_workflow_by_id(
         version: Workflow version, if needed
         registry: Optional Registry instance
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed workflow whose references cannot be rehydrated raises
+            instead of loading degraded
 
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed workflow's
+            references cannot be resolved
     """
     if workflow_id is None:
         return None
@@ -1095,8 +1138,13 @@ def get_workflow_by_id(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            db_workflow = get_workflow_by_id_db(
+                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+            )
             return db_workflow
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
             return None
@@ -1112,6 +1160,7 @@ async def get_workflow_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    strict: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Async variant of get_workflow_by_id that supports async factories."""
     if workflow_id is None:
@@ -1137,8 +1186,13 @@ async def get_workflow_by_id_async(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            db_workflow = get_workflow_by_id_db(
+                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+            )
             return db_workflow
+        except ComponentRehydrationError:
+            # Broken is not "not found": propagate so the caller can refuse loudly.
+            raise
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
             return None
@@ -1398,7 +1452,7 @@ def load_yaml_config(config_file_path: str) -> AgentOSConfig:
         raise ValueError(f"Config file must have a .yaml or .yml extension, got: {config_file_path}")
 
     # Load the YAML file
-    with open(config_file_path, "r") as f:
+    with open(config_file_path, "r", encoding="utf-8") as f:
         return AgentOSConfig.model_validate(yaml.safe_load(f))
 
 
@@ -1551,7 +1605,7 @@ def _collect_fallback_models(owner: Any, registry: Registry) -> None:
 
 
 def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> None:
-    """Add the vector db and contents db backing a knowledge instance to the registry.
+    """Add a knowledge instance and its backing vector/contents dbs to the registry.
 
     ``knowledge`` may be a Knowledge instance, a custom KnowledgeProtocol
     implementation, or a callable factory. Attribute access is guarded so any
@@ -1559,12 +1613,13 @@ def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> No
     """
     if knowledge is None:
         return
+    registry.add_knowledge(knowledge, mirrored=True)
     registry.add_vector_db(getattr(knowledge, "vector_db", None))
     registry.add_db(getattr(knowledge, "contents_db", None))
 
 
 def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[int]) -> None:
-    """Add the models, tools, db and vector db referenced by an agent to the registry.
+    """Add the models, tools, schemas, db and vector db referenced by an agent to the registry.
 
     ``visited`` tracks already-walked agents/teams/workflows (by object id) to
     avoid redundant work and infinite recursion on cyclic composition graphs.
@@ -1584,6 +1639,8 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
         for tool in tools:
             registry.add_tool(tool)
 
+    registry.add_schema(getattr(agent, "input_schema", None))
+    registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
 
@@ -1605,6 +1662,8 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
         for tool in tools:
             registry.add_tool(tool)
 
+    registry.add_schema(getattr(team, "input_schema", None))
+    registry.add_schema(getattr(team, "output_schema", None))
     registry.add_db(getattr(team, "db", None))
     _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
 
@@ -1623,6 +1682,7 @@ def collect_components_from_workflow(workflow: Any, registry: Registry, visited:
         return
     visited.add(id(workflow))
 
+    registry.add_schema(getattr(workflow, "input_schema", None))
     registry.add_db(getattr(workflow, "db", None))
 
     # Agentic workflow coordinator (WorkflowAgent is an Agent subclass)
@@ -1670,6 +1730,8 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
         nested_workflow = getattr(step, "workflow", None)
         if nested_workflow is not None:
             collect_components_from_workflow(nested_workflow, registry, visited)
+        if callable(getattr(step, "executor", None)):
+            registry.add_function(step.executor)
 
     elif isinstance(step, Agent):
         collect_components_from_agent(step, registry, visited)
@@ -1681,6 +1743,13 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
         collect_components_from_workflow(step, registry, visited)
 
     elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
+        # Container-level callable refs resolve by function name at rehydration.
+        if isinstance(step, Condition) and callable(getattr(step, "evaluator", None)):
+            registry.add_function(step.evaluator)
+        if isinstance(step, Router) and callable(getattr(step, "selector", None)):
+            registry.add_function(step.selector)
+        if isinstance(step, Loop) and callable(getattr(step, "end_condition", None)):
+            registry.add_function(step.end_condition)
         # Walk every sub-step container: `steps` (all), `else_steps` (Condition)
         # and `choices` (Router, before it is prepared into `steps`).
         for attr in ("steps", "else_steps", "choices"):
@@ -1689,7 +1758,9 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
                 for sub_step in sub_steps:
                     _collect_components_from_step(sub_step, registry, visited)
 
-    # else: plain callable executor or unknown step type -> nothing to collect
+    elif callable(step):
+        # A bare callable used directly as a step serializes as an executor ref.
+        registry.add_function(step)
 
 
 def collect_components_from_os(
@@ -1974,11 +2045,15 @@ async def resolve_agent(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
     For factory agents: builds RequestContext, invokes factory, handles factory-specific errors.
-    For non-factory agents: resolves via deep_copy or DB lookup.
+    For non-factory agents: resolves via deep_copy or DB lookup. With strict=True
+    (the default), a db-backed agent whose references cannot be rehydrated is
+    refused with a 422; pass strict=False for callers that only need a handle
+    on the component (cancel, history reads).
 
     Raises HTTPException on all error paths.
     """
@@ -2003,7 +2078,11 @@ async def resolve_agent(
             raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
     else:
         try:
-            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True)
+            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True, strict=strict)
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -2023,8 +2102,13 @@ async def resolve_team(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Team, RemoteTeam]:
-    """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
+    """Resolve a team by ID with proper error handling for both factory and non-factory paths.
+
+    Raises HTTPException on all error paths; an unrehydratable db-backed team
+    is refused with a 422 unless strict=False.
+    """
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
         if request is None:
@@ -2046,7 +2130,13 @@ async def resolve_team(
             raise HTTPException(status_code=500, detail=f"Error in team factory: {e}")
     else:
         try:
-            team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
+            team = get_team_by_id(
+                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, strict=strict
+            )
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -2066,8 +2156,13 @@ async def resolve_workflow(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Workflow, RemoteWorkflow]:
-    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
+    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths.
+
+    Raises HTTPException on all error paths; an unrehydratable db-backed
+    workflow is refused with a 422 unless strict=False.
+    """
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
@@ -2090,8 +2185,12 @@ async def resolve_workflow(
     else:
         try:
             workflow = get_workflow_by_id(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True
+                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, strict=strict
             )
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
