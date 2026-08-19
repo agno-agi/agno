@@ -196,10 +196,32 @@ async def aarchived_endpoint_refusal(
     return await _aarchived_component_refusal(db, target[0], target[1], user_id=user_id)
 
 
+def _has_any_config(db: Any, component_id: str) -> bool:
+    """True when the component carries at least one stored config version.
+
+    Distinguishes a real draft-only component from a bare components row that
+    has no configs at all; adapters without a catalog answer False (allow).
+    """
+    list_configs = getattr(db, "list_configs", None)
+    if list_configs is None:
+        return False
+    try:
+        return bool(list_configs(component_id, include_config=False))
+    except (NotImplementedError, TypeError):
+        return False
+
+
 def _draft_only_component_refusal(
     db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
 ) -> Optional[Tuple[str, str]]:
-    """(type, id) iff that component exists but has no published version."""
+    """(type, id) iff that component has an unpublished config and no live version.
+
+    ``current_version is None`` alone is not enough: a components row with no
+    configs at all (a bare registry/control-plane stub) reads the same way, and
+    it behaves like a code-defined target - there is nothing to publish, so
+    refusing it would brick schedules that work today. Only a component that
+    actually carries a config, none of which is live, is a draft-only target.
+    """
     if db is None:
         return None
     get_component = getattr(db, "get_component", None)
@@ -209,9 +231,11 @@ def _draft_only_component_refusal(
         row = get_component(target_id, component_type=_component_type_arg(target_type), user_id=user_id)
     except NotImplementedError:
         return None
-    if isinstance(row, dict) and row.get("current_version") is None:
-        return target_type, target_id
-    return None
+    if not isinstance(row, dict) or row.get("current_version") is not None:
+        return None
+    if not _has_any_config(db, target_id):
+        return None
+    return target_type, target_id
 
 
 async def _adraft_only_component_refusal(
@@ -233,9 +257,11 @@ async def _adraft_only_component_refusal(
             )
     except NotImplementedError:
         return None
-    if isinstance(row, dict) and row.get("current_version") is None:
-        return target_type, target_id
-    return None
+    if not isinstance(row, dict) or row.get("current_version") is not None:
+        return None
+    if not await asyncio.to_thread(partial(_has_any_config, db, target_id)):
+        return None
+    return target_type, target_id
 
 
 def draft_endpoint_refusal(
@@ -256,6 +282,14 @@ async def adraft_endpoint_refusal(
     if target is None:
         return None
     return await _adraft_only_component_refusal(db, target[0], target[1], user_id=user_id)
+
+
+def draft_target_refusal(db: Any, schedule: Schedule, user_id: Optional[str] = None) -> Optional[Tuple[str, str]]:
+    """(type, id) of the draft-only component that blocks enabling *schedule*."""
+    target = _schedule_component_target(schedule)
+    if target is None:
+        return None
+    return _draft_only_component_refusal(db, target[0], target[1], user_id=user_id)
 
 
 async def adraft_target_refusal(
@@ -582,6 +616,22 @@ class SchedulerTools(Toolkit):
                         "target_id": target_id,
                     }
                 )
+            # A schedule fires the live published version, so a draft-only
+            # target can only 404 on every tick. The REST enable route refuses
+            # this identically; keep the two surfaces in step.
+            draft_target = draft_target_refusal(self.manager.db, existing, user_id=self._owner(run_context))
+            if draft_target is not None:
+                target_type, target_id = draft_target
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': its target "
+                        f"{target_type} '{target_id}' has no published version. "
+                        "Publish it first.",
+                        "error_type": "target_not_published",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    }
+                )
             # A drift-disabled row re-arms only once its endpoint matches its
             # provenance target again; otherwise it just fails on the next tick.
             drift = endpoint_drift_refusal(existing)
@@ -895,6 +945,22 @@ class SchedulerTools(Toolkit):
                         f"{target_type} '{target_id}' is archived. "
                         "Restore the component first.",
                         "error_type": "target_archived",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    }
+                )
+            # A schedule fires the live published version, so a draft-only
+            # target can only 404 on every tick. The REST enable route refuses
+            # this identically; keep the two surfaces in step.
+            draft_target = await adraft_target_refusal(self.manager.db, existing, user_id=self._owner(run_context))
+            if draft_target is not None:
+                target_type, target_id = draft_target
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': its target "
+                        f"{target_type} '{target_id}' has no published version. "
+                        "Publish it first.",
+                        "error_type": "target_not_published",
                         "target_type": target_type,
                         "target_id": target_id,
                     }
