@@ -4287,10 +4287,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if row is None:
                         return None
                     schedule = dict(row._mapping)
+                    # Claim it with EVERY predicate the select used, not just
+                    # the lock half: the select runs before the write, so a
+                    # disable (the archive cascade among them) or a reschedule
+                    # committing in the gap must make the claim a no-op rather
+                    # than arm a run against a target that is gone.
                     claim_result = await sess.execute(
                         table.update()
                         .where(
                             table.c.id == schedule["id"],
+                            table.c.enabled == True,  # noqa: E712
+                            table.c.next_run_at <= now,
                             or_(
                                 table.c.locked_by.is_(None),
                                 table.c.locked_at <= stale_lock_threshold,
@@ -4300,9 +4307,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                     )
                     if claim_result.rowcount == 0:  # type: ignore[attr-defined]
                         return None
-                    schedule["locked_by"] = worker_id
-                    schedule["locked_at"] = now
-                    return schedule
+                    # Return post-claim state: the executor acts on this dict,
+                    # and the pre-claim snapshot can already be stale.
+                    claimed = (await sess.execute(select(table).where(table.c.id == schedule["id"]))).fetchone()
+                    if claimed is None:
+                        return None
+                    return dict(claimed._mapping)
         except Exception as e:
             log_debug(f"Error claiming schedule: {e}")
             return None
