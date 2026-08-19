@@ -22,6 +22,7 @@ from agno.os.schema import (
     BadRequestResponse,
     ComponentConfigResponse,
     ComponentCreate,
+    ComponentDeleteRequest,
     ComponentResponse,
     ComponentType,
     ComponentUpdate,
@@ -601,9 +602,28 @@ def attach_routes(
         expected_current_version: Optional[int] = Query(
             None, description="Optional compare-and-set guard on the current version"
         ),
+        body: Optional[ComponentDeleteRequest] = Body(
+            None, description="Optional compare-and-set guard, matching the other guarded routes"
+        ),
     ) -> None:
         try:
             scoped_user_id = get_scoped_user_id(request)
+            # The other four guarded routes take a ComponentGuard in the body;
+            # this one historically took a bare query param. Accept both so a
+            # caller who follows the body pattern is honoured rather than
+            # silently ignored on the one destructive route, and reject
+            # guard.latest_version, which this route cannot enforce.
+            body_guard = body.guard if body is not None else None
+            _reject_unsupported_guard(body_guard, "current_version")
+            if body_guard is not None and body_guard.current_version is not None:
+                if expected_current_version is not None and expected_current_version != body_guard.current_version:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Conflicting guards: expected_current_version query param and "
+                        "guard.current_version disagree. Send one.",
+                    )
+                expected_current_version = body_guard.current_version
+
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")

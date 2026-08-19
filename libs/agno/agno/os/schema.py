@@ -896,6 +896,17 @@ class SetCurrentRequest(BaseModel):
     guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
+class ComponentDeleteRequest(BaseModel):
+    """Body for delete. Optional: a bodyless DELETE keeps working.
+
+    Delete also accepts the guard as an ``expected_current_version`` query
+    param; this shape exists so the guard reads the same as on every other
+    guarded component route instead of being silently ignored here.
+    """
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
+
+
 class RegistryResourceType(str, Enum):
     """Types of resources that can be stored in a registry."""
 
