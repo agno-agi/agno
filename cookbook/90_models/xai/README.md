@@ -75,3 +75,17 @@ Generate a key with `python -c "from agno.utils.encryption import generate_encry
 ```shell
 python cookbook/90_models/xai/oauth_device_login.py
 ```
+
+### 10. Run Agent with SuperGrok sign-in from chat
+
+Sign in from inside the conversation instead of the terminal: the agent hands
+the user an approval link on one turn and finishes the sign-in on the next.
+Use this for chatbots and web UIs. Same encryption key as above:
+
+```shell
+export XAI_TOKEN_ENCRYPTION_KEY=***
+```
+
+```shell
+python cookbook/90_models/xai/oauth_chat_signin.py
+```
