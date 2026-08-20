@@ -291,8 +291,16 @@ class xAIResponses(OpenResponses):
             try:
                 await self.token_manager.aget_access_token(user_id=candidate)
                 return
-            except (ModelAuthenticationError, httpx.HTTPError):
-                continue
+            except ModelAuthenticationError as e:
+                # A failed refresh is not an absent row. Only this coroutine can
+                # tell them apart: the sync resolver that runs next cannot read an
+                # async store, so it would read the failure as absence and fall
+                # through to the shared slot (§1.2 step 2).
+                if candidate and e.message != _NO_TOKEN_MESSAGE:
+                    raise
+            except httpx.HTTPError:
+                if candidate:
+                    raise
 
     @staticmethod
     def _uid(run_response: Optional[RunOutput]) -> str:
@@ -319,7 +327,7 @@ class xAIResponses(OpenResponses):
                 # Only an ABSENT row falls through (§1.2 step 2). A refresh that
                 # failed is not absence: the user has a credential, and quietly
                 # spending the shared one would bill the wrong subscription.
-                if e.message != _NO_TOKEN_MESSAGE and not self.require_user_token:
+                if e.message != _NO_TOKEN_MESSAGE:
                     raise
                 if self.require_user_token:
                     raise ModelAuthenticationError(
