@@ -5244,13 +5244,13 @@ def _handle_team_tool_call_updates(
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -5312,13 +5312,13 @@ def _handle_team_tool_call_updates_stream(
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -5377,13 +5377,13 @@ async def _ahandle_team_tool_call_updates(
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -5446,13 +5446,13 @@ async def _ahandle_team_tool_call_updates_stream(
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 

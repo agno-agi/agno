@@ -35,6 +35,7 @@ NEVER_OFFLOADED_TOOLS = ("read_result", "search_result")
 # defaults for this store.
 MAX_RESULT_BYTES = 8_000_000
 MAX_SESSION_NAMESPACE_BYTES = 200_000_000
+MAX_CALL_ID_ATTEMPTS = 1000
 
 # read_result caps: whichever binds first.
 READ_MAX_LINES = 400
@@ -272,6 +273,30 @@ class ResultStore:
     # Offload
     # ------------------------------------------------------------------
 
+    def _free_call_id(self, session_id: str, run_id: str, tool_call_id: str) -> str:
+        """A call id whose result id is not yet taken in this session.
+
+        The result id is derived from the call, so one call stored once keeps
+        a predictable id. A paused run continued more than once executes the
+        same call again under the same ids; each later write gets a suffix so
+        it cannot replace an earlier payload that a transcript still points to.
+        """
+        candidate = tool_call_id
+        for attempt in range(2, MAX_CALL_ID_ATTEMPTS + 2):
+            if self.get_row(result_id_for(session_id, run_id, candidate)) is None:
+                return candidate
+            candidate = f"{tool_call_id}~{attempt}"
+        return candidate
+
+    async def _afree_call_id(self, session_id: str, run_id: str, tool_call_id: str) -> str:
+        """Async variant of ``_free_call_id``."""
+        candidate = tool_call_id
+        for attempt in range(2, MAX_CALL_ID_ATTEMPTS + 2):
+            if await self.aget_row(result_id_for(session_id, run_id, candidate)) is None:
+                return candidate
+            candidate = f"{tool_call_id}~{attempt}"
+        return candidate
+
     def offload(
         self,
         *,
@@ -286,6 +311,7 @@ class ResultStore:
     ) -> ResultRef:
         """Store one payload and its index row. Raises ``QuotaExceededError``
         when the store refuses the write."""
+        tool_call_id = self._free_call_id(session_id, run_id, tool_call_id)
         path, content_type = self._plan(run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared)
         session_fs = self._session_fs(session_id)
         session_fs.write(path, output)
@@ -325,6 +351,7 @@ class ResultStore:
         shared: bool = False,
     ) -> ResultRef:
         """Async variant of ``offload``."""
+        tool_call_id = await self._afree_call_id(session_id, run_id, tool_call_id)
         path, content_type = self._plan(run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared)
         session_fs = self._session_fs(session_id)
         await session_fs.awrite(path, output)

@@ -19,7 +19,7 @@ from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ToolExecution
 from agno.tools.function import ToolResult
 
 pytestmark = pytest.mark.integration
@@ -675,3 +675,157 @@ def test_unscoped_delete_cleans_up_after_a_missing_session_row(db):
         from sqlalchemy import select as sa_select
 
         assert sess.execute(sa_select(runs_table).where(runs_table.c.session_id == session_id)).first() is None
+
+
+def test_a_paused_run_continued_twice_keeps_both_payloads(db):
+    import json
+
+    from agno.run.requirement import RunRequirement
+    from agno.tools.decorator import tool
+
+    @tool(requires_confirmation=True)
+    def fetch_gated_twice() -> str:
+        """Fetch a large page behind a confirmation.
+
+        Returns:
+            str: the page body.
+        """
+        return BIG
+
+    agent = Agent(
+        model=ScriptedToolModel(tool_name="fetch_gated_twice"),
+        db=db,
+        tools=[fetch_gated_twice],
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    paused = agent.run("go", session_id=session_id)
+    paused_tool = paused.tools[0].to_dict()
+
+    def approve():
+        tool_execution = ToolExecution.from_dict(json.loads(json.dumps(paused_tool)))
+        tool_execution.confirmed = True
+        return [RunRequirement(tool_execution=tool_execution)]
+
+    agent.model = ScriptedToolModel(tool_name="fetch_gated_twice")
+    first = agent.continue_run(run_id=paused.run_id, session_id=session_id, requirements=approve())
+    first_id = _tool_messages(first)[0].content.split('id="')[1].split('"')[0]
+
+    agent.model = ScriptedToolModel(tool_name="fetch_gated_twice")
+    second = agent.continue_run(run_id=paused.run_id, session_id=session_id, fork=True, requirements=approve())
+    # The fork replays the first continue's tool message; the new execution is the last one.
+    second_id = _tool_messages(second)[-1].content.split('id="')[1].split('"')[0]
+
+    assert first_id != second_id
+    store = agent._result_store
+    assert store.read(first_id).text.startswith("row 1:")
+    assert store.read(second_id).text.startswith("row 1:")
+    assert store.get_row(first_id)["path"] != store.get_row(second_id)["path"]
+
+
+def test_a_large_user_input_value_is_offloaded(db):
+    from agno.tools.user_control_flow import UserControlFlowTools
+
+    model = ScriptedToolModel(
+        tool_name="get_user_input",
+        tool_args={"user_input_fields": [{"field_name": "doc", "field_type": "str", "field_description": "a doc"}]},
+    )
+    agent = Agent(model=model, db=db, tools=[UserControlFlowTools()], offload_tool_results=True)
+    session_id = _sid()
+    paused = agent.run("go", session_id=session_id)
+    assert paused.is_paused
+    for field in paused.tools[0].user_input_schema or []:
+        field.value = BIG
+
+    output = agent.continue_run(paused, session_id=session_id)
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+    result_id = tool_message.content.split('id="')[1].split('"')[0]
+    assert "User inputs retrieved" in agent._result_store.read(result_id, 1, 1).text
+
+
+async def test_a_large_user_input_value_is_offloaded_async(db):
+    from agno.tools.user_control_flow import UserControlFlowTools
+
+    model = ScriptedToolModel(
+        tool_name="get_user_input",
+        tool_args={"user_input_fields": [{"field_name": "doc", "field_type": "str", "field_description": "a doc"}]},
+    )
+    agent = Agent(model=model, db=db, tools=[UserControlFlowTools()], offload_tool_results=True)
+    session_id = _sid()
+    paused = await agent.arun("go", session_id=session_id)
+    for field in paused.tools[0].user_input_schema or []:
+        field.value = BIG
+
+    output = await agent.acontinue_run(paused, session_id=session_id)
+    assert _tool_messages(output)[0].content.startswith('<result id="res_')
+
+
+def test_small_user_input_stays_inline(db):
+    from agno.tools.user_control_flow import UserControlFlowTools
+
+    model = ScriptedToolModel(
+        tool_name="get_user_input",
+        tool_args={"user_input_fields": [{"field_name": "doc", "field_type": "str", "field_description": "a doc"}]},
+    )
+    agent = Agent(model=model, db=db, tools=[UserControlFlowTools()], offload_tool_results=True)
+    session_id = _sid()
+    paused = agent.run("go", session_id=session_id)
+    for field in paused.tools[0].user_input_schema or []:
+        field.value = "short"
+
+    output = agent.continue_run(paused, session_id=session_id)
+    assert _tool_messages(output)[0].content.startswith("User inputs retrieved")
+
+
+def test_scoped_delete_removes_only_the_callers_runs_in_a_shared_session(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    bob = agent.run("go", session_id=session_id, user_id="bob")
+    bob_id = _tool_messages(bob)[0].content.split('id="')[1].split('"')[0]
+    agent.model = ScriptedToolModel()
+    alice = agent.run("go", session_id=session_id, user_id="alice")
+    store = agent._result_store
+
+    db.delete_sessions(session_ids=[session_id], user_id="alice")
+    # Bob owns the session: it and his payload survive. Alice's own run is gone.
+    assert db.get_session(session_id=session_id, session_type=SessionType.AGENT) is not None
+    assert store.read(bob_id).text.startswith("row 1:")
+    runs_table = db._get_table(table_type="runs")
+    with db.Session() as sess:
+        from sqlalchemy import select as sa_select
+
+        remaining = [
+            row[0] for row in sess.execute(sa_select(runs_table.c.run_id).where(runs_table.c.session_id == session_id))
+        ]
+    assert bob.run_id in remaining
+    assert alice.run_id not in remaining
+
+
+def test_an_external_result_that_ends_the_run_stays_inline(db):
+    from agno.tools.decorator import tool
+
+    @tool(external_execution=True)
+    def fetch_final_on_client() -> str:
+        """Fetch the final answer on the client side.
+
+        Returns:
+            str: the answer.
+        """
+        return "never runs here"
+
+    agent = Agent(
+        model=ScriptedToolModel(tool_name="fetch_final_on_client"),
+        db=db,
+        tools=[fetch_final_on_client],
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    paused = agent.run("go", session_id=session_id)
+    # The client marks the posted execution as the run's final answer.
+    paused.tools[0].result = BIG
+    paused.tools[0].stop_after_tool_call = True
+
+    output = agent.continue_run(paused, session_id=session_id)
+    assert _tool_messages(output)[0].content == BIG
