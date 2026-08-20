@@ -494,6 +494,23 @@ def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
         raise ValueError(f"`page` must be >= 1 (pages are 1-indexed); got {page}.")
 
 
+def table_schema_mismatch_error(table_ref: str) -> ValueError:
+    """Build the error raised when an existing table is missing expected columns.
+
+    The most common cause is an upgrade across Agno versions whose migrations
+    have not been applied yet (e.g. v2.x data with a v3.x install), so the
+    message points the user at the migration path instead of dead-ending.
+    """
+    return ValueError(
+        f"Table {table_ref} has an invalid schema: it is missing columns this version of Agno "
+        "expects (the missing columns are logged as a warning above). If this database was "
+        "created by an older version of Agno, apply the pending migrations with "
+        "`asyncio.run(MigrationManager(db).up())` (import it from `agno.db.migrations.manager`; "
+        "await the call directly in async code), or via the AgentOS endpoint "
+        "`POST /databases/all/migrate`."
+    )
+
+
 def metric_record_day(record: Dict[str, Any]) -> Optional[date]:
     """Read the day off a stored metric record, or ``None`` if it has no usable one.
 

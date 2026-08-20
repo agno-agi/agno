@@ -33,6 +33,7 @@ from agno.db.utils import (
     json_serializer,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    table_schema_mismatch_error,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -498,7 +499,7 @@ class SingleStoreDb(BaseDb):
             db_schema=self.db_schema,
         ):
             table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
-            raise ValueError(f"Table {table_ref} has an invalid schema")
+            raise table_schema_mismatch_error(table_ref)
 
         try:
             return self._create_table_structure_only(table_name=table_name, table_type=table_type)

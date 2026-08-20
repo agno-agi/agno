@@ -34,6 +34,7 @@ from agno.db.utils import (
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
     run_index_lock_name,
+    table_schema_mismatch_error,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -422,7 +423,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             table_type=table_type,
             db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
+            raise table_schema_mismatch_error(f"{self.db_schema}.{table_name}")
 
         try:
             async with self.db_engine.connect() as conn:
