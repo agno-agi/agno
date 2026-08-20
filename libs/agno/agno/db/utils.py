@@ -172,9 +172,10 @@ def get_run_type(run: Any) -> str:
     if isinstance(run, WorkflowRunOutput):
         return "workflow"
     if isinstance(run, dict):
-        if run.get("agent_id"):
+        # A member run persisted without its id still identifies itself by name.
+        if run.get("agent_id") or run.get("agent_name"):
             return "agent"
-        if run.get("team_id"):
+        if run.get("team_id") or run.get("team_name"):
             return "team"
         return "workflow"
     raise ValueError(f"Cannot determine run type for: {type(run)}")
