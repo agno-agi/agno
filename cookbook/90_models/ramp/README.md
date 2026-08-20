@@ -1,6 +1,6 @@
 # Router
 
-Cookbook examples for `cookbook/90_models/router`.
+Cookbook examples for `cookbook/90_models/ramp`.
 
 [Ramp Router](https://router.com) puts one OpenAI Responses endpoint in front of several
 providers. Set your API key first:
@@ -12,7 +12,7 @@ export RAMP_ROUTER_API_KEY=***
 Run examples with:
 
 ```bash
-.venvs/demo/bin/python cookbook/90_models/router/<example>.py
+.venvs/demo/bin/python cookbook/90_models/ramp/<example>.py
 ```
 
 ## Router specifics

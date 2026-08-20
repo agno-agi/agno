@@ -63,7 +63,7 @@ class RampRouter(OpenResponses):
     Example:
         ```python
         from agno.agent import Agent
-        from agno.models.router import RampRouter
+        from agno.models.ramp import RampRouter
 
         agent = Agent(
             model=RampRouter(id="gpt-5.6-luna"),

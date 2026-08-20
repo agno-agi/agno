@@ -11,7 +11,7 @@ import pytest
 from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
-from agno.models.router import RampRouter
+from agno.models.ramp import RampRouter
 from agno.tools.function import Function
 
 

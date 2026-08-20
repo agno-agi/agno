@@ -7,7 +7,7 @@ Run against the live Router API on 2026-08-19 with `.venvs/demo/bin/python`.
 **Status:** PASS
 
 **Description:** Sync, sync streaming, async and async streaming runs on `gpt-5.6-luna`, half of
-them through the `RampRouter(...)` constructor and half through the `"router:gpt-5.6-luna"` model
+them through the `RampRouter(...)` constructor and half through the `"ramp:gpt-5.6-luna"` model
 string.
 
 **Result:** All four runs returned a two sentence horror story. The model string resolved to

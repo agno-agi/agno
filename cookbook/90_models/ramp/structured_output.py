@@ -2,13 +2,13 @@
 Router Structured Output
 ========================
 
-Cookbook example for `router/structured_output.py`.
+Cookbook example for `ramp/structured_output.py`.
 """
 
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.router import RampRouter
+from agno.models.ramp import RampRouter
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 

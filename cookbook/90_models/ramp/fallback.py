@@ -2,7 +2,7 @@
 Router Fallback
 ===============
 
-Cookbook example for `router/fallback.py`.
+Cookbook example for `ramp/fallback.py`.
 
 Router serves the first candidate that answers, so a rate limit or an outage at one provider
 falls through to the next instead of failing the run. Candidates are the `catalog_id` values
@@ -12,7 +12,7 @@ from `GET https://api.router.com/v1/models`, optionally suffixed with a service 
 """
 
 from agno.agent import Agent
-from agno.models.router import RampRouter
+from agno.models.ramp import RampRouter
 
 # ---------------------------------------------------------------------------
 # Create Agent

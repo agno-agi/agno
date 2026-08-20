@@ -1,15 +1,14 @@
 """
-Router Tool Use
-===============
+Router Basic
+============
 
-Cookbook example for `router/tool_use.py`.
+Cookbook example for `ramp/basic.py`.
 """
 
 import asyncio
 
 from agno.agent import Agent
-from agno.models.router import RampRouter
-from agno.tools.websearch import WebSearchTools
+from agno.models.ramp import RampRouter
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -17,7 +16,12 @@ from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=RampRouter(id="gpt-5.6-luna"),
-    tools=[WebSearchTools()],
+    markdown=True,
+)
+
+# The same model can be selected with a model string
+agent_from_string = Agent(
+    model="ramp:gpt-5.6-luna",
     markdown=True,
 )
 
@@ -26,13 +30,17 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # --- Sync ---
-    agent.print_response("Whats happening in France?")
+    agent.print_response("write a two sentence horror story")
 
     # --- Sync + Streaming ---
-    agent.print_response("Whats happening in France?", stream=True)
+    agent.print_response("write a two sentence horror story", stream=True)
 
     # --- Async ---
-    asyncio.run(agent.aprint_response("Whats happening in France?"))
+    asyncio.run(agent_from_string.aprint_response("write a two sentence horror story"))
 
     # --- Async + Streaming ---
-    asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))
+    asyncio.run(
+        agent_from_string.aprint_response(
+            "write a two sentence horror story", stream=True
+        )
+    )
