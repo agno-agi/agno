@@ -185,13 +185,16 @@ async def _asetup_session(
     session_id: str,
     user_id: Optional[str],
     run_id: Optional[str],
+    pre_session: Optional["TeamSession"] = None,
 ) -> TeamSession:
     """Read/create session, load state from DB, and resolve callable dependencies.
 
     Shared setup for _arun() and _arun_stream(). Mirrors what the sync
     run_dispatch() does inline before calling _run()/_run_stream().
+
+    When ``pre_session`` is provided (from a dispatch-level pre-read), it is
+    used directly, skipping the redundant DB read.
     """
-    # Read or create session
     from agno.team._init import _has_async_db, _initialize_session_state
     from agno.team._storage import (
         _aread_or_create_session,
@@ -200,7 +203,10 @@ async def _asetup_session(
         _update_metadata,
     )
 
-    if _has_async_db(team):
+    # Use the pre-read session if provided, otherwise read from DB
+    if pre_session is not None:
+        team_session = pre_session
+    elif _has_async_db(team):
         team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     else:
         team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
@@ -2082,6 +2088,7 @@ async def _arun_tasks(
     add_history_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional["TeamSession"] = None,
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Run the Team in autonomous task mode (async).
@@ -2115,13 +2122,14 @@ async def _arun_tasks(
         # Register run for cancellation tracking
         await aregister_run(run_context.run_id)
 
-        # Setup session
+        # Setup session (use pre_session if provided to avoid redundant DB read)
         team_session = await _asetup_session(
             team=team,
             run_context=run_context,
             session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
+            pre_session=pre_session,
         )
 
         run_input = cast(TeamRunInput, run_response.input)
@@ -2440,6 +2448,7 @@ async def _arun_tasks_stream(
     add_history_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional["TeamSession"] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Run the Team in autonomous task mode with async streaming support.
@@ -2480,13 +2489,14 @@ async def _arun_tasks_stream(
         # Register run for cancellation tracking
         await aregister_run(run_context.run_id)
 
-        # Setup session
+        # Setup session (use pre_session if provided to avoid redundant DB read)
         team_session = await _asetup_session(
             team=team,
             run_context=run_context,
             session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
+            pre_session=pre_session,
         )
 
         run_input = cast(TeamRunInput, run_response.input)
@@ -2976,6 +2986,7 @@ async def _arun(
     add_history_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional["TeamSession"] = None,
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Run the Team and return the response.
@@ -3028,6 +3039,7 @@ async def _arun(
             add_history_to_context=add_history_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=pre_session,
             **kwargs,
         )
 
@@ -3046,6 +3058,7 @@ async def _arun(
             session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
+            pre_session=pre_session,
         )
 
         # Set up retry logic
@@ -3684,6 +3697,7 @@ async def _arun_stream(
     add_history_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional["TeamSession"] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Run the Team and return the response as a stream.
@@ -3735,6 +3749,7 @@ async def _arun_stream(
             add_history_to_context=add_history_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=pre_session,
             **kwargs,
         ):
             yield event
@@ -3756,6 +3771,7 @@ async def _arun_stream(
             session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
+            pre_session=pre_session,
         )
 
         # Set up retry logic
@@ -4401,6 +4417,7 @@ def arun_dispatch(  # type: ignore
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=_pre_session,
             **kwargs,
         )
     else:
@@ -4416,6 +4433,7 @@ def arun_dispatch(  # type: ignore
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=_pre_session,
             **kwargs,
         )
 
@@ -8921,12 +8939,14 @@ def acontinue_run_dispatch(  # type: ignore
     team.initialize_team(debug_mode=debug_mode)
 
     # Pre-read the session so session-stored metadata is visible to
-    # resolve_run_options via session_metadata. Only possible with a sync DB:
-    # with an async DB the session is read inside _acontinue_run AFTER options are
-    # resolved, so session metadata does not reach this run's resolved options.
+    # resolve_run_options via session_metadata, and the session can be passed
+    # to the inner runner to skip a redundant DB read. Only possible with a
+    # sync DB: with an async DB the session is read inside _acontinue_run
+    # AFTER options are resolved.
     from agno.team._init import _has_async_db
 
     session_metadata: Optional[Dict[str, Any]] = None
+    _pre_session: Optional[TeamSession] = None
     if team.db is not None and not _has_async_db(team):
         from copy import deepcopy
 
@@ -9028,6 +9048,7 @@ def acontinue_run_dispatch(  # type: ignore
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=_pre_session,
             **kwargs,
         )
     else:
@@ -9048,6 +9069,7 @@ def acontinue_run_dispatch(  # type: ignore
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=_pre_session,
             **kwargs,
         )
 
@@ -9070,6 +9092,7 @@ async def _acontinue_run(
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional["TeamSession"] = None,
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Continue a paused team run (async, non-streaming)."""
@@ -9100,13 +9123,14 @@ async def _acontinue_run(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
-                # Setup session
+                # Setup session (use pre_session on first attempt to avoid redundant DB read)
                 team_session = await _asetup_session(
                     team=team,
                     run_context=run_context,
                     session_id=session_id,
                     user_id=user_id,
                     run_id=run_id,
+                    pre_session=pre_session if attempt == 0 else None,
                 )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
@@ -9542,6 +9566,7 @@ async def _acontinue_run_stream(
     yield_run_output: bool = False,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional["TeamSession"] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Continue a paused team run (async, streaming)."""
@@ -9573,13 +9598,14 @@ async def _acontinue_run_stream(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
-                # Setup session
+                # Setup session (use pre_session on first attempt to avoid redundant DB read)
                 team_session = await _asetup_session(
                     team=team,
                     run_context=run_context,
                     session_id=session_id,
                     user_id=user_id,
                     run_id=run_id,
+                    pre_session=pre_session if attempt == 0 else None,
                 )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
