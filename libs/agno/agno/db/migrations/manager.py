@@ -107,9 +107,13 @@ class MigrationManager:
                     log_info(f"Applying migration {normalised_version} on {table_name}")
                     try:
                         migration_executed = await self._up_migration(version, table_type, table_name)
-                    finally:
-                        # The migration may have changed the table shape; the
-                        # next access must re-resolve it.
+                    except BaseException:
+                        # A partial migration may have changed the table shape
+                        self._invalidate_table(table_name)
+                        raise
+                    if migration_executed:
+                        # The migration changed the table shape; the next
+                        # access must re-resolve it. No-op steps keep the cache.
                         self._invalidate_table(table_name)
                     # False means "nothing to migrate" — failures raise and abort
                     # before stamping, so no-ops still advance the stamp.
@@ -201,9 +205,11 @@ class MigrationManager:
                     log_info(f"Reverting migration {normalised_version} on table {table_name}")
                     try:
                         migration_executed = await self._down_migration(version, table_type, table_name)
-                    finally:
-                        # The migration may have changed the table shape; the
-                        # next access must re-resolve it.
+                    except BaseException:
+                        # A partial revert may have changed the table shape
+                        self._invalidate_table(table_name)
+                        raise
+                    if migration_executed:
                         self._invalidate_table(table_name)
                     if migration_executed:
                         any_migration_executed = True

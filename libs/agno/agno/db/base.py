@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
@@ -15,6 +17,7 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
+from agno.utils.log import log_debug
 
 
 class SessionType(str, Enum):
@@ -29,7 +32,93 @@ class ComponentType(str, Enum):
     WORKFLOW = "workflow"
 
 
-class BaseDb(ABC):
+class TableResolutionMixin:
+    """Table-resolution cache shared by the sync and async SQL adapters.
+
+    Methods are getattr-defensive so a subclass that skipped ``__init__``
+    degrades to uncached resolution instead of raising.
+    """
+
+    _table_cache: Dict[Tuple[str, str], Any]
+    _cache_tables: bool
+
+    def _get_cached_table(self, table_type: str, table_name: str) -> Optional[Any]:
+        if not getattr(self, "_cache_tables", True):
+            return None
+        cache = getattr(self, "_table_cache", None)
+        if cache is None:
+            return None
+        return cache.get((table_type, table_name))
+
+    def _store_resolved_table(self, table_type: str, table_name: str, table: Any) -> None:
+        """Cache a resolved table.
+
+        Only the object currently registered on the metadata is stored (an
+        identity check, not a name check), so a resolver suspended across an
+        invalidation cannot re-pin its stale table under the fresh one.
+        """
+        if not getattr(self, "_cache_tables", True) or table is None:
+            return
+        cache = getattr(self, "_table_cache", None)
+        if cache is None:
+            return
+        metadata = getattr(self, "metadata", None)
+        if metadata is not None and not any(t is table for t in metadata.tables.values()):
+            log_debug(
+                f"Table cache: refused stale store for '{table_name}' ({table_type}); object is no longer registered"
+            )
+            return
+        cache[(table_type, table_name)] = table
+        log_debug(f"Table cache: stored '{table_name}' ({table_type})")
+
+    def _invalidate_table_cache(self, table_name: str) -> None:
+        """Forget a resolved table after a schema change (ALTER/DROP).
+
+        The metadata entry is removed FIRST: a resolver racing this call then
+        at worst gets a cache hit on the soon-to-be-popped entry (stale for one
+        read), instead of re-resolving through the still-registered metadata
+        key and permanently re-pinning the old object. Other processes hold
+        their own cache: restart replicas after cross-process schema changes.
+        """
+        metadata = getattr(self, "metadata", None)
+        if metadata is not None:
+            for table in list(metadata.tables.values()):
+                if table.name == table_name:
+                    metadata.remove(table)
+        cache = getattr(self, "_table_cache", None)
+        evicted = 0
+        if cache is not None:
+            for key in [k for k in cache if k[1] == table_name]:
+                cache.pop(key, None)
+                evicted += 1
+        log_debug(f"Table cache: invalidated '{table_name}' ({evicted} cached resolution(s) evicted)")
+
+    def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:
+        """(table_type, table_name) pairs the given table type MAY declare foreign keys to.
+
+        The map is a superset across dialects; callers must consult their own
+        schema definition and only register parents when the dependent table
+        actually declares a foreign key in that dialect.
+        """
+        edges = {
+            "runs": [("sessions", "session_table_name")],
+            "spans": [("traces", "trace_table_name")],
+            "schedule_runs": [("schedules", "schedules_table_name")],
+            "component_configs": [("components", "components_table_name")],
+            "component_links": [
+                ("components", "components_table_name"),
+                ("component_configs", "component_configs_table_name"),
+            ],
+        }
+        dependencies = []
+        for ref_type, attr in edges.get(table_type, []):
+            ref_name = getattr(self, attr, None)
+            if ref_name:
+                dependencies.append((ref_type, ref_name))
+        return dependencies
+
+
+class BaseDb(TableResolutionMixin, ABC):
     """Base abstract class for all our Database implementations."""
 
     # We assume the database to be up to date with the 2.0.0 release
@@ -101,70 +190,21 @@ class BaseDb(ABC):
         self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
         self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
 
-        # Table objects resolved by this adapter, keyed by table name. Avoids
-        # re-running the existence check and schema validation on every query.
-        # Only successful resolutions are cached: a missing table is re-checked
-        # on the next call, so a table created later (including by another
-        # process) is still picked up.
-        self._table_cache: Dict[str, Any] = {}
+        # Table objects resolved by this adapter, keyed by (table_type, table
+        # name). Avoids re-running the existence check and schema validation on
+        # every query. Only successful resolutions are cached: a missing table
+        # is re-checked on the next call, so a table created later (including
+        # by another process) is still picked up. Keying by type keeps two
+        # logical types configured to the same physical name from aliasing:
+        # each type resolves (and validates) independently.
+        self._table_cache: Dict[Tuple[str, str], Any] = {}
         # Adapters where table existence is not a process-wide fact
         # (e.g. in-memory SQLite) set this to False to disable caching.
         self._cache_tables: bool = True
-
-    def _get_cached_table(self, table_name: str) -> Optional[Any]:
-        if not self._cache_tables:
-            return None
-        return self._table_cache.get(table_name)
-
-    def _store_resolved_table(self, table_name: str, table: Any) -> None:
-        """Cache a resolved table.
-
-        Only fully built, still-registered tables are stored, so a concurrent
-        invalidation cannot pin a stale object.
-        """
-        if not self._cache_tables or table is None:
-            return
-        metadata = getattr(self, "metadata", None)
-        if metadata is not None and not any(t.name == table_name for t in metadata.tables.values()):
-            return
-        self._table_cache[table_name] = table
-
-    def _invalidate_table_cache(self, table_name: str) -> None:
-        """Forget a resolved table after a schema change (ALTER/DROP).
-
-        Also unregisters the table from the SQLAlchemy metadata, which
-        otherwise pins the first reflection. Other processes hold their own
-        cache: restart replicas after cross-process schema changes.
-        """
-        self._table_cache.pop(table_name, None)
-        metadata = getattr(self, "metadata", None)
-        if metadata is not None:
-            for table in list(metadata.tables.values()):
-                if table.name == table_name:
-                    metadata.remove(table)
-
-    def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:
-        """(table_type, table_name) pairs the given table type declares foreign keys to.
-
-        Each parent must be registered on the metadata before the dependent
-        table can be constructed.
-        """
-        edges = {
-            "runs": [("sessions", "session_table_name")],
-            "spans": [("traces", "trace_table_name")],
-            "schedule_runs": [("schedules", "schedules_table_name")],
-            "component_configs": [("components", "components_table_name")],
-            "component_links": [
-                ("components", "components_table_name"),
-                ("component_configs", "component_configs_table_name"),
-            ],
-        }
-        dependencies = []
-        for ref_type, attr in edges.get(table_type, []):
-            ref_name = getattr(self, attr, None)
-            if ref_name:
-                dependencies.append((ref_type, ref_name))
-        return dependencies
+        # Serializes table resolution: concurrent reflection into the shared
+        # metadata can expose a half-built Table to other threads. Reentrant
+        # because resolving a table may resolve its FK parents.
+        self._resolve_lock = threading.RLock()
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -1666,7 +1706,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
 
-class AsyncBaseDb(ABC):
+class AsyncBaseDb(TableResolutionMixin, ABC):
     """Base abstract class for all our async database implementations."""
 
     def __init__(
@@ -1721,14 +1761,17 @@ class AsyncBaseDb(ABC):
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
 
-        # See BaseDb._table_cache: same contract for async adapters.
-        self._table_cache: Dict[str, Any] = {}
-        self._cache_tables: bool = True
+        # Async adapters cannot create component config/link tables yet, but
+        # the FK dependency map needs their configured names.
+        self.component_configs_table_name = "agno_component_configs"
+        self.component_links_table_name = "agno_component_links"
 
-    _get_cached_table = BaseDb._get_cached_table
-    _store_resolved_table = BaseDb._store_resolved_table
-    _invalidate_table_cache = BaseDb._invalidate_table_cache
-    _fk_dependencies = BaseDb._fk_dependencies
+        # See BaseDb._table_cache: same contract for async adapters.
+        self._table_cache: Dict[Tuple[str, str], Any] = {}
+        self._cache_tables: bool = True
+        # See BaseDb._resolve_lock. asyncio.Lock is not reentrant: code
+        # already holding it must call _resolve_table directly.
+        self._resolve_lock_async = asyncio.Lock()
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""

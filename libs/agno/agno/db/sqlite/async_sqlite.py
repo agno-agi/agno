@@ -177,10 +177,16 @@ class AsyncSqliteDb(AsyncBaseDb):
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
 
-        # In-memory SQLite gives every connection thread its own private
-        # database, so "this table exists" is not a process-wide fact there.
-        if getattr(self.db_engine.url, "database", None) in (None, ":memory:"):
+        # SingletonThreadPool (SQLite's pool for in-memory databases, any URL
+        # spelling) gives every thread its own private database, so "this
+        # table exists" is not a process-wide fact there. StaticPool (the
+        # async in-memory arrangement) shares one connection and caches fine.
+        from sqlalchemy.pool import SingletonThreadPool
+
+        pool = getattr(self.db_engine, "pool", None) or self.db_engine.sync_engine.pool
+        if isinstance(pool, SingletonThreadPool):
             self._cache_tables = False
+            log_debug("Table cache: disabled for in-memory SQLite (per-thread private databases)")
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
 
@@ -224,9 +230,11 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            # Re-check even previously resolved tables, so this call still
-            # recreates tables that were dropped externally
-            self._invalidate_table_cache(table_name)
+            # Re-verify cached tables against the live database (one existence
+            # check each), so this call still recreates tables dropped
+            # externally without re-reflecting everything
+            if self._get_cached_table(table_type, table_name) is not None and not await self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             await self._get_or_create_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
             )
@@ -243,16 +251,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         # Ensure sessions Table is registered on metadata so the runs FK can resolve.
-        # Register FK parent tables on the metadata first, so SQLAlchemy can
-        # resolve the FK references at ``Table(...)`` construction.
-        registered = {t.name for t in self.metadata.tables.values()}
-        for ref_type, ref_name in self._fk_dependencies(table_type):
-            if ref_name not in registered:
-                await self._get_or_create_table(
-                    table_name=ref_name,
-                    table_type=ref_type,
-                    create_table_if_not_found=True,
-                )
         try:
             # Pass table names for foreign key resolution
             table_schema = get_table_schema_definition(
@@ -261,6 +259,24 @@ class AsyncSqliteDb(AsyncBaseDb):
                 schedules_table_name=self.schedules_table_name,
                 session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        # Already under _resolve_lock_async: bypass the wrapper
+                        await self._resolve_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -294,7 +310,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns)
+            # In-memory SQLite (cache disabled): every thread has a private
+            # database, so re-creation of an already-registered table is
+            # legitimate; allow redefinition instead of "already defined"
+            table = Table(table_name, self.metadata, *columns, extend_existing=not self._cache_tables)
+
+            existing_index_names = {i.name for i in table.indexes}
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -305,12 +326,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             # Add indexes to the table definition
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
-                table.append_constraint(Index(idx_name, idx_col))
+                if idx_name not in existing_index_names:
+                    table.append_constraint(Index(idx_name, idx_col))
 
             # Composite indexes
             for idx_config in schema_composite_indexes:
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
-                table.append_constraint(Index(idx_name, *idx_config["columns"]))
+                if idx_name not in existing_index_names:
+                    table.append_constraint(Index(idx_name, *idx_config["columns"]))
 
             # Partial unique indexes (unique only for rows matching the where clause).
             # Fail loudly on missing columns like every other backend: silently
@@ -323,12 +346,13 @@ class AsyncSqliteDb(AsyncBaseDb):
                         f"Partial unique index references missing columns in {table_name}: {missing_columns}"
                     )
                 idx_name = f"{table_name}_{idx_config['name']}"
-                Index(
-                    idx_name,
-                    *[table.c[col] for col in idx_config["columns"]],
-                    unique=True,
-                    sqlite_where=text(idx_config["where"]),
-                )
+                if idx_name not in existing_index_names:
+                    Index(
+                        idx_name,
+                        *[table.c[col] for col in idx_config["columns"]],
+                        unique=True,
+                        sqlite_where=text(idx_config["where"]),
+                    )
 
             # Create table
             table_created = False
@@ -498,6 +522,24 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise ValueError(f"Unknown table type: '{table_type}'")
 
     async def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Table]:
+        cached = self._get_cached_table(table_type, table_name)
+        if cached is not None:
+            return cached
+        # Serialize resolution: concurrent reflection into the shared metadata
+        # can expose a half-built Table to other coroutines. The lock is not
+        # reentrant; code already holding it calls _resolve_table directly.
+        async with self._resolve_lock_async:
+            cached = self._get_cached_table(table_type, table_name)
+            if cached is not None:
+                return cached
+            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
+            return await self._resolve_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+            )
+
+    async def _resolve_table(
         self,
         table_name: str,
         table_type: str,
@@ -513,10 +555,6 @@ class AsyncSqliteDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
-        cached = self._get_cached_table(table_name)
-        if cached is not None:
-            return cached
-
         async with self.async_session_factory() as sess, sess.begin():
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
@@ -524,7 +562,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             if not create_table_if_not_found:
                 return None
             table = await self._create_table(table_name=table_name, table_type=table_type)
-            self._store_resolved_table(table_name, table)
+            self._store_resolved_table(table_type, table_name, table)
             return table
 
         # SQLite version of table validation (no schema)
@@ -538,7 +576,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return Table(table_name, self.metadata, autoload_with=connection)
 
                 table = await conn.run_sync(load_table)
-                self._store_resolved_table(table_name, table)
+                self._store_resolved_table(table_type, table_name, table)
                 return table
 
         except Exception as e:

@@ -404,14 +404,16 @@ def _forget_table(db, table_name: Optional[str], attribute: str) -> None:
     ``db.metadata``, so a later up() in the same process fails with
     "Table is already defined".
     """
-    metadata = getattr(db, "metadata", None)
-    if metadata is not None and table_name is not None:
-        for table in list(metadata.tables.values()):
-            if table.name == table_name:
-                metadata.remove(table)
-    table_cache = getattr(db, "_table_cache", None)
-    if table_cache is not None and table_name is not None:
-        table_cache.pop(table_name, None)
+    invalidate = getattr(db, "_invalidate_table_cache", None)
+    if invalidate is not None and table_name is not None:
+        invalidate(table_name)
+    else:
+        # Third-party adapter without the cache helper: best-effort metadata cleanup
+        metadata = getattr(db, "metadata", None)
+        if metadata is not None and table_name is not None:
+            for table in list(metadata.tables.values()):
+                if table.name == table_name:
+                    metadata.remove(table)
     if hasattr(db, attribute):
         setattr(db, attribute, None)
 

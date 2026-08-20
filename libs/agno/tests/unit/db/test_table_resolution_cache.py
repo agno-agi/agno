@@ -101,7 +101,7 @@ def test_dependent_table_creation_after_migration_invalidated_parent(db):
             )
         )
     asyncio.run(MigrationManager(db).up(table_type="schedules"))
-    assert db.schedules_table_name not in db._table_cache
+    assert ("schedules", db.schedules_table_name) not in db._table_cache
 
     table = db._get_table(table_type="schedule_runs", create_table_if_not_found=True)
     assert table is not None
@@ -113,13 +113,18 @@ def test_migration_invalidates_resolved_table(db):
     from agno.db.migrations.manager import MigrationManager
 
     db._get_table(table_type="sessions", create_table_if_not_found=True)
-    assert db.session_table_name in db._table_cache
 
-    # Created tables are stamped at the latest version; roll the stamp back so
-    # the manager actually walks a migration step
+    # Make the migration actually execute: v2 shape (legacy runs column) and a
+    # rolled-back stamp. No-op steps deliberately keep the cache.
+    with db.Session() as sess, sess.begin():
+        sess.execute(text("ALTER TABLE agno_sessions ADD COLUMN runs JSON"))
+    db._invalidate_table_cache(db.session_table_name)
+    db._get_table(table_type="sessions")
+    assert ("sessions", db.session_table_name) in db._table_cache
     db.upsert_schema_version(db.session_table_name, "2.5.6")
+
     asyncio.run(MigrationManager(db).up(table_type="sessions"))
-    assert db.session_table_name not in db._table_cache
+    assert ("sessions", db.session_table_name) not in db._table_cache
 
 
 def test_in_memory_sqlite_does_not_cache():
@@ -212,8 +217,91 @@ def test_down_migration_invalidates_resolved_table(db):
 
     from agno.db.migrations.manager import MigrationManager
 
+    # A full v3 state (sessions + runs tables) so the revert actually executes
     db._get_table(table_type="sessions", create_table_if_not_found=True)
-    assert db.session_table_name in db._table_cache
+    db._get_table(table_type="runs", create_table_if_not_found=True)
+    assert ("sessions", db.session_table_name) in db._table_cache
 
     asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="sessions"))
-    assert db.session_table_name not in db._table_cache
+    assert ("sessions", db.session_table_name) not in db._table_cache
+
+
+def test_same_physical_name_for_two_types_fails_loudly():
+    """Two table types configured to one physical table must not silently
+    alias through the cache; validation raises for the second type."""
+    tmp = tempfile.mkdtemp()
+    shared = SqliteDb(db_file=f"{tmp}/t.db", session_table="agno_shared", memory_table="agno_shared")
+    shared._get_table(table_type="sessions", create_table_if_not_found=True)
+    with pytest.raises(ValueError, match="invalid schema"):
+        shared._get_table(table_type="memories", create_table_if_not_found=True)
+
+
+def test_store_rejects_stale_object_after_invalidation(db):
+    """A resolver suspended across an invalidation cannot re-pin its stale
+    table: the store guard checks object identity, not table name."""
+    t_old = db._get_table(table_type="sessions", create_table_if_not_found=True)
+    with db.Session() as sess, sess.begin():
+        sess.execute(text("ALTER TABLE agno_sessions ADD COLUMN new_col TEXT"))
+    db._invalidate_table_cache(db.session_table_name)
+    t_new = db._get_table(table_type="sessions")
+    assert "new_col" in t_new.c
+
+    db._store_resolved_table("sessions", db.session_table_name, t_old)  # stale write-back
+    assert db._get_table(table_type="sessions") is t_new
+
+
+def test_fk_loop_does_not_create_unrelated_tables(db):
+    """SQLite declares no component FKs; the _create_table FK-parent loop must
+    not create agno_components as a side effect. (_get_table has an older,
+    deliberate parent-creation branch, so call _get_or_create_table directly.)"""
+    db._get_or_create_table(
+        table_name=db.component_configs_table_name,
+        table_type="component_configs",
+        create_table_if_not_found=True,
+    )
+    with db.Session() as sess:
+        exists = sess.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agno_components'")
+        ).scalar()
+    assert exists is None
+
+
+def test_noop_migration_keeps_cache(db):
+    """up() on an already-current schema must not evict resolutions."""
+    import asyncio
+
+    from agno.db.migrations.manager import MigrationManager
+
+    db._get_table(table_type="sessions", create_table_if_not_found=True)
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
+    assert ("sessions", db.session_table_name) in db._table_cache
+
+
+def test_create_all_tables_is_cheap_when_warm(db):
+    """The externally-dropped-table re-check must cost one existence query per
+    table, not a full re-reflection of everything."""
+    db._create_all_tables()
+    statements = count_queries(db.db_engine, db._create_all_tables)
+    assert len(statements) <= 25, f"{len(statements)} statements on warm _create_all_tables"
+
+
+def test_in_memory_sqlite_multi_thread_does_not_collide():
+    """With the cache disabled, each thread re-resolves into its private
+    database; shared-metadata redefinition must not raise."""
+    import threading
+
+    mem = SqliteDb(db_url="sqlite:///file:cache_test_mem?mode=memory&uri=true")
+    errors = []
+
+    def worker():
+        try:
+            assert mem._get_table(table_type="sessions", create_table_if_not_found=True) is not None
+        except Exception as e:  # noqa: BLE001
+            errors.append(repr(e))
+
+    threads = [threading.Thread(target=worker) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors[:2]

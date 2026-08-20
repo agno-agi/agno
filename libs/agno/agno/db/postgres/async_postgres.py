@@ -246,9 +246,11 @@ class AsyncPostgresDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            # Re-check even previously resolved tables, so this call still
-            # recreates tables that were dropped externally
-            self._invalidate_table_cache(table_name)
+            # Re-verify cached tables against the live database (one existence
+            # check each), so this call still recreates tables dropped
+            # externally without re-reflecting everything
+            if self._get_cached_table(table_type, table_name) is not None and not await self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             await self._get_or_create_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
             )
@@ -264,16 +266,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
-        # Register FK parent tables on the metadata first, so SQLAlchemy can
-        # resolve the FK references at ``Table(...)`` construction.
-        registered = {t.name for t in self.metadata.tables.values()}
-        for ref_type, ref_name in self._fk_dependencies(table_type):
-            if ref_name not in registered:
-                await self._get_or_create_table(
-                    table_name=ref_name,
-                    table_type=ref_type,
-                    create_table_if_not_found=True,
-                )
         try:
             # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
@@ -283,6 +275,24 @@ class AsyncPostgresDb(AsyncBaseDb):
                 schedules_table_name=self.schedules_table_name,
                 session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        # Already under _resolve_lock_async: bypass the wrapper
+                        await self._resolve_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -537,6 +547,24 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def _get_or_create_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
     ) -> Optional[Table]:
+        cached = self._get_cached_table(table_type, table_name)
+        if cached is not None:
+            return cached
+        # Serialize resolution: concurrent reflection into the shared metadata
+        # can expose a half-built Table to other coroutines. The lock is not
+        # reentrant; code already holding it calls _resolve_table directly.
+        async with self._resolve_lock_async:
+            cached = self._get_cached_table(table_type, table_name)
+            if cached is not None:
+                return cached
+            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
+            return await self._resolve_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+            )
+
+    async def _resolve_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
@@ -548,10 +576,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             Table: SQLAlchemy Table object representing the schema.
         """
 
-        cached = self._get_cached_table(table_name)
-        if cached is not None:
-            return cached
-
         async with self.async_session_factory() as sess, sess.begin():
             table_is_available = await ais_table_available(
                 session=sess, table_name=table_name, db_schema=self.db_schema
@@ -561,7 +585,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if not create_table_if_not_found:
                 return None
             table = await self._create_table(table_name=table_name, table_type=table_type)
-            self._store_resolved_table(table_name, table)
+            self._store_resolved_table(table_type, table_name, table)
             return table
 
         if not await ais_valid_table(
@@ -580,7 +604,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 table = await conn.run_sync(create_table)
 
-                self._store_resolved_table(table_name, table)
+                self._store_resolved_table(table_type, table_name, table)
                 return table
 
         except Exception as e:

@@ -208,10 +208,16 @@ class SqliteDb(BaseDb):
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
-        # In-memory SQLite gives every connection thread its own private
-        # database, so "this table exists" is not a process-wide fact there.
-        if getattr(self.db_engine.url, "database", None) in (None, ":memory:"):
+        # SingletonThreadPool (SQLite's pool for in-memory databases, any URL
+        # spelling) gives every thread its own private database, so "this
+        # table exists" is not a process-wide fact there. StaticPool (the
+        # async in-memory arrangement) shares one connection and caches fine.
+        from sqlalchemy.pool import SingletonThreadPool
+
+        pool = getattr(self.db_engine, "pool", None) or self.db_engine.sync_engine.pool
+        if isinstance(pool, SingletonThreadPool):
             self._cache_tables = False
+            log_debug("Table cache: disabled for in-memory SQLite (per-thread private databases)")
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
 
@@ -295,9 +301,11 @@ class SqliteDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            # Re-check even previously resolved tables, so this call still
-            # recreates tables that were dropped externally
-            self._invalidate_table_cache(table_name)
+            # Re-verify cached tables against the live database (one existence
+            # check each), so this call still recreates tables dropped
+            # externally without re-reflecting everything
+            if self._get_cached_table(table_type, table_name) is not None and not self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -320,16 +328,6 @@ class SqliteDb(BaseDb):
         # The runs table declares a FK to sessions — ensure the real sessions
         # Table object is registered in ``self.metadata`` first so SQLAlchemy
         # can resolve the FK reference at ``Table(...)`` construction.
-        # Register FK parent tables on the metadata first, so SQLAlchemy can
-        # resolve the FK references at ``Table(...)`` construction.
-        registered = {t.name for t in self.metadata.tables.values()}
-        for ref_type, ref_name in self._fk_dependencies(table_type):
-            if ref_name not in registered:
-                self._get_or_create_table(
-                    table_name=ref_name,
-                    table_type=ref_type,
-                    create_table_if_not_found=True,
-                )
         try:
             from sqlalchemy.schema import ForeignKeyConstraint, PrimaryKeyConstraint
 
@@ -340,6 +338,23 @@ class SqliteDb(BaseDb):
                 schedules_table_name=self.schedules_table_name,
                 session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        self._get_or_create_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -383,7 +398,12 @@ class SqliteDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns)
+            # In-memory SQLite (cache disabled): every thread has a private
+            # database, so re-creation of an already-registered table is
+            # legitimate; allow redefinition instead of "already defined"
+            table = Table(table_name, self.metadata, *columns, extend_existing=not self._cache_tables)
+
+            existing_index_names = {i.name for i in table.indexes}
 
             # Composite PK
             if schema_primary_key is not None:
@@ -438,13 +458,15 @@ class SqliteDb(BaseDb):
                 if idx_col not in table.c:
                     raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
                 idx_name = f"idx_{table_name}_{idx_col}"
-                Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
+                if idx_name not in existing_index_names:
+                    Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
 
             # Composite indexes
             for idx_config in schema_composite_indexes:
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
-                idx_cols = [table.c[c] for c in idx_config["columns"]]
-                Index(idx_name, *idx_cols)
+                if idx_name not in existing_index_names:
+                    idx_cols = [table.c[c] for c in idx_config["columns"]]
+                    Index(idx_name, *idx_cols)
 
             # Partial unique indexes
             for idx_config in schema_partial_unique_indexes:
@@ -452,8 +474,9 @@ class SqliteDb(BaseDb):
                 missing = [c for c in idx_config["columns"] if c not in table.c]
                 if missing:
                     raise ValueError(f"Partial unique index references missing columns in {table_name}: {missing}")
-                idx_cols = [table.c[c] for c in idx_config["columns"]]
-                Index(idx_name, *idx_cols, unique=True, sqlite_where=text(idx_config["where"]))
+                if idx_name not in existing_index_names:
+                    idx_cols = [table.c[c] for c in idx_config["columns"]]
+                    Index(idx_name, *idx_cols, unique=True, sqlite_where=text(idx_config["where"]))
 
             # Create table
             table_created = False
@@ -699,6 +722,23 @@ class SqliteDb(BaseDb):
             raise ValueError(f"Unknown table type: '{table_type}'")
 
     def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Table]:
+        cached = self._get_cached_table(table_type, table_name)
+        if cached is not None:
+            return cached
+        # Serialize resolution: concurrent reflection into the shared metadata
+        # can expose a half-built Table to other threads
+        with self._resolve_lock:
+            cached = self._get_cached_table(table_type, table_name)
+            if cached is not None:
+                return cached
+            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
+            return self._resolve_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+            )
+
+    def _resolve_table(
         self,
         table_name: str,
         table_type: str,
@@ -714,10 +754,6 @@ class SqliteDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
-        cached = self._get_cached_table(table_name)
-        if cached is not None:
-            return cached
-
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name)
 
@@ -725,7 +761,7 @@ class SqliteDb(BaseDb):
             if not create_table_if_not_found:
                 return None
             table = self._create_table(table_name=table_name, table_type=table_type)
-            self._store_resolved_table(table_name, table)
+            self._store_resolved_table(table_type, table_name, table)
             return table
 
         # SQLite version of table validation (no schema)
@@ -734,7 +770,7 @@ class SqliteDb(BaseDb):
 
         try:
             table = Table(table_name, self.metadata, autoload_with=self.db_engine)
-            self._store_resolved_table(table_name, table)
+            self._store_resolved_table(table_type, table_name, table)
             return table
 
         except Exception as e:

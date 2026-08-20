@@ -215,9 +215,11 @@ class SingleStoreDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            # Re-check even previously resolved tables, so this call still
-            # recreates tables that were dropped externally
-            self._invalidate_table_cache(table_name)
+            # Re-verify cached tables against the live database (one existence
+            # check each), so this call still recreates tables dropped
+            # externally without re-reflecting everything
+            if self._get_cached_table(table_type, table_name) is not None and not self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -231,17 +233,6 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
-        # Register FK parent tables on the metadata first, so SQLAlchemy can
-        # resolve the FK references at ``Table(...)`` construction.
-        # (SingleStore parses but does not enforce FKs.)
-        registered = {t.name for t in self.metadata.tables.values()}
-        for ref_type, ref_name in self._fk_dependencies(table_type):
-            if ref_name not in registered:
-                self._get_or_create_table(
-                    table_name=ref_name,
-                    table_type=ref_type,
-                    create_table_if_not_found=True,
-                )
         table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
         try:
             # Pass traces_table_name and db_schema for spans table foreign key resolution
@@ -251,6 +242,23 @@ class SingleStoreDb(BaseDb):
                 db_schema=self.db_schema or "agno",
                 session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        self._get_or_create_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -465,6 +473,23 @@ class SingleStoreDb(BaseDb):
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Table]:
+        cached = self._get_cached_table(table_type, table_name)
+        if cached is not None:
+            return cached
+        # Serialize resolution: concurrent reflection into the shared metadata
+        # can expose a half-built Table to other threads
+        with self._resolve_lock:
+            cached = self._get_cached_table(table_type, table_name)
+            if cached is not None:
+                return cached
+            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
+            return self._resolve_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+            )
+
+    def _resolve_table(
         self,
         table_name: str,
         table_type: str,
@@ -480,10 +505,6 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
-        cached = self._get_cached_table(table_name)
-        if cached is not None:
-            return cached
-
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
@@ -497,7 +518,7 @@ class SingleStoreDb(BaseDb):
                 self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
             table = self._create_table(table_name=table_name, table_type=table_type)
-            self._store_resolved_table(table_name, table)
+            self._store_resolved_table(table_type, table_name, table)
             return table
 
         if not is_valid_table(
@@ -511,7 +532,7 @@ class SingleStoreDb(BaseDb):
 
         try:
             table = self._create_table_structure_only(table_name=table_name, table_type=table_type)
-            self._store_resolved_table(table_name, table)
+            self._store_resolved_table(table_type, table_name, table)
             return table
 
         except Exception as e:
