@@ -2246,21 +2246,21 @@ class TestEntrypointLookupCollisionWarning:
 
 
 class TestAddToolSource:
-    """add_tool's source parameter feeds the folded-tool set the palette policy reads."""
+    """add_tool's source parameter feeds the undeclared-tool set the palette policy reads."""
 
     def test_enum_folded_marks_the_tool_folded(self):
         registry = Registry()
-        registry.add_tool(Toolkit(name="folded_kit", tools=[sample_function]), source=ToolSource.FOLDED)
-        assert "folded_kit" in registry.folded_tool_names
+        registry.add_tool(Toolkit(name="folded_kit", tools=[sample_function]), source=ToolSource.DISCOVERED)
+        assert "folded_kit" in registry.undeclared_tool_names
 
     def test_declared_default_is_not_folded(self):
         registry = Registry()
         registry.add_tool(Toolkit(name="declared_kit", tools=[sample_function]))
-        assert "declared_kit" not in registry.folded_tool_names
+        assert "declared_kit" not in registry.undeclared_tool_names
 
     def test_legacy_string_folded_still_marks_folded(self):
         # Callers that predate ToolSource pass the plain string; the str-enum
         # comparison keeps them working.
         registry = Registry()
-        registry.add_tool(Toolkit(name="legacy_kit", tools=[sample_function]), source="folded")
-        assert "legacy_kit" in registry.folded_tool_names
+        registry.add_tool(Toolkit(name="legacy_kit", tools=[sample_function]), source="discovered")
+        assert "legacy_kit" in registry.undeclared_tool_names

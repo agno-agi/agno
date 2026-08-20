@@ -29,13 +29,13 @@ class ToolSource(str, Enum):
     """How a tool entered the registry.
 
     DECLARED tools were registered directly on the registry and are buildable
-    from Studio. FOLDED tools were discovered on a registered component's own
+    from Studio. DISCOVERED tools were found on a registered component's own
     tool list: they stay resolvable at rehydration, but Studio's palette policy
     refuses to wire them into new components unless explicitly allow-listed.
     """
 
     DECLARED = "declared"
-    FOLDED = "folded"
+    DISCOVERED = "discovered"
 
 
 def _model_identity(model: Model) -> tuple:
@@ -90,13 +90,13 @@ class Registry:
     # Names claimed by two distinct knowledge instances: lenient resolution
     # keeps the first, strict resolution refuses the ambiguity.
     _ambiguous_knowledge_names: Set[str] = field(default_factory=set, init=False, repr=False)
-    # Tool names claimed only by the AgentOS fold, never by a declaration.
-    # Resolvable at rehydration, but not buildable by default: Studio's palette
-    # policy reads this set. Foldedness is a property of the NAME, not of an
-    # instance -- the palette selects tools by name, and a declaration of that
-    # name is the deployer saying the name is buildable, whatever order the
-    # fold and the declaration arrived in.
-    folded_tool_names: Set[str] = field(default_factory=set, init=False, repr=False)
+    # Names no deployer ever declared: they reached the registry only by being
+    # discovered on a registered component. Such a tool stays resolvable at
+    # rehydration but is not buildable by default -- Studio's palette policy
+    # asks ``tool_is_declared``. This is a property of the NAME, not of an
+    # instance: the palette selects tools by name, so a declaration of that
+    # name puts it in the palette whichever order the two arrivals came in.
+    undeclared_tool_names: Set[str] = field(default_factory=set, init=False, repr=False)
     # Knowledge a framework sync mirrored in for name resolution, as opposed to
     # the user registering it. Kept on the registry, not on the AgentOS that
     # mirrored, because a registry can be shared: any AgentOS asking must see
@@ -404,15 +404,15 @@ class Registry:
         """Add a tool unless an equivalent one is already present.
 
         ``source`` says how the tool arrived: ``ToolSource.DECLARED`` (the
-        default) for tools registered directly, ``ToolSource.FOLDED`` for tools
-        discovered on a registered component. The equivalent plain strings are
-        accepted for backward compatibility.
+        default) for tools registered directly, ``ToolSource.DISCOVERED`` for
+        tools found on a registered component. The equivalent plain strings are
+        accepted.
 
         The source decides one thing: whether the tool's *name* is in the build
-        palette (``folded_tool_names``). A declaration always wins over a fold,
-        in either order, so the name a deployer registers directly -- in the
-        constructor or through this method -- stays buildable even when a
-        component carries a same-named tool the AgentOS walk folds in. A fold
+        palette (see ``tool_is_declared``). A declaration always wins over a
+        discovery, in either order, so the name a deployer registers directly --
+        in the constructor or through this method -- stays buildable even when a
+        component carries a same-named tool the AgentOS walk finds. A discovery
         marks a name only when no other tool already claims it, which is what
         keeps that rule order-independent.
 
@@ -455,7 +455,9 @@ class Registry:
         # claim: this asks whether some *other* tool already owns the name.
         # Only a fold consults it, so the scan is skipped on declarations.
         name_already_claimed = (
-            source == ToolSource.FOLDED and name is not None and any(_tool_resource_name(t) == name for t in self.tools)
+            source == ToolSource.DISCOVERED
+            and name is not None
+            and any(_tool_resource_name(t) == name for t in self.tools)
         )
 
         if not self._is_duplicate_tool(tool):
@@ -464,19 +466,29 @@ class Registry:
 
         if name is None:
             return
-        if source == ToolSource.FOLDED:
-            # The fold makes every registered agent's own tools resolvable at
+        if source == ToolSource.DISCOVERED:
+            # Discovery makes every registered agent's own tools resolvable at
             # rehydration; resolvable is not the same as buildable. A name a
             # declaration already claims stays buildable: two toolkits can
-            # share a name without sharing a function set, and folding the
+            # share a name without sharing a function set, and discovering the
             # second must not take the declared one out of the palette.
             if not name_already_claimed:
-                self.folded_tool_names.add(name)
+                self.undeclared_tool_names.add(name)
         elif source == ToolSource.DECLARED:
             # Declaring is the deployer putting the name in the palette, even
-            # when the fold got there first and even when this instance dedupes
-            # against the folded one.
-            self.folded_tool_names.discard(name)
+            # when the discovery got there first and even when this instance
+            # dedupes against the discovered one.
+            self.undeclared_tool_names.discard(name)
+
+    def tool_is_declared(self, name: str) -> bool:
+        """Whether a deployer declared this tool name, so Studio may build with it.
+
+        A name reaches the registry either because someone registered it or
+        because it was discovered on a registered component. Only the first is
+        an instruction to make it buildable; the second just has to resolve at
+        rehydration.
+        """
+        return name not in self.undeclared_tool_names
 
     def _is_duplicate_tool(self, tool: Any) -> bool:
         """Whether an equivalent tool is already registered (see ``add_tool``)."""
