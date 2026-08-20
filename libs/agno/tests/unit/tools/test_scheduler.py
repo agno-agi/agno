@@ -539,7 +539,9 @@ class TestArchivedTargetRefusalPredicate:
         db.get_component = MagicMock(return_value=None)
         schedule = self._schedule(target_type="agent", target_id="code-agent")
         assert archived_target_refusal(db, schedule) is None
-        db.get_component.assert_called_once_with("code-agent", user_id=None, include_deleted=True)
+        db.get_component.assert_called_once_with(
+            "code-agent", component_type=ComponentType.AGENT, user_id=None, include_deleted=True
+        )
 
     def test_live_catalog_row_allows(self):
         db = MagicMock()
@@ -560,7 +562,9 @@ class TestArchivedTargetRefusalPredicate:
         db.get_component = MagicMock(return_value={"component_id": "a1", "deleted_at": 123})
         schedule = self._schedule(endpoint="/agents/a1/runs", disabled_reason=None)
         assert archived_target_refusal(db, schedule) == ("agent", "a1")
-        db.get_component.assert_called_once_with("a1", user_id=None, include_deleted=True)
+        db.get_component.assert_called_once_with(
+            "a1", component_type=ComponentType.AGENT, user_id=None, include_deleted=True
+        )
 
     def test_repointed_row_with_stale_cascade_reason_allows(self):
         """A row repointed at a live target is judged on where it points NOW,
@@ -569,7 +573,9 @@ class TestArchivedTargetRefusalPredicate:
         db.get_component = MagicMock(return_value={"component_id": "live", "deleted_at": None})
         schedule = self._schedule(endpoint="/agents/live/runs", disabled_reason="target_archived:agent:a1")
         assert archived_target_refusal(db, schedule) is None
-        db.get_component.assert_called_once_with("live", user_id=None, include_deleted=True)
+        db.get_component.assert_called_once_with(
+            "live", component_type=ComponentType.AGENT, user_id=None, include_deleted=True
+        )
 
     def test_allows_once_target_is_restored_or_hard_deleted(self):
         schedule = self._schedule(endpoint="/agents/a1/runs", disabled_reason="target_archived:agent:a1")
@@ -587,7 +593,9 @@ class TestArchivedTargetRefusalPredicate:
         db.get_component = MagicMock(return_value={"component_id": "prov", "deleted_at": 123})
         schedule = self._schedule(endpoint="/agents/other/runs", target_type="agent", target_id="prov")
         assert archived_target_refusal(db, schedule) == ("agent", "prov")
-        db.get_component.assert_called_once_with("prov", user_id=None, include_deleted=True)
+        db.get_component.assert_called_once_with(
+            "prov", component_type=ComponentType.AGENT, user_id=None, include_deleted=True
+        )
 
     def test_adapter_without_catalog_allows(self):
         db = MagicMock()
@@ -604,7 +612,9 @@ class TestArchivedTargetRefusalPredicate:
         db.get_component = AsyncMock(return_value={"component_id": "a1", "deleted_at": 123})
         schedule = self._schedule(target_type="agent", target_id="a1")
         assert await aarchived_target_refusal(db, schedule) == ("agent", "a1")
-        db.get_component.assert_awaited_once_with("a1", user_id=None, include_deleted=True)
+        db.get_component.assert_awaited_once_with(
+            "a1", component_type=ComponentType.AGENT, user_id=None, include_deleted=True
+        )
 
     @pytest.mark.asyncio
     async def test_async_variant_matches_sync_verdicts(self):
@@ -679,7 +689,9 @@ class TestArchivedEndpointRefusal:
         db = MagicMock()
         db.get_component = MagicMock(return_value={"component_id": "a1", "deleted_at": 123})
         assert archived_endpoint_refusal(db, "/agents/a1/runs") == ("agent", "a1")
-        db.get_component.assert_called_once_with("a1", user_id=None, include_deleted=True)
+        db.get_component.assert_called_once_with(
+            "a1", component_type=ComponentType.AGENT, user_id=None, include_deleted=True
+        )
 
     def test_live_and_code_defined_targets_allow(self):
         db = MagicMock()
