@@ -259,7 +259,17 @@ def convert_schema(
     # Handle enum types
     if "enum" in schema_dict:
         enum_values = schema_dict["enum"]
-        return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default, title=title)
+        # Gemini's Schema.enum is typed List[str], but upstream JSON schemas can
+        # carry integer or number enums (for example an IntEnum or Literal[1, 2, 3]
+        # tool parameter). Stringify the values so a non-string enum does not raise
+        # a pydantic ValidationError.
+        return Schema(
+            type=GeminiType.STRING,
+            enum=[str(value) for value in enum_values],
+            description=description,
+            default=default,
+            title=title,
+        )
 
     if schema_type == "object":
         # Handle regular objects with properties
