@@ -417,6 +417,8 @@ class Team:
     _tool_instructions: Optional[List[str]] = None
     # Member response model
     _member_response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+    # Ids of media lifted from a member whose store_media is off, dropped before persistence
+    _opted_out_media_ids: Optional[Set[str]] = None
     # Safe formatter for template resolution
     _formatter: Optional[Any] = None
     # Hooks normalised flag
@@ -1319,11 +1321,8 @@ class Team:
     def _scrub_member_responses(
         self,
         member_responses: List[Union[TeamRunOutput, RunOutput]],
-        keep_media_references: Optional[bool] = None,
     ) -> None:
-        return _run._scrub_member_responses(
-            self, member_responses=member_responses, keep_media_references=keep_media_references
-        )
+        return _run._scrub_member_responses(self, member_responses=member_responses)
 
     def cli_app(
         self,

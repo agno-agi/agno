@@ -8,6 +8,7 @@ class MediaReference(BaseModel):
 
     media_id: str
     storage_key: str  # backend object key — also serves as discriminator for deserialization
+    session_id: Optional[str] = None  # session whose run uploaded the object
     storage_backend: str  # "s3", "gcs", "local", etc.
     bucket: Optional[str] = None
     region: Optional[str] = None

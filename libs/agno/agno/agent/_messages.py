@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1197,15 +1196,9 @@ def get_run_messages(
 
             # Refresh pre-signed URLs for media loaded from history
             if agent.media_storage is not None:
-                from agno.media.storage.base import AsyncMediaStorage
+                from agno.utils.media_offload import refresh_messages_media
 
-                if isinstance(agent.media_storage, AsyncMediaStorage):
-                    raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
-
-                from agno.utils.media_offload import refresh_message_media_urls
-
-                for _msg in history_copy:
-                    refresh_message_media_urls(_msg, agent.media_storage)
+                refresh_messages_media(history_copy, agent.media_storage)
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1415,21 +1408,9 @@ async def aget_run_messages(
 
             # Refresh pre-signed URLs for media loaded from history
             if agent.media_storage is not None:
-                from agno.media.storage.base import AsyncMediaStorage
+                from agno.utils.media_offload import arefresh_messages_media
 
-                if isinstance(agent.media_storage, AsyncMediaStorage):
-                    from agno.utils.media_offload import arefresh_message_media_urls
-
-                    for _msg in history_copy:
-                        await arefresh_message_media_urls(_msg, agent.media_storage)
-                else:
-                    from agno.utils.media_offload import refresh_message_media_urls
-
-                    # Sync storage in an async run — refresh in a worker thread. Inline, every
-                    # history image re-signs (and on a non-signing backend, downloads) on the
-                    # event loop before the model call can start.
-                    for _msg in history_copy:
-                        await asyncio.to_thread(refresh_message_media_urls, _msg, agent.media_storage)
+                await arefresh_messages_media(history_copy, agent.media_storage)
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1526,7 +1507,7 @@ async def aget_run_messages(
     return run_messages
 
 
-def get_continue_run_messages(
+def _build_continue_run_messages(
     agent: Agent,
     input: List[Message],
     session: Optional[AgentSession] = None,
@@ -1619,6 +1600,42 @@ def get_continue_run_messages(
     if run_context is not None:
         run_context.messages = run_messages.messages
 
+    return run_messages
+
+
+def get_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Build the messages that resume a paused run, reading offloaded media back first.
+
+    The paused run's own messages come off the database carrying a reference and no bytes,
+    so without the refresh the resumed model sees empty media where it saw an image before.
+    """
+    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    if agent.media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, agent.media_storage)
+    return run_messages
+
+
+async def aget_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Async variant of :func:`get_continue_run_messages`."""
+    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    if agent.media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, agent.media_storage)
     return run_messages
 
 

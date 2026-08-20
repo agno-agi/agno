@@ -8,9 +8,8 @@ would expire. URL-only media is skipped unless persist_remote_urls=True.
 
 Requirements:
 - uv pip install 'agno[s3]'
-- AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION (or configure them via boto3)
-- Set MEDIA_S3_BUCKET to a bucket you own; AWS_ENDPOINT_URL to target an S3-compatible
-  service such as MinIO
+- AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+- Set MEDIA_S3_BUCKET to a bucket you own
 """
 
 import os
@@ -22,7 +21,6 @@ from agno.media import Image
 from agno.media.storage import S3MediaStorage
 from agno.models.openai import OpenAIResponses
 
-# from agno.db.postgres import PostgresDb
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -41,15 +39,11 @@ if not bucket:
 # URL-only media is skipped by default.
 # ---------------------------------------------------------------------------
 
-# Create the storage. For async runs, swap in AsyncS3MediaStorage.
 storage = S3MediaStorage(
     bucket=bucket,
     region=os.getenv(
         "AWS_REGION"
-    ),  # unset falls through to boto3 (AWS_DEFAULT_REGION, ~/.aws/config)
-    endpoint_url=os.getenv(
-        "AWS_ENDPOINT_URL"
-    ),  # set for an S3-compatible service (e.g. MinIO)
+    ),  # unset falls back to AWS_DEFAULT_REGION or ~/.aws/config
     prefix="agno/media/",
     presigned_url_expiry=3600,  # 1 hour
 )
@@ -61,7 +55,6 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     media_storage=storage,
     db=SqliteDb(db_file="tmp/data.db"),
-    # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
 # ---------------------------------------------------------------------------
@@ -73,10 +66,7 @@ storage_with_persist = S3MediaStorage(
     bucket=bucket,
     region=os.getenv(
         "AWS_REGION"
-    ),  # unset falls through to boto3 (AWS_DEFAULT_REGION, ~/.aws/config)
-    endpoint_url=os.getenv(
-        "AWS_ENDPOINT_URL"
-    ),  # set for an S3-compatible service (e.g. MinIO)
+    ),  # unset falls back to AWS_DEFAULT_REGION or ~/.aws/config
     prefix="agno/media/",
     presigned_url_expiry=3600,  # 1 hour
     persist_remote_urls=True,
@@ -86,7 +76,6 @@ agent_with_persist = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     media_storage=storage_with_persist,
     db=SqliteDb(db_file="tmp/data.db"),
-    # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
 # ---------------------------------------------------------------------------

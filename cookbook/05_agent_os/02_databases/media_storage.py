@@ -39,9 +39,8 @@ storage = AsyncS3MediaStorage(
     bucket=bucket,
     region=os.getenv(
         "AWS_REGION"
-    ),  # unset falls through to boto3 (AWS_DEFAULT_REGION, ~/.aws/config)
-    endpoint_url=os.getenv("AWS_ENDPOINT_URL"),
-    prefix=os.getenv("AGNO_FILE_OUTPUT_S3_PREFIX", "agno/agentos/files/"),
+    ),  # unset falls back to AWS_DEFAULT_REGION or ~/.aws/config
+    prefix="agno/agentos/files/",
     presigned_url_expiry=3600,
 )
 

@@ -16,7 +16,6 @@ from agno.media import Image
 from agno.media.storage import LocalMediaStorage
 from agno.models.openai import OpenAIResponses
 
-# from agno.db.postgres import PostgresDb
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -28,12 +27,7 @@ IMAGE_URL = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national
 # URL-only media is skipped by default.
 # ---------------------------------------------------------------------------
 
-# Create the storage. For async runs, swap in AsyncLocalMediaStorage.
-storage = LocalMediaStorage(
-    base_path="./tmp/media_storage",
-    # Optional: set base_url if serving files via a local HTTP server
-    # base_url="http://localhost:8080/media",
-)
+storage = LocalMediaStorage(base_path="./tmp/media_storage")
 
 # ---------------------------------------------------------------------------
 # Create the Agent
@@ -42,7 +36,6 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     media_storage=storage,
     db=SqliteDb(db_file="tmp/data.db"),
-    # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
 # ---------------------------------------------------------------------------
@@ -59,7 +52,6 @@ agent_with_persist = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     media_storage=storage_with_persist,
     db=SqliteDb(db_file="tmp/data.db"),
-    # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
 # ---------------------------------------------------------------------------
@@ -85,6 +77,3 @@ if __name__ == "__main__":
         "What do you see in this image?",
         images=[Image(url=IMAGE_URL)],
     )
-
-    # After running, check ./tmp/media_storage/ for the saved media files
-    # (a .meta.json sidecar is written alongside each file when filename/mime-type/metadata is available).

@@ -23,7 +23,6 @@ from agno.media import Image
 from agno.media.storage import GCSMediaStorage
 from agno.models.openai import OpenAIResponses
 
-# from agno.db.postgres import PostgresDb
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -42,12 +41,11 @@ if not bucket:
 # URL-only media is skipped by default.
 # ---------------------------------------------------------------------------
 
-# Create the storage. For async runs, swap in AsyncGCSMediaStorage.
 storage = GCSMediaStorage(
     bucket=bucket,
-    project=os.getenv("GCP_PROJECT"),  # optional if a default project is configured
+    project=os.getenv("GCP_PROJECT"),
     prefix="agno/media/",
-    presigned_url_expiry=3600,  # 1 hour; needs credentials_path to take effect
+    presigned_url_expiry=3600,  # 1 hour
 )
 
 # ---------------------------------------------------------------------------
@@ -57,7 +55,6 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     media_storage=storage,
     db=SqliteDb(db_file="tmp/data.db"),
-    # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
 # ---------------------------------------------------------------------------
@@ -67,9 +64,9 @@ agent = Agent(
 
 storage_with_persist = GCSMediaStorage(
     bucket=bucket,
-    project=os.getenv("GCP_PROJECT"),  # optional if a default project is configured
+    project=os.getenv("GCP_PROJECT"),
     prefix="agno/media/",
-    presigned_url_expiry=3600,  # 1 hour; needs credentials_path to take effect
+    presigned_url_expiry=3600,  # 1 hour
     persist_remote_urls=True,
 )
 
@@ -77,7 +74,6 @@ agent_with_persist = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     media_storage=storage_with_persist,
     db=SqliteDb(db_file="tmp/data.db"),
-    # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
 # ---------------------------------------------------------------------------

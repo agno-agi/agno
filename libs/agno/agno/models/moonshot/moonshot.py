@@ -189,19 +189,21 @@ class MoonShot(OpenAILike):
         """
         import time
 
-        # A previously stored id is a hint, not a guarantee: it may be stale, deleted
-        # server-side, or a foreign id set by the caller. Try it, but fall back to a
-        # fresh upload instead of failing the file outright.
-        if file.id:
+        # File ids are auto-generated UUIDs, so the ``ms://`` prefix is what marks a file as
+        # already uploaded — the same marker _video_reference uses. A stored id is still only
+        # a hint (it may be stale or deleted server-side), so a failed fetch re-uploads rather
+        # than failing the file outright.
+        if file.id and file.id.startswith("ms://"):
+            stored_id = file.id[len("ms://") :]
             try:
-                return self.get_client().files.content(file_id=file.id).text
+                return self.get_client().files.content(file_id=stored_id).text
             except Exception:
-                log_warning(f"Stored Moonshot file id '{file.id}' is not retrievable, re-uploading.")
+                log_warning(f"Stored Moonshot file id '{stored_id}' is not retrievable, re-uploading.")
 
         file_id = self._upload_media(file, purpose="file-extract")
         if file_id is None:
             return None
-        file.id = file_id
+        file.id = f"ms://{file_id}"
 
         # Uploads are parsed asynchronously ("created" -> "ok"), and fetching the content
         # of an unparsed file 404s. Mirror OpenAIResponses._create_vector_store: poll the

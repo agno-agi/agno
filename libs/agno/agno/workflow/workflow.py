@@ -1712,14 +1712,11 @@ class Workflow:
 
         new_runs = []
         for run in session.runs:
-            run_id = getattr(run, "run_id", "") or ""
             try:
                 # Copy inside the guard so an uncopyable payload falls back to inline storage
                 # rather than taking the session save down with it.
                 run_copy = copy.deepcopy(run)
-                offload_workflow_media(
-                    run_copy, media_storage, session.session_id, run_id, cache=offload_cache_for(run)
-                )
+                offload_workflow_media(run_copy, media_storage, session.session_id, cache=offload_cache_for(run))
             except Exception as e:
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
                 run_copy = run
@@ -1744,7 +1741,6 @@ class Workflow:
 
         new_runs = []
         for run in session.runs:
-            run_id = getattr(run, "run_id", "") or ""
             try:
                 # Copy inside the guard so an uncopyable payload falls back to inline storage
                 # rather than taking the session save down with it.
@@ -1753,7 +1749,7 @@ class Workflow:
                     from agno.utils.media_offload import aoffload_workflow_media, offload_cache_for
 
                     await aoffload_workflow_media(
-                        run_copy, media_storage, session.session_id, run_id, cache=offload_cache_for(run)
+                        run_copy, media_storage, session.session_id, cache=offload_cache_for(run)
                     )
                 else:
                     # Sync storage in an async run — offload in a worker thread, as _aoffload_run_media_copy
@@ -1765,7 +1761,6 @@ class Workflow:
                         run_copy,
                         media_storage,
                         session.session_id,
-                        run_id,
                         offload_cache_for(run),
                     )
             except Exception as e:
@@ -1986,12 +1981,11 @@ class Workflow:
 
         from agno.utils.media_offload import offload_cache_for, offload_workflow_media
 
-        run_id = getattr(run, "run_id", "") or ""
         try:
             # Copy inside the guard so an uncopyable payload falls back to inline storage
             # rather than taking the run save down with it.
             run_copy = copy.deepcopy(run)
-            offload_workflow_media(run_copy, self.media_storage, session_id, run_id, cache=offload_cache_for(run))
+            offload_workflow_media(run_copy, self.media_storage, session_id, cache=offload_cache_for(run))
         except Exception as e:
             log_warning(f"Media offload failed, falling back to inline storage: {e}")
             return run
@@ -2006,7 +2000,6 @@ class Workflow:
 
         from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 
-        run_id = getattr(run, "run_id", "") or ""
         try:
             # Copy inside the guard so an uncopyable payload falls back to inline storage
             # rather than taking the run save down with it.
@@ -2014,9 +2007,7 @@ class Workflow:
             if isinstance(self.media_storage, AsyncMediaStorage):
                 from agno.utils.media_offload import aoffload_workflow_media, offload_cache_for
 
-                await aoffload_workflow_media(
-                    run_copy, self.media_storage, session_id, run_id, cache=offload_cache_for(run)
-                )
+                await aoffload_workflow_media(run_copy, self.media_storage, session_id, cache=offload_cache_for(run))
             elif isinstance(self.media_storage, MediaStorage):
                 # Sync storage in an async run — offload it in a worker thread. Calling it
                 # inline would hold the event loop for the whole upload.
@@ -2027,7 +2018,6 @@ class Workflow:
                     run_copy,
                     self.media_storage,
                     session_id,
-                    run_id,
                     offload_cache_for(run),
                 )
             else:
@@ -2102,10 +2092,10 @@ class Workflow:
         try:
             self._update_session_metrics(session=session, workflow_run_response=run)
             session.upsert_run(run=run)
-            if self._has_async_db():
-                await self._apersist_session_and_run(session=session, run=run)
-            else:
-                self._persist_session_and_run(session=session, run=run)
+            # asave_* already fall back to a sync DB. Branching would also pick the sync media
+            # path, which raises on an async backend — and the guard below swallows it, so the
+            # errored run is never written at all.
+            await self._apersist_session_and_run(session=session, run=run)
         except Exception as store_err:
             log_warning(f"Failed to persist errored run: {store_err}")
         await acleanup_run(run.run_id)  # type: ignore

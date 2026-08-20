@@ -41,6 +41,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import iter_run_media
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.utils.media_offload import reference_matches_storage
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,8 @@ def attach_routes(
         """Storage keys held by these sessions, read before the rows that name them are gone.
 
         The reference is the only record of which object belongs to which session, so a caller
-        that deletes first can never find the objects again.
+        that deletes first can never find the objects again. Objects a session merely borrowed
+        (a fork copies the reference) belong to the session that uploaded them and are left be.
         """
         keys: List[str] = []
         for session_id in session_ids:
@@ -90,9 +92,17 @@ def attach_routes(
             for run in getattr(session, "runs", None) or []:
                 for media in iter_run_media(run):
                     ref = getattr(media, "media_reference", None)
-                    key = getattr(ref, "storage_key", None)
-                    if key:
-                        keys.append(key)
+                    if ref is None or not ref.storage_key:
+                        continue
+                    # Only this session's own objects. A forked session copies the reference
+                    # verbatim, so deleting the fork would otherwise take the source's media.
+                    if ref.session_id not in session_ids:
+                        continue
+                    # A key only resolves against the backend that wrote it, matching the
+                    # guard the fetch route applies before serving one.
+                    if media_storage is not None and not reference_matches_storage(ref, media_storage):
+                        continue
+                    keys.append(ref.storage_key)
         return list(dict.fromkeys(keys))
 
     async def _delete_media_keys(keys: List[str]) -> None:

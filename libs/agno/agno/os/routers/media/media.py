@@ -19,6 +19,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import iter_run_media
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_warning
+from agno.utils.media_offload import reference_matches_storage
 
 # A type/subtype of RFC 9110 tokens and nothing else; the rest is octet-stream.
 _MIME_TYPE_PATTERN = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+")
@@ -76,8 +77,8 @@ def attach_routes(
             },
             401: {"description": "Unauthenticated", "model": UnauthenticatedResponse},
             404: {"description": "Session or media not found", "model": NotFoundResponse},
+            500: {"description": "Media storage could not be reached"},
             501: {"description": "Remote databases are not supported"},
-            502: {"description": "Media storage could not be reached"},
             503: {"description": "Media storage is not configured"},
         },
     )
@@ -129,16 +130,9 @@ def attach_routes(
         if ref is None:
             raise HTTPException(status_code=404, detail="Media not found in this session")
 
-        # Only serve media this backend actually offloaded; a backend/bucket mismatch would
-        # otherwise surface as a confusing 500 or, worse, serve a same-named object from the
-        # wrong bucket.
-        backend_name = getattr(media_storage, "backend_name", None)
-        ref_backend = getattr(ref, "storage_backend", None)
-        if backend_name is not None and ref_backend is not None and ref_backend != backend_name:
-            raise HTTPException(status_code=404, detail="Media is not served by the configured storage backend")
-        os_bucket = getattr(media_storage, "bucket", None)
-        ref_bucket = getattr(ref, "bucket", None)
-        if os_bucket is not None and ref_bucket is not None and ref_bucket != os_bucket:
+        # Only serve media this backend offloaded, or a mismatch serves a same-named object
+        # from the wrong bucket.
+        if not reference_matches_storage(ref, media_storage):
             raise HTTPException(status_code=404, detail="Media is not served by the configured storage backend")
 
         if redirect:
@@ -151,7 +145,7 @@ def attach_routes(
                     url = await asyncio.to_thread(media_storage.get_url, storage_key)
             except Exception as e:
                 log_warning(f"Failed to generate media URL for {storage_key}: {e}")
-                raise HTTPException(status_code=502, detail="Failed to generate a media URL")
+                raise HTTPException(status_code=500, detail="Failed to generate a media URL")
             # A browser can only follow http(s); file:// (local backend) cannot be fetched, so
             # fall through to streaming the bytes instead.
             if url.startswith(("http://", "https://")):
@@ -165,12 +159,12 @@ def attach_routes(
                 data = await asyncio.to_thread(media_storage.download, storage_key)
         except (FileNotFoundError, PathSecurityError):
             # A key the backend refuses to resolve is as absent as one that is missing, so a
-            # path-security rejection answers 404 here rather than falling through to 502.
+            # path-security rejection answers 404 here rather than falling through to 500.
             raise HTTPException(status_code=404, detail="Media object not found")
         except Exception as e:
             # Log the real error for debugging; never echo it (it can leak filesystem paths or bucket internals).
             log_warning(f"Failed to fetch media {storage_key}: {e}")
-            raise HTTPException(status_code=502, detail="Failed to fetch media from storage")
+            raise HTTPException(status_code=500, detail="Failed to fetch media from storage")
 
         media_type = getattr(ref, "mime_type", None)
         if not media_type:

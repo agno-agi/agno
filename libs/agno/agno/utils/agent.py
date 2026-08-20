@@ -658,6 +658,16 @@ def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -
 RunOutputT = TypeVar("RunOutputT", RunOutput, TeamRunOutput)
 
 
+def drop_opted_out_member_media(entity: Union["Agent", "Team"], run_response: Any) -> None:
+    """Strip member media the team is not allowed to upload. No-op outside a team run."""
+    if not getattr(run_response, "member_responses", None):
+        return
+
+    from agno.team._run import drop_opted_out_member_media as drop_for_team
+
+    drop_for_team(entity, run_response)  # type: ignore[arg-type]
+
+
 def build_offloaded_storage_copy(
     entity: Union["Agent", "Team"],
     run_response: RunOutputT,
@@ -688,11 +698,11 @@ def build_offloaded_storage_copy(
         from agno.utils.media_offload import offload_cache_for, offload_run_media
 
         storage_copy = copy.deepcopy(run_response)
+        drop_opted_out_member_media(entity, storage_copy)
         offload_run_media(
             storage_copy,
             entity.media_storage,
             session_id,
-            run_response.run_id or "",
             cache=offload_cache_for(run_response),
         )
         return storage_copy
@@ -719,11 +729,11 @@ async def abuild_offloaded_storage_copy(
             from agno.utils.media_offload import aoffload_run_media, offload_cache_for
 
             storage_copy = copy.deepcopy(run_response)
+            drop_opted_out_member_media(entity, storage_copy)
             await aoffload_run_media(
                 storage_copy,
                 entity.media_storage,
                 session_id,
-                run_response.run_id or "",
                 cache=offload_cache_for(run_response),
             )
             return storage_copy
@@ -733,12 +743,12 @@ async def abuild_offloaded_storage_copy(
             from agno.utils.media_offload import offload_cache_for, offload_run_media
 
             storage_copy = copy.deepcopy(run_response)
+            drop_opted_out_member_media(entity, storage_copy)
             await asyncio.to_thread(
                 offload_run_media,
                 storage_copy,
                 entity.media_storage,
                 session_id,
-                run_response.run_id or "",
                 offload_cache_for(run_response),
             )
             return storage_copy

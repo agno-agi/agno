@@ -50,9 +50,9 @@
 
 **Status:** PASS
 
-**Description:** Multi-turn reuse with LocalMediaStorage. Turn 1 sends an image; turn 2 asks about it without re-sending. Ran with `OpenAIResponses(id="gpt-5.5", store=False)` so history stays client-side.
+**Description:** Multi-turn reuse with S3MediaStorage against a real AWS bucket (`MEDIA_S3_BUCKET`). Turn 1 sends an image; turn 2 asks about it without re-attaching it. Ran with `OpenAIResponses(id="gpt-5.5", store=False)` so history stays client-side.
 
-**Result:** Exit 0, both turns answered about the same image. Instrumenting the outbound request shows turn 2 carries one `input_image` (~151 KB) re-read from storage, while the run row stays at 3002 bytes with only a `media_reference`.
+**Result:** Exit 0, both turns answered about the same image, no offload-failure warning. Turn 1 uploaded one object (113255 bytes) under the session-scoped key `multiturn-session-<media_id>-<hash>.jpg` and sent 151008 base64 chars to the model. Instrumenting the outbound request shows turn 2 carries one `input_image` holding a freshly presigned S3 URL — 0 base64 chars and 0 `download()` calls, so the model reads the object from S3 directly. The run row stays at 2897 bytes with a `media_reference` and no base64.
 
 ---
 

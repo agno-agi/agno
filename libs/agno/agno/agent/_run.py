@@ -4664,7 +4664,7 @@ async def _acontinue_run(
     """
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import get_continue_run_messages
+    from agno.agent._messages import aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -4861,7 +4861,7 @@ async def _acontinue_run(
                 )
 
                 # 6. Prepare run messages
-                run_messages = get_continue_run_messages(
+                run_messages = await aget_continue_run_messages(
                     agent,
                     input=input_messages,
                     session=agent_session,
@@ -5152,7 +5152,7 @@ async def _acontinue_run_stream(
     """
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import get_continue_run_messages
+    from agno.agent._messages import aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
@@ -5347,7 +5347,7 @@ async def _acontinue_run_stream(
                 )
 
                 # 6. Prepare run messages
-                run_messages = get_continue_run_messages(
+                run_messages = await aget_continue_run_messages(
                     agent,
                     input=input_messages,
                     session=agent_session,
@@ -5768,17 +5768,11 @@ def save_run_response_to_file(
             log_warning(f"Failed to save output to file: {str(e)}")
 
 
-def scrub_run_output_for_storage(
-    agent: Agent, run_response: RunOutput, keep_media_references: Optional[bool] = None
-) -> None:
+def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
     """Scrub run output based on storage flags before persisting to database."""
     if not agent.store_media:
-        # store_media is off: offload was skipped and media is dropped from the persisted run.
-        # A caller can still force-preserve MediaReferences (metadata pointers) it offloaded
-        # elsewhere via keep_media_references — teams use this for members whose media the team
-        # itself stored.
-        keep_references = keep_media_references if keep_media_references is not None else False
-        scrub_media_from_run_output(run_response, keep_references=keep_references)
+        # store_media is off, so the media was never offloaded — the run keeps no pointer to it.
+        scrub_media_from_run_output(run_response, keep_references=False)
 
     if not agent.store_tool_messages:
         scrub_tool_results_from_run_output(run_response)
@@ -6034,7 +6028,6 @@ def cleanup_and_store(
                 storage_copy,
                 agent.media_storage,
                 session.session_id,
-                run_response.run_id or "",
                 cache=offload_cache_for(run_response),
             )
         except Exception as e:
@@ -6145,7 +6138,6 @@ async def acleanup_and_store(
                         storage_copy,
                         agent.media_storage,
                         session.session_id,
-                        run_response.run_id or "",
                         offload_cache_for(run_response),
                     )
                 except Exception as e:
@@ -6162,7 +6154,6 @@ async def acleanup_and_store(
                     storage_copy,
                     agent.media_storage,
                     session.session_id,
-                    run_response.run_id or "",
                     cache=offload_cache_for(run_response),
                 )
             except Exception as e:
@@ -6490,11 +6481,15 @@ def fork_session_dispatch(
     # AgentSession.runs is typed as Union[RunOutput, TeamRunOutput] for legacy
     # reasons; an agent's own session only ever holds RunOutput.
     from agno.agent._session import save_run
+    from agno.utils.agent import build_offloaded_storage_copy
 
     for idx, run in enumerate(new_session.runs or []):
+        # Offloaded like the team fork's twin: the fork inherits the source's references, and
+        # offload gives it its own copy so either session can be deleted on its own.
+        forked_run = cast(RunOutput, run)
         save_run(
             agent,
-            run=cast(RunOutput, run),
+            run=build_offloaded_storage_copy(agent, forked_run, new_session.session_id) or forked_run,
             session_id=new_session.session_id,
             user_id=new_session.user_id,
             run_index=idx,
@@ -6539,9 +6534,13 @@ async def afork_session_dispatch(
     # AgentSession.runs is typed as Union[RunOutput, TeamRunOutput] for legacy
     # reasons; an agent's own session only ever holds RunOutput.
     from agno.agent._session import asave_run, save_run
+    from agno.utils.agent import abuild_offloaded_storage_copy
 
     for idx, run in enumerate(new_session.runs or []):
         run_out = cast(RunOutput, run)
+        # Offloaded for the same reason as the sync twin: the fork gets its own copy of the
+        # objects it inherited, so either session can be deleted independently.
+        run_out = await abuild_offloaded_storage_copy(agent, run_out, new_session.session_id) or run_out
         if has_async_db(agent):
             await asave_run(
                 agent,

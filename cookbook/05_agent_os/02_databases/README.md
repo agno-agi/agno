@@ -65,10 +65,9 @@ session row instead of base64. Media is then served through
 
 Each backend has an `Async` counterpart for asynchronous applications.
 
-`S3MediaStorage` reaches an S3-compatible service such as MinIO through
-`endpoint_url`. Pass `region` as well when that service sets a site region: uploads
-find the right region on their own, but the media URL carries the region in its
-signature, so without it media saves cleanly and then fails to load.
+Pass `region` when the bucket is not in the default region: uploads find the right
+region on their own, but the media URL carries the region in its signature, so
+without it media saves cleanly and then fails to load.
 
 ## Prerequisites
 
