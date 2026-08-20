@@ -34,6 +34,116 @@ async def _abytes_from_url(url: str) -> Optional[bytes]:
         return resp.content
 
 
+def _resolve_from_storage(media: Any, storage: Any) -> Optional[bytes]:
+    """Read an offloaded object's bytes back through the backend that stored it.
+
+    Returns None when ``media`` carries no reference, when ``storage`` is not the backend
+    that minted it, or when the read fails — a caller that already has ``content``, a
+    ``url`` or a ``filepath`` never reaches here.
+    """
+    from agno.media.storage.base import AsyncMediaStorage
+
+    ref = getattr(media, "media_reference", None)
+    if storage is None or ref is None or not ref.storage_key:
+        return None
+    if isinstance(storage, AsyncMediaStorage):
+        raise ValueError("Cannot resolve media with an AsyncMediaStorage from a sync call. Use the async variant.")
+
+    from agno.utils.media_offload import reference_matches_storage
+
+    # A key only resolves against the backend that wrote it, so a mismatched handle would
+    # otherwise read a same-named object out of the wrong bucket.
+    if not reference_matches_storage(ref, storage):
+        log_error(f"Media {getattr(media, 'id', '?')} was stored on another backend")
+        return None
+    try:
+        return storage.download(ref.storage_key)
+    except Exception as e:
+        log_error(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
+        return None
+
+
+async def _aresolve_from_storage(media: Any, storage: Any) -> Optional[bytes]:
+    """Async variant of :func:`_resolve_from_storage`."""
+    from agno.media.storage.base import AsyncMediaStorage
+
+    ref = getattr(media, "media_reference", None)
+    if storage is None or ref is None or not ref.storage_key:
+        return None
+
+    from agno.utils.media_offload import reference_matches_storage
+
+    if not reference_matches_storage(ref, storage):
+        log_error(f"Media {getattr(media, 'id', '?')} was stored on another backend")
+        return None
+    try:
+        if isinstance(storage, AsyncMediaStorage):
+            return await storage.download(ref.storage_key)
+        # A sync backend downloads in a worker thread rather than on the running loop.
+        return await asyncio.to_thread(storage.download, ref.storage_key)
+    except Exception as e:
+        log_error(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
+        return None
+
+
+def _url_from_storage(media: Any, storage: Any, expires_in: Optional[int] = None) -> Optional[str]:
+    """Re-sign a URL for an offloaded object from its ``storage_key``.
+
+    Always re-derived rather than read off the reference: a persisted URL is either absent
+    (the usual case, since a presigned one is never stored) or stale. Returns None when the
+    backend cannot produce a usable link, which is the caller's cue to fetch bytes instead.
+    """
+    from agno.media.storage.base import AsyncMediaStorage
+
+    ref = getattr(media, "media_reference", None)
+    if storage is None or ref is None or not ref.storage_key:
+        return None
+    if isinstance(storage, AsyncMediaStorage):
+        raise ValueError("Cannot resolve media with an AsyncMediaStorage from a sync call. Use the async variant.")
+
+    from agno.utils.media_offload import reference_matches_storage
+
+    if not reference_matches_storage(ref, storage):
+        log_error(f"Media {getattr(media, 'id', '?')} was stored on another backend")
+        return None
+    try:
+        url = storage.get_url(ref.storage_key, expires_in=expires_in)
+    except Exception as e:
+        log_error(f"Could not sign a URL for {getattr(media, 'id', '?')}: {e}")
+        return None
+    # "" is the backend saying it cannot sign, and file:// resolves only on the host that
+    # wrote it — neither is something a caller can hand to a browser or a model.
+    if not url or url.startswith("file://"):
+        return None
+    return url
+
+
+async def _aurl_from_storage(media: Any, storage: Any, expires_in: Optional[int] = None) -> Optional[str]:
+    """Async variant of :func:`_url_from_storage`."""
+    from agno.media.storage.base import AsyncMediaStorage
+
+    ref = getattr(media, "media_reference", None)
+    if storage is None or ref is None or not ref.storage_key:
+        return None
+
+    from agno.utils.media_offload import reference_matches_storage
+
+    if not reference_matches_storage(ref, storage):
+        log_error(f"Media {getattr(media, 'id', '?')} was stored on another backend")
+        return None
+    try:
+        if isinstance(storage, AsyncMediaStorage):
+            url = await storage.get_url(ref.storage_key, expires_in=expires_in)
+        else:
+            url = await asyncio.to_thread(storage.get_url, ref.storage_key, expires_in=expires_in)
+    except Exception as e:
+        log_error(f"Could not sign a URL for {getattr(media, 'id', '?')}: {e}")
+        return None
+    if not url or url.startswith("file://"):
+        return None
+    return url
+
+
 class Image(BaseModel):
     """Unified Image class for all use cases (input, output, artifacts)"""
 
@@ -91,7 +201,7 @@ class Image(BaseModel):
 
         return data
 
-    def get_content_bytes(self) -> Optional[bytes]:
+    def get_content_bytes(self, storage: Any = None) -> Optional[bytes]:
         """Get image content as raw bytes, loading from URL/file if needed"""
         if self.content:
             return self.content
@@ -102,9 +212,11 @@ class Image(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
-        return None
+        # Offloaded media carries only a reference on a private backend, so the bytes come
+        # back through the storage handle the caller passes in.
+        return _resolve_from_storage(self, storage)
 
-    async def aget_content_bytes(self) -> Optional[bytes]:
+    async def aget_content_bytes(self, storage: Any = None) -> Optional[bytes]:
         if self.content:
             return self.content
         elif self.url:
@@ -114,7 +226,23 @@ class Image(BaseModel):
         elif self.filepath:
             fp = self.filepath
             return await asyncio.to_thread(lambda: Path(fp).read_bytes())
-        return None
+        return await _aresolve_from_storage(self, storage)
+
+    def get_url(self, storage: Any = None, expires_in: Optional[int] = None) -> Optional[str]:
+        """A URL a browser or model can fetch this media from, or None.
+
+        Prefers a URL the media already carries, else re-signs one from the stored object.
+        None means there is no fetchable link — read the bytes with ``get_content_bytes``.
+        """
+        if self.url:
+            return self.url
+        return _url_from_storage(self, storage, expires_in)
+
+    async def aget_url(self, storage: Any = None, expires_in: Optional[int] = None) -> Optional[str]:
+        """Async variant of :meth:`get_url`."""
+        if self.url:
+            return self.url
+        return await _aurl_from_storage(self, storage, expires_in)
 
     def to_base64(self) -> Optional[str]:
         """Convert content to base64 string for transmission/storage"""
@@ -224,7 +352,7 @@ class Audio(BaseModel):
 
         return data
 
-    def get_content_bytes(self) -> Optional[bytes]:
+    def get_content_bytes(self, storage: Any = None) -> Optional[bytes]:
         """Get audio content as raw bytes"""
         if self.content:
             return self.content
@@ -235,9 +363,11 @@ class Audio(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
-        return None
+        # Offloaded media carries only a reference on a private backend, so the bytes come
+        # back through the storage handle the caller passes in.
+        return _resolve_from_storage(self, storage)
 
-    async def aget_content_bytes(self) -> Optional[bytes]:
+    async def aget_content_bytes(self, storage: Any = None) -> Optional[bytes]:
         if self.content:
             return self.content
         elif self.url:
@@ -247,7 +377,23 @@ class Audio(BaseModel):
         elif self.filepath:
             fp = self.filepath
             return await asyncio.to_thread(lambda: Path(fp).read_bytes())
-        return None
+        return await _aresolve_from_storage(self, storage)
+
+    def get_url(self, storage: Any = None, expires_in: Optional[int] = None) -> Optional[str]:
+        """A URL a browser or model can fetch this media from, or None.
+
+        Prefers a URL the media already carries, else re-signs one from the stored object.
+        None means there is no fetchable link — read the bytes with ``get_content_bytes``.
+        """
+        if self.url:
+            return self.url
+        return _url_from_storage(self, storage, expires_in)
+
+    async def aget_url(self, storage: Any = None, expires_in: Optional[int] = None) -> Optional[str]:
+        """Async variant of :meth:`get_url`."""
+        if self.url:
+            return self.url
+        return await _aurl_from_storage(self, storage, expires_in)
 
     def to_base64(self) -> Optional[str]:
         """Convert content to base64 string"""
@@ -373,7 +519,7 @@ class Video(BaseModel):
 
         return data
 
-    def get_content_bytes(self) -> Optional[bytes]:
+    def get_content_bytes(self, storage: Any = None) -> Optional[bytes]:
         """Get video content as raw bytes"""
         if self.content:
             return self.content
@@ -384,9 +530,11 @@ class Video(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
-        return None
+        # Offloaded media carries only a reference on a private backend, so the bytes come
+        # back through the storage handle the caller passes in.
+        return _resolve_from_storage(self, storage)
 
-    async def aget_content_bytes(self) -> Optional[bytes]:
+    async def aget_content_bytes(self, storage: Any = None) -> Optional[bytes]:
         if self.content:
             return self.content
         elif self.url:
@@ -396,7 +544,23 @@ class Video(BaseModel):
         elif self.filepath:
             fp = self.filepath
             return await asyncio.to_thread(lambda: Path(fp).read_bytes())
-        return None
+        return await _aresolve_from_storage(self, storage)
+
+    def get_url(self, storage: Any = None, expires_in: Optional[int] = None) -> Optional[str]:
+        """A URL a browser or model can fetch this media from, or None.
+
+        Prefers a URL the media already carries, else re-signs one from the stored object.
+        None means there is no fetchable link — read the bytes with ``get_content_bytes``.
+        """
+        if self.url:
+            return self.url
+        return _url_from_storage(self, storage, expires_in)
+
+    async def aget_url(self, storage: Any = None, expires_in: Optional[int] = None) -> Optional[str]:
+        """Async variant of :meth:`get_url`."""
+        if self.url:
+            return self.url
+        return await _aurl_from_storage(self, storage, expires_in)
 
     def to_base64(self) -> Optional[str]:
         """Convert content to base64 string"""
@@ -598,7 +762,7 @@ class File(BaseModel):
         else:
             return None
 
-    def get_content_bytes(self) -> Optional[bytes]:
+    def get_content_bytes(self, storage: Any = None) -> Optional[bytes]:
         if self.content:
             if isinstance(self.content, bytes):
                 return self.content
@@ -612,9 +776,11 @@ class File(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
-        return None
+        # Offloaded media carries only a reference on a private backend, so the bytes come
+        # back through the storage handle the caller passes in.
+        return _resolve_from_storage(self, storage)
 
-    async def aget_content_bytes(self) -> Optional[bytes]:
+    async def aget_content_bytes(self, storage: Any = None) -> Optional[bytes]:
         if self.content:
             if isinstance(self.content, bytes):
                 return self.content
@@ -628,7 +794,23 @@ class File(BaseModel):
         elif self.filepath:
             fp = self.filepath
             return await asyncio.to_thread(lambda: Path(fp).read_bytes())
-        return None
+        return await _aresolve_from_storage(self, storage)
+
+    def get_url(self, storage: Any = None, expires_in: Optional[int] = None) -> Optional[str]:
+        """A URL a browser or model can fetch this media from, or None.
+
+        Prefers a URL the media already carries, else re-signs one from the stored object.
+        None means there is no fetchable link — read the bytes with ``get_content_bytes``.
+        """
+        if self.url:
+            return self.url
+        return _url_from_storage(self, storage, expires_in)
+
+    async def aget_url(self, storage: Any = None, expires_in: Optional[int] = None) -> Optional[str]:
+        """Async variant of :meth:`get_url`."""
+        if self.url:
+            return self.url
+        return await _aurl_from_storage(self, storage, expires_in)
 
     def _normalise_content(self) -> Optional[Union[str, bytes]]:
         if self.content is None:
