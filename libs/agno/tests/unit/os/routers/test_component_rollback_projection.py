@@ -1,0 +1,120 @@
+"""A rollback re-projects the version it rolls to, including its silences.
+
+Publishing re-projects name/description/metadata onto the catalog row inside
+the pointer transaction. A pointer moved any other way -- a rollback through
+PATCH /components/{id} -- has to do the same, or listings keep serving the
+identity of a version that is no longer live.
+
+The subtlety is the cleared field: the adapters read None as "leave this
+column alone", so projecting only the non-None fields leaves the PREVIOUS
+version's description and metadata on the row.
+"""
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from agno.db.base import ComponentType
+from agno.db.sqlite import SqliteDb
+from agno.os.routers.components import get_components_router
+from agno.os.settings import AgnoAPISettings
+
+
+@pytest.fixture
+def db(tmp_path):
+    return SqliteDb(id="rollback-db", db_file=str(tmp_path / "rollback.db"))
+
+
+@pytest.fixture
+def client(db):
+    app = FastAPI()
+    app.include_router(get_components_router(os_db=db, settings=AgnoAPISettings()))
+    return TestClient(app)
+
+
+@pytest.fixture
+def two_versions(db):
+    """v1 clears both fields explicitly; v2 carries a description and metadata."""
+    db.create_component_with_config(
+        component_id="roller",
+        component_type=ComponentType.AGENT,
+        name="roller",
+        config={"name": "roller", "description": ""},
+        stage="published",
+    )
+    db.upsert_config(
+        "roller",
+        config={"name": "roller v2", "description": "the second one", "metadata": {"tier": "gold"}},
+        stage="published",
+    )
+    db.set_current_version("roller", version=2)
+    return "roller"
+
+
+class TestRollingBackToABarerVersion:
+    def test_the_description_the_new_live_version_lacks_is_cleared(self, client, db, two_versions):
+        r = client.patch(f"/components/{two_versions}", json={"current_version": 1})
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert not db.get_component(two_versions).get("description")
+
+    def test_the_metadata_the_new_live_version_lacks_is_left_alone(self, client, db, two_versions):
+        """Metadata follows the adapter's publish rule: projected only when the
+        rolled-to version actually carries some."""
+        client.patch(f"/components/{two_versions}", json={"current_version": 1})
+        assert db.get_component(two_versions)["metadata"] == {"tier": "gold"}
+
+    def test_the_name_falls_back_rather_than_emptying(self, client, db, two_versions):
+        client.patch(f"/components/{two_versions}", json={"current_version": 1})
+        assert db.get_component(two_versions)["name"] == "roller"
+
+    def test_rolling_forward_still_projects_the_richer_version(self, client, db, two_versions):
+        client.patch(f"/components/{two_versions}", json={"current_version": 1})
+        client.patch(f"/components/{two_versions}", json={"current_version": 2})
+        row = db.get_component(two_versions)
+        assert row["description"] == "the second one"
+        assert row["metadata"] == {"tier": "gold"}
+
+    def test_a_field_set_by_the_same_request_still_wins(self, client, db, two_versions):
+        r = client.patch(f"/components/{two_versions}", json={"current_version": 1, "description": "explicit"})
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert db.get_component(two_versions)["description"] == "explicit"
+
+
+class TestRowOnlyFieldsSurviveAPointerMove:
+    """description and metadata are also first-class columns, set through
+    POST/PATCH /components and never written into any config. A projection
+    that read "absent from the config" as "cleared" destroyed them on the
+    next pointer move, with no version to restore them from.
+    """
+
+    @pytest.fixture
+    def row_only(self, client, db):
+        r = client.post(
+            "/components",
+            json={
+                "name": "Invoices",
+                "component_type": "agent",
+                "description": "Handles invoices",
+                "metadata": {"team": "finance"},
+                "config": {"name": "Invoices"},
+                "stage": "published",
+            },
+        )
+        assert r.status_code == 201, r.text
+        component_id = r.json()["component_id"]
+        db.upsert_config(component_id, config={"name": "Invoices"}, stage="published")
+        return component_id
+
+    def test_the_description_survives_a_pointer_move(self, client, db, row_only):
+        assert client.patch(f"/components/{row_only}", json={"current_version": 1}).status_code == 200
+        assert db.get_component(row_only)["description"] == "Handles invoices"
+
+    def test_the_metadata_survives_a_pointer_move(self, client, db, row_only):
+        client.patch(f"/components/{row_only}", json={"current_version": 1})
+        assert db.get_component(row_only)["metadata"] == {"team": "finance"}
+
+    def test_the_set_current_route_agrees(self, client, db, row_only):
+        assert client.post(f"/components/{row_only}/configs/1/set-current").status_code == 200
+        row = db.get_component(row_only)
+        assert row["description"] == "Handles invoices"
+        assert row["metadata"] == {"team": "finance"}

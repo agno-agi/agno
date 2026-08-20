@@ -280,6 +280,17 @@ SCHEDULE_TABLE_SCHEMA = {
     "locked_by": {"type": String, "nullable": True},
     "locked_at": {"type": BigInteger, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
+    # Which control plane manages this row ("studio" for builder-created ones)
+    # plus the exact component target and writing-run provenance. Nullable so
+    # legacy rows need only the ALTERs in the v3 migration.
+    "managed_by": {"type": String, "nullable": True, "index": True},
+    "target_type": {"type": String, "nullable": True},
+    "target_id": {"type": String, "nullable": True, "index": True},
+    "created_by_run_id": {"type": String, "nullable": True},
+    "created_by_session_id": {"type": String, "nullable": True},
+    "updated_by_run_id": {"type": String, "nullable": True},
+    "updated_by_session_id": {"type": String, "nullable": True},
+    "disabled_reason": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [

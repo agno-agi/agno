@@ -1,3 +1,3 @@
-from agno.registry.registry import Registry
+from agno.registry.registry import Registry, ToolSource
 
-__all__ = ["Registry"]
+__all__ = ["Registry", "ToolSource"]
