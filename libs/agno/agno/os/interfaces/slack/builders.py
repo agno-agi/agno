@@ -39,6 +39,7 @@ from agno.os.interfaces.slack.types import (
     RowActionContext,
     RowTransformResult,
     block_to_dict,
+    sanitize_mrkdwn_text,
     tool_args,
     tool_name,
     truncate,
@@ -48,24 +49,6 @@ from agno.utils.serialize import json_serializer
 
 # Slack caps messages at 50 blocks
 MAX_MESSAGE_BLOCKS = 50
-
-
-# Untrusted values are embedded in Slack inline code spans: a backtick closes the span,
-# a newline exits it (inline code does not span lines), and <...> becomes a Slack control
-# sequence once outside the span. Swap each for an inert lookalike / visible escape.
-_CODE_SPAN_INERT = str.maketrans(
-    {
-        "`": "ˋ",  # modifier letter grave accent
-        "<": "‹",  # single left-pointing angle quotation mark
-        ">": "›",  # single right-pointing angle quotation mark
-        "\r": "\\r",
-        "\n": "\\n",
-    }
-)
-
-
-def inert_code_span_text(text: str) -> str:
-    return text.translate(_CODE_SPAN_INERT)
 
 
 # Formats tool arg values for display in HITL approval cards; strings pass through, others
@@ -78,7 +61,7 @@ def render_arg_value(value: Any) -> str:
             rendered = json.dumps(value, default=json_serializer)
         except (TypeError, ValueError):
             rendered = str(value)
-    return inert_code_span_text(rendered)
+    return sanitize_mrkdwn_text(rendered)
 
 
 # --- Type detection helpers ---
@@ -208,7 +191,7 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
 
     # Format args as bullet points in body (not subtitle which truncates). Arg keys are
     # model-derived and sit outside the code span, so inert them too.
-    body_lines = [f"• {inert_code_span_text(str(k))}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
+    body_lines = [f"• {sanitize_mrkdwn_text(str(k))}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
     body_text = "\n".join(body_lines) if body_lines else "_(no arguments)_"
     # Slack Block Kit section text has ~200 char limit; truncate to prevent silent card rejection
     body_text = truncate(body_text, 200)
@@ -590,7 +573,7 @@ def response_blocks(
         value = _extract_input_value(element, submitted)
         # Labels round-trip through Slack from the input schema (may be model-derived)
         # and sit outside the code span, so inert them too.
-        submissions.append(f"• {inert_code_span_text(label)}: `{inert_code_span_text(value)}`")
+        submissions.append(f"• {sanitize_mrkdwn_text(label)}: `{sanitize_mrkdwn_text(value)}`")
 
     if not submissions:
         return preserved

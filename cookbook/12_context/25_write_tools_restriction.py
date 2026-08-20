@@ -27,12 +27,12 @@ from __future__ import annotations
 import asyncio
 
 from agno.agent import Agent
-from agno.context.gmail import GmailContextProvider
 from agno.context.calendar import GoogleCalendarContextProvider
 from agno.context.database import DatabaseContextProvider
+from agno.context.gmail import GmailContextProvider
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.gmail import GmailTools
 from agno.tools.google.calendar import GoogleCalendarTools
+from agno.tools.google.gmail import GmailTools
 from agno.tools.postgres import PostgresTools
 
 # ---------------------------------------------------------------------------
@@ -198,15 +198,11 @@ async def demo_with_timeout():
         query_timeout=30.0,
     )
 
-    agent = Agent(
-        model=OpenAIResponses(id="gpt-5.4"),
-        tools=gmail.get_tools(),
-        instructions=gmail.instructions(),
-        markdown=True,
-    )
-
     print("\n--- Draft-only + 30s timeout ---\n")
-    print("If the query takes >30s, it will timeout with an error message.")
+    print("Gmail provider configured with:")
+    print("  - write_tools: draft-only (no send)")
+    print("  - query_timeout: 30s")
+    print("  - Tools available:", [t.__name__ for t in gmail.get_tools()])
 
 
 # ---------------------------------------------------------------------------
