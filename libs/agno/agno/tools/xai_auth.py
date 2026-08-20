@@ -1,7 +1,6 @@
 import json
 from inspect import iscoroutinefunction
 from os import getenv
-from time import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import httpx
@@ -134,7 +133,7 @@ class XAIAuth(Toolkit):
 
         self._stash(
             user_id,
-            {"device_code": info.device_code, "interval": info.interval, "deadline": time() + info.expires_in},
+            {"device_code": info.device_code, "interval": info.interval},
         )
         return json.dumps(
             {
@@ -215,7 +214,7 @@ class XAIAuth(Toolkit):
 
         await self._astash(
             user_id,
-            {"device_code": info.device_code, "interval": info.interval, "deadline": time() + info.expires_in},
+            {"device_code": info.device_code, "interval": info.interval},
         )
         return json.dumps(
             {

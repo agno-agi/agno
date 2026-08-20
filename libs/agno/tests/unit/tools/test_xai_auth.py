@@ -206,7 +206,6 @@ def test_sign_in_stashes_the_pending_login_encrypted_under_the_requester(endpoin
     stash = _stash(sqlite_db, "u1", encryption_key)
     assert stash["device_code"] == "device-code-1"
     assert stash["interval"] == 5
-    assert stash["deadline"] > 0
     # The pending row belongs to the requester, never to the deployment slot
     assert sqlite_db.get_auth_token("xai", "", PENDING_SERVICE) is None
 
@@ -589,7 +588,7 @@ def test_a_seeded_pending_row_from_another_process_completes_the_login(
             "user_id": "u1",
             "service": PENDING_SERVICE,
             "token_data": encrypt_dict(
-                {"device_code": "device-code-1", "interval": 5, "deadline": 1_000_000.0},
+                {"device_code": "device-code-1", "interval": 5},
                 key=encryption_key,
             ),
             "granted_scopes": [],
@@ -734,7 +733,9 @@ async def test_an_async_terminal_poll_reports_the_reason_and_drops_the_pending_l
 
     payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
 
-    assert payload["error"].startswith("Sign-in failed:")
+    assert payload == {
+        "error": "Sign-in failed: SuperGrok sign-in was denied in the browser. Start again with sign_in_with_supergrok."
+    }
     assert sqlite_db.get_auth_token("xai", "u1", PENDING_SERVICE) is None
 
 

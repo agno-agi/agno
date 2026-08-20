@@ -241,13 +241,13 @@ class XAITokenManager:
             return DevicePollResult(status=DevicePollStatus.success, interval=interval, token_data=token_data)
         return self._classify_poll_error(response, interval)
 
-    def poll_for_token(self, device_code: str, interval: int, deadline: float, user_id: str = "") -> Dict[str, Any]:
+    def poll_for_token(self, device_code: str, interval: int, deadline: float) -> Dict[str, Any]:
         """Poll the token endpoint until the user approves, per RFC 8628 section 3.5."""
         current_interval = interval
         while True:
             if self.now_fn() > deadline:
                 raise ModelAuthenticationError(_EXPIRED_LOGIN_MESSAGE)
-            result = self.poll_once(device_code, current_interval, user_id)
+            result = self.poll_once(device_code, current_interval)
             if result.status == DevicePollStatus.success and result.token_data is not None:
                 return result.token_data
             if result.status in (DevicePollStatus.denied, DevicePollStatus.expired) and result.message is not None:
@@ -255,15 +255,13 @@ class XAITokenManager:
             current_interval = result.interval
             time.sleep(current_interval)
 
-    async def apoll_for_token(
-        self, device_code: str, interval: int, deadline: float, user_id: str = ""
-    ) -> Dict[str, Any]:
+    async def apoll_for_token(self, device_code: str, interval: int, deadline: float) -> Dict[str, Any]:
         """Poll the token endpoint until the user approves, per RFC 8628 section 3.5."""
         current_interval = interval
         while True:
             if self.now_fn() > deadline:
                 raise ModelAuthenticationError(_EXPIRED_LOGIN_MESSAGE)
-            result = await self.apoll_once(device_code, current_interval, user_id)
+            result = await self.apoll_once(device_code, current_interval)
             if result.status == DevicePollStatus.success and result.token_data is not None:
                 return result.token_data
             if result.status in (DevicePollStatus.denied, DevicePollStatus.expired) and result.message is not None:
