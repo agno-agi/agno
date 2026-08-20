@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from os import getenv
 from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 from uuid import uuid4
@@ -307,8 +307,13 @@ class OpenAIChat(Model):
     def from_dict(cls, data: Dict[str, Any]) -> "OpenAIChat":
         """
         Create an OpenAIChat model from a dictionary.
+
+        Only fields the dataclass declares reach the constructor, so a payload carrying an
+        unrecognized key (e.g. one written by a different agno version) still rebuilds instead
+        of raising.
         """
-        return cls(**data)
+        allowed = {field.name for field in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
 
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
