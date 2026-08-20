@@ -89,6 +89,25 @@ class TestAgentOSSync:
         assert registry.get_workflow("wf-dup") is first
         assert any("multiple distinct workflows share id" in r.message for r in caplog.records)
 
+    def test_the_duplicate_id_warning_names_both_surfaces(self, db, caplog):
+        """Nothing is discarded: the registry keeps one object and the OS keeps
+        serving the other, so one id answers differently per surface."""
+        first = _wf("wf-dup", "First")
+        second = _wf("wf-dup", "Second")
+        registry = Registry(name="R", workflows=[first])
+
+        with caplog.at_level("WARNING"):
+            agent_os = AgentOS(workflows=[second], db=db, registry=registry)
+
+        # Both surfaces already disagree before the reword; the assertions are
+        # the regression guard for what the message now claims.
+        assert registry.get_workflow("wf-dup") is first
+        assert agent_os.workflows is not None and agent_os.workflows[0] is second
+        messages = [r.message for r in caplog.records if "multiple distinct workflows share id" in r.message]
+        assert messages, [r.message for r in caplog.records]
+        assert any("registry keeps the first" in message for message in messages)
+        assert any("keeps serving the one it was constructed with" in message for message in messages)
+
     def test_a_workflow_without_an_id_is_skipped(self, db):
         # AgentOS mints ids for the workflows it is constructed with, so the
         # id-less case only reaches _populate_registry through later mutation.

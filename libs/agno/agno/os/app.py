@@ -908,8 +908,11 @@ class AgentOS:
                 if existing_agent is not None:
                     if existing_agent is not agent:
                         log_warning(
-                            f"Registry: multiple distinct agents share id '{agent_id}'; keeping the "
-                            "first. Give them distinct ids to avoid one shadowing the other."
+                            f"Registry: multiple distinct agents share id '{agent_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
                         )
                     continue
                 self.registry.agents.append(agent)
@@ -925,8 +928,11 @@ class AgentOS:
                 if existing_team is not None:
                     if existing_team is not team:
                         log_warning(
-                            f"Registry: multiple distinct teams share id '{team_id}'; keeping the "
-                            "first. Give them distinct ids to avoid one shadowing the other."
+                            f"Registry: multiple distinct teams share id '{team_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
                         )
                     continue
                 self.registry.teams.append(team)
@@ -944,8 +950,11 @@ class AgentOS:
                 if existing_workflow is not None:
                     if existing_workflow is not workflow:
                         log_warning(
-                            f"Registry: multiple distinct workflows share id '{workflow_id}'; keeping the "
-                            "first. Give them distinct ids to avoid one shadowing the other."
+                            f"Registry: multiple distinct workflows share id '{workflow_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
                         )
                     continue
                 self.registry.workflows.append(workflow)
