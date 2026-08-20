@@ -78,14 +78,31 @@ python cookbook/90_models/xai/oauth_device_login.py
 
 ### 10. Run Agent with SuperGrok sign-in from chat
 
-Sign in from inside the conversation instead of the terminal: the agent hands
-the user an approval link on one turn and finishes the sign-in on the next.
-Use this for chatbots and web UIs. Same encryption key as above:
+Sign in from inside the conversation instead of the terminal: a sign-in agent
+hands the user an approval link on one turn and finishes the sign-in on the
+next, and a Grok agent then answers on the subscription. Two agents, because an
+agent cannot sign in to the model it is already running on - so the sign-in
+agent runs on a model that does not need the SuperGrok session. Use this for
+chatbots and web UIs.
 
 ```shell
+export OPENAI_API_KEY=***
 export XAI_TOKEN_ENCRYPTION_KEY=***
 ```
 
 ```shell
 python cookbook/90_models/xai/oauth_chat_signin.py
+```
+
+### 11. Run Agents with per-user SuperGrok sign-in
+
+Several people share one deployment and each spends their own subscription. The
+token is stored under the user_id the run carries, and the model resolves that
+user's token per request. A user who has not signed in falls back to the
+deployment's own session; `require_user_token=True` on the model refuses that
+fallback and requires everyone to sign in first. Per-user tokens need a
+database - one token file cannot hold a session each. Same two keys as above:
+
+```shell
+python cookbook/90_models/xai/oauth_multi_user.py
 ```
