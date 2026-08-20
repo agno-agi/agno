@@ -117,6 +117,27 @@ class OpenRouterResponses(OpenResponses):
 
         return client_params
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the model, including the dynamic-routing fallback candidates.
+
+        The base `to_dict` drops `models`, so a model configured with fallbacks would rebuild
+        pinned to its primary `id` alone, losing the routing safety net. `from_dict` restores it.
+        """
+        model_dict = super().to_dict()
+        if self.models is not None:
+            model_dict["models"] = self.models
+        return model_dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "OpenRouterResponses":
+        """Rebuild from a `to_dict` payload, restoring the routing candidates it carried.
+
+        Only an explicit allowlist reaches the constructor, so an unexpected key (or a stray
+        credential) in the payload cannot.
+        """
+        allowed = {"id", "name", "provider", "models"}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
+
     def get_request_params(
         self,
         messages: Optional[List[Message]] = None,
