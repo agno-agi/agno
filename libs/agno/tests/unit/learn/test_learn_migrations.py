@@ -759,3 +759,99 @@ class TestTheDestinationComesFromTheFreshRow:
         assert report["rekeyed"] == [legacy_id]
         assert _user_key("acme", "company", ALICE) in db.rows
         assert db.rows[_user_key("acme", "company", ALICE)]["user_id"] == ALICE
+
+
+class TestFoldingIntoAnExistingRow:
+    """The row already on the target key is the newer state. It wins every
+    conflict, its ordering is preserved, and nothing it carries is dropped."""
+
+    def _fold(self, db: FakeLearningDb, source: Dict[str, Any], target: Dict[str, Any], **kw: Any) -> str:
+        legacy_id = _seed_legacy(db, "acme", ALICE, source)
+        db.upsert_learning(
+            id=_user_key("acme", "company", ALICE),
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+            namespace="user",
+            user_id=ALICE,
+            content=target,
+            **kw,
+        )
+        return legacy_id
+
+    @MODES
+    async def test_the_newer_rows_facts_end_up_last(self, use_async: bool) -> None:
+        """The store renders the last N facts as the newest, so the source's go in
+        front. Appending them instead buries every fact the newer row holds."""
+        db = FakeLearningDb()
+        source = {
+            **_clean_content("acme", ALICE),
+            "facts": [{"id": f"old{i}", "content": f"old {i}"} for i in range(10)],
+        }
+        target = {**_clean_content("acme", ALICE), "facts": [{"id": "new0", "content": "new 0"}]}
+        self._fold(db, source, target)
+
+        await _rekey(db, use_async, dry_run=False)
+
+        facts = db.rows[_user_key("acme", "company", ALICE)]["content"]["facts"]
+        assert [f["id"] for f in facts][-1] == "new0"
+
+    @MODES
+    async def test_a_fact_recorded_in_both_rows_is_kept_once(self, use_async: bool) -> None:
+        """The two rows were written independently so their fact ids never match.
+        Facts key on their normalised content, the way the store's own duplicate
+        check does."""
+        db = FakeLearningDb()
+        source = {**_clean_content("acme", ALICE), "facts": [{"id": "a1", "content": "Uses PostgreSQL"}]}
+        target = {**_clean_content("acme", ALICE), "facts": [{"id": "b9", "content": "uses   postgresql"}]}
+        self._fold(db, source, target)
+
+        await _rekey(db, use_async, dry_run=False)
+
+        facts = db.rows[_user_key("acme", "company", ALICE)]["content"]["facts"]
+        assert len(facts) == 1
+
+    @MODES
+    async def test_the_newer_rows_plain_string_facts_survive(self, use_async: bool) -> None:
+        """A fact is not always a dict. The store renders a bare string, so a fold
+        that keeps only dicts destroys the newer row's data."""
+        db = FakeLearningDb()
+        source = {**_clean_content("acme", ALICE), "facts": [{"id": "s", "content": "legacy"}]}
+        target = {**_clean_content("acme", ALICE), "facts": ["Uses PostgreSQL", "API is OAuth2"]}
+        self._fold(db, source, target)
+
+        await _rekey(db, use_async, dry_run=False)
+
+        facts = db.rows[_user_key("acme", "company", ALICE)]["content"]["facts"]
+        assert "Uses PostgreSQL" in facts and "API is OAuth2" in facts
+
+    @MODES
+    async def test_a_field_only_the_older_row_carries_survives(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        source = {**_clean_content("acme", ALICE), "internal_ref": "TICKET-42"}
+        self._fold(db, source, _clean_content("acme", ALICE))
+
+        await _rekey(db, use_async, dry_run=False)
+
+        assert db.rows[_user_key("acme", "company", ALICE)]["content"]["internal_ref"] == "TICKET-42"
+
+    @MODES
+    async def test_the_newer_rows_metadata_survives(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        self._fold(db, _clean_content("acme", ALICE), _clean_content("acme", ALICE), metadata={"source": "crm-sync"})
+
+        await _rekey(db, use_async, dry_run=False)
+
+        assert db.rows[_user_key("acme", "company", ALICE)]["metadata"] == {"source": "crm-sync"}
+
+    @MODES
+    async def test_a_collection_that_is_not_a_list_is_failed_and_left_alone(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        source = {**_clean_content("acme", ALICE), "facts": {"f": "x"}}
+        legacy_id = self._fold(db, source, _clean_content("acme", ALICE))
+
+        report = await _rekey(db, use_async, dry_run=False)
+
+        assert report["failed"] == [legacy_id]
+        assert report["merged"] == []
+        assert legacy_id in db.rows

@@ -37,6 +37,7 @@ default "global" namespace and custom namespaces keep their keys unchanged.
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.learn.stores.entity_memory import _normalize_fact_text
 from agno.learn.utils import _parse_json, build_learning_id, legacy_entity_learning_id, same_user
 from agno.utils.log import log_info, log_warning
 
@@ -145,28 +146,58 @@ async def _adelete_confirmed(db: AsyncBaseDb, learning_id: str) -> bool:
     return await db.get_learning_by_id(learning_id) is None
 
 
+def _entry_key(field: str, entry: Any) -> Any:
+    """The identity the store treats a collection entry by.
+
+    Facts key on their normalised content, the same fold the store's own
+    duplicate check applies, because the two rows were written independently and
+    their fact ids never match. Events and relationships key on the tuples the
+    store's own add paths are idempotent over. An entry that is not a dict is a
+    bare string in every shape the store renders, so it keys on its own text.
+    """
+    if not isinstance(entry, dict):
+        return _normalize_fact_text(str(entry))
+    if field == "facts":
+        content = entry.get("content")
+        return _normalize_fact_text(str(content)) if content else entry.get("id")
+    if field == "events":
+        return (entry.get("content"), entry.get("date"))
+    return (entry.get("entity_id"), entry.get("entity_type"), entry.get("relation"), entry.get("direction"))
+
+
+def _collection(content: Dict[str, Any], field: str) -> List[Any]:
+    """A content collection as a list.
+
+    Raises TypeError when the field holds something the store would not render
+    as a collection at all. Such a row cannot be merged without dropping it, and
+    the caller reports it rather than writing a merge that loses data.
+    """
+    entries = content.get(field)
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        raise TypeError(f"{field} is not a list")
+    return list(entries)
+
+
 def _merge_into_target(source: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
     """Union a pre-3.0 row's content into the row that already holds its key.
 
     A row can already sit on the target key when the application wrote to the
     entity before this ran. That row is the newer state and wins every conflict;
-    the source only fills gaps. Collections union on the identity the store keys
-    them by: a fact by its id or its content, an event by its content and date,
-    a relationship by its endpoint, type, relation and direction.
+    the source only fills gaps, including any field this function does not know
+    by name.
+
+    Collections keep the store's ordering convention, where later in the list is
+    more recent: the source's entries go in front of the target's, so a context
+    window that renders the last N entries renders the newer ones.
     """
-    merged = dict(target)
-    for field, key in (
-        ("facts", lambda i: i.get("id") or i.get("content")),
-        ("events", lambda i: (i.get("content"), i.get("date"))),
-        ("relationships", lambda i: (i.get("entity_id"), i.get("entity_type"), i.get("relation"), i.get("direction"))),
-    ):
-        base = [i for i in (target.get(field) or []) if isinstance(i, dict)]
-        seen = {key(i) for i in base}
-        for item in source.get(field) or []:
-            if isinstance(item, dict) and key(item) not in seen:
-                base.append(item)
-                seen.add(key(item))
-        merged[field] = base
+    merged = {**source, **target}
+    for field in ("facts", "events", "relationships"):
+        target_entries = _collection(target, field)
+        seen = {_entry_key(field, entry) for entry in target_entries}
+        carried = [entry for entry in _collection(source, field) if _entry_key(field, entry) not in seen]
+        merged[field] = carried + target_entries
 
     if not merged.get("description") and source.get("description"):
         merged["description"] = source["description"]
@@ -372,6 +403,7 @@ def rekey_user_entity_learnings(
                     )
                     continue
                 fresh = reread
+            metadata = _parse_json(fresh.get("metadata"))
             new_id = _new_id_for(fresh)
             target = db.get_learning_by_id(new_id)
             if dry_run:
@@ -386,6 +418,7 @@ def rekey_user_entity_learnings(
                     )
                     continue
                 content = _merge_into_target(content, target_content)
+                metadata = _parse_json(target.get("metadata")) or metadata
                 bucket = "merged"
             db.upsert_learning(
                 id=new_id,
@@ -398,7 +431,7 @@ def rekey_user_entity_learnings(
                 namespace="user",
                 entity_id=fresh.get("entity_id"),
                 entity_type=fresh.get("entity_type"),
-                metadata=_parse_json(fresh.get("metadata")),
+                metadata=metadata,
             )
             if db.get_learning_by_id(new_id) is None:
                 buckets["failed"].append(old_id)
@@ -489,6 +522,7 @@ async def arekey_user_entity_learnings(
                     )
                     continue
                 fresh = reread
+            metadata = _parse_json(fresh.get("metadata"))
             new_id = _new_id_for(fresh)
             target = await db.get_learning_by_id(new_id)
             if dry_run:
@@ -503,6 +537,7 @@ async def arekey_user_entity_learnings(
                     )
                     continue
                 content = _merge_into_target(content, target_content)
+                metadata = _parse_json(target.get("metadata")) or metadata
                 bucket = "merged"
             await db.upsert_learning(
                 id=new_id,
@@ -515,7 +550,7 @@ async def arekey_user_entity_learnings(
                 namespace="user",
                 entity_id=fresh.get("entity_id"),
                 entity_type=fresh.get("entity_type"),
-                metadata=_parse_json(fresh.get("metadata")),
+                metadata=metadata,
             )
             if await db.get_learning_by_id(new_id) is None:
                 buckets["failed"].append(old_id)
