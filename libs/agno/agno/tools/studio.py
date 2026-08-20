@@ -527,12 +527,15 @@ class StudioTools(Toolkit):
 
     @property
     def db(self) -> Optional["BaseDb"]:
-        if self._db is None:
-            # The registry states which db backs the catalog; an OS whose own
-            # db cannot serve it says so, and Studio stays unconfigured rather
-            # than adopting a component-private db.
-            self._db = self.registry.resolve_component_db()
-        return self._db
+        if self._db is not None:
+            return self._db
+        # Resolved on every access, never memoized. Studio is built before
+        # AgentOS, so a single read before the OS declares its catalog db -- a
+        # log line, a debug print, a health check -- would otherwise pin this
+        # toolkit to whatever registry.dbs held at that moment for the life of
+        # the process, and the declaration that follows would do nothing. An
+        # explicitly passed db is still authoritative and still short-circuits.
+        return self.registry.resolve_component_db()
 
     @db.setter
     def db(self, value: Optional["BaseDb"]) -> None:

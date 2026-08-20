@@ -324,11 +324,12 @@ class StudioRunnerTools(Toolkit):
 
     @property
     def db(self) -> Optional["BaseDb"]:
-        if self._db is None and self.registry is not None:
-            # Same resolution as StudioTools: the registry names the catalog
-            # db, and a declared None means this OS has none to give.
-            self._db = self.registry.resolve_component_db()
-        return self._db
+        if self._db is not None or self.registry is None:
+            return self._db
+        # Resolved on every access, never memoized - see the twin on
+        # StudioTools: a read taken before AgentOS declares its catalog db
+        # would otherwise pin this toolkit to the wrong db permanently.
+        return self.registry.resolve_component_db()
 
     @db.setter
     def db(self, value: Optional["BaseDb"]) -> None:

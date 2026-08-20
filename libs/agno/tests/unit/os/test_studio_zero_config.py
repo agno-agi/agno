@@ -293,3 +293,105 @@ class TestTheCatalogDbIsNamedNotGuessed:
         registry = Registry(name="R", models=[_model()], dbs=[db])
 
         assert StudioTools(registry=registry).db is db
+
+
+class TestTheDeclarationIsBinding:
+    """Naming the catalog db only helps if nothing can pre-empt or bypass it."""
+
+    def _studio(self, registry):
+        studio = StudioTools(registry=registry)
+        return studio, Agent(id="builder", name="Builder", model=_model(), tools=[studio])
+
+    def test_a_read_before_agentos_does_not_pin_the_wrong_db(self, tmp_path):
+        registry = Registry(name="R", models=[_model()])
+        private = SqliteDb(id="agent-private", db_file=str(tmp_path / "private.db"))
+        registry.add_db(private)
+        studio, builder = self._studio(registry)
+
+        # Any read at all -- a log line, a debug print, a health check.
+        assert studio.db is private
+
+        os_db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        AgentOS(agents=[builder], registry=registry, db=os_db)
+
+        # The declaration must win over the earlier read, not lose to it.
+        assert studio.db is os_db
+
+    def test_an_agentos_with_no_db_refuses_instead_of_adopting_a_private_one(self, tmp_path, caplog):
+        registry = Registry(name="R", models=[_model()])
+        private = SqliteDb(id="builder-private", db_file=str(tmp_path / "private.db"))
+        studio = StudioTools(registry=registry)
+        builder = Agent(id="builder", name="Builder", model=_model(), db=private, tools=[studio])
+
+        with caplog.at_level("WARNING"):
+            AgentOS(agents=[builder], registry=registry)  # no db=
+
+        # Writing to a component-private db would report success while the
+        # catalog no OS surface serves fills up silently.
+        assert studio.db is None
+        assert _loads(studio.create_agent(name="X", instructions="y"))["error"]["code"] == "db_not_configured"
+        assert any("no" in r.message and "component catalog" in r.message for r in caplog.records)
+
+    def test_an_explicit_db_still_wins_over_the_declaration(self, tmp_path):
+        registry = Registry(name="R", models=[_model()])
+        explicit = SqliteDb(id="explicit", db_file=str(tmp_path / "explicit.db"))
+        os_db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        studio = StudioTools(registry=registry, db=explicit)
+        builder = Agent(id="builder", name="Builder", model=_model(), tools=[studio])
+
+        AgentOS(agents=[builder], registry=registry, db=os_db)
+
+        assert studio.db is explicit
+
+    def test_the_embedded_runner_resolves_the_same_way(self, tmp_path):
+        registry = Registry(name="R", models=[_model()])
+        private = SqliteDb(id="agent-private", db_file=str(tmp_path / "private.db"))
+        registry.add_db(private)
+        studio, builder = self._studio(registry)
+        assert studio._runner_tools.db is private  # pre-empting read on the twin
+
+        os_db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        AgentOS(agents=[builder], registry=registry, db=os_db)
+
+        assert studio._runner_tools.db is os_db
+
+    def test_a_pre_read_does_not_split_the_builder_from_its_scheduler(self, tmp_path):
+        """All three surfaces must land on the same db, whenever they were read.
+
+        The toolkit, its embedded runner and its embedded scheduler each
+        resolve independently; a read taken before AgentOS declared the
+        catalog db used to leave them on three different databases.
+        """
+        registry = Registry(name="R", models=[_model()])
+        registry.add_db(SqliteDb(id="agent-private", db_file=str(tmp_path / "private.db")))
+        studio = StudioTools(registry=registry, schedules=True)
+        builder = Agent(id="builder", name="Builder", model=_model(), tools=[studio])
+
+        # Read every surface BEFORE the OS exists, building each one's cache.
+        assert studio.db is not None
+        assert studio._scheduler_tools is not None
+        studio._scheduler_tools.manager  # noqa: B018 - builds the manager on the pre-declaration db
+
+        os_db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        AgentOS(agents=[builder], registry=registry, db=os_db)
+
+        assert studio.db is os_db
+        assert studio._runner_tools.db is os_db
+        assert studio._scheduler_tools.manager.db is os_db
+
+    def test_an_explicitly_assigned_scheduler_manager_is_never_rebuilt(self, tmp_path):
+        from agno.scheduler.manager import ScheduleManager
+
+        registry = Registry(name="R", models=[_model()])
+        studio = StudioTools(registry=registry, schedules=True)
+        assert studio._scheduler_tools is not None
+        pinned = ScheduleManager(db=SqliteDb(id="pinned", db_file=str(tmp_path / "pinned.db")))
+        studio._scheduler_tools.manager = pinned
+
+        AgentOS(
+            agents=[Agent(id="builder", name="Builder", model=_model(), tools=[studio])],
+            registry=registry,
+            db=SqliteDb(id="os-db", db_file=str(tmp_path / "os.db")),
+        )
+
+        assert studio._scheduler_tools.manager is pinned

@@ -841,15 +841,15 @@ class AgentOS:
         if self.registry is None:
             self.registry = Registry()
 
-        # Name the db behind the component catalog outright. A Studio toolkit
-        # given no db of its own resolves this, rather than guessing at the
-        # head of registry.dbs: that list is whatever the component tree
-        # happened to carry, so guessing can bind Studio to an agent-private
-        # session db and write the catalog where no OS surface reads it. When
-        # this OS has no db that can serve the catalog, the declaration says
-        # so, and Studio refuses instead of adopting the wrong one.
-        if self.db is not None:
-            self.registry.declare_component_db(self.db)
+        # Name the db behind the component catalog outright, ALWAYS - including
+        # when there is none. A Studio toolkit given no db of its own resolves
+        # this rather than guessing at the head of registry.dbs: that list is
+        # whatever the component tree happened to carry, so guessing binds
+        # Studio to an agent-private session db and writes the catalog where no
+        # OS surface reads it. Declaring only when self.db exists would leave
+        # exactly that guess in place for an OS with no db, which is the wiring
+        # most likely to have one - a builder agent carrying its own.
+        self.registry.declare_component_db(self.db)
 
         # The catalog db also goes first in registry.dbs, so rehydration that
         # walks the list meets it before any component-private db. Ordering is
@@ -1010,14 +1010,25 @@ class AgentOS:
             for tool in tools:
                 if not isinstance(tool, (StudioTools, StudioRunnerTools)):
                     continue
+                component_label = getattr(component, "id", None) or getattr(component, "name", None)
                 tool_registry = getattr(tool, "registry", None)
                 if tool_registry is not None and tool_registry is not self.registry:
-                    component_label = getattr(component, "id", None) or getattr(component, "name", None)
                     log_warning(
                         f"Component '{component_label}' carries {type(tool).__name__} bound to a different "
                         "Registry than this AgentOS populates: the OS's code-defined agents, teams, and "
                         "workflows will be invisible to it. Pass that registry to AgentOS (registry=...), "
                         "or construct the toolkit with the OS's registry."
+                    )
+                # No catalog db means every Studio write refuses. Say so here:
+                # the alternative to refusing is adopting a component-private
+                # db and writing a catalog no OS surface serves, and a silent
+                # success is the worse of the two failures.
+                if getattr(tool, "_db", None) is None and self.registry.resolve_component_db() is None:
+                    log_warning(
+                        f"Component '{component_label}' carries {type(tool).__name__} but this AgentOS has no "
+                        "database that can back the component catalog, so every Studio write will answer "
+                        "db_not_configured. Pass a synchronous db to AgentOS (db=...), or give the toolkit "
+                        "its own (StudioTools(db=...))."
                     )
 
     def _populate_registry_managers(self) -> None:
