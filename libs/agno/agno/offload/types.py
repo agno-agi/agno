@@ -26,7 +26,13 @@ class ResultRef:
 
 @dataclass
 class ResultPage:
-    """One bounded page of a stored result."""
+    """One bounded page of a stored result.
+
+    A page ends at a line boundary when it can. When a single line is longer
+    than one page, the page ends inside that line and ``next_start_char`` says
+    where in ``next_start_line`` the next page begins, so every character of
+    a stored result can be read back.
+    """
 
     text: str
     start_line: int
@@ -34,6 +40,7 @@ class ResultPage:
     line_count: int
     truncated: bool
     next_start_line: Optional[int]
+    next_start_char: int = 0
 
 
 @dataclass
@@ -47,6 +54,10 @@ class ResultMatch:
 
     line_number: int
     line: str
+    # Character offset of the match in its line. A line longer than the clip
+    # is shown as a window around the match, and the offset is where to
+    # continue reading with read_result(start_char=...).
+    char_offset: int = 0
 
 
 __all__ = ["NEVER_OFFLOADED_TOOLS", "ResultMatch", "ResultPage", "ResultRef"]

@@ -996,3 +996,77 @@ def test_a_changed_db_rebinds_the_store(db, tmp_path):
     result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
     assert agent.result_store.db is other
     assert other.get_tool_result(result_id) is not None
+
+
+# ------------------------------------------------------------------
+# Session delete reaches the payloads wherever a store put them
+# ------------------------------------------------------------------
+def test_session_delete_cleans_up_a_custom_filesystem(db, tmp_path):
+    from agno.fs import FileSystem
+    from agno.fs.local import LocalFileSystem
+
+    payload_dir = tmp_path / "payloads"
+    settings = ResultStore(fs=FileSystem(backend=LocalFileSystem(root=payload_dir), namespace="tool-results"))
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=settings)
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id)
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    store = agent.result_store
+    assert store.read(result_id).text.startswith("row 1:")
+    files_before = [p for p in payload_dir.rglob("*") if p.is_file()]
+    assert files_before, "the payload went to the custom filesystem"
+
+    db.delete_sessions(session_ids=[session_id])
+    assert store.get_row(result_id) is None
+    assert [p for p in payload_dir.rglob("*") if p.is_file()] == []
+
+
+def test_two_postgres_schemas_do_not_share_or_delete_each_others_payloads(db):
+    from agno.db.postgres import PostgresDb
+
+    if not isinstance(db, PostgresDb):
+        pytest.skip("PostgreSQL only: every schema shares one payload table")
+    schema_a, schema_b = f"{PG_SCHEMA}_a", f"{PG_SCHEMA}_b"
+    db_a = PostgresDb(db_url=PG_URL, db_schema=schema_a)
+    db_b = PostgresDb(db_url=PG_URL, db_schema=schema_b)
+    try:
+        session_id = "shared-session-id"
+        ids = {}
+        for key, tenant_db in (("a", db_a), ("b", db_b)):
+            agent = Agent(model=ScriptedToolModel(), db=tenant_db, tools=[fetch_page], offload_tool_results=True)
+            # The same run and call ids in both schemas, the worst case for a shared payload table.
+            agent.model.calls = 0
+            output = agent.run("go", session_id=session_id)
+            ids[key] = (agent, _tool_messages(output)[0].content.split('id="')[1].split('"')[0])
+        agent_a, rid_a = ids["a"]
+        agent_b, rid_b = ids["b"]
+        assert agent_a.result_store.read(rid_a).text.startswith("row 1:")
+        assert agent_b.result_store.read(rid_b).text.startswith("row 1:")
+
+        db_a.delete_session(session_id=session_id)
+        # Tenant B's payload and index row survive tenant A's delete.
+        assert agent_b.result_store.get_row(rid_b) is not None
+        assert agent_b.result_store.read(rid_b).text.startswith("row 1:")
+        assert agent_a.result_store.get_row(rid_a) is None
+    finally:
+        with db_a.db_engine.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_a}" CASCADE'))
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_b}" CASCADE'))
+
+
+async def test_an_async_db_cascades_payloads_written_by_a_sync_store(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    path = str(tmp_path / "shared.db")
+    sync_db = SqliteDb(db_file=path)
+    agent = Agent(model=ScriptedToolModel(), db=sync_db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id)
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    store = agent.result_store
+    row = store.get_row(result_id)
+
+    async_db = AsyncSqliteDb(db_file=path)
+    await async_db.delete_sessions(session_ids=[session_id])
+    assert store.get_row(result_id) is None
+    assert store._fs_for_namespace(row["namespace"]).read(row["path"]) is None

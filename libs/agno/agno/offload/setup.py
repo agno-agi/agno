@@ -66,11 +66,22 @@ def build_result_store(
         return None
 
     try:
-        store.fs
+        fs = store.fs
     except Exception as e:
         _warn_once(owner, f"Result offloading could not reach the filesystem backend ({e}); offloading is off.")
         return None
 
+    # The db's session delete removes payloads through every filesystem a
+    # store on that db writes to, so a custom filesystem is cleaned up too.
+    registered = getattr(store.db, "tool_result_filesystems", None)
+    if registered is None:
+        registered = []
+        try:
+            store.db.tool_result_filesystems = registered
+        except Exception:
+            registered = None
+    if registered is not None and all(existing.backend is not fs.backend for existing in registered):
+        registered.append(fs)
     return store
 
 

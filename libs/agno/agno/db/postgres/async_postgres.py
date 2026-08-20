@@ -1118,33 +1118,61 @@ class AsyncPostgresDb(AsyncBaseDb):
 
     async def _cascade_tool_results(self, session_ids: List[str]) -> None:
         """Cascade result offloading on session delete: read the index rows,
-        delete their AgentFS payload rows, then the index rows.
+        delete their payloads, then the index rows.
 
-        Best-effort in its own transaction so a cascade failure can never
-        poison or roll back the session delete itself. Payload rows live in
-        the AgentFS table at its defaults (schema "fs", table "agno_fs");
-        each session's payloads occupy their own namespace.
+        Best-effort and outside the session delete, so a cascade failure can
+        never poison or roll back the delete itself. Payloads are removed by
+        the exact (namespace, path) of each index row, through the
+        filesystems result stores registered on this db, or from the AgentFS
+        table at its defaults when no store registered.
         """
         try:
             table = await self._get_table(table_type="tool_results")
             if table is None:
                 return
-            from sqlalchemy import text as sa_text
-
-            async with self.async_session_factory() as sess, sess.begin():
+            async with self.async_session_factory() as sess:
                 result = await sess.execute(
-                    select(table.c.namespace).distinct().where(table.c.session_id.in_(session_ids))
+                    select(table.c.result_id, table.c.namespace, table.c.path).where(
+                        table.c.session_id.in_(session_ids)
+                    )
                 )
-                namespaces = [row[0] for row in result.fetchall()]
-                if not namespaces:
-                    return
-                exists = await sess.execute(sa_text("SELECT to_regclass('fs.agno_fs')"))
-                if exists.scalar() is not None:
-                    for namespace in namespaces:
-                        await sess.execute(sa_text('DELETE FROM "fs".agno_fs WHERE namespace = :ns'), {"ns": namespace})
-                await sess.execute(table.delete().where(table.c.session_id.in_(session_ids)))
+                rows = result.fetchall()
+            if not rows:
+                return
+            filesystems = list(getattr(self, "tool_result_filesystems", []) or [])
+            if filesystems:
+                from agno.fs import FileSystem
+
+                for _, namespace, path in rows:
+                    for fs in filesystems:
+                        try:
+                            await FileSystem(backend=fs.backend, namespace=str(namespace)).adelete(str(path))
+                        except Exception as e:
+                            log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
+            else:
+                async with self.async_session_factory() as sess, sess.begin():
+                    if await self._adefault_payload_table_exists(sess):
+                        for _, namespace, path in rows:
+                            await sess.execute(
+                                text(
+                                    f"DELETE FROM {self._default_payload_table()} WHERE namespace = :ns AND path = :p"
+                                ),
+                                {"ns": str(namespace), "p": str(path)},
+                            )
+            result_ids = [str(row[0]) for row in rows]
+            for start in range(0, len(result_ids), 500):
+                async with self.async_session_factory() as sess, sess.begin():
+                    await sess.execute(table.delete().where(table.c.result_id.in_(result_ids[start : start + 500])))
         except Exception as e:
             log_warning(f"Tool-result cascade on session delete failed: {e}")
+
+    @staticmethod
+    def _default_payload_table() -> str:
+        return '"fs".agno_fs'
+
+    @staticmethod
+    async def _adefault_payload_table_exists(sess: Any) -> bool:
+        return (await sess.execute(text("SELECT to_regclass('fs.agno_fs')"))).scalar() is not None
 
     # -- Tool Results (result offloading index) --
 

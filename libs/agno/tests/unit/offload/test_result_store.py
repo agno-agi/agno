@@ -501,3 +501,90 @@ def test_search_context_lines_are_clamped(store):
 
     assert len(match.line.split("\n")) == 2 * SEARCH_MAX_CONTEXT_LINES + 1
     assert match.line.startswith(f"{100 - SEARCH_MAX_CONTEXT_LINES}: ")
+
+
+# ------------------------------------------------------------------
+# Every character is recoverable, whatever the line shape
+# ------------------------------------------------------------------
+def _read_everything(store, result_id) -> str:
+    out, line, char = [], 1, 0
+    while line is not None:
+        page = store.read(result_id, start_line=line, start_char=char)
+        out.append(page.text)
+        # A continuation inside a line glues without a newline; a new line gets one.
+        if page.next_start_line is not None and not page.next_start_char:
+            out.append("\n")
+        line, char = page.next_start_line, page.next_start_char
+    return "".join(out)
+
+
+def test_a_single_long_line_is_recoverable_in_pieces(store):
+    payload = json.dumps({"items": [{"i": i, "v": "x" * 30} for i in range(3000)]})
+    assert "\n" not in payload and len(payload) > 3 * READ_MAX_CHARS
+    ref = _offload(store, payload)
+    first = store.read(ref.result_id)
+    assert first.truncated is True
+    assert first.next_start_line == 1 and first.next_start_char == READ_MAX_CHARS
+    assert _read_everything(store, ref.result_id) == payload
+
+
+def test_a_long_value_inside_pretty_json_loses_nothing(store):
+    payload = json.dumps({"short": 1, "long": "y" * 30_000, "after": 2}, indent=2)
+    ref = _offload(store, payload)
+    assert _read_everything(store, ref.result_id) == payload
+
+
+def test_a_page_boundary_never_drops_the_tail_of_a_line(store):
+    payload = "\n".join(f"{i:05d} " + "z" * 194 for i in range(1, 501))  # 200-char lines
+    ref = _offload(store, payload)
+    assert _read_everything(store, ref.result_id) == payload
+
+
+def test_end_line_below_start_line_is_an_empty_page_with_no_self_reference(store):
+    ref = _offload(store, "\n".join(f"line {i}" for i in range(1, 50)))
+    page = store.read(ref.result_id, start_line=1, end_line=0)
+    assert page.text == "line 1"
+    assert page.next_start_line == 2
+
+
+def test_search_shows_a_window_around_a_match_on_a_long_line(store):
+    payload = "a" * 20_000 + "FINDME_AT_END" + "b" * 100
+    ref = _offload(store, payload)
+    match = store.search(ref.result_id, "FINDME_AT_END")[0]
+    assert "FINDME_AT_END" in match.line
+    assert match.char_offset == 20_000
+    assert len(match.line) <= 500
+    assert match.line.startswith("...")
+
+
+def test_a_refused_envelope_stays_small_for_a_huge_last_line(store):
+    output = "\n".join(["header"] * 30 + ["x" * 2_000_000])
+    envelope = render_refused_envelope(
+        tool_name="t", output=output, reason="quota", preview_lines=20, preview_chars=1200
+    )
+    assert len(envelope) < 5_000
+    assert 'stored="false"' in envelope
+
+
+def test_sweep_deletes_index_rows_in_bounded_batches(tmp_path, monkeypatch):
+    db = SqliteDb(db_file=str(tmp_path / "many.db"))
+    store = ResultStore(db=db, threshold_chars=10, ttl_seconds=1)
+    count = 1_007
+    for i in range(count):
+        store.offload(
+            session_id="S", run_id="r", tool_call_id=f"c{i}", tool_name="t", tool_args={}, output="payload text"
+        )
+    # One bound parameter per id: a delete that binds every id at once fails
+    # past SQLite's limit, so each statement must stay within a batch.
+    sizes = []
+    real_delete = db.delete_tool_results
+
+    def counting_delete(result_ids):
+        sizes.append(len(result_ids))
+        return real_delete(result_ids)
+
+    monkeypatch.setattr(db, "delete_tool_results", counting_delete)
+    assert store.sweep_expired(now=int(time.time()) + 10) == count
+    assert sum(sizes) == count
+    assert max(sizes) <= 500
+    assert store.live_ids("S") == []

@@ -53,6 +53,7 @@ _TAIL_LINES = 5
 # The longest one store instance waits between TTL sweeps. A shorter TTL
 # sweeps at its own length instead.
 SWEEP_INTERVAL_SECONDS = 300
+DELETE_BATCH_SIZE = 500
 
 
 def _canonical_args_hash(tool_args: Optional[Dict[str, Any]]) -> str:
@@ -79,6 +80,24 @@ def _format_size(size: float) -> str:
             return f"{int(size)}{unit}" if unit == "B" else f"{size:.1f}{unit}"
         size /= 1024
     return f"{size:.1f}GB"
+
+
+def _clip_around(line: str, char_offset: int) -> str:
+    """The line clipped to the search clip, as a window around ``char_offset``.
+
+    A line shorter than the clip is returned whole. A longer one is shown
+    from a little before the match, with ellipses marking cut ends, so the
+    match itself is always visible whatever its position in the line.
+    """
+    if len(line) <= SEARCH_LINE_CLIP:
+        return line
+    lead = SEARCH_LINE_CLIP // 4
+    start = max(0, min(char_offset - lead, len(line) - SEARCH_LINE_CLIP))
+    head = "..." if start > 0 else ""
+    width = SEARCH_LINE_CLIP - len(head)
+    tail = "..." if start + width < len(line) else ""
+    width -= len(tail)
+    return f"{head}{line[start : start + width]}{tail}"
 
 
 def _head_preview(output: str, preview_lines: int, preview_chars: int) -> str:
@@ -113,7 +132,12 @@ def render_refused_envelope(*, tool_name: str, output: str, reason: str, preview
     omitted = line_count - head_line_count - _TAIL_LINES
     if omitted > 0:
         parts.append(f"[... {omitted} lines omitted ...]")
-        parts.append("\n".join(lines[-_TAIL_LINES:]))
+        tail = "\n".join(lines[-_TAIL_LINES:])
+        # The tail is capped like the head: a refused envelope must never be
+        # the size of the payload it stands in for.
+        if len(tail) > preview_chars:
+            tail = "..." + tail[-preview_chars:]
+        parts.append(tail)
     parts.append("</result>")
     parts.append("Full result was NOT stored. Re-run the tool with a narrower query if you need the rest.")
     return "\n".join(parts)
@@ -140,7 +164,7 @@ _NAMESPACE_UNSAFE = re.compile(r"[^a-z0-9._@+-]")
 _NAMESPACE_HASH_CHARS = 8
 
 
-def namespace_for(session_id: str) -> str:
+def namespace_for(session_id: str, scope: str = "") -> str:
     """The AgentFS namespace holding one session's payloads.
 
     The readable part is lowercased and reduced to the characters AgentFS keeps
@@ -148,11 +172,15 @@ def namespace_for(session_id: str) -> str:
     resolves on read and delete. Two session ids can reduce to the same text;
     the hash suffix keeps them apart. Without it, deleting one session would
     delete the other's payloads and leave its index rows pointing at nothing.
+    ``scope`` is the database schema the index lives in: on PostgreSQL the
+    payload table is shared by every schema of one database, and the scope
+    keeps two schemas that reuse a session id from sharing payload rows.
     The segment stays within the AgentFS segment limit with the suffix added.
     """
     limit = MAX_SEGMENT_CHARS - _NAMESPACE_HASH_CHARS - 1
     readable = _NAMESPACE_UNSAFE.sub("_", session_id.lower())[:limit] or "_"
-    return f"tool-results/{readable}-{hash_string_sha256(session_id)[:_NAMESPACE_HASH_CHARS]}"
+    digest = hash_string_sha256(f"{scope}:{session_id}" if scope else session_id)
+    return f"tool-results/{readable}-{digest[:_NAMESPACE_HASH_CHARS]}"
 
 
 class ResultStore:
@@ -268,10 +296,14 @@ class ResultStore:
     # Namespaces and rows
     # ------------------------------------------------------------------
 
+    @property
+    def _namespace_scope(self) -> str:
+        return str(getattr(self.db, "db_schema", None) or "")
+
     def _session_fs(self, session_id: str) -> FileSystem:
         return FileSystem(
             backend=self.fs.backend,
-            namespace=namespace_for(session_id),
+            namespace=namespace_for(session_id, self._namespace_scope),
             max_file_bytes=MAX_RESULT_BYTES,
             max_namespace_bytes=MAX_SESSION_NAMESPACE_BYTES,
         )
@@ -568,36 +600,55 @@ class ResultStore:
         """Async variant of ``get_row``."""
         return await self._adb_call("get_tool_result", result_id)
 
-    def _page_from_content(self, content: str, start_line: int, end_line: Optional[int]) -> ResultPage:
+    def _page_from_content(
+        self, content: str, start_line: int, end_line: Optional[int], start_char: int = 0
+    ) -> ResultPage:
         lines = content.split("\n")
         line_count = len(lines)
-        start = max(1, start_line)
-        end = min(end_line if end_line is not None else line_count, line_count)
-        selected = lines[start - 1 : end]
-        clipped: List[str] = []
+        start = min(max(1, start_line), line_count)
+        end = line_count if end_line is None else min(max(end_line, start), line_count)
+        offset = max(0, start_char)
+        pieces: List[str] = []
         chars = 0
         truncated = False
-        for line in selected:
-            if len(clipped) >= READ_MAX_LINES:
+        last_included = start - 1
+        next_line: Optional[int] = None
+        next_char = 0
+        current = start
+        while current <= end:
+            if len(pieces) >= READ_MAX_LINES:
                 truncated = True
+                next_line = current
                 break
-            if chars + len(line) + 1 > READ_MAX_CHARS:
-                remaining = READ_MAX_CHARS - chars
-                if remaining > 0:
-                    clipped.append(line[:remaining])
+            skip = offset if current == start else 0
+            line = lines[current - 1][skip:]
+            separator = 1 if pieces else 0
+            room = READ_MAX_CHARS - chars - separator
+            if len(line) > room:
+                # The line does not fit. Take what fits and continue inside
+                # this line on the next page, so no character is ever lost.
+                if room > 0:
+                    pieces.append(line[:room])
+                    chars += room + separator
+                    last_included = current
                 truncated = True
+                next_line = current
+                next_char = skip + max(room, 0)
                 break
-            clipped.append(line)
-            chars += len(line) + 1
-        actual_end = start + len(clipped) - 1 if clipped else start - 1
-        has_more = truncated or actual_end < end or end < line_count
+            pieces.append(line)
+            chars += len(line) + separator
+            last_included = current
+            current += 1
+        if next_line is None and end < line_count:
+            next_line, next_char = end + 1, 0
         return ResultPage(
-            text="\n".join(clipped),
+            text="\n".join(pieces),
             start_line=start,
-            end_line=actual_end,
+            end_line=last_included,
             line_count=line_count,
             truncated=truncated,
-            next_start_line=actual_end + 1 if has_more and actual_end < line_count else None,
+            next_start_line=next_line,
+            next_start_char=next_char,
         )
 
     def _read_payload(self, row: Dict[str, Any]) -> str:
@@ -612,19 +663,24 @@ class ResultStore:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
 
-    def read(self, result_id: str, start_line: int = 1, end_line: Optional[int] = None) -> ResultPage:
-        """Read a page of a stored result. Lines are 1-indexed and inclusive."""
+    def read(
+        self, result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0
+    ) -> ResultPage:
+        """Read a page of a stored result. Lines are 1-indexed and inclusive;
+        ``start_char`` is the 0-indexed offset into ``start_line`` to begin at."""
         row = self.get_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
-        return self._page_from_content(self._read_payload(row), start_line, end_line)
+        return self._page_from_content(self._read_payload(row), start_line, end_line, start_char)
 
-    async def aread(self, result_id: str, start_line: int = 1, end_line: Optional[int] = None) -> ResultPage:
+    async def aread(
+        self, result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0
+    ) -> ResultPage:
         """Async variant of ``read``."""
         row = await self.aget_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
-        return self._page_from_content(await self._aread_payload(row), start_line, end_line)
+        return self._page_from_content(await self._aread_payload(row), start_line, end_line, start_char)
 
     def _matches_from_content(self, content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
         compiled = re.compile(pattern)
@@ -638,23 +694,25 @@ class ResultStore:
         for index, line in enumerate(lines):
             if len(matches) >= SEARCH_MAX_MATCHES or budget <= 0:
                 break
-            if compiled.search(line) is None:
+            found = compiled.search(line)
+            if found is None:
                 continue
+            char_offset = found.start()
             if context_lines > 0:
                 start = max(0, index - context_lines)
                 end = min(len(lines), index + context_lines + 1)
                 # Each row carries its own line number, so the block reads the
                 # same way a read_result page does and the match line is clear.
                 text = "\n".join(
-                    f"{start + offset + 1}: {context_line[:SEARCH_LINE_CLIP]}"
+                    f"{start + offset + 1}: {_clip_around(context_line, char_offset if start + offset == index else 0)}"
                     for offset, context_line in enumerate(lines[start:end])
                 )
             else:
-                text = line[:SEARCH_LINE_CLIP]
+                text = _clip_around(line, char_offset)
             if len(text) > budget:
                 text = text[:budget]
             budget -= len(text) + 1
-            matches.append(ResultMatch(line_number=index + 1, line=text))
+            matches.append(ResultMatch(line_number=index + 1, line=text, char_offset=char_offset))
         return matches
 
     def search(self, result_id: str, pattern: str, context_lines: int = 0) -> List[ResultMatch]:
@@ -690,23 +748,29 @@ class ResultStore:
         return [self._ref_from_row(row) for row in rows]
 
     def _delete_rows_and_payloads(self, rows: List[Dict[str, Any]]) -> int:
-        for row in rows:
-            try:
-                self._fs_for_namespace(str(row["namespace"])).delete(str(row["path"]))
-            except Exception as e:
-                log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
-        if rows:
-            self._db_call("delete_tool_results", [str(row["result_id"]) for row in rows])
+        # Index rows are deleted in batches: the delete binds one parameter per
+        # id and SQLite allows 32,766 of them. Each batch removes its payloads
+        # and its rows together, so a failure part way leaves no row whose
+        # payload is already gone.
+        for batch_start in range(0, len(rows), DELETE_BATCH_SIZE):
+            batch = rows[batch_start : batch_start + DELETE_BATCH_SIZE]
+            for row in batch:
+                try:
+                    self._fs_for_namespace(str(row["namespace"])).delete(str(row["path"]))
+                except Exception as e:
+                    log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
+            self._db_call("delete_tool_results", [str(row["result_id"]) for row in batch])
         return len(rows)
 
     async def _adelete_rows_and_payloads(self, rows: List[Dict[str, Any]]) -> int:
-        for row in rows:
-            try:
-                await self._fs_for_namespace(str(row["namespace"])).adelete(str(row["path"]))
-            except Exception as e:
-                log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
-        if rows:
-            await self._adb_call("delete_tool_results", [str(row["result_id"]) for row in rows])
+        for batch_start in range(0, len(rows), DELETE_BATCH_SIZE):
+            batch = rows[batch_start : batch_start + DELETE_BATCH_SIZE]
+            for row in batch:
+                try:
+                    await self._fs_for_namespace(str(row["namespace"])).adelete(str(row["path"]))
+                except Exception as e:
+                    log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
+            await self._adb_call("delete_tool_results", [str(row["result_id"]) for row in batch])
         return len(rows)
 
     def delete_for_sessions(self, session_ids: List[str]) -> int:
