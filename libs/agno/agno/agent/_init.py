@@ -193,10 +193,10 @@ def set_compression_manager(agent: Agent) -> None:
 
 DEFAULT_OFFLOAD_THRESHOLD = 4000
 
-# Result offloading needs the agno_tool_results index table; PostgreSQL and
-# SQLite ship it in 3.0 (DECISIONS.md D10). Anywhere else the flag is honoured
-# as off, with one warning — a run that believes its payloads are recoverable
-# when they are not is the one failure mode worse than no offloading.
+# Result offloading needs the agno_tool_results index table. PostgreSQL and
+# SQLite implement it. On any other backend the flag is treated as off, with
+# one warning: a run must never believe its payloads are recoverable when
+# they are not.
 _OFFLOAD_SUPPORTED_DBS = ("SqliteDb", "AsyncSqliteDb", "PostgresDb", "AsyncPostgresDb")
 
 

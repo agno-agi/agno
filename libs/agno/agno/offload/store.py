@@ -7,10 +7,10 @@ properties are non-negotiable: lossless (the full bytes are recoverable),
 free (no model call on the write path), and bounded (every read back through
 the tools is capped).
 
-Index rows live in ``agno_tool_results`` on the agent's db — PostgreSQL and
-SQLite in 3.0; every other backend runs with offloading off (DECISIONS.md
-D10). Failure is loud, never silent: a refused write produces a head+tail
-envelope that says so, and the run continues.
+Index rows live in ``agno_tool_results`` on the agent's db. PostgreSQL and
+SQLite implement it; every other backend runs with offloading off. Failure is
+loud, never silent: a refused write produces a head+tail envelope that says
+so, and the run continues.
 """
 
 from __future__ import annotations
@@ -532,8 +532,8 @@ class ResultStore:
     def live_ids(self, session_id: str, limit: int = 20) -> List[ResultRef]:
         """The session's stored results, newest first, capped at ``limit``.
 
-        This is the seam the post-compaction survival notice (feature 04)
-        consumes; the notice itself is not built here.
+        A context-compaction notice can list these so the model still knows
+        which results it can read back after older messages are dropped.
         """
         rows = self._db_call("get_tool_results_for_session", session_id, limit)
         return [self._ref_from_row(row) for row in rows]

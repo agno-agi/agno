@@ -266,7 +266,7 @@ def get_system_message(
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
-    # 3.2.5 Tell the model what a result envelope is and how to read the rest
+    # Tell the model what a result envelope is and how to read the rest
     if agent.offload_tool_results and agent._result_store is not None:
         additional_information.append(OFFLOAD_INSTRUCTION)
 
@@ -570,7 +570,7 @@ async def aget_system_message(
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
-    # 3.2.5 Tell the model what a result envelope is and how to read the rest
+    # Tell the model what a result envelope is and how to read the rest
     if agent.offload_tool_results and agent._result_store is not None:
         additional_information.append(OFFLOAD_INSTRUCTION)
 

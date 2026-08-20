@@ -1087,7 +1087,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
     async def _cascade_tool_results(self, session_ids: List[str]) -> None:
         """Cascade result offloading on session delete: read the index rows,
-        delete their AgentFS payload rows, then the index rows (feature 02).
+        delete their AgentFS payload rows, then the index rows.
 
         Best-effort in its own transaction so a cascade failure can never
         poison or roll back the session delete itself. Payload rows live in
@@ -1117,7 +1117,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_warning(f"Tool-result cascade on session delete failed: {e}")
 
-    # -- Tool Results (result offloading index; DECISIONS.md D10) --
+    # -- Tool Results (result offloading index) --
 
     async def upsert_tool_result(self, row: Dict[str, Any]) -> None:
         table = await self._get_table(table_type="tool_results", create_table_if_not_found=True)

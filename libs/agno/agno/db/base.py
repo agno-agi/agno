@@ -277,8 +277,8 @@ class BaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
-        # Result offloading index (feature-fixed name; created lazily on first
-        # use by the adapters that support it — see DECISIONS.md D10).
+        # Result offloading index. The name is fixed; adapters that support
+        # offloading create the table lazily on first use.
         self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
@@ -1787,8 +1787,8 @@ class BaseDb(ABC):
 
     # --- Tool Results (Optional) ---
     # Optional: the index table for result offloading (agno_tool_results).
-    # Implemented by PostgreSQL and SQLite in 3.0; on any other backend the
-    # feature degrades with offloading off (DECISIONS.md D10).
+    # Implemented by PostgreSQL and SQLite; on any other backend the agent
+    # runs with offloading off.
 
     def upsert_tool_result(self, row: Dict[str, Any]) -> None:
         """Insert or replace one tool-result index row."""
@@ -2059,8 +2059,8 @@ class AsyncBaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
-        # Result offloading index (feature-fixed name; created lazily on first
-        # use by the adapters that support it — see DECISIONS.md D10).
+        # Result offloading index. The name is fixed; adapters that support
+        # offloading create the table lazily on first use.
         self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
@@ -3155,8 +3155,8 @@ class AsyncBaseDb(ABC):
 
     # --- Tool Results (Optional) ---
     # Optional: the index table for result offloading (agno_tool_results).
-    # Implemented by PostgreSQL and SQLite in 3.0; on any other backend the
-    # feature degrades with offloading off (DECISIONS.md D10).
+    # Implemented by PostgreSQL and SQLite; on any other backend the agent
+    # runs with offloading off.
 
     async def upsert_tool_result(self, row: Dict[str, Any]) -> None:
         """Insert or replace one tool-result index row."""
