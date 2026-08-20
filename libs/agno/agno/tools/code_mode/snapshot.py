@@ -279,8 +279,19 @@ class SnapshotManager:
     # ------------------------------------------------------------------
 
     async def flush_locked(self, session: KernelSession) -> None:
-        """Write a snapshot now. The caller holds the session lock."""
+        """Write a snapshot now. The caller holds the session lock.
+
+        A kernel that did not take over the stored snapshot writes nothing:
+        its namespace is not that state, and the write would take the stored
+        variables with it.
+        """
         if not session.running:
+            return
+        if not session.snapshot_writable:
+            log_debug(
+                f"CodeMode snapshot for session {session.session_id} held back: "
+                "this kernel did not take over the stored snapshot"
+            )
             return
         skip_b64 = base64.b64encode(json.dumps(self.skip_names).encode("utf-8")).decode("ascii")
         code = _SNAPSHOT_CODE_TEMPLATE.format(
@@ -343,8 +354,8 @@ class SnapshotManager:
             "saved_at": int(time.time()),
             "execution_count": session.execution_count,
             # The user whose state this is. A restore into a run of another
-            # user is refused; None means the state was built without an
-            # identity and stays readable by any run.
+            # user is refused; None means no run that built this state carried
+            # an identity, and it stays readable by any run.
             "owner_user_id": session.owner_user_id,
             "variables": written,
             "skipped": skipped,
@@ -392,10 +403,18 @@ class SnapshotManager:
         nothing to restore. Runs before the bootstrap cell by contract.
         """
         session_id = session.session_id
+        session.snapshot_writable = True
         try:
             manifest_text = await self.fs.aread(self._manifest_path(session_id))
         except Exception as e:
-            log_warning(f"CodeMode restore for session {session_id}: manifest read failed: {e}")
+            # What is stored may hold variables this kernel never read, so the
+            # kernel is held back from writing over them until it starts again
+            # and reads the manifest.
+            session.snapshot_writable = False
+            log_warning(
+                f"CodeMode restore for session {session_id}: manifest read failed: {e}. "
+                "Snapshots for this kernel are held back."
+            )
             return None
         if manifest_text is None:
             return None
@@ -408,13 +427,25 @@ class SnapshotManager:
         except Exception as e:
             log_warning(f"CodeMode restore for session {session_id}: corrupt manifest: {e}")
             return None
+        # Compared as text: a manifest written before identity was normalized
+        # can hold a non-str owner, and '42' and 42 are the same user.
         recorded_owner = manifest.get("owner_user_id")
-        if recorded_owner is not None and session.owner_user_id is not None and recorded_owner != session.owner_user_id:
-            log_warning(
-                f"CodeMode restore for session {session_id} refused: the snapshot belongs to "
-                f"user '{recorded_owner}', this kernel to user '{session.owner_user_id}'"
-            )
-            return None
+        if recorded_owner is not None:
+            recorded_owner = str(recorded_owner)
+            if session.owner_user_id is None:
+                # A run that carries no identity may read this state, but it
+                # must not erase whose state it is: the session takes the
+                # recorded owner, the next flush writes it back, and a later
+                # run of a different user is still refused.
+                session.owner_user_id = recorded_owner
+            elif recorded_owner != str(session.owner_user_id):
+                session.snapshot_writable = False
+                log_warning(
+                    f"CodeMode restore for session {session_id} refused: the snapshot belongs to "
+                    f"user '{recorded_owner}', this kernel to user '{session.owner_user_id}'. "
+                    "Snapshots for this kernel are held back."
+                )
+                return None
 
         payloads: List[List[str]] = []
         failed: List[Tuple[str, str]] = []
@@ -439,8 +470,14 @@ class SnapshotManager:
                 result = await session._run_silent(code, timeout=120.0)
                 if result.status == "aborted":
                     # The kernel may still be restoring; claiming zero restored
-                    # variables here would be a lie the model acts on.
-                    log_warning(f"CodeMode restore for session {session_id} timed out; emitting no restore notice")
+                    # variables here would be a lie the model acts on. The
+                    # namespace is part of the stored snapshot at best, so it
+                    # must not be written back over the whole of it either.
+                    session.snapshot_writable = False
+                    log_warning(
+                        f"CodeMode restore for session {session_id} timed out; emitting no restore notice. "
+                        "Snapshots for this kernel are held back."
+                    )
                     return None
                 marker_payload = parse_marker_line(result.stdout, RESTORE_MARKER)
                 if marker_payload is None:

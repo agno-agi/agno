@@ -195,6 +195,12 @@ class KernelSession:
         self.pending_notice: Optional[str] = None
         # A cell has run since the last snapshot flush.
         self.snapshot_pending = False
+        # False when this kernel did not take over the stored snapshot: it
+        # belongs to another user, or it could not be read, or its restore did
+        # not finish. This namespace is then not the stored state, so flushing
+        # it would overwrite and delete state this kernel never read. Every
+        # restore recomputes it, so a fresh kernel starts writable again.
+        self.snapshot_writable = True
         # Incremented for every kernel this session starts. A bridged tool call
         # carries the generation it was issued in: the replacement kernel's call
         # ids restart at 1, so a reply from an older generation would otherwise

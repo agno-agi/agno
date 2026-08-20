@@ -19,7 +19,8 @@ import base64
 import concurrent.futures
 import functools
 import weakref
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Set, Union
+from collections import OrderedDict
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Union
 
 from agno.fs import FileSystem
 from agno.run import RunContext
@@ -50,6 +51,9 @@ OWNER_REFUSAL = (
 # Upper bound on how long a run-end close() may block a plain (non-loop) thread
 # waiting for snapshot flushes, when the debounce interval is shorter than this.
 _CLOSE_FLUSH_FLOOR = 5.0
+
+# How many evicted session ids are remembered, most recent kept.
+_MAX_EVICTED_IDS = 1024
 
 _VARIABLES_CODE_TEMPLATE = (
     "import base64 as _cm_b64\n"
@@ -243,9 +247,13 @@ class CodeMode(Toolkit):
 
         self._runner = LoopRunner()
         self._sessions: Dict[str, KernelSession] = {}
-        # Ids of sessions evicted for idleness, so a later cell for one of them
-        # is told its namespace was reset. Ids only; the sessions are gone.
-        self._evicted: Set[str] = set()
+        # Ids of sessions evicted for idleness, oldest first, so a later cell
+        # for one of them is told its namespace was reset. Ids only; the
+        # sessions are gone. Bounded at _MAX_EVICTED_IDS: a server that mints
+        # a session id per conversation would otherwise hold every id it ever
+        # evicted for the life of the process. Past the bound the oldest id is
+        # dropped, which costs a returning session only the reset notice.
+        self._evicted: OrderedDict[str, None] = OrderedDict()
         self._background_flush: Optional["concurrent.futures.Future[Any]"] = None
         self._bridge: Optional[ToolBridge] = (
             ToolBridge(self.injected_tools, max_result_bytes=max_result_bytes) if self.injected_tools else None
@@ -465,7 +473,16 @@ class CodeMode(Toolkit):
 
     @staticmethod
     def _user_key(run_context: Optional[RunContext]) -> Optional[str]:
-        return run_context.user_id if run_context is not None else None
+        """This run's identity, as text.
+
+        The one point identity enters CodeMode, so the session, the manifest
+        and both comparison sites hold the same type. An application whose
+        user ids are ints would otherwise be refused from its own session
+        after a restart, and an id that is not JSON-serializable would cost
+        the session its manifest.
+        """
+        user_id = run_context.user_id if run_context is not None else None
+        return str(user_id) if user_id is not None else None
 
     async def _refuse_foreign_user(self, session_id: str, user_id: Optional[str]) -> bool:
         """True when this run's user may not touch this session.
@@ -474,7 +491,9 @@ class CodeMode(Toolkit):
         access: the warm kernel holds the previous run's variables and the
         snapshot holds them durably. The owner is the user of the run the
         session was created for, in memory and in the snapshot manifest. A run
-        without a user_id carries no identity to compare and is left alone.
+        without a user_id carries no identity to compare and is left alone; it
+        takes the recorded owner when it restores, so the record survives it
+        and the next named user is still measured against it.
         """
         if user_id is None:
             return False
@@ -484,7 +503,7 @@ class CodeMode(Toolkit):
             # First run for this id in this process: the durable snapshot is
             # the only record of who owns the state it would restore.
             owner = await self._snapshots.owner(session_id)
-        if owner is None or owner == user_id:
+        if owner is None or str(owner) == user_id:
             return False
         log_warning(
             f"CodeMode refused session '{session_id}' for user '{user_id}': "
@@ -496,7 +515,10 @@ class CodeMode(Toolkit):
         """Drop an evicted session, unless the id already maps to a newer one."""
         if self._sessions.get(session.session_id) is session:
             del self._sessions[session.session_id]
-            self._evicted.add(session.session_id)
+            self._evicted[session.session_id] = None
+            self._evicted.move_to_end(session.session_id)
+            while len(self._evicted) > _MAX_EVICTED_IDS:
+                self._evicted.popitem(last=False)
             log_debug(f"CodeMode forgot evicted session {session.session_id}")
 
     def _run_on_loop_sync(self, coro: Coroutine[Any, Any, Any]) -> Any:
@@ -523,7 +545,7 @@ class CodeMode(Toolkit):
                 on_evict=self._forget_session,
                 served_before=session_id in self._evicted,
             )
-            self._evicted.discard(session_id)
+            self._evicted.pop(session_id, None)
             if self._bridge is not None:
                 self._bridge.attach(session)
             self._sessions[session_id] = session

@@ -393,6 +393,87 @@ async def test_restore_refuses_a_snapshot_owned_by_another_user(snapshot_fs, mak
     assert await manager.restore(KernelSession(sid, owner_user_id="user-b")) is None
 
 
+def test_a_run_without_an_identity_keeps_the_recorded_owner(snapshot_fs, make_code_mode):
+    owner = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    sid = _sid("owner-adopt")
+    owner.execute(_ctx(sid, user_id="user-a"), "token = 'secret-a'")
+    owner.close()
+    owner.shutdown(sid)
+
+    # An in-process call or an unowned schedule reaches the session with no
+    # user_id at all. It reads the state, and it leaves the record intact.
+    anonymous = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    read = anonymous.execute(_ctx(sid), "token")
+    assert "secret-a" in read.content
+    assert anonymous._sessions[sid].owner_user_id == "user-a"
+    anonymous.close()
+    anonymous.shutdown(sid)
+    assert json.loads(snapshot_fs.read(f"kernel/{sid}/manifest.json"))["owner_user_id"] == "user-a"
+
+    intruder = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    refused = intruder.execute(_ctx(sid, user_id="user-b"), "token")
+    assert refused.content == OWNER_REFUSAL
+    assert "secret-a" not in refused.content
+
+    back = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    assert "secret-a" in back.execute(_ctx(sid, user_id="user-a"), "token").content
+
+
+def test_a_user_id_that_is_not_a_str_resumes_its_own_session(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    sid = _sid("int-user")
+    cm.execute(_ctx(sid, user_id=42), "token = 'secret-42'")
+    cm.close()
+    cm.shutdown(sid)
+    assert json.loads(snapshot_fs.read(f"kernel/{sid}/manifest.json"))["owner_user_id"] == "42"
+
+    resumed = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    assert "secret-42" in resumed.execute(_ctx(sid, user_id=42), "token").content
+    # The same id read back from a database as text is the same user.
+    assert "secret-42" in resumed.execute(_ctx(sid, user_id="42"), "token").content
+    resumed.close()
+    resumed.shutdown(sid)
+
+    other = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    assert other.execute(_ctx(sid, user_id=43), "token").content == OWNER_REFUSAL
+    assert snapshot_fs.read(f"kernel/{sid}/vars/token.b64") is not None
+
+    # A manifest written before identity was normalized holds the raw id, and
+    # the user it belongs to still gets in.
+    manifest_path = f"kernel/{sid}/manifest.json"
+    stored = json.loads(snapshot_fs.read(manifest_path))
+    stored["owner_user_id"] = 42
+    snapshot_fs.write(manifest_path, json.dumps(stored))
+    legacy = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    assert "secret-42" in legacy.execute(_ctx(sid, user_id=42), "token").content
+
+
+async def test_a_kernel_refused_the_snapshot_does_not_overwrite_it(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    sid = _sid("refused-write")
+    cm.execute(_ctx(sid, user_id="user-a"), "token = 'secret-a'")
+    cm.close()
+    cm.shutdown(sid)
+    manifest_before = snapshot_fs.read(f"kernel/{sid}/manifest.json")
+    payload_before = snapshot_fs.read(f"kernel/{sid}/vars/token.b64")
+
+    # A kernel of another user, reached past the CodeMode guard: restore
+    # refuses it the variables, so its own namespace must not be written over
+    # them either.
+    manager = SnapshotManager(snapshot_fs, debounce=0.05)
+    session = KernelSession(sid, owner_user_id="user-b", idle_ttl=0, setup_hook=manager.restore)
+    try:
+        await session.execute_cell("mine = 'secret-b'", timeout=120)
+        async with session.lock:
+            await manager.flush_locked(session)
+    finally:
+        await session.shutdown()
+
+    assert snapshot_fs.read(f"kernel/{sid}/manifest.json") == manifest_before
+    assert snapshot_fs.read(f"kernel/{sid}/vars/token.b64") == payload_before
+    assert snapshot_fs.read(f"kernel/{sid}/vars/mine.b64") is None
+
+
 def test_eviction_drops_the_session_and_the_next_execute_restores_it(snapshot_fs, make_code_mode):
     cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05, idle_ttl=1)
     sid = _sid("evict-restore")

@@ -3,12 +3,19 @@
 Kernel-backed behavior lives in tests/integration/tools/test_code_mode_kernel.py.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from agno.tools import Function, Toolkit
 from agno.tools.code_mode import CellResult, CodeMode, CodeModeError, KernelBusyError, ResultTooLarge
-from agno.tools.code_mode.code_mode import build_instructions, derive_handle_name, handle_names_for
-from agno.tools.code_mode.kernel import OutputAccumulator
+from agno.tools.code_mode.code_mode import (
+    _MAX_EVICTED_IDS,
+    build_instructions,
+    derive_handle_name,
+    handle_names_for,
+)
+from agno.tools.code_mode.kernel import KernelSession, OutputAccumulator
 
 # ------------------------------------------------------------------
 # Handle-name derivation
@@ -220,6 +227,34 @@ def test_shutdown_without_sessions_is_safe():
     cm = CodeMode()
     cm.shutdown()
     cm.shutdown("nothing")
+
+
+def test_evicted_session_ids_are_bounded():
+    cm = CodeMode()
+    ids = [f"evicted-{i}" for i in range(_MAX_EVICTED_IDS + 10)]
+    for session_id in ids:
+        session = SimpleNamespace(session_id=session_id)
+        cm._sessions[session_id] = session
+        cm._forget_session(session)
+    assert cm._sessions == {}
+    assert len(cm._evicted) == _MAX_EVICTED_IDS
+    # The oldest ids go first: a session evicted long ago loses only the
+    # reset notice, while the recent ones still get it.
+    assert ids[0] not in cm._evicted
+    assert ids[9] not in cm._evicted
+    assert ids[10] in cm._evicted
+    assert ids[-1] in cm._evicted
+
+
+def test_a_session_owner_that_is_not_a_str_is_compared_as_text():
+    cm = CodeMode()
+    session_id = "typed-owner"
+    cm._sessions[session_id] = KernelSession(session_id, owner_user_id=42)
+    try:
+        assert cm._run_on_loop_sync(cm._refuse_foreign_user(session_id, "42")) is False
+        assert cm._run_on_loop_sync(cm._refuse_foreign_user(session_id, "43")) is True
+    finally:
+        cm.shutdown()
 
 
 # ------------------------------------------------------------------
