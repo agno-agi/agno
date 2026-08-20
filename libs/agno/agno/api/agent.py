@@ -10,4 +10,4 @@ def create_agent_run(run: AgentRunCreate) -> None:
 
 async def acreate_agent_run(run: AgentRunCreate) -> None:
     """Telemetry recording for async Agent runs"""
-    api.post_in_background(ApiRoutes.RUN_CREATE, run.model_dump(exclude_none=True))
+    await api.apost_in_background(ApiRoutes.RUN_CREATE, run.model_dump(exclude_none=True))

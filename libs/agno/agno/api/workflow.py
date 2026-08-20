@@ -10,4 +10,4 @@ def create_workflow_run(workflow: WorkflowRunCreate) -> None:
 
 async def acreate_workflow_run(workflow: WorkflowRunCreate) -> None:
     """Telemetry recording for async Workflow runs"""
-    api.post_in_background(ApiRoutes.RUN_CREATE, workflow.model_dump(exclude_none=True))
+    await api.apost_in_background(ApiRoutes.RUN_CREATE, workflow.model_dump(exclude_none=True))
