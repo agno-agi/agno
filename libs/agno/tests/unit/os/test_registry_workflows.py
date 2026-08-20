@@ -370,3 +370,74 @@ class TestSchedulerProbeSeesTheRegistry:
         )
 
         assert out.get("ok") is True, out
+
+
+class TestListingsExcludeWhatTheyRender:
+    """An exclusion set must match the code half the listing actually renders.
+
+    The registry is a superset of what an OS serves - it also carries
+    rehydration context no listing shows - so subtracting the registry drops
+    stored rows with nothing left to list them back. And the exclusion is
+    keyed on id alone, so it has to be narrowed to the type being listed.
+    """
+
+    def _db(self, tmp_path):
+        from agno.db.base import ComponentType
+
+        db = SqliteDb(id="os-db", db_file=str(tmp_path / "c.db"))
+        return db, ComponentType
+
+    def test_a_code_workflow_does_not_hide_a_stored_agent_sharing_its_id(self, tmp_path):
+        db, ComponentType = self._db(tmp_path)
+        db.create_component_with_config(
+            component_id="research",
+            component_type=ComponentType.AGENT,
+            name="Research",
+            config={"id": "research", "name": "Research"},
+            stage="published",
+        )
+        workflow = Workflow(id="research", name="Research WF", steps=[Step(name="s", executor=lambda si: None)])
+        agent_os = AgentOS(agents=[Agent(id="a", name="A", model=_model())], workflows=[workflow], db=db)
+        client = TestClient(agent_os.get_app())
+
+        listed = client.get("/components", params={"component_type": "agent"}).json()["data"]
+
+        assert [row["component_id"] for row in listed] == ["research"]
+
+    def test_a_registry_only_workflow_does_not_hide_a_stored_workflow(self, tmp_path):
+        db, ComponentType = self._db(tmp_path)
+        db.create_component_with_config(
+            component_id="shadow",
+            component_type=ComponentType.WORKFLOW,
+            name="Shadow",
+            config={"id": "shadow", "name": "Shadow"},
+            stage="published",
+        )
+        registry = Registry(name="R", models=[_model()])
+        # In the registry for rehydration, but not served by this OS.
+        registry.workflows.append(
+            Workflow(id="shadow", name="Reg only", steps=[Step(name="s", executor=lambda si: None)])
+        )
+        agent_os = AgentOS(agents=[Agent(id="a", name="A", model=_model())], db=db, registry=registry)
+        client = TestClient(agent_os.get_app())
+
+        listed = client.get("/workflows").json()
+
+        assert [w.get("id") for w in listed] == ["shadow"]
+
+    def test_a_served_workflow_is_still_listed_once(self, tmp_path):
+        db, ComponentType = self._db(tmp_path)
+        db.create_component_with_config(
+            component_id="served",
+            component_type=ComponentType.WORKFLOW,
+            name="Stored twin",
+            config={"id": "served", "name": "Stored twin"},
+            stage="published",
+        )
+        workflow = Workflow(id="served", name="Served", steps=[Step(name="s", executor=lambda si: None)])
+        agent_os = AgentOS(workflows=[workflow], db=db)
+        client = TestClient(agent_os.get_app())
+
+        listed = client.get("/workflows").json()
+
+        assert [w.get("id") for w in listed] == ["served"]

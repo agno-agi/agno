@@ -1504,10 +1504,13 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            # Exclude workflows whose IDs are owned by the registry: the code
-            # objects above already represent them, so a stored row sharing the
-            # id would list the same workflow twice.
-            exclude_ids = os.registry.get_workflow_ids() if os.registry else None
+            # Exclude the ids this OS actually serves, which is exactly what
+            # the code objects above render: a stored row sharing one of them
+            # would list the same workflow twice. The registry is a superset -
+            # it also carries rehydration context this route never lists - so
+            # subtracting it instead would drop a stored workflow with nothing
+            # left to list it back.
+            exclude_ids = {wid for w in os.workflows or [] if (wid := getattr(w, "id", None)) is not None}
             db_workflows = get_workflows(
                 db=os.db,
                 registry=os.registry,

@@ -720,8 +720,23 @@ def attach_routes(
             start_time_ms = time.time() * 1000
             offset = (page - 1) * limit
 
-            # Exclude components whose IDs are owned by the registry
-            exclude_ids = registry.get_all_component_ids() if registry else None
+            # Exclude components whose IDs are owned by the registry. The
+            # exclusion is keyed on id alone, so it must be narrowed to the
+            # type being listed: ids are unique per type, not across types,
+            # and the untyped union would let a code-defined workflow hide a
+            # stored agent row that merely shares its id.
+            if registry is None:
+                exclude_ids = None
+            elif component_type == ComponentType.AGENT:
+                exclude_ids = registry.get_agent_ids()
+            elif component_type == ComponentType.TEAM:
+                exclude_ids = registry.get_team_ids()
+            elif component_type == ComponentType.WORKFLOW:
+                exclude_ids = registry.get_workflow_ids()
+            else:
+                # No type filter: one id can only be matched against the union,
+                # so a cross-type collision still shadows here.
+                exclude_ids = registry.get_all_component_ids()
 
             components, total_count = db.list_components(
                 component_type=DbComponentType(component_type.value) if component_type else None,
