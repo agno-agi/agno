@@ -4,7 +4,13 @@ Each top-level name is pickled independently, so one socket or open file
 handle is skipped and reported rather than aborting the whole snapshot. The
 store is the database (AgentFS over the agent's db): nothing about resume
 depends on a container's disk surviving. Payloads are base64 text because
-AgentFS v1 is text-only.
+AgentFS v1 is text-only, four stored bytes for every three pickle bytes.
+
+Both caps count stored bytes, the bytes the file store actually holds, and
+they are lowered at setup to the store's own per-file and per-namespace
+limits so a variable the caps admit is a variable the store accepts. A
+variable that is still refused is reported to the model by name with the
+size and the limit, never as unpicklable.
 
 Restore never raises — a missing or corrupt file yields an empty restore and
 a logged warning — and runs BEFORE the bootstrap cell that rebinds the live
@@ -30,6 +36,8 @@ RESTORE_MARKER = "__AGNO_CM_RESTORE__"
 
 # Pickles each candidate name independently. Builtins go through the _cm_b
 # alias so a user variable named ``list`` or ``open`` cannot break the save.
+# Sizes are the base64 length the store will hold, computed arithmetically so
+# an oversized value is never encoded just to be discarded.
 _SNAPSHOT_CODE_TEMPLATE = (
     "import base64 as _cm_b64\n"
     "import builtins as _cm_b\n"
@@ -59,14 +67,15 @@ _SNAPSHOT_CODE_TEMPLATE = (
     "        except Exception as _cm_e:\n"
     "            _cm_skipped.append({{'name': _cm_k, 'reason': _cm_b.type(_cm_e).__name__ + ': ' + _cm_b.str(_cm_e)[:200]}})\n"
     "            continue\n"
-    "        if _cm_b.len(_cm_payload) > {max_variable_bytes}:\n"
-    "            _cm_skipped.append({{'name': _cm_k, 'reason': 'pickle is ' + _cm_b.str(_cm_b.len(_cm_payload)) + ' bytes, over the {max_variable_bytes}-byte cap'}})\n"
+    "        _cm_size = ((_cm_b.len(_cm_payload) + 2) // 3) * 4\n"
+    "        if _cm_size > {max_variable_bytes}:\n"
+    "            _cm_skipped.append({{'name': _cm_k, 'reason': 'too large to store: ' + _cm_b.str(_cm_size) + ' bytes, over the {max_variable_bytes}-byte limit'}})\n"
     "            continue\n"
-    "        if _cm_total + _cm_b.len(_cm_payload) > {max_snapshot_bytes}:\n"
-    "            _cm_skipped.append({{'name': _cm_k, 'reason': 'over the {max_snapshot_bytes}-byte snapshot budget'}})\n"
+    "        if _cm_total + _cm_size > {max_snapshot_bytes}:\n"
+    "            _cm_skipped.append({{'name': _cm_k, 'reason': 'over the {max_snapshot_bytes}-byte snapshot budget: ' + _cm_b.str(_cm_size) + ' bytes'}})\n"
     "            continue\n"
-    "        _cm_total += _cm_b.len(_cm_payload)\n"
-    "        _cm_entries.append({{'name': _cm_k, 'data': _cm_b64.b64encode(_cm_payload).decode('ascii'), 'bytes': _cm_b.len(_cm_payload), 'type': _cm_b.type(_cm_v).__name__}})\n"
+    "        _cm_total += _cm_size\n"
+    "        _cm_entries.append({{'name': _cm_k, 'data': _cm_b64.b64encode(_cm_payload).decode('ascii'), 'bytes': _cm_size, 'type': _cm_b.type(_cm_v).__name__}})\n"
     "    _cm_b.print('\\n{marker}' + _cm_json.dumps({{'entries': _cm_entries, 'skipped': _cm_skipped}}))\n"
 )
 
@@ -94,10 +103,37 @@ _RESTORE_CODE_TEMPLATE = (
 )
 
 
+def reconcile_caps(
+    max_variable_bytes: int,
+    max_snapshot_bytes: int,
+    max_file_bytes: Optional[int],
+    max_namespace_bytes: Optional[int],
+) -> Tuple[int, int, List[str]]:
+    """Lower the snapshot caps to what the file store will accept.
+
+    All four numbers count stored bytes. A cap above the store's own limit
+    hands the store a payload it refuses, which costs the variable and tells
+    the model nothing useful, so the smaller number wins and becomes the cap
+    the snapshot is held to. Limits that are not numbers (a store that does
+    not publish them) leave the caps alone. Returns the effective
+    (per-variable, per-snapshot) caps and one sentence per lowered cap.
+    """
+    notes: List[str] = []
+    variable_bytes = max_variable_bytes
+    snapshot_bytes = max_snapshot_bytes
+    if isinstance(max_file_bytes, int) and max_file_bytes < variable_bytes:
+        notes.append(f"per-variable {variable_bytes} -> {max_file_bytes} bytes (the store's max_file_bytes)")
+        variable_bytes = max_file_bytes
+    if isinstance(max_namespace_bytes, int) and max_namespace_bytes < snapshot_bytes:
+        notes.append(f"per-snapshot {snapshot_bytes} -> {max_namespace_bytes} bytes (the store's max_namespace_bytes)")
+        snapshot_bytes = max_namespace_bytes
+    return variable_bytes, snapshot_bytes, notes
+
+
 def apply_snapshot_budget(
     entries: List[Dict[str, Any]], max_snapshot_bytes: int
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Enforce the cumulative snapshot budget.
+    """Enforce the cumulative snapshot budget over stored bytes.
 
     Entries are taken in manifest order — smallest first, largest last — and
     cut when the running total would cross ``max_snapshot_bytes``, so one
@@ -123,8 +159,15 @@ def apply_snapshot_budget(
     return kept, cut
 
 
-def build_restored_notice(restored: Sequence[str], not_restored: Sequence[str]) -> Optional[str]:
-    """The in-band notice prefixed to the next execute result after a restore."""
+def build_restored_notice(restored: Sequence[str], not_restored: Sequence[Tuple[str, str]]) -> Optional[str]:
+    """The in-band notice prefixed to the next execute result after a restore.
+
+    ``not_restored`` holds one ``(name, reason)`` pair per variable that did
+    not come back. The reason is what the model acts on — a value refused for
+    its size is worth rebuilding smaller, an unpicklable handle is worth
+    reopening, a value that failed to unpickle is worth recomputing — so each
+    one is named rather than folded into a single verdict.
+    """
     if not restored and not not_restored:
         return None
     lines = ["<code_mode_restored>"]
@@ -133,13 +176,22 @@ def build_restored_notice(restored: Sequence[str], not_restored: Sequence[str]) 
     else:
         lines.append("Restored 0 variables.")
     if not_restored:
-        lines.append("Not restored (unpicklable): " + ", ".join(not_restored) + ".")
+        lines.append("Not restored:")
+        lines.extend(f"- {name}: {reason or 'no reason recorded'}" for name, reason in not_restored)
     lines.append("</code_mode_restored>")
     return "\n".join(lines)
 
 
 class SnapshotManager:
-    """Schedules, writes, restores, and clears per-session snapshots."""
+    """Schedules, writes, restores, and clears per-session snapshots.
+
+    ``max_variable_bytes`` and ``max_snapshot_bytes`` count stored bytes and
+    are lowered at construction to the store's own limits, so the caps the
+    kernel enforces are the caps the store honours. The namespace is shared
+    with whatever else writes to this FileSystem, so a write can still be
+    refused when the namespace fills; those refusals are logged and carried
+    to the model by name and reason.
+    """
 
     def __init__(
         self,
@@ -152,8 +204,18 @@ class SnapshotManager:
     ) -> None:
         self.fs = fs
         self.debounce = debounce
-        self.max_variable_bytes = max_variable_bytes
-        self.max_snapshot_bytes = max_snapshot_bytes
+        self.max_variable_bytes, self.max_snapshot_bytes, adjustments = reconcile_caps(
+            max_variable_bytes,
+            max_snapshot_bytes,
+            getattr(fs, "max_file_bytes", None),
+            getattr(fs, "max_namespace_bytes", None),
+        )
+        if adjustments:
+            log_warning(
+                "CodeMode snapshot caps lowered to fit the file store: "
+                + "; ".join(adjustments)
+                + ". Raise the FileSystem limits to keep the larger caps."
+            )
         self.skip_names = list(skip_names or [])
         self._timers: Dict[str, "asyncio.Task[None]"] = {}
 
@@ -227,9 +289,9 @@ class SnapshotManager:
             max_variable_bytes=self.max_variable_bytes,
             max_snapshot_bytes=self.max_snapshot_bytes,
         )
-        # The kernel-side budget bounds the emission at max_snapshot_bytes of
-        # pickle bytes, so the marker line stays well under this cap and can
-        # never be truncated mid-JSON.
+        # Every kept payload rides the marker line, and the kernel-side budget
+        # caps their total at max_snapshot_bytes of base64, so this ceiling is
+        # the budget plus half again for the JSON frame around it.
         max_chars = int(self.max_snapshot_bytes * 1.5) + 1_000_000
         result = await session._run_silent(code, timeout=120.0, max_chars=max_chars)
         payload = parse_marker_line(result.stdout, SNAPSHOT_MARKER)
@@ -258,6 +320,7 @@ class SnapshotManager:
                 await self.fs.awrite(self._var_path(session_id, name), str(entry["data"]))
                 written.append({"name": name, "type": entry.get("type"), "bytes": int(entry.get("bytes", 0))})
             except Exception as e:
+                log_warning(f"CodeMode snapshot for session {session_id}: store refused '{name}': {e}")
                 skipped.append({"name": name, "reason": f"store refused the write: {e}"})
 
         # Drop var files for names that no longer exist in the kernel, so a
@@ -310,22 +373,25 @@ class SnapshotManager:
         try:
             manifest = json.loads(manifest_text)
             variables = list(manifest.get("variables", []))
-            manifest_skipped = [str(s.get("name")) for s in manifest.get("skipped", [])]
+            manifest_skipped = [
+                (str(s.get("name")), str(s.get("reason") or "no reason recorded")) for s in manifest.get("skipped", [])
+            ]
         except Exception as e:
             log_warning(f"CodeMode restore for session {session_id}: corrupt manifest: {e}")
             return None
 
         payloads: List[List[str]] = []
-        failed: List[str] = []
+        failed: List[Tuple[str, str]] = []
         for var in variables:
             name = str(var.get("name"))
             try:
                 data = await self.fs.aread(self._var_path(session_id, name))
             except Exception as e:
                 log_warning(f"CodeMode restore for session {session_id}: read of '{name}' failed: {e}")
-                data = None
+                failed.append((name, f"stored payload could not be read: {e}"))
+                continue
             if data is None:
-                failed.append(name)
+                failed.append((name, "stored payload is missing"))
             else:
                 payloads.append([name, data])
 
@@ -346,19 +412,31 @@ class SnapshotManager:
                         f"CodeMode restore for session {session_id} produced no result: "
                         f"{result.traceback or result.stderr or 'no output'}"
                     )
-                    failed.extend(name for name, _ in payloads)
+                    failed.extend((name, "the kernel produced no restore result") for name, _ in payloads)
                 else:
                     outcome = json.loads(marker_payload)
                     restored = [str(n) for n in outcome.get("restored", [])]
                     for name, reason in outcome.get("failed", []):
                         log_warning(f"CodeMode restore for session {session_id}: '{name}' failed: {reason}")
-                        if name != "*":
-                            failed.append(str(name))
+                        if name == "*":
+                            # A whole-cell failure: every payload is gone, and
+                            # each one carries that reason to the model.
+                            failed.extend((sent, str(reason)) for sent, _ in payloads)
+                        else:
+                            failed.append((str(name), str(reason)))
             except Exception as e:
                 log_warning(f"CodeMode restore for session {session_id} failed: {e}")
-                failed.extend(name for name, _ in payloads)
+                failed.extend((name, f"restore failed: {e}") for name, _ in payloads)
 
-        not_restored = manifest_skipped + [name for name in failed if name not in manifest_skipped]
+        # One line per variable, first reason recorded wins, and a name that
+        # did come back is never also reported as missing.
+        seen = set(restored)
+        not_restored: List[Tuple[str, str]] = []
+        for name, reason in manifest_skipped + failed:
+            if name in seen:
+                continue
+            seen.add(name)
+            not_restored.append((name, reason))
         return build_restored_notice(restored, not_restored)
 
     # ------------------------------------------------------------------

@@ -9,8 +9,12 @@ its variables restored, and the model is told what came back in-band:
 
     <code_mode_restored>
     Restored 3 variables: frames, world_model, notes.
-    Not restored (unpicklable): client.
+    Not restored:
+    - client: TypeError: cannot pickle '_thread.lock' object
     </code_mode_restored>
+
+Every variable that did not come back is named with its reason, so a value
+refused for its size reads differently from one that cannot be pickled at all.
 
 Restore runs BEFORE the live toolkit handles are rebound, so a stale pickled
 handle from last week always loses to this run's live one.
@@ -28,7 +32,14 @@ SESSION_ID = "code-mode-persistence"
 # Create Agent
 # ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/code_mode.db")
-snapshots = FileSystem(backend=db, namespace="code-mode", max_file_bytes=2_000_000)
+# The snapshot caps count stored bytes and are lowered at setup to whatever this
+# store allows, so give the store room for the caps you want.
+snapshots = FileSystem(
+    backend=db,
+    namespace="code-mode",
+    max_file_bytes=2_000_000,
+    max_namespace_bytes=64_000_000,
+)
 
 code = CodeMode(fs=snapshots)
 

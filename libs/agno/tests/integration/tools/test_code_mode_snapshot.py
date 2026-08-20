@@ -115,7 +115,8 @@ def test_snapshot_round_trip_restores_picklable_and_names_unpicklable(snapshot_f
     assert "<code_mode_restored>" in revived.content
     assert "frames" in revived.content
     assert "world_model" in revived.content
-    assert "Not restored (unpicklable): sock." in revived.content
+    assert "Not restored:" in revived.content
+    assert "- sock: " in revived.content
     assert "[1, 2, 3, 4]" in revived.content
     follow_up = cm.execute(_ctx(sid), "world_model['level']")
     assert "4" in follow_up.content
@@ -186,10 +187,60 @@ def test_oversized_variable_is_skipped_and_small_ones_kept(snapshot_fs, make_cod
     assert "small" in kept
     assert "big" not in kept
     assert "big" in skipped
-    assert "over the 10000-byte cap" in skipped["big"]
+    assert "too large to store" in skipped["big"]
+    assert "over the 10000-byte limit" in skipped["big"]
     cm.shutdown(sid)
     revived = cm.execute(_ctx(sid), "small")
-    assert "Not restored (unpicklable): big." in revived.content
+    assert "big: too large to store" in revived.content
+    assert "unpicklable" not in revived.content
+    assert "tiny" in revived.content
+
+
+def _small_store(snapshot_fs):
+    """A store with the FileSystem defaults, well under CodeMode's own caps."""
+    return FileSystem(
+        backend=snapshot_fs.backend,
+        namespace="code-mode-caps",
+        max_file_bytes=1_000_000,
+        max_namespace_bytes=20_000_000,
+    )
+
+
+def test_variable_under_the_cap_round_trips_and_the_manifest_counts_stored_bytes(snapshot_fs, make_code_mode):
+    # 740,000 characters pickle to ~740,030 bytes and store as 986,708 bytes of
+    # base64, just under the store's 1,000,000-byte file limit.
+    store = _small_store(snapshot_fs)
+    cm = make_code_mode(fs=store, snapshot_debounce=0.05)
+    sid = _sid("under-cap")
+    cm.execute(_ctx(sid), "blob = 'y' * 740_000")
+    cm.close()
+    manifest = json.loads(store.read(f"kernel/{sid}/manifest.json"))
+    entry = next(v for v in manifest["variables"] if v["name"] == "blob")
+    assert entry["bytes"] == len(store.read(f"kernel/{sid}/vars/blob.b64"))
+    assert entry["bytes"] <= 1_000_000
+    cm.shutdown(sid)
+    revived = cm.execute(_ctx(sid), "len(blob)")
+    assert "740000" in revived.content
+    assert "Not restored" not in revived.content
+
+
+def test_variable_over_the_store_limit_is_reported_by_size_not_as_unpicklable(snapshot_fs, make_code_mode):
+    # 800,000 characters pickle to ~800,009 bytes, under CodeMode's 2,000,000-byte
+    # cap, and store as 1,066,680 bytes of base64, over the store's file limit.
+    store = _small_store(snapshot_fs)
+    cm = make_code_mode(fs=store, snapshot_debounce=0.05)
+    sid = _sid("b64-inflation")
+    cm.execute(_ctx(sid), "small = 'tiny'\nbig = 'x' * 800_000")
+    cm.close()
+    manifest = json.loads(store.read(f"kernel/{sid}/manifest.json"))
+    skipped = {s["name"]: s["reason"] for s in manifest["skipped"]}
+    assert "big" in skipped
+    assert "too large to store: 1066680 bytes, over the 1000000-byte limit" == skipped["big"]
+    assert "small" in [v["name"] for v in manifest["variables"]]
+    cm.shutdown(sid)
+    revived = cm.execute(_ctx(sid), "small")
+    assert "- big: too large to store: 1066680 bytes, over the 1000000-byte limit" in revived.content
+    assert "unpicklable" not in revived.content
     assert "tiny" in revived.content
 
 

@@ -350,13 +350,29 @@ def test_budget_orders_smallest_first_so_largest_is_cut():
 def test_restored_notice_full_shape():
     from agno.tools.code_mode.snapshot import build_restored_notice
 
-    notice = build_restored_notice(["frames", "world_model"], ["arcade_client", "sock"])
+    notice = build_restored_notice(
+        ["frames", "world_model"],
+        [
+            ("arcade_client", "TypeError: cannot pickle 'socket' object"),
+            ("scores", "too large to store: 1066680 bytes, over the 1000000-byte limit"),
+        ],
+    )
     assert notice == (
         "<code_mode_restored>\n"
         "Restored 2 variables: frames, world_model.\n"
-        "Not restored (unpicklable): arcade_client, sock.\n"
+        "Not restored:\n"
+        "- arcade_client: TypeError: cannot pickle 'socket' object\n"
+        "- scores: too large to store: 1066680 bytes, over the 1000000-byte limit\n"
         "</code_mode_restored>"
     )
+
+
+def test_restored_notice_never_calls_a_size_refusal_unpicklable():
+    from agno.tools.code_mode.snapshot import build_restored_notice
+
+    notice = build_restored_notice([], [("scores", "too large to store: 1066680 bytes, over the 1000000-byte limit")])
+    assert "unpicklable" not in notice
+    assert "- scores: too large to store: 1066680 bytes, over the 1000000-byte limit" in notice
 
 
 def test_restored_notice_omits_unpicklable_line_when_empty():
@@ -371,3 +387,71 @@ def test_restored_notice_none_when_nothing_happened():
     from agno.tools.code_mode.snapshot import build_restored_notice
 
     assert build_restored_notice([], []) is None
+
+
+# ------------------------------------------------------------------
+# Snapshot caps against the file store's own limits
+# ------------------------------------------------------------------
+
+
+def test_caps_are_lowered_to_the_store_limits():
+    from agno.tools.code_mode.snapshot import reconcile_caps
+
+    variable_bytes, snapshot_bytes, notes = reconcile_caps(2_000_000, 64_000_000, 1_000_000, 20_000_000)
+    assert (variable_bytes, snapshot_bytes) == (1_000_000, 20_000_000)
+    assert len(notes) == 2
+    assert "max_file_bytes" in notes[0]
+    assert "max_namespace_bytes" in notes[1]
+
+
+def test_caps_below_the_store_limits_are_left_alone():
+    from agno.tools.code_mode.snapshot import reconcile_caps
+
+    assert reconcile_caps(10_000, 50_000, 4_000_000, 128_000_000) == (10_000, 50_000, [])
+
+
+def test_caps_survive_a_store_that_publishes_no_limits():
+    from agno.tools.code_mode.snapshot import reconcile_caps
+
+    assert reconcile_caps(2_000_000, 64_000_000, None, None) == (2_000_000, 64_000_000, [])
+
+
+def test_snapshot_manager_binds_the_store_limits_and_warns_once(tmp_path, monkeypatch):
+    from agno.fs import FileSystem
+    from agno.fs.local import LocalFileSystem
+    from agno.tools.code_mode import snapshot as snapshot_module
+
+    warnings = []
+    monkeypatch.setattr(snapshot_module, "log_warning", lambda message: warnings.append(message))
+
+    fs = FileSystem(
+        backend=LocalFileSystem(root=tmp_path),
+        max_file_bytes=1_000_000,
+        max_namespace_bytes=20_000_000,
+    )
+    manager = snapshot_module.SnapshotManager(fs, max_variable_bytes=2_000_000, max_snapshot_bytes=64_000_000)
+
+    assert manager.max_variable_bytes == 1_000_000
+    assert manager.max_snapshot_bytes == 20_000_000
+    assert len(warnings) == 1
+    assert "max_file_bytes" in warnings[0]
+
+
+def test_snapshot_manager_is_quiet_when_the_store_fits_the_caps(tmp_path, monkeypatch):
+    from agno.fs import FileSystem
+    from agno.fs.local import LocalFileSystem
+    from agno.tools.code_mode import snapshot as snapshot_module
+
+    warnings = []
+    monkeypatch.setattr(snapshot_module, "log_warning", lambda message: warnings.append(message))
+
+    fs = FileSystem(
+        backend=LocalFileSystem(root=tmp_path),
+        max_file_bytes=4_000_000,
+        max_namespace_bytes=128_000_000,
+    )
+    manager = snapshot_module.SnapshotManager(fs, max_variable_bytes=2_000_000, max_snapshot_bytes=64_000_000)
+
+    assert manager.max_variable_bytes == 2_000_000
+    assert manager.max_snapshot_bytes == 64_000_000
+    assert warnings == []
