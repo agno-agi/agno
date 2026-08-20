@@ -427,3 +427,154 @@ class TestTheDeclarationIsBinding:
             AgentOS(agents=[runner], registry=registry)
 
         assert not any("component catalog" in r.message for r in caplog.records)
+
+
+class TestASharedRegistryBindsPerOS:
+    """A Registry can back several AgentOS instances at once, so the toolkit
+    binds to the OS that SERVES it rather than to the last one constructed.
+
+    Construction order used to decide the catalog for every unpinned toolkit
+    in the process: a second OS silently took the first one's Studio with it,
+    and writes landed in a db the serving OS's HTTP surfaces never read.
+    """
+
+    def _studio_agent(self, registry, agent_id="builder", **kwargs):
+        studio = StudioTools(registry=registry, **kwargs)
+        return studio, Agent(id=agent_id, name="Builder", model=_model(), tools=[studio])
+
+    @pytest.mark.skipif(
+        find_spec("croniter") is None or find_spec("pytz") is None,
+        reason="scheduler extras not installed (pip install agno[scheduler])",
+    )
+    def test_a_second_os_with_its_own_db_does_not_rebind_the_first(self, tmp_path):
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry, schedules=True)
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        db_b = SqliteDb(id="db-b", db_file=str(tmp_path / "b.db"))
+
+        AgentOS(agents=[builder], registry=registry, db=db_a)
+        AgentOS(agents=[Agent(id="dispatch", name="Dispatch", model=_model())], registry=registry, db=db_b)
+
+        assert studio.db is db_a
+        assert studio._runner_tools.db is db_a
+        assert studio._scheduler_tools is not None
+        assert studio._scheduler_tools.manager.db is db_a
+        assert _loads(studio.create_agent(name="Made", instructions="i", publish=True))["ok"] is True
+        assert [row["component_id"] for row in db_a.list_components()[0]] == ["made"]
+        assert db_b.list_components()[0] == []
+
+    def test_the_serving_os_wins_even_when_it_is_constructed_second(self, tmp_path):
+        """The mirrored order of the test above: first-declaration-wins would
+        fail here, binding the toolkit to the dispatch OS's db instead."""
+        from fastapi.testclient import TestClient
+
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry)
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        db_b = SqliteDb(id="db-b", db_file=str(tmp_path / "b.db"))
+
+        AgentOS(agents=[Agent(id="dispatch", name="Dispatch", model=_model())], registry=registry, db=db_b)
+        serving = AgentOS(agents=[builder], registry=registry, db=db_a)
+
+        assert studio.db is db_a
+        assert _loads(studio.create_agent(name="Made", instructions="i", publish=True))["ok"] is True
+
+        client = TestClient(serving.get_app())
+        listed = client.get("/components", params={"component_type": "agent"}).json()["data"]
+        assert "made" in [row["component_id"] for row in listed]
+
+    def test_a_second_os_with_an_async_db_does_not_unbind_the_first(self, tmp_path):
+        pytest.importorskip("aiosqlite")
+        from agno.db.sqlite import AsyncSqliteDb
+
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry)
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        AgentOS(agents=[builder], registry=registry, db=db_a)
+
+        # An async db cannot back the catalog; naming it must not blank out a
+        # catalog another OS is already serving.
+        AgentOS(
+            agents=[Agent(id="dispatch", name="Dispatch", model=_model())],
+            registry=registry,
+            db=AsyncSqliteDb(id="async-os", db_file=str(tmp_path / "async.db")),
+        )
+
+        assert studio.db is db_a
+        assert _loads(studio.create_agent(name="Made", instructions="i"))["ok"] is True
+
+    def test_a_db_less_second_os_is_silent(self, tmp_path, caplog):
+        """A second OS serving the same builder with no db of its own keeps the
+        first binding, and says nothing: it has no competing answer to offer."""
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry)
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        AgentOS(agents=[builder], registry=registry, db=db_a)
+
+        with caplog.at_level("WARNING"):
+            AgentOS(agents=[builder], registry=registry)
+
+        assert studio.db is db_a
+        assert not any(
+            "component catalog" in r.message or "more than one" in r.message for r in caplog.records
+        ), [r.message for r in caplog.records]
+
+    def test_two_os_pulling_one_toolkit_apart_warn(self, tmp_path, caplog):
+        """When the same toolkit is served by two OS with different dbs there
+        is no right answer, so the first binding stands and the split is loud."""
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry)
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        db_b = SqliteDb(id="db-b", db_file=str(tmp_path / "b.db"))
+        AgentOS(agents=[builder], registry=registry, db=db_a)
+
+        with caplog.at_level("WARNING"):
+            AgentOS(agents=[builder], registry=registry, db=db_b)
+
+        assert studio.db is db_a
+        assert any("served by more than one" in r.message for r in caplog.records)
+
+    def test_a_registry_declared_db_survives_a_db_less_os(self, tmp_path):
+        """The user named the catalog db on the Registry itself; an OS with no
+        db of its own has nothing better to say and must not overrule it."""
+        catalog = SqliteDb(id="catalog", db_file=str(tmp_path / "catalog.db"))
+        registry = Registry(name="R", models=[_model()], dbs=[catalog])
+        studio, builder = self._studio_agent(registry)
+
+        AgentOS(agents=[builder], registry=registry)  # no db=
+
+        assert studio.db is catalog
+        assert _loads(studio.create_agent(name="Made", instructions="i", publish=True))["ok"] is True
+
+    def test_the_catalog_is_declared_before_components_are_collected(self, tmp_path):
+        """Pins the population order: the declaration runs while registry.dbs
+        can only hold what the user passed to Registry(...).
+
+        Collecting the component tree first would put an agent-private session
+        db in that list, and the db-less fallback would then adopt it - a
+        catalog written where no OS surface reads it.
+        """
+        from agno.registry.registry import Registry as RegistryClass
+
+        registry = Registry(name="R", models=[_model()])
+        private = SqliteDb(id="builder-private", db_file=str(tmp_path / "private.db"))
+        studio, builder = self._studio_agent(registry)
+        builder.db = private
+
+        seen_at_declaration = []
+        original = RegistryClass.declare_component_db
+
+        def _record(self, db):
+            seen_at_declaration.append([getattr(entry, "id", None) for entry in self.dbs])
+            return original(self, db)
+
+        RegistryClass.declare_component_db = _record
+        try:
+            agent_os = AgentOS(agents=[builder], registry=registry)
+            agent_os.get_app()
+        finally:
+            RegistryClass.declare_component_db = original
+
+        assert seen_at_declaration, "the catalog db was never declared"
+        assert all("builder-private" not in ids for ids in seen_at_declaration), seen_at_declaration
+        assert studio.db is None

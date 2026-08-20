@@ -3,7 +3,7 @@ import contextlib
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Set, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -462,6 +462,7 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._bind_studio_catalog_dbs()
         self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
@@ -540,6 +541,7 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._bind_studio_catalog_dbs()
         self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
@@ -853,9 +855,31 @@ class AgentOS:
         # A db-less OS still does not OVERRIDE a catalog another OS already
         # named: registries are explicitly shareable, so a second, dispatch-only
         # OS mounted on the same registry would otherwise unbind the first one's
-        # Studio and turn its working writes into db_not_configured.
-        if self.db is not None or not self.registry.component_db_declared:
-            self.registry.declare_component_db(self.db)
+        # Studio and turn its working writes into db_not_configured. Toolkits
+        # this OS actually serves are bound to it directly and outrank this
+        # declaration; what is left here is the answer for toolkits no OS
+        # serves.
+        if not self.registry.component_db_declared:
+            # With no db of its own, declare what the USER put on the registry
+            # rather than a flat None. This runs before component discovery, so
+            # registry.dbs can only hold dbs passed to Registry(...) at this
+            # point, never an agent-private one collected from the served tree
+            # - and re-running it later must not reach for that list either.
+            declared = self.db if self.db is not None else (self.registry.dbs[0] if self.registry.dbs else None)
+            self.registry.declare_component_db(declared)
+        elif self.db is not None:
+            if self.registry.component_db is None:
+                # A declared None is a refusal that a later db-bearing OS lifts.
+                self.registry.declare_component_db(self.db)
+            elif self.db is not self.registry.component_db:
+                # Not a warning: a legitimate sibling OS with its own db is
+                # normal wiring, and the toolkits it serves are bound to it
+                # directly. Only a toolkit pulled between two of them warns.
+                log_debug(
+                    f"Registry: component catalog stays on db '{self.registry.component_db.id}'; this AgentOS "
+                    f"holds a different db ('{getattr(self.db, 'id', None)}') and binds only the Studio "
+                    "toolkits it serves."
+                )
 
         # The catalog db also goes first in registry.dbs, so rehydration that
         # walks the list meets it before any component-private db. Ordering is
@@ -945,6 +969,109 @@ class AgentOS:
         for kb in self.knowledge or []:
             self.registry.add_knowledge(kb, mirrored=True)
 
+    def _bind_studio_catalog_dbs(self) -> None:
+        """Bind every Studio toolkit this OS serves to this OS's own db.
+
+        A Registry is explicitly shareable, so its single catalog declaration
+        cannot say which of several mounted AgentOS instances owns a given
+        toolkit: whichever OS was constructed last would take every unpinned
+        toolkit with it, and its writes would land in a db the OS actually
+        serving that toolkit never reads. Binding follows the OS that SERVES
+        the toolkit, which does not depend on construction order.
+
+        A toolkit served by an OS with no usable db is deliberately left
+        unbound so it falls through to the registry declaration: that keeps a
+        db-less deployment working once another OS names a catalog db.
+        """
+        from agno.tools.studio import StudioTools
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        os_db = self.db if isinstance(self.db, BaseDb) else None
+        for component in self._iter_component_carriers():
+            tools = getattr(component, "tools", None)
+            # tools may be a callable factory; only a materialized list can be
+            # inspected here, and a factory cannot be called safely at
+            # construction time.
+            if not isinstance(tools, list):
+                continue
+            for tool in tools:
+                if not isinstance(tool, (StudioTools, StudioRunnerTools)):
+                    continue
+                # A toolkit on another registry is a different catalog entirely
+                # (warned about separately), and an explicit db always wins.
+                if getattr(tool, "registry", None) is not self.registry or getattr(tool, "_db", None) is not None:
+                    continue
+                already = getattr(tool, "_os_db", None)
+                if already is not None and already is not os_db:
+                    if os_db is not None:
+                        label = getattr(component, "id", None) or getattr(component, "name", None)
+                        log_warning(
+                            f"Component '{label}' carries {type(tool).__name__} served by more than one "
+                            f"AgentOS with different databases (bound '{already.id}', this OS '{os_db.id}'); "
+                            "keeping the first. Pass the toolkit its own db (StudioTools(db=...)) to make "
+                            "the choice explicit."
+                        )
+                else:
+                    # StudioTools delegates its component lookups to an embedded
+                    # runner toolkit, so both halves have to resolve one db.
+                    tool._os_db = os_db
+                    embedded = getattr(tool, "_runner_tools", None)
+                    if embedded is not None and getattr(embedded, "_db", None) is None:
+                        embedded._os_db = os_db
+
+    def _iter_component_carriers(self) -> Iterator[Any]:
+        """Every served component that can carry a toolkit: top-level
+        agents and teams, team members recursively, and the agents/teams
+        executing workflow steps (nested step containers included)."""
+        seen: Set[int] = set()
+
+        def visit(component: Any):
+            if component is None or id(component) in seen:
+                return
+            seen.add(id(component))
+            yield component
+            # members may be a callable factory, which is truthy but not
+            # iterable; only a materialized list can be walked, and a
+            # factory cannot be called safely at construction time.
+            members = getattr(component, "members", None)
+            if isinstance(members, list):
+                for member in members:
+                    yield from visit(member)
+
+        for top in [*self._agents, *self._teams]:
+            yield from visit(top)
+
+        def visit_steps(steps: Any):
+            # steps may be a Steps container rather than a plain list --
+            # WorkflowSteps accepts one at the top level, and a bare
+            # container here would otherwise skip the whole subtree.
+            if not isinstance(steps, list):
+                inner = getattr(steps, "steps", None)
+                if steps is None or not isinstance(inner, list):
+                    return
+                steps = inner
+            for step in steps:
+                # Containers can reference each other; without this the
+                # walk recurses until the stack dies, taking the whole
+                # application down at construction time.
+                if id(step) in seen:
+                    continue
+                seen.add(id(step))
+                for attr in ("agent", "team"):
+                    yield from visit(getattr(step, attr, None))
+                # Every container a step can be: Loop, Parallel and
+                # Condition hold steps, Condition also else_steps, Router
+                # holds choices, and a nested Workflow its own step list.
+                for attr in ("steps", "else_steps", "choices"):
+                    yield from visit_steps(getattr(step, attr, None))
+                nested = getattr(step, "workflow", None)
+                if nested is not None and id(nested) not in seen:
+                    seen.add(id(nested))
+                    yield from visit_steps(getattr(nested, "steps", None))
+
+        for workflow in self._workflows:
+            yield from visit_steps(getattr(workflow, "steps", None))
+
     def _warn_on_foreign_studio_registries(self) -> None:
         """Warn when a served component carries a Studio toolkit bound to a
         different Registry than the one this OS populates.
@@ -959,60 +1086,7 @@ class AgentOS:
         from agno.tools.studio import StudioTools
         from agno.tools.studio_runner import StudioRunnerTools
 
-        def iter_carriers():
-            """Every served component that can carry a toolkit: top-level
-            agents and teams, team members recursively, and the agents/teams
-            executing workflow steps (nested step containers included)."""
-            seen: Set[int] = set()
-
-            def visit(component: Any):
-                if component is None or id(component) in seen:
-                    return
-                seen.add(id(component))
-                yield component
-                # members may be a callable factory, which is truthy but not
-                # iterable; only a materialized list can be walked, and a
-                # factory cannot be called safely at construction time.
-                members = getattr(component, "members", None)
-                if isinstance(members, list):
-                    for member in members:
-                        yield from visit(member)
-
-            for top in [*self._agents, *self._teams]:
-                yield from visit(top)
-
-            def visit_steps(steps: Any):
-                # steps may be a Steps container rather than a plain list --
-                # WorkflowSteps accepts one at the top level, and a bare
-                # container here would otherwise skip the whole subtree.
-                if not isinstance(steps, list):
-                    inner = getattr(steps, "steps", None)
-                    if steps is None or not isinstance(inner, list):
-                        return
-                    steps = inner
-                for step in steps:
-                    # Containers can reference each other; without this the
-                    # walk recurses until the stack dies, taking the whole
-                    # application down at construction time.
-                    if id(step) in seen:
-                        continue
-                    seen.add(id(step))
-                    for attr in ("agent", "team"):
-                        yield from visit(getattr(step, attr, None))
-                    # Every container a step can be: Loop, Parallel and
-                    # Condition hold steps, Condition also else_steps, Router
-                    # holds choices, and a nested Workflow its own step list.
-                    for attr in ("steps", "else_steps", "choices"):
-                        yield from visit_steps(getattr(step, attr, None))
-                    nested = getattr(step, "workflow", None)
-                    if nested is not None and id(nested) not in seen:
-                        seen.add(id(nested))
-                        yield from visit_steps(getattr(nested, "steps", None))
-
-            for workflow in self._workflows:
-                yield from visit_steps(getattr(workflow, "steps", None))
-
-        for component in iter_carriers():
+        for component in self._iter_component_carriers():
             tools = getattr(component, "tools", None)
             # tools may be a callable factory; only a materialized list can be
             # inspected here, and a factory cannot be called safely at
