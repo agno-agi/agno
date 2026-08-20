@@ -773,6 +773,7 @@ class ClickhouseDb(BaseDb):
         component_id: str,
         component_type: Optional[ComponentType] = None,
         user_id: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         return None
 

@@ -2,7 +2,7 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from sqlalchemy import and_, or_
@@ -10,7 +10,7 @@ from sqlalchemy import and_, or_
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import AsyncBaseDb, ComponentType, SessionType
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -4044,125 +4044,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error getting learning user stats: {e}")
             raise e
 
-    # --- Components (Not yet supported for async) ---
-    def get_component(
-        self,
-        component_id: str,
-        component_type: Optional[ComponentType] = None,
-        user_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def upsert_component(
-        self,
-        component_id: str,
-        component_type: Optional[ComponentType] = None,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def delete_component(
-        self,
-        component_id: str,
-        hard_delete: bool = False,
-        user_id: Optional[str] = None,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def list_components(
-        self,
-        component_type: Optional[ComponentType] = None,
-        include_deleted: bool = False,
-        limit: int = 20,
-        offset: int = 0,
-        exclude_component_ids: Optional[Set[str]] = None,
-        user_id: Optional[str] = None,
-        name: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def create_component_with_config(
-        self,
-        component_id: str,
-        component_type: ComponentType,
-        name: Optional[str],
-        config: Dict[str, Any],
-        description: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        label: Optional[str] = None,
-        stage: str = "draft",
-        notes: Optional[str] = None,
-        links: Optional[List[Dict[str, Any]]] = None,
-        user_id: Optional[str] = None,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_config(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def upsert_config(
-        self,
-        component_id: str,
-        config: Optional[Dict[str, Any]] = None,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-        stage: Optional[str] = None,
-        notes: Optional[str] = None,
-        links: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def delete_config(
-        self,
-        component_id: str,
-        version: int,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def list_configs(
-        self,
-        component_id: str,
-        include_config: bool = False,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def set_current_version(
-        self,
-        component_id: str,
-        version: int,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_links(
-        self,
-        component_id: str,
-        version: int,
-        link_kind: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_dependents(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def load_component_graph(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
+    # --- Components (Not supported for async) ---
+    # The plain-def stubs raising NotImplementedError are inherited from AsyncBaseDb.
 
     # -- Schedule methods --
     # ``claim_due_schedule`` / ``release_schedule`` take no user_id: the poller has to fire
@@ -4254,6 +4137,13 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def update_schedule(
         self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        if kwargs.get("enabled") is True:
+            # A system-set disabled_reason describes why the row was off;
+            # turning it on retires the explanation.
+            kwargs.setdefault("disabled_reason", None)
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -4299,6 +4189,77 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_debug(f"Error deleting schedule: {e}")
             return False
 
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Async variant of the sync adapter's primitive: matches provenance-tagged
+        rows and generic rows whose endpoint is the component's run endpoint,
+        across owners, and records the system reason in disabled_reason.
+        """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return 0
+            endpoint = build_run_endpoint(target_type, target_id)
+            # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+            # "/agents/x/runs/" is a valid run endpoint that plain equality would
+            # miss - matching both spellings keeps the cascade from leaking rows.
+            endpoints = [endpoint, endpoint + "/"]
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.update()
+                        .where(
+                            or_(
+                                and_(table.c.target_type == target_type, table.c.target_id == target_id),
+                                table.c.endpoint.in_(endpoints),
+                            ),
+                            table.c.enabled.is_(True),
+                        )
+                        .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                    )
+            return int(getattr(result, "rowcount", 0) or 0)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses."""
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.update()
+                        .where(table.c.id == schedule_id)
+                        .values(updated_at=int(time.time()), **provenance)
+                    )
+            return getattr(result, "rowcount", 0) > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
+
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
@@ -4326,10 +4287,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if row is None:
                         return None
                     schedule = dict(row._mapping)
+                    # Claim it with EVERY predicate the select used, not just
+                    # the lock half: the select runs before the write, so a
+                    # disable (the archive cascade among them) or a reschedule
+                    # committing in the gap must make the claim a no-op rather
+                    # than arm a run against a target that is gone.
                     claim_result = await sess.execute(
                         table.update()
                         .where(
                             table.c.id == schedule["id"],
+                            table.c.enabled == True,  # noqa: E712
+                            table.c.next_run_at <= now,
                             or_(
                                 table.c.locked_by.is_(None),
                                 table.c.locked_at <= stale_lock_threshold,
@@ -4339,9 +4307,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                     )
                     if claim_result.rowcount == 0:  # type: ignore[attr-defined]
                         return None
-                    schedule["locked_by"] = worker_id
-                    schedule["locked_at"] = now
-                    return schedule
+                    # Return post-claim state: the executor acts on this dict,
+                    # and the pre-claim snapshot can already be stale.
+                    claimed = (await sess.execute(select(table).where(table.c.id == schedule["id"]))).fetchone()
+                    if claimed is None:
+                        return None
+                    return dict(claimed._mapping)
         except Exception as e:
             log_debug(f"Error claiming schedule: {e}")
             return None
