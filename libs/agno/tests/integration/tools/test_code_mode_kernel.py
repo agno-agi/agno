@@ -4,12 +4,17 @@ Every test runs against a live kernel subprocess and is marked integration.
 """
 
 import asyncio
+import os
+import signal
 import time
+from typing import Optional
 
 import pytest
 
 from agno.run import RunContext
+from agno.tools import Toolkit
 from agno.tools.code_mode import CodeMode, KernelBusyError, KernelDiedError
+from agno.tools.code_mode.code_mode import OWNER_REFUSAL
 from agno.tools.code_mode.kernel import RESET_NOTICE
 
 pytestmark = pytest.mark.integration
@@ -17,12 +22,31 @@ pytestmark = pytest.mark.integration
 _SESSION_COUNTER = iter(range(1_000_000))
 
 
-def _ctx(session_id: str) -> RunContext:
-    return RunContext(run_id="run-1", session_id=session_id)
+def _ctx(session_id: str, user_id: Optional[str] = None) -> RunContext:
+    return RunContext(run_id="run-1", session_id=session_id, user_id=user_id)
 
 
 def _sid(prefix: str) -> str:
     return f"{prefix}-{next(_SESSION_COUNTER)}"
+
+
+class SlowTools(Toolkit):
+    """A bridged tool slow enough to still be running when the kernel goes away."""
+
+    def __init__(self, **kwargs):
+        super().__init__(name="slow_tools", tools=[self.nap], **kwargs)
+
+    def nap(self, seconds: float, tag: str) -> str:
+        """Sleep for the given seconds and return the tag.
+
+        Args:
+            seconds: How long to sleep.
+            tag: The tag to return.
+        """
+        import time as _time
+
+        _time.sleep(seconds)
+        return f"napped:{tag}"
 
 
 @pytest.fixture
@@ -286,6 +310,25 @@ def test_idle_ttl_evicts_and_next_execute_resets(make_code_mode):
     assert "revived" in revived.content
 
 
+def test_eviction_forgets_the_session_and_its_run_context(make_code_mode):
+    cm = make_code_mode(idle_ttl=1)
+    sid = _sid("evict-forget")
+    cm.execute(_ctx(sid), "ephemeral = 1")
+    session = cm._sessions[sid]
+    deadline = time.monotonic() + 15
+    while cm._sessions.get(sid) is not None and time.monotonic() < deadline:
+        time.sleep(0.2)
+    # Nothing about a session survives its eviction: neither the registry entry
+    # nor the RunContext of the run that last used it.
+    assert cm._sessions.get(sid) is None, "eviction must drop the session entry"
+    assert not session.running
+    assert session.run_context is None
+    # The id still works: the next execute starts a fresh kernel for it.
+    revived = cm.execute(_ctx(sid), "'revived'")
+    assert "revived" in revived.content
+    assert cm._sessions.get(sid) is not None
+
+
 # ------------------------------------------------------------------
 # Developer-facing surface
 # ------------------------------------------------------------------
@@ -345,3 +388,92 @@ def test_shutdown_all_sessions(make_code_mode):
     assert len(cm._sessions) == 2
     cm.shutdown()
     assert cm._sessions == {}
+
+
+# ------------------------------------------------------------------
+# Session ownership: a session id is not proof of access
+# ------------------------------------------------------------------
+
+
+def test_same_user_reuses_the_warm_kernel(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("own-same")
+    cm.execute(_ctx(sid, user_id="user-a"), "token = 'secret-a'")
+    again = cm.execute(_ctx(sid, user_id="user-a"), "token")
+    assert "secret-a" in again.content
+
+
+def test_another_users_run_is_refused_and_never_reaches_the_kernel(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("own-other")
+    cm.execute(_ctx(sid, user_id="user-a"), "token = 'secret-a'")
+    intruder = cm.execute(_ctx(sid, user_id="user-b"), "print(token)")
+    assert intruder.content == OWNER_REFUSAL
+    assert "secret-a" not in intruder.content
+    # The owner's environment is untouched by the refusal.
+    kept = cm.execute(_ctx(sid, user_id="user-a"), "token")
+    assert "secret-a" in kept.content
+
+
+def test_another_user_cannot_restart_the_session(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("own-restart")
+    cm.execute(_ctx(sid, user_id="user-a"), "token = 'secret-a'")
+    assert cm.restart(_ctx(sid, user_id="user-b")) == OWNER_REFUSAL
+    kept = cm.execute(_ctx(sid, user_id="user-a"), "token")
+    assert "secret-a" in kept.content
+
+
+async def test_async_surface_refuses_another_user(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("own-async")
+    await cm.aexecute(_ctx(sid, user_id="user-a"), "token = 'secret-a'")
+    refused = await cm.aexecute(_ctx(sid, user_id="user-b"), "token")
+    assert refused.content == OWNER_REFUSAL
+    assert await cm.arestart(_ctx(sid, user_id="user-b")) == OWNER_REFUSAL
+    kept = await cm.aexecute(_ctx(sid, user_id="user-a"), "token")
+    assert "secret-a" in kept.content
+
+
+def test_session_without_a_user_is_claimed_by_the_first_one(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("own-claim")
+    # A run without an identity carries nothing to compare, so it keeps the
+    # unauthenticated behavior and reuses the same kernel.
+    cm.execute(_ctx(sid), "shared = 1")
+    claimed = cm.execute(_ctx(sid, user_id="user-a"), "shared + 1")
+    assert "2" in claimed.content
+    # The first identity to arrive owns the session from then on.
+    assert cm.execute(_ctx(sid, user_id="user-b"), "shared").content == OWNER_REFUSAL
+
+
+# ------------------------------------------------------------------
+# Teardown and in-flight bridged tool calls
+# ------------------------------------------------------------------
+
+
+async def test_kernel_death_cancels_the_in_flight_bridged_call(make_code_mode):
+    cm = make_code_mode(tools=[SlowTools()], timeout=120)
+    sid = _sid("death-inflight")
+    await cm.aexecute(_ctx(sid), "1")
+    session = cm._sessions[sid]
+    call = asyncio.ensure_future(cm.aexecute(_ctx(sid), "await slow.nap(seconds=5, tag='old')"))
+    for _ in range(200):
+        if any(key[0] == sid for key in cm._bridge._pending):
+            break
+        await asyncio.sleep(0.05)
+    assert any(key[0] == sid for key in cm._bridge._pending), "the bridged call never reached the host"
+    generation_before = session.generation
+    os.kill(session.km.provisioner.pid, signal.SIGKILL)
+    with pytest.raises(KernelDiedError):
+        await call
+    # The task serving that call belongs to the destroyed kernel: leaving it
+    # running lets its reply land on a call id of the replacement.
+    assert not any(key[0] == sid for key in cm._bridge._pending), (
+        "teardown must cancel the bridged calls of the kernel it destroyed"
+    )
+    # The replacement kernel starts a new generation and its own call ids.
+    revived = await cm.aexecute(_ctx(sid), "await slow.nap(seconds=0.1, tag='new')")
+    assert "napped:new" in revived.content
+    assert "old" not in revived.content
+    assert session.generation > generation_before

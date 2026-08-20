@@ -172,10 +172,11 @@ class ToolBridge:
         # (handle, method) -> Function; top-level callables bind under handle "".
         self._registry: Dict[Tuple[str, str], Function] = {}
         self._spec: Dict[str, Any] = {"toolkits": [], "functions": []}
-        # In-flight calls keyed by (session_id, call_id): call ids are a
-        # per-kernel counter, so two sessions of one CodeMode collide on the
-        # bare id and an interrupt in one must never cancel the other's calls.
-        self._pending: Dict[Tuple[str, str], "asyncio.Task[None]"] = {}
+        # In-flight calls keyed by (session_id, kernel generation, call_id):
+        # call ids are a per-kernel counter, so two sessions of one CodeMode
+        # collide on the bare id and so do two kernels of one session — an
+        # interrupt in one must never cancel the other's calls.
+        self._pending: Dict[Tuple[str, int, str], "asyncio.Task[None]"] = {}
         self._build(tools)
 
     # ------------------------------------------------------------------
@@ -276,16 +277,17 @@ class ToolBridge:
             return
         if msg_type == "comm_msg" and content.get("comm_id") == getattr(session, "bridge_comm_id", None):
             data = content.get("data") or {}
-            key = (session.session_id, str(data.get("id")))
-            task = asyncio.get_running_loop().create_task(self._serve(session, data))
+            key = (session.session_id, session.generation, str(data.get("id")))
+            task = asyncio.get_running_loop().create_task(self._serve(session, data, session.generation))
             self._pending[key] = task
 
-            def _forget(_finished: "asyncio.Task[None]", _key: Tuple[str, str] = key) -> None:
+            def _forget(_finished: "asyncio.Task[None]", _key: Tuple[str, int, str] = key) -> None:
                 self._pending.pop(_key, None)
 
             task.add_done_callback(_forget)
 
-    async def _serve(self, session: KernelSession, data: Dict[str, Any]) -> None:
+    async def _serve(self, session: KernelSession, data: Dict[str, Any], generation: int) -> None:
+        """Run one bridged call. ``generation`` is the kernel that asked for it."""
         call_id = data.get("id")
         handle = data.get("handle") or ""
         method = data.get("method") or ""
@@ -305,6 +307,11 @@ class ToolBridge:
             }
         except Exception as e:
             reply = {"id": call_id, "ok": False, "error": {"type": "ToolError", "message": f"{tool_label}: {e}"}}
+        if generation != session.generation:
+            # The kernel that asked is gone. Its call ids restart at 1 in the
+            # replacement, so this reply would answer a different call.
+            log_debug(f"CodeMode bridge dropped a reply for {tool_label} from a torn-down kernel")
+            return
         self._send_reply(session, reply)
 
     def _too_large_reply(self, call_id: Any, tool_label: str, size_bytes: int) -> Dict[str, Any]:

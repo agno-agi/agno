@@ -4,10 +4,13 @@ Postgres runs against the pgvector container from cookbook/scripts/run_pgvector.
 (host port 5532, db/user/pass all `ai`) with a per-process schema.
 """
 
+import asyncio
 import json
 import os
+import threading
 import time
 import uuid
+from typing import Optional
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -17,6 +20,9 @@ from agno.fs.db import DbFileSystem
 from agno.run import RunContext
 from agno.tools.code_mode import CodeMode
 from agno.tools.code_mode.bridge import ToolBridge
+from agno.tools.code_mode.code_mode import OWNER_REFUSAL
+from agno.tools.code_mode.kernel import KernelSession
+from agno.tools.code_mode.snapshot import SnapshotManager
 from agno.tools.toolkit import Toolkit
 
 pytestmark = pytest.mark.integration
@@ -30,8 +36,23 @@ def _sid(prefix: str) -> str:
     return f"snap-{prefix}-{uuid.uuid4().hex[:8]}"
 
 
-def _ctx(session_id: str) -> RunContext:
-    return RunContext(run_id="snap-run", session_id=session_id)
+def _ctx(session_id: str, user_id: Optional[str] = None) -> RunContext:
+    return RunContext(run_id="snap-run", session_id=session_id, user_id=user_id)
+
+
+async def _hold_lock(session, release: threading.Event, limit: float = 6.0) -> None:
+    """Hold a session's lock, as a long cell does, until released or ``limit``."""
+    async with session.lock:
+        deadline = time.monotonic() + limit
+        while not release.is_set() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+
+
+def _wait_for_lock(session, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not session.lock.locked() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert session.lock.locked(), "the holder never took the session lock"
 
 
 class EchoTools(Toolkit):
@@ -339,6 +360,121 @@ def test_refused_variable_keeps_previous_good_copy(snapshot_fs, make_code_mode):
     assert "grows" not in {v["name"] for v in manifest["variables"]}
     # The last good copy survives; it is simply not restored (manifest governs).
     assert snapshot_fs.read(var_path) == previous
+
+
+def test_another_user_cannot_resume_a_session_from_its_snapshot(snapshot_fs, make_code_mode):
+    owner = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    sid = _sid("owner-restore")
+    owner.execute(_ctx(sid, user_id="user-a"), "token = 'secret-a'")
+    owner.close()
+    owner.shutdown(sid)
+    assert json.loads(snapshot_fs.read(f"kernel/{sid}/manifest.json"))["owner_user_id"] == "user-a"
+
+    # A second instance stands in for a process with no live kernel: the
+    # snapshot is the only record of who the state belongs to.
+    intruder = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    refused = intruder.execute(_ctx(sid, user_id="user-b"), "token")
+    assert refused.content == OWNER_REFUSAL
+    assert "secret-a" not in refused.content
+    assert intruder._sessions.get(sid) is None, "the refused run must not start a kernel"
+    resumed = intruder.execute(_ctx(sid, user_id="user-a"), "token")
+    assert "secret-a" in resumed.content
+
+
+async def test_restore_refuses_a_snapshot_owned_by_another_user(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    sid = _sid("restore-guard")
+    cm.execute(_ctx(sid, user_id="user-a"), "token = 'secret-a'")
+    cm.close()
+    cm.shutdown(sid)
+    # Straight at the restore path: it refuses before any payload is read, so
+    # the kernel of another user is never handed the variables.
+    manager = SnapshotManager(snapshot_fs, debounce=0.05)
+    assert await manager.restore(KernelSession(sid, owner_user_id="user-b")) is None
+
+
+def test_eviction_drops_the_session_and_the_next_execute_restores_it(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05, idle_ttl=1)
+    sid = _sid("evict-restore")
+    cm.execute(_ctx(sid), "kept = 'from-before-eviction'")
+    session = cm._sessions[sid]
+    deadline = time.monotonic() + 15
+    while cm._sessions.get(sid) is not None and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert cm._sessions.get(sid) is None, "eviction must not keep the session entry"
+    assert not session.running
+    assert session.run_context is None
+    revived = cm.execute(_ctx(sid), "kept")
+    assert "<code_mode_restored>" in revived.content
+    assert "from-before-eviction" in revived.content
+
+
+def test_close_does_not_wait_for_another_sessions_lock(snapshot_fs, make_code_mode):
+    # A run ends while another session is mid-cell. The debounce is long
+    # enough that both sessions still have unsaved cells at close time.
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=5.0)
+    busy, quiet = _sid("close-busy"), _sid("close-quiet")
+    cm.execute(_ctx(busy), "busy_var = 1")
+    cm.execute(_ctx(quiet), "quiet_var = 2")
+    release = threading.Event()
+    holder = cm._runner.submit(_hold_lock(cm._sessions[busy], release))
+    try:
+        _wait_for_lock(cm._sessions[busy])
+        started = time.monotonic()
+        cm.close()
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        holder.result(timeout=15)
+    assert elapsed < 3, f"close waited {elapsed:.1f}s on another session's lock"
+    assert snapshot_fs.read(f"kernel/{quiet}/manifest.json") is not None
+
+
+async def test_close_on_an_event_loop_does_not_block_it(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=5.0)
+    busy, quiet = _sid("aclose-busy"), _sid("aclose-quiet")
+    await cm.aexecute(_ctx(busy), "busy_var = 1")
+    await cm.aexecute(_ctx(quiet), "quiet_var = 2")
+    release = threading.Event()
+    holder = cm._runner.submit(_hold_lock(cm._sessions[busy], release))
+    try:
+        _wait_for_lock(cm._sessions[busy])
+        started = time.monotonic()
+        # The agent calls close() from the async run's cleanup, on this loop.
+        cm.close()
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        holder.result(timeout=15)
+    assert elapsed < 1, f"close blocked the event loop for {elapsed:.1f}s"
+    # The flush it handed off still lands.
+    cm._background_flush.result(timeout=15)
+    assert snapshot_fs.read(f"kernel/{quiet}/manifest.json") is not None
+
+
+async def test_aclose_flushes_the_pending_session(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=5.0)
+    sid = _sid("aclose-flush")
+    await cm.aexecute(_ctx(sid), "saved = 'via-aclose'")
+    await cm.aclose()
+    manifest = snapshot_fs.read(f"kernel/{sid}/manifest.json")
+    assert manifest is not None
+    assert "saved" in [v["name"] for v in json.loads(manifest)["variables"]]
+
+
+def test_close_writes_nothing_for_a_session_with_no_new_cell(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=30.0)
+    sid = _sid("close-idempotent")
+    cm.execute(_ctx(sid), "first = 1")
+    cm.close()
+    manifest_path = f"kernel/{sid}/manifest.json"
+    saved_at = json.loads(snapshot_fs.read(manifest_path))["saved_at"]
+    # Every later run ends with another close(); none of them may snapshot a
+    # namespace that has not changed.
+    time.sleep(1.1)
+    cm.close()
+    cm.close()
+    assert json.loads(snapshot_fs.read(manifest_path))["saved_at"] == saved_at
 
 
 def test_hostile_session_id_round_trips_and_does_not_nest(snapshot_fs, make_code_mode):

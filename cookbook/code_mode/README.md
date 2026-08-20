@@ -35,3 +35,5 @@ cookbook/code_mode/
 `execute` runs arbitrary Python and arbitrary shell with the permissions of the process running the agent. It is not a sandbox and does not pretend to be one: use a trusted operator or an isolated container. `allow_shell=False` strips the `%%bash` magic, but that is a footgun reducer, not a boundary.
 
 One consequence deserves its own sentence: **restore is also code execution.** A snapshot is a `dill` pickle, unpickling runs `__reduce__`, and restore happens automatically on resume — before any model call. A writable snapshot row is therefore remote code execution in the agent's process. The snapshot store inherits the database's trust level exactly.
+
+A session's environment belongs to the user of the run that created it, in memory and in the snapshot. A run that names the same `session_id` with a different `user_id` is refused and gets neither the warm kernel nor the stored variables. Runs without a `user_id` carry no identity to compare and keep sharing a session by id.

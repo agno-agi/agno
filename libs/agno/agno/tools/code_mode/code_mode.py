@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import functools
 import weakref
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Union
@@ -30,7 +31,7 @@ from agno.tools.code_mode.snapshot import SnapshotManager
 from agno.tools.code_mode.types import CellResult
 from agno.tools.function import Function, ToolResult
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 try:
     from typing import Literal
@@ -39,6 +40,16 @@ except ImportError:  # pragma: no cover
 
 _VARIABLES_MARKER = "__AGNO_CM_VARS__"
 _VALUE_MARKER = "__AGNO_CM_VALUE__"
+
+# Returned to the model when a run addresses a session owned by another user.
+OWNER_REFUSAL = (
+    "Error: the code environment for this session belongs to another user, so its "
+    "variables and snapshot cannot be reached from this run. Continue in a new session."
+)
+
+# Upper bound on how long a run-end close() may block a plain (non-loop) thread
+# waiting for snapshot flushes, when the debounce interval is shorter than this.
+_CLOSE_FLUSH_FLOOR = 5.0
 
 _VARIABLES_CODE_TEMPLATE = (
     "import base64 as _cm_b64\n"
@@ -57,6 +68,15 @@ _VARIABLES_CODE_TEMPLATE = (
     "    _cm_vars[_cm_k] = _cm_b.type(_cm_v).__name__\n"
     "_cm_b.print('\\n{marker}' + _cm_json.dumps(_cm_vars))\n"
 )
+
+
+def _in_event_loop() -> bool:
+    """True when the calling thread is running an event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 @functools.lru_cache(maxsize=None)
@@ -115,6 +135,14 @@ def build_instructions(handles: List[str], allow_shell: bool, allow_restart: boo
     return "\n\n".join(paragraphs)
 
 
+async def _flush_locked_session(session: KernelSession) -> None:
+    """Snapshot one session under its lock."""
+    async with session.lock:
+        if session.running and session.flush_hook is not None:
+            await session.flush_hook(session)
+            session.snapshot_pending = False
+
+
 def _cleanup_kernels(runner: LoopRunner, sessions: Dict[str, KernelSession]) -> None:
     """Best-effort kernel teardown at garbage collection or interpreter exit."""
     try:
@@ -122,6 +150,14 @@ def _cleanup_kernels(runner: LoopRunner, sessions: Dict[str, KernelSession]) -> 
 
             async def _shutdown_all() -> None:
                 for session in list(sessions.values()):
+                    # A cell that ran after the last flush lives only in the
+                    # kernel; save it before the kernel goes away. Bounded so a
+                    # slow store cannot cost the shutdown its own budget.
+                    if session.running and session.snapshot_pending and session.flush_hook is not None:
+                        try:
+                            await asyncio.wait_for(_flush_locked_session(session), timeout=5)
+                        except Exception:
+                            pass
                     await session.shutdown()
 
             runner.submit(_shutdown_all()).result(timeout=15)
@@ -201,12 +237,13 @@ class CodeMode(Toolkit):
 
         # Surface-drift guard: every model-facing and developer-facing method
         # must exist with its async twin.
-        for method_name in ("execute", "restart", "run", "variables", "value", "shutdown"):
+        for method_name in ("execute", "restart", "run", "variables", "value", "shutdown", "close"):
             assert callable(getattr(self, method_name, None)), f"CodeMode missing sync method '{method_name}'"
             assert callable(getattr(self, "a" + method_name, None)), f"CodeMode missing async method 'a{method_name}'"
 
         self._runner = LoopRunner()
         self._sessions: Dict[str, KernelSession] = {}
+        self._background_flush: Optional["concurrent.futures.Future[Any]"] = None
         self._bridge: Optional[ToolBridge] = (
             ToolBridge(self.injected_tools, max_result_bytes=max_result_bytes) if self.injected_tools else None
         )
@@ -233,23 +270,76 @@ class CodeMode(Toolkit):
         """No-op: the session is unknown at connect time; kernels start lazily."""
 
     def close(self) -> None:
-        """Flush a final snapshot for every kernel this process touched.
+        """Flush a snapshot for the sessions that ran a cell since their last one.
 
-        Kernels are NOT killed: a resumed run inside ``idle_ttl`` reattaches to
-        a warm kernel and skips the restore entirely.
+        The agent calls this at the end of every run, so it touches only
+        sessions with unsaved work and never waits on a session whose lock
+        another run holds. Kernels are NOT killed: a resumed run inside
+        ``idle_ttl`` reattaches to a warm kernel and skips the restore
+        entirely. ``shutdown`` is the explicit flush-everything path.
         """
-        if not self._runner.started:
+        if not self._runner.started or self._snapshots is None:
+            return
+        if _in_event_loop():
+            # An async run ends on the caller's event loop. Blocking it would
+            # stall every other request sharing that loop, so the flush is
+            # handed to the kernel loop and this call returns.
+            self._submit_background_flush()
             return
         try:
-            self._runner.submit(self._aflush_all()).result(timeout=60)
+            self._runner.submit(self._aflush_pending()).result(timeout=max(self.snapshot_debounce, _CLOSE_FLUSH_FLOOR))
+        except concurrent.futures.TimeoutError:
+            log_warning(
+                "CodeMode close: snapshot flush is taking longer than the close bound; it continues in the background"
+            )
         except Exception as e:
             log_warning(f"CodeMode close: snapshot flush failed: {e}")
 
-    async def _aflush_all(self) -> None:
-        for session in list(self._sessions.values()):
-            if session.running and session.flush_hook is not None:
-                async with session.lock:
-                    await session.flush_hook(session)
+    async def aclose(self) -> None:
+        """Async variant of ``close``."""
+        if not self._runner.started or self._snapshots is None:
+            return
+        try:
+            await self._run_on_loop(self._aflush_pending())
+        except Exception as e:
+            log_warning(f"CodeMode close: snapshot flush failed: {e}")
+
+    def _submit_background_flush(self) -> None:
+        """Queue one flush pass on the kernel loop; never more than one at a time."""
+        pending = self._background_flush
+        if pending is not None and not pending.done():
+            return
+        future = self._runner.submit(self._aflush_pending())
+        self._background_flush = future
+
+        def _report(finished: "concurrent.futures.Future[Any]") -> None:
+            error = finished.exception()
+            if error is not None:
+                log_warning(f"CodeMode close: snapshot flush failed: {error}")
+
+        future.add_done_callback(_report)
+
+    async def _aflush_pending(self) -> None:
+        """Snapshot the sessions with an unsaved cell. Used by ``close``."""
+        await self._aflush(list(self._sessions.values()), only_pending=True)
+
+    async def _aflush(self, sessions: List[KernelSession], *, only_pending: bool) -> None:
+        """Snapshot the given live kernels.
+
+        Under ``only_pending`` the pass covers sessions with an unsaved cell
+        and skips any whose lock is held or whose kernel stopped answering: a
+        run that ends must not wait on another run's kernel. Without it every
+        live kernel is snapshotted, pending cell or not.
+        """
+        for session in sessions:
+            if not session.running or session.flush_hook is None:
+                continue
+            if only_pending and (not session.snapshot_pending or session.lock.locked() or session.maybe_busy):
+                continue
+            try:
+                await _flush_locked_session(session)
+            except Exception as e:
+                log_warning(f"CodeMode snapshot flush for session {session.session_id} failed: {e}")
 
     # ------------------------------------------------------------------
     # Model-facing tools
@@ -289,12 +379,12 @@ class CodeMode(Toolkit):
             A notice confirming the environment was reset.
         """
         _warn()
-        return self._run_on_loop_sync(self._arestart_impl(self._session_key(run_context)))
+        return self._run_on_loop_sync(self._arestart_impl(self._session_key(run_context), run_context))
 
     async def arestart(self, run_context: RunContext) -> str:
         """Async variant of ``restart``."""
         _warn()
-        return await self._run_on_loop(self._arestart_impl(self._session_key(run_context)))
+        return await self._run_on_loop(self._arestart_impl(self._session_key(run_context), run_context))
 
     # ------------------------------------------------------------------
     # Developer-facing surface
@@ -353,13 +443,48 @@ class CodeMode(Toolkit):
         # session's kernel.
         return run_context.session_id
 
+    @staticmethod
+    def _user_key(run_context: Optional[RunContext]) -> Optional[str]:
+        return run_context.user_id if run_context is not None else None
+
+    async def _refuse_foreign_user(self, session_id: str, user_id: Optional[str]) -> bool:
+        """True when this run's user may not touch this session.
+
+        A session id is client-supplied in AgentOS, so it is not proof of
+        access: the warm kernel holds the previous run's variables and the
+        snapshot holds them durably. The owner is the user of the run the
+        session was created for, in memory and in the snapshot manifest. A run
+        without a user_id carries no identity to compare and is left alone.
+        """
+        if user_id is None:
+            return False
+        session = self._sessions.get(session_id)
+        owner = session.owner_user_id if session is not None else None
+        if owner is None and self._snapshots is not None:
+            # First run for this id in this process: the durable snapshot is
+            # the only record of who owns the state it would restore.
+            owner = await self._snapshots.owner(session_id)
+        if owner is None or owner == user_id:
+            return False
+        log_warning(
+            f"CodeMode refused session '{session_id}' for user '{user_id}': "
+            f"the code environment belongs to user '{owner}'"
+        )
+        return True
+
+    def _forget_session(self, session: KernelSession) -> None:
+        """Drop an evicted session, unless the id already maps to a newer one."""
+        if self._sessions.get(session.session_id) is session:
+            del self._sessions[session.session_id]
+            log_debug(f"CodeMode forgot evicted session {session.session_id}")
+
     def _run_on_loop_sync(self, coro: Coroutine[Any, Any, Any]) -> Any:
         return self._runner.submit(coro).result()
 
     async def _run_on_loop(self, coro: Coroutine[Any, Any, Any]) -> Any:
         return await asyncio.wrap_future(self._runner.submit(coro))
 
-    def _session_for(self, session_id: str) -> KernelSession:
+    def _session_for(self, session_id: str, user_id: Optional[str] = None) -> KernelSession:
         session = self._sessions.get(session_id)
         if session is None:
             session = KernelSession(
@@ -371,12 +496,18 @@ class CodeMode(Toolkit):
                 busy_wait=self.busy_wait,
                 on_busy_kernel=self.on_busy_kernel,
                 idle_ttl=self.idle_ttl,
+                owner_user_id=user_id,
                 flush_hook=self._snapshots.flush_locked if self._snapshots is not None else None,
                 setup_hook=self._asetup_session,
+                on_evict=self._forget_session,
             )
             if self._bridge is not None:
                 self._bridge.attach(session)
             self._sessions[session_id] = session
+        elif session.owner_user_id is None:
+            # A session first served without an identity is claimed by the
+            # first run that brings one; every later run is checked against it.
+            session.owner_user_id = user_id
         return session
 
     async def _asetup_session(self, session: KernelSession) -> Optional[str]:
@@ -427,9 +558,16 @@ class CodeMode(Toolkit):
     async def _aexecute_impl(self, session_id: str, code: str, run_context: Optional[RunContext] = None) -> ToolResult:
         if self._rejects_shell(code):
             return ToolResult(content="Error: %%bash cells are disabled (allow_shell=False).")
-        session = self._session_for(session_id)
+        user_id = self._user_key(run_context)
+        if await self._refuse_foreign_user(session_id, user_id):
+            return ToolResult(content=OWNER_REFUSAL)
+        session = self._session_for(session_id, user_id)
         cell = await self._execute_with_busy_policy(session, code, run_context)
+        # An idle eviction can drop the registry entry while this cell waits
+        # for the lock; the kernel it started must stay reachable.
+        self._sessions.setdefault(session_id, session)
         if cell.status == "ok" and self._snapshots is not None:
+            session.snapshot_pending = True
             self._snapshots.schedule(session)
         notice = session.take_notice()
         content = self._format_cell(cell)
@@ -437,18 +575,27 @@ class CodeMode(Toolkit):
             content = f"{notice}\n{content}"
         return ToolResult(content=content, images=cell.images or None)
 
-    async def _arestart_impl(self, session_id: str) -> str:
-        session = self._session_for(session_id)
+    async def _arestart_impl(self, session_id: str, run_context: Optional[RunContext] = None) -> str:
+        user_id = self._user_key(run_context)
+        if await self._refuse_foreign_user(session_id, user_id):
+            return OWNER_REFUSAL
+        session = self._session_for(session_id, user_id)
         # The snapshot clear runs under the session lock (before_start) so a
         # debounced flush can never land after it and resurrect state.
-        return await session.restart(before_start=self._snapshot_clear_hook(session_id))
+        notice = await session.restart(before_start=self._snapshot_clear_hook(session_id))
+        self._sessions.setdefault(session_id, session)
+        # The snapshot was cleared with the state it held: nothing to flush.
+        session.snapshot_pending = False
+        return notice
 
     async def _arun_impl(self, session_id: str, code: str) -> CellResult:
         if self._rejects_shell(code):
             return CellResult(status="error", stderr="Error: %%bash cells are disabled (allow_shell=False).")
         session = self._session_for(session_id)
         cell = await self._execute_with_busy_policy(session, code, run_context=None)
+        self._sessions.setdefault(session_id, session)
         if cell.status == "ok" and self._snapshots is not None:
+            session.snapshot_pending = True
             self._snapshots.schedule(session)
         return cell
 
@@ -502,6 +649,9 @@ class CodeMode(Toolkit):
         else:
             popped = self._sessions.pop(session_id, None)
             sessions = [popped] if popped is not None else []
+        # Shutdown is explicit and kills the kernel, so it snapshots whatever
+        # each namespace holds, pending cell or not.
+        await self._aflush(sessions, only_pending=False)
         for session in sessions:
             await session.shutdown()
 

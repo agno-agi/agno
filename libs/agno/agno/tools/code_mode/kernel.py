@@ -159,8 +159,10 @@ class KernelSession:
         on_busy_kernel: str = "wait",
         interrupt_grace: float = 1.0,
         idle_ttl: int = 1800,
+        owner_user_id: Optional[str] = None,
         flush_hook: Optional[Callable[["KernelSession"], Coroutine[Any, Any, None]]] = None,
         setup_hook: Optional[Callable[["KernelSession"], Coroutine[Any, Any, Optional[str]]]] = None,
+        on_evict: Optional[Callable[["KernelSession"], None]] = None,
     ) -> None:
         self.session_id = session_id
         self.python = python or sys.executable
@@ -171,10 +173,17 @@ class KernelSession:
         self.on_busy_kernel = on_busy_kernel
         self.interrupt_grace = interrupt_grace
         self.idle_ttl = idle_ttl
+        # The user_id of the run this session was created for. A warm kernel
+        # holds that run's variables, so a run of a different user is refused
+        # by the owner of this session (CodeMode) before it reaches the kernel.
+        self.owner_user_id = owner_user_id
         # Called before the kernel is killed (eviction, close): flushes snapshots.
         self.flush_hook = flush_hook
         # Called after the kernel is ready: restore + bootstrap. Returns a notice or None.
         self.setup_hook = setup_hook
+        # Called after an idle eviction has flushed and torn down the kernel,
+        # so the owner can drop its registry entry and the RunContext with it.
+        self.on_evict = on_evict
 
         self.km: Optional[AsyncKernelManager] = None
         self.kc: Any = None
@@ -183,6 +192,13 @@ class KernelSession:
         self.last_used = time.monotonic()
         self.maybe_busy = False
         self.pending_notice: Optional[str] = None
+        # A cell has run since the last snapshot flush.
+        self.snapshot_pending = False
+        # Incremented for every kernel this session starts. A bridged tool call
+        # carries the generation it was issued in: the replacement kernel's call
+        # ids restart at 1, so a reply from an older generation would otherwise
+        # resolve to a live call of the new one.
+        self.generation = 0
         self._ever_started = False
         self._evict_task: Optional[asyncio.Task] = None
         self._cell_idle_seen = False
@@ -227,6 +243,7 @@ class KernelSession:
             raise
         self.km = km
         self.kc = kc
+        self.generation += 1
         self.execution_count = 0
         self.maybe_busy = False
         notice: Optional[str] = None
@@ -270,6 +287,14 @@ class KernelSession:
             await self._teardown_kernel()
 
     async def _teardown_kernel(self) -> None:
+        # In-flight bridged tool calls belong to the kernel being torn down.
+        # Cancel them here, while their comm is still alive, so no task from
+        # this generation survives to answer a call id of the next one.
+        if self.interrupt_hook is not None and self.kc is not None:
+            try:
+                await self.interrupt_hook()
+            except Exception as e:
+                log_warning(f"CodeMode bridge cancel on teardown failed for session {self.session_id}: {e}")
         kc, km = self.kc, self.km
         self.kc = None
         self.km = None
@@ -284,6 +309,10 @@ class KernelSession:
             except Exception:
                 pass
         self.maybe_busy = False
+        self.bridge_comm_id = None
+        # The RunContext carries the run's whole message list. A torn-down
+        # session must not pin it until the next run stamps a new one.
+        self.run_context = None
 
     async def restart(self, before_start: Optional[Callable[[], Coroutine[Any, Any, None]]] = None) -> str:
         """Tear the kernel down, start a fresh one, and return the reset notice.
@@ -325,10 +354,19 @@ class KernelSession:
                 if self.flush_hook is not None:
                     try:
                         await self.flush_hook(self)
+                        self.snapshot_pending = False
                     except Exception as e:
                         log_warning(f"CodeMode snapshot flush on eviction failed: {e}")
                 await self._teardown_kernel()
                 self._evict_task = None
+                # The snapshot is durable and the kernel is gone: nothing about
+                # this session is worth keeping in memory. The next execute for
+                # the id starts a fresh kernel and restores from the snapshot.
+                if self.on_evict is not None:
+                    try:
+                        self.on_evict(self)
+                    except Exception as e:
+                        log_warning(f"CodeMode eviction callback failed for session {self.session_id}: {e}")
                 return
 
     # ------------------------------------------------------------------

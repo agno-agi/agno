@@ -196,7 +196,7 @@ def test_async_docstrings_match_sync():
 
 
 def test_every_public_method_has_async_twin():
-    for name in ("execute", "restart", "run", "variables", "value", "shutdown"):
+    for name in ("execute", "restart", "run", "variables", "value", "shutdown", "close"):
         assert callable(getattr(CodeMode, name))
         assert callable(getattr(CodeMode, "a" + name))
 
@@ -302,6 +302,129 @@ def test_failed_binding_stub_every_attribute_returns_a_callable():
     for attr in ("anything", "at", "all"):
         with pytest.raises(RuntimeError):
             getattr(stub, attr)()
+
+
+# ------------------------------------------------------------------
+# Bridge replies are tied to the kernel that asked
+# ------------------------------------------------------------------
+
+
+class _FakeChannel:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, message):
+        self.sent.append(message)
+
+
+class _FakeKernelClient:
+    def __init__(self):
+        self.control_channel = _FakeChannel()
+
+        class _Session:
+            @staticmethod
+            def msg(msg_type, content):
+                return {"msg_type": msg_type, "content": content}
+
+        self.session = _Session()
+
+
+class _FakeSession:
+    """The KernelSession surface the bridge touches."""
+
+    def __init__(self):
+        self.session_id = "fake-session"
+        self.generation = 1
+        self.bridge_comm_id = "comm-1"
+        self.run_context = None
+        self.kc = _FakeKernelClient()
+
+
+def _bridge_call(bridge, session, method, **kwargs):
+    """Serve one call the way _on_comm does: tagged with the asking kernel."""
+    return bridge._serve(session, {"id": "1", "handle": "", "method": method, "kwargs": kwargs}, session.generation)
+
+
+async def test_bridge_reply_reaches_the_kernel_that_asked():
+    from agno.tools.code_mode.bridge import ToolBridge
+
+    def double(x: int) -> int:
+        """Double x.
+
+        Args:
+            x: value.
+        """
+        return x * 2
+
+    session = _FakeSession()
+    bridge = ToolBridge([double])
+    await _bridge_call(bridge, session, "double", x=2)
+    assert len(session.kc.control_channel.sent) == 1
+    assert session.kc.control_channel.sent[0]["content"]["data"] == {"id": "1", "ok": True, "value": 4}
+
+
+async def test_bridge_reply_from_a_replaced_kernel_is_dropped():
+    from agno.tools.code_mode.bridge import ToolBridge
+
+    session = _FakeSession()
+
+    def double_after_restart(x: int) -> int:
+        """Double x, with the kernel replaced while the call is in flight.
+
+        Args:
+            x: value.
+        """
+        session.generation += 1
+        return x * 2
+
+    bridge = ToolBridge([double_after_restart])
+    await _bridge_call(bridge, session, "double_after_restart", x=2)
+    # Call ids restart at 1 in the replacement kernel, so this reply would
+    # answer a different call than the one that asked for it.
+    assert session.kc.control_channel.sent == []
+
+
+async def test_a_call_id_reused_by_the_next_kernel_gets_its_own_entry():
+    import asyncio
+
+    from agno.tools.code_mode.bridge import ToolBridge
+
+    released = asyncio.Event()
+
+    async def wait_for_release(x: int) -> int:
+        """Return x once the test releases it.
+
+        Args:
+            x: value.
+        """
+        await released.wait()
+        return x
+
+    session = _FakeSession()
+    bridge = ToolBridge([wait_for_release])
+    request = {
+        "msg_type": "comm_msg",
+        "content": {
+            "comm_id": "comm-1",
+            "data": {"id": "1", "handle": "", "method": "wait_for_release", "kwargs": {"x": 1}},
+        },
+    }
+    bridge._on_comm(session, request)
+    # The kernel is replaced; the fresh one numbers its first call "1" too.
+    session.generation += 1
+    bridge._on_comm(session, request)
+    assert len(bridge._pending) == 2, "the two kernels' calls must be tracked apart"
+    released.set()
+    await asyncio.gather(*list(bridge._pending.values()))
+    # Only the live kernel's call is answered.
+    assert len(session.kc.control_channel.sent) == 1
+
+    serving = list(bridge._pending.values())
+    released.set()
+    await asyncio.gather(*serving)
+    assert bridge._pending == {}
+    # Only the live kernel is answered; the replaced one's reply is dropped.
+    assert len(session.kc.control_channel.sent) == 1
 
 
 # ------------------------------------------------------------------

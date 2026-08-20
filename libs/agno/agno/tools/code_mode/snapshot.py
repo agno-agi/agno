@@ -342,6 +342,10 @@ class SnapshotManager:
             "schema": 1,
             "saved_at": int(time.time()),
             "execution_count": session.execution_count,
+            # The user whose state this is. A restore into a run of another
+            # user is refused; None means the state was built without an
+            # identity and stays readable by any run.
+            "owner_user_id": session.owner_user_id,
             "variables": written,
             "skipped": skipped,
         }
@@ -351,6 +355,31 @@ class SnapshotManager:
             log_warning(f"CodeMode snapshot manifest write failed for session {session_id}: {e}")
             return
         log_debug(f"CodeMode snapshot for session {session_id}: {len(written)} variables, {len(skipped)} skipped")
+
+    # ------------------------------------------------------------------
+    # Ownership
+    # ------------------------------------------------------------------
+
+    async def owner(self, session_id: str) -> Optional[str]:
+        """The user_id recorded in this session's snapshot, or None.
+
+        None also covers a snapshot that does not exist and one that cannot be
+        read or parsed: what cannot be read here cannot be restored later
+        either, so an unreadable manifest hands over no state.
+        """
+        try:
+            manifest_text = await self.fs.aread(self._manifest_path(session_id))
+        except Exception as e:
+            log_warning(f"CodeMode owner check for session {session_id}: manifest read failed: {e}")
+            return None
+        if manifest_text is None:
+            return None
+        try:
+            recorded = json.loads(manifest_text).get("owner_user_id")
+        except Exception as e:
+            log_warning(f"CodeMode owner check for session {session_id}: corrupt manifest: {e}")
+            return None
+        return str(recorded) if recorded is not None else None
 
     # ------------------------------------------------------------------
     # Restore
@@ -378,6 +407,13 @@ class SnapshotManager:
             ]
         except Exception as e:
             log_warning(f"CodeMode restore for session {session_id}: corrupt manifest: {e}")
+            return None
+        recorded_owner = manifest.get("owner_user_id")
+        if recorded_owner is not None and session.owner_user_id is not None and recorded_owner != session.owner_user_id:
+            log_warning(
+                f"CodeMode restore for session {session_id} refused: the snapshot belongs to "
+                f"user '{recorded_owner}', this kernel to user '{session.owner_user_id}'"
+            )
             return None
 
         payloads: List[List[str]] = []
