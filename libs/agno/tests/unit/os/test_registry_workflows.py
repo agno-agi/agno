@@ -424,6 +424,56 @@ class TestNestedWorkflowSteps:
         assert step.workflow is not None
         assert step.workflow is not wf
 
+    def test_an_unmeasurable_value_does_not_excuse_a_copy_that_dropped_its_steps(self):
+        """One key that cannot be compared leaves every other key still judged."""
+        from agno.exceptions import ComponentRehydrationError
+
+        class Ambiguous:
+            def __bool__(self):
+                raise ValueError("the truth value of this value is ambiguous")
+
+        class ArrayLike:
+            def __eq__(self, other):
+                return Ambiguous()
+
+            __hash__ = None
+
+        class AmbiguousAndLossyWorkflow(Workflow):
+            def deep_copy(self, *, update=None):
+                return Workflow(id=self.id, name=self.name, description=self.description, steps=[])
+
+        agent = Agent(id="ambiguous-lossy-agent", name="A", model=_model())
+        wf = AmbiguousAndLossyWorkflow(
+            id="ambiguous-lossy-wf",
+            name="AmbiguousAndLossy",
+            description=ArrayLike(),
+            steps=[Step(name="s1", agent=agent)],
+        )
+        registry = Registry(name="R", workflows=[wf])
+
+        with pytest.raises(ComponentRehydrationError, match="diverges from the original on: steps"):
+            Step.from_dict({"name": "outer", "workflow_id": "ambiguous-lossy-wf"}, registry=registry, strict=True)
+
+    def test_a_nested_dependency_object_still_loads_strictly(self):
+        """The runtime-state strip has to reach nested step configs, not just the top level."""
+
+        class Plain:
+            pass
+
+        agent = Agent(
+            id="nested-dep-agent",
+            name="A",
+            model=_model(),
+            dependencies={"svc": Plain()},
+        )
+        wf = Workflow(id="nested-dep-wf", name="NestedDep", steps=[agent])
+        registry = Registry(name="R", workflows=[wf])
+
+        step = Step.from_dict({"name": "outer", "workflow_id": "nested-dep-wf"}, registry=registry, strict=True)
+
+        assert step.workflow is not None
+        assert step.workflow is not wf
+
     def test_runtime_state_holding_a_per_instance_object_still_loads_strictly(self):
         """session_state, dependencies and metadata are runtime state, not the work."""
 

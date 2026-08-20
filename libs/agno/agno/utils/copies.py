@@ -1,6 +1,6 @@
 """Strict-load fidelity check for registry copies."""
 
-from typing import Any, FrozenSet, Optional
+from typing import Any, FrozenSet, List, Optional
 
 from agno.utils.log import log_debug
 
@@ -54,10 +54,18 @@ def workflow_copy_divergence(original: Any, copied: Any) -> Optional[str]:
     """How a workflow copy's serialized form differs from its original, or None.
 
     What this catches is a copy that lost the work the stored config names:
-    its steps, its id, its name, or a step's own configuration. A nested
-    child's internals are not compared - a parent's Step.to_dict records only
-    the child's agent_id, team_id or workflow_id - so a child that keeps its
-    id while losing its own state reads as identical here.
+    its id, its name, a step's own configuration, and - when the original's
+    steps are a plain list - the steps themselves. Workflow.to_dict emits a
+    'steps' key only for a list, so when the original's steps are a Steps
+    container or a callable neither side carries a serialized step list and a
+    copy that emptied them is admitted.
+
+    How much of a child is compared depends on how the step named it. A step
+    that references a child - Step(agent=...), Step(team=...) or
+    Step(workflow=...) - serializes only that child's agent_id, team_id or
+    workflow_id, so a child that keeps its id while losing its own state reads
+    as identical here. A child that is the step - the Workflow(steps=[Agent(...)])
+    shorthand - is serialized by its own to_dict, so its internals are compared.
 
     Step ids are dropped at any nesting depth before comparing, because
     deep_copy regenerates them; containers such as Loop, Parallel, Condition,
@@ -66,10 +74,11 @@ def workflow_copy_divergence(original: Any, copied: Any) -> Optional[str]:
     dependencies and metadata are dropped as well: they carry runtime state
     the caller supplied, not the work the copy has to be able to do.
 
-    An original that cannot be serialized or a comparison that cannot produce
-    a bool - a value whose __eq__ returns something else - leaves the copy
-    unmeasured rather than condemned. A copy whose own to_dict raises is a
-    divergence: a copy that cannot serialize is not a faithful one.
+    An original that cannot be serialized leaves the copy unmeasured rather
+    than condemned, and so does a single key whose comparison cannot produce a
+    bool - a value whose __eq__ returns something else - while every other key
+    is still judged. A copy whose own to_dict raises is a divergence: a copy
+    that cannot serialize is not a faithful one.
     """
     try:
         original_dict = _without_keys(original.to_dict(), _UNCOMPARED_WORKFLOW_KEYS)
@@ -80,13 +89,16 @@ def workflow_copy_divergence(original: Any, copied: Any) -> Optional[str]:
         copied_dict = _without_keys(copied.to_dict(), _UNCOMPARED_WORKFLOW_KEYS)
     except Exception as e:
         return f"the copy could not be serialized (to_dict failed: {e})"
-    try:
-        if original_dict == copied_dict:
-            return None
-        diverging = sorted(
-            key for key in set(original_dict) | set(copied_dict) if original_dict.get(key) != copied_dict.get(key)
-        )
-    except Exception as e:
-        log_debug(f"Could not compare a workflow copy against its original (comparison failed: {e})")
+    diverging: List[str] = []
+    for key in sorted(set(original_dict) | set(copied_dict)):
+        try:
+            if original_dict.get(key) != copied_dict.get(key):
+                diverging.append(key)
+        except Exception as e:
+            # One unmeasurable value only leaves its own key unjudged; every
+            # other key is still judged, so a copy that dropped its steps is
+            # still refused.
+            log_debug(f"Could not compare the workflow copy's '{key}' against the original ({e})")
+    if not diverging:
         return None
     return f"the copy diverges from the original on: {', '.join(diverging[:5])}"
