@@ -4,7 +4,7 @@ Offload Member Results
 
 A member's answer reaches the team leader as the result of the delegation
 tool, so it is the payload that grows a team session. With
-offload set, the leader's transcript holds a short envelope with
+`offload_tool_results` set, the leader's transcript holds a short envelope with
 a result id, and the full answer is stored as a file the leader can read back.
 
 Run this and compare the printed transcript size with the size of the reports
@@ -66,10 +66,8 @@ platform_builder = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[list_platform_components],
     instructions=dedent("""
-        You build and inventory platform components.
-        A large tool result arrives as a preview with a result id. Use
-        search_result to count and find what you need, then report the
-        components and counts that answer the task.
+        You build and inventory platform components. Report the components
+        and counts that answer the task.
     """).strip(),
 )
 
@@ -80,10 +78,8 @@ platform_manager = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[list_platform_components],
     instructions=dedent("""
-        You track who owns what and which versions are running.
-        A large tool result arrives as a preview with a result id. Use
-        search_result to find the owners you were asked about, then report
-        them with their versions.
+        You track who owns what and which versions are running. Report the
+        owners you were asked about with their versions.
     """).strip(),
 )
 
@@ -94,19 +90,19 @@ platform_engineer = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[read_deployment_log],
     instructions=dedent("""
-        You read deployment logs and find what broke.
-        A large log arrives as a preview with a result id. Use search_result
-        to find the failing events, then read_result around them, and quote
-        the failing line with the lines on either side.
+        You read deployment logs and find what broke. Quote the failing line
+        with the lines on either side.
     """).strip(),
 )
 
 # ---------------------------------------------------------------------------
 # The team leader
 #
-# offload=True uses the 4000 character default. A ResultStore sets the
-# threshold and the rest. Members run on the leader's store, so a member can
-# read back a result another member produced.
+# offload_tool_results=True stores results of 16,000 characters or more. A
+# ResultStore sets the threshold and the rest; 8,000 here so the shorter
+# member answers are stored too. Members run on the leader's store, so a
+# member can read back a result another member produced. The read-back tools
+# and the instruction that explains the envelope are added for you.
 # ---------------------------------------------------------------------------
 platform_team = Team(
     name="Platform Team",
@@ -114,14 +110,12 @@ platform_team = Team(
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     members=[platform_builder, platform_manager, platform_engineer],
-    offload=ResultStore(threshold=2000),
+    offload_tool_results=ResultStore(threshold_chars=8000),
     add_history_to_context=True,
     num_history_runs=5,
     instructions=dedent("""
         You lead the platform team.
         Delegate to the right member, then answer from what they report.
-        A large member report arrives as a short preview with a result id.
-        Use search_result to find what you need and read_result to read it.
     """).strip(),
 )
 
@@ -159,7 +153,7 @@ if __name__ == "__main__":
     report_transcript_size(session_id)
 
     print("\nStored results for this session")
-    for ref in platform_team._result_store.live_ids(session_id):
+    for ref in platform_team.result_store.live_ids(session_id):
         print(
             f"  {ref.result_id} from {ref.tool_name}: {ref.line_count} lines, {ref.size_bytes} bytes"
         )

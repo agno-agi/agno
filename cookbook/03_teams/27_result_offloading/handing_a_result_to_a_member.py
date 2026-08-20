@@ -71,7 +71,7 @@ platform_team = Team(
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     members=[platform_engineer, platform_manager],
-    offload=ResultStore(threshold=2000),
+    offload_tool_results=ResultStore(threshold_chars=8000),
     instructions=dedent("""
         You lead the platform team.
         A large member report arrives as a short preview with a result id.

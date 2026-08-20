@@ -1,18 +1,18 @@
 """
-Result Offloading - Basic
-=========================
+Offload Tool Results
+====================
 
-A long agentic run dies of its own tool output. One large search result sits in
-the message list forever, re-sent on every subsequent model call.
+A long agentic run dies of its own tool output. One large search result sits
+in the message list forever, re-sent on every later model call.
 
-`offload=True` makes the transcript hold a pointer instead of a
-payload: results over 4000 characters are written to the database and the
-message gets a short envelope with a head preview and a `result_id`. The agent
+`offload_tool_results=True` makes the transcript hold a pointer instead of a
+payload. A result of 16,000 characters or more is written to the database and
+the message gets a short envelope: a head preview and a `result_id`. The agent
 gets two tools to go back for the rest, `read_result` and `search_result`, and
 the full bytes stay recoverable.
 
-Nothing is summarized away, there is no model call on the write path, and every
-read back is capped.
+Nothing is summarized away, there is no model call on the write path, and
+every read back is capped.
 """
 
 from agno.agent import Agent
@@ -42,7 +42,7 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     db=SqliteDb(db_file="tmp/offloading.db"),
     tools=[fetch_catalog],
-    offload=True,
+    offload_tool_results=True,
     markdown=True,
 )
 

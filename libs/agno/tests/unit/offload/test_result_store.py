@@ -257,7 +257,9 @@ def test_search_with_context_lines(store):
     payload = "a\nb\nneedle\nd\ne"
     ref = _offload(store, payload)
     match = store.search(ref.result_id, "needle", context_lines=1)[0]
-    assert match.line == "b\nneedle\nd"
+    # Every row in the block carries its own line number, so the match line is unambiguous.
+    assert match.line == "2: b\n3: needle\n4: d"
+    assert match.line_number == 3
 
 
 def test_search_reports_1_indexed_line_numbers(store):

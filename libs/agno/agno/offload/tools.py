@@ -114,10 +114,19 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
         return _access_error(result_id, row, run_context)
 
     def _render(result_id: str, matches: Any) -> str:
+        from agno.offload.store import SEARCH_MAX_MATCHES
+
         if not matches:
             return f"No matches in {result_id}."
-        lines = [f"{len(matches)} match(es) in {result_id}:"]
-        lines.extend(f"{match.line_number}: {match.line}" for match in matches)
+        if len(matches) >= SEARCH_MAX_MATCHES:
+            lines = [f"First {len(matches)} matches in {result_id} (more may follow; narrow the pattern):"]
+        else:
+            lines = [f"{len(matches)} match(es) in {result_id}:"]
+        for match in matches:
+            if "\n" in match.line:
+                lines.append(f"match at line {match.line_number}:\n{match.line}")
+            else:
+                lines.append(f"{match.line_number}: {match.line}")
         return "\n".join(lines)
 
     def search_result(result_id: str, pattern: str, context_lines: int = 0) -> str:

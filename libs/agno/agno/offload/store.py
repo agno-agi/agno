@@ -636,7 +636,12 @@ class ResultStore:
             if context_lines > 0:
                 start = max(0, index - context_lines)
                 end = min(len(lines), index + context_lines + 1)
-                block = "\n".join(context_line[:SEARCH_LINE_CLIP] for context_line in lines[start:end])
+                # Each row carries its own line number, so the block reads the
+                # same way a read_result page does and the match line is clear.
+                block = "\n".join(
+                    f"{start + offset + 1}: {context_line[:SEARCH_LINE_CLIP]}"
+                    for offset, context_line in enumerate(lines[start:end])
+                )
                 matches.append(ResultMatch(line_number=index + 1, line=block))
             else:
                 matches.append(ResultMatch(line_number=index + 1, line=line[:SEARCH_LINE_CLIP]))

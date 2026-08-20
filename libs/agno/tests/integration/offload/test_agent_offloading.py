@@ -961,3 +961,17 @@ def test_the_limit_still_applies_to_ordinary_tools_with_offloading_on(db):
     output = agent.run("go", session_id=_sid())
     tool_messages = _tool_messages(output)
     assert "Tool call limit" in str(tool_messages[2].content)
+
+
+def test_search_result_renders_context_blocks_with_their_own_line_numbers(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id)
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    search = agent.model.seen_functions["search_result"]
+    rendered = search.entrypoint(result_id=result_id, pattern=r"^row 10:", context_lines=1)
+    assert "match at line 10:" in rendered
+    assert "9: row 9:" in rendered and "10: row 10:" in rendered and "11: row 11:" in rendered
+
+    capped = search.entrypoint(result_id=result_id, pattern=r"^row")
+    assert capped.startswith("First 20 matches in")

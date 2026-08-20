@@ -42,7 +42,7 @@ class ResultMatch:
 
     ``line`` is the matching line clipped to 500 characters; with
     ``context_lines`` it becomes the surrounding block, one clipped line per
-    row, joined with newlines.
+    row, each row prefixed with its own line number, joined with newlines.
     """
 
     line_number: int
