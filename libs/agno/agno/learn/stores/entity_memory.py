@@ -2875,10 +2875,6 @@ class EntityMemoryStore(LearningStore):
         )
 
     # =========================================================================
-    # Deterministic "user"-namespace reads over the legacy/user-scoped row pair
-    # =========================================================================
-
-    # =========================================================================
     # Data API: get / list / search / delete
     # =========================================================================
 
@@ -3001,9 +2997,7 @@ class EntityMemoryStore(LearningStore):
                     limit=fetch,
                 )
                 rows = results or []
-                entities = self._parse_rows(
-                    rows, limit=limit, include_archived=include_archived, user_id=user_id, namespace=effective_namespace
-                )
+                entities = self._parse_rows(rows, limit=limit, include_archived=include_archived)
                 if len(entities) >= limit or len(rows) < fetch:
                     return entities
             return entities
@@ -3048,9 +3042,7 @@ class EntityMemoryStore(LearningStore):
                         limit=fetch,
                     )
                 rows = results or []
-                entities = self._parse_rows(
-                    rows, limit=limit, include_archived=include_archived, user_id=user_id, namespace=effective_namespace
-                )
+                entities = self._parse_rows(rows, limit=limit, include_archived=include_archived)
                 if len(entities) >= limit or len(rows) < fetch:
                     return entities
             return entities
@@ -3129,10 +3121,7 @@ class EntityMemoryStore(LearningStore):
         rows: List[Dict[str, Any]],
         limit: int,
         include_archived: bool,
-        user_id: Optional[str] = None,
-        namespace: Optional[str] = None,
     ) -> List[EntityMemory]:
-        rows = rows
         entities: List[EntityMemory] = []
         for row in rows:
             entity = self.schema.from_dict(row.get("content"))
@@ -3205,14 +3194,7 @@ class EntityMemoryStore(LearningStore):
                     limit=fetch,
                 )
                 rows = rows or []
-                entities = self._filter_rows_by_query(
-                    rows,
-                    query=query,
-                    limit=limit,
-                    include_archived=include_archived,
-                    user_id=user_id,
-                    namespace=effective_namespace,
-                )
+                entities = self._filter_rows_by_query(rows, query=query, limit=limit, include_archived=include_archived)
                 if len(entities) >= limit or len(rows) < fetch:
                     break
         except NotImplementedError:
@@ -3293,8 +3275,6 @@ class EntityMemoryStore(LearningStore):
                     query=query,
                     limit=limit,
                     include_archived=include_archived,
-                    user_id=user_id,
-                    namespace=effective_namespace,
                 )
                 if len(entities) >= limit or len(rows) < fetch:
                     break
@@ -3381,8 +3361,6 @@ class EntityMemoryStore(LearningStore):
             query=query,
             limit=limit,
             include_archived=include_archived,
-            user_id=user_id,
-            namespace=namespace,
         )
 
     async def _asearch_client_side(
@@ -3420,8 +3398,6 @@ class EntityMemoryStore(LearningStore):
             query=query,
             limit=limit,
             include_archived=include_archived,
-            user_id=user_id,
-            namespace=namespace,
         )
 
     def _filter_rows_by_query(
@@ -3430,10 +3406,7 @@ class EntityMemoryStore(LearningStore):
         query: str,
         limit: int,
         include_archived: bool,
-        user_id: Optional[str] = None,
-        namespace: Optional[str] = None,
     ) -> List[EntityMemory]:
-        rows = rows
         entities: List[EntityMemory] = []
         for row in rows:
             try:

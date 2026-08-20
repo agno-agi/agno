@@ -93,9 +93,9 @@ def _report_rekey(report: Dict[str, Any], table_name: str) -> bool:
     log_info(f"Re-keyed {rekeyed} namespace='user' entity_memory row(s) on table {table_name}")
 
     for bucket, note in (
-        ("quarantined", "held more than one user's data and moved out of every user-filtered read"),
+        ("quarantined", "held more than one user's data and moved out of the entity store's reads"),
         ("contaminated_keyed", "record a user other than their owner and were left in place"),
-        ("unowned", "have no owner and are unreachable by any user-filtered read"),
+        ("unowned", "have no owner, so no user owns them and no user's erasure reaches them"),
         ("malformed", "are missing the entity columns or do not parse"),
         ("conflicts", "already have a row on the target key"),
         ("failed", "could not be moved"),

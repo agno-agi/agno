@@ -607,7 +607,9 @@ class TestSourceRowIsReReadBeforeCopy:
 
         assert report["rekeyed"] == [clean]
         assert report["contaminated"] == [dirty]
-        assert report["conflicts"] == [conflicted]
+        # A row whose target key is already taken is folded into it, not abandoned.
+        assert report["merged"] == [conflicted]
+        assert report["conflicts"] == []
         assert report["failed"] == []
         assert report["keyed"] == 1
         assert report["scanned"] == 4
@@ -618,7 +620,9 @@ class TestSourceRowIsReReadBeforeCopy:
         quarantined = legacy_entity_learning_id("initech", "company", "quarantined_user")
         assert dirty not in db.rows
         assert quarantined in db.rows
-        assert conflicted in db.rows
+        # The conflicted source is folded into the row already on its key and removed.
+        assert conflicted not in db.rows
+        assert _user_key("hooli", "company", ALICE) in db.rows
 
     @MODES
     async def test_dry_run_still_writes_nothing(self, use_async: bool) -> None:
@@ -630,3 +634,128 @@ class TestSourceRowIsReReadBeforeCopy:
         assert report["rekeyed"] == [legacy_id]
         assert list(db.rows) == [legacy_id]
         assert db.rows[legacy_id]["content"] == _clean_content("acme", ALICE)
+
+
+class TestCopyIsReadBackBeforeTheSourceIsDeleted:
+    """Every adapter's upsert_learning swallows its exception and returns None, so
+    a write that never landed looks exactly like one that did. Both moves the
+    migration makes -- the re-key to the user-scoped key and the quarantine of a
+    contaminated row -- read the destination back, and delete the source only
+    once the copy is there."""
+
+    class SilentUpsertDb(FakeLearningDb):
+        """upsert_learning drops the write to drop_id without raising or reporting,
+        the way an adapter behaves when its statement fails and is swallowed."""
+
+        drop_id = ""
+
+        def upsert_learning(self, id: str, **kwargs: Any) -> None:
+            if id == self.drop_id:
+                return
+            super().upsert_learning(id=id, **kwargs)
+
+    @MODES
+    async def test_dropped_rekey_write_leaves_the_source_row_and_reports_failed(self, use_async: bool) -> None:
+        db = self.SilentUpsertDb()
+        db.drop_id = _user_key("acme", "company", ALICE)
+        legacy_id = _seed_legacy(db, "acme", ALICE, _clean_content("acme", ALICE))
+
+        report = await _rekey(db, use_async, dry_run=False)
+
+        assert report["failed"] == [legacy_id]
+        assert report["rekeyed"] == []
+        assert list(db.rows) == [legacy_id]
+        assert db.rows[legacy_id]["content"] == _clean_content("acme", ALICE)
+
+    @MODES
+    async def test_dropped_quarantine_write_leaves_the_contaminated_row_and_reports_failed(
+        self, use_async: bool
+    ) -> None:
+        db = self.SilentUpsertDb()
+        db.drop_id = legacy_entity_learning_id("initech", "company", "quarantined_user")
+        dirty = _seed_legacy(db, "initech", ALICE, _clean_content("initech", BOB))
+
+        report = await _rekey(db, use_async, dry_run=False)
+
+        assert report["contaminated"] == [dirty]
+        assert report["quarantined"] == []
+        assert report["failed"] == [dirty]
+        # The contaminated content is the only copy of that user's data, so a
+        # quarantine whose write did not land leaves the row exactly where it is.
+        assert list(db.rows) == [dirty]
+        assert db.rows[dirty]["content"] == _clean_content("initech", BOB)
+
+    @MODES
+    async def test_landed_rekey_write_removes_the_source_row(self, use_async: bool) -> None:
+        db = self.SilentUpsertDb()
+        # A key this walk never writes, so every write the migration makes lands.
+        db.drop_id = _user_key("acme", "company", BOB)
+        legacy_id = _seed_legacy(db, "acme", ALICE, _clean_content("acme", ALICE))
+
+        report = await _rekey(db, use_async, dry_run=False)
+
+        assert report["rekeyed"] == [legacy_id]
+        assert report["failed"] == []
+        assert list(db.rows) == [_user_key("acme", "company", ALICE)]
+
+    @MODES
+    async def test_landed_quarantine_write_removes_the_contaminated_row(self, use_async: bool) -> None:
+        db = self.SilentUpsertDb()
+        db.drop_id = legacy_entity_learning_id("acme", "company", "quarantined_user")
+        dirty = _seed_legacy(db, "initech", ALICE, _clean_content("initech", BOB))
+
+        report = await _rekey(db, use_async, dry_run=False)
+
+        assert report["quarantined"] == [dirty]
+        assert report["failed"] == []
+        quarantined = legacy_entity_learning_id("initech", "company", "quarantined_user")
+        assert list(db.rows) == [quarantined]
+        assert db.rows[quarantined]["content"] == _clean_content("initech", BOB)
+
+
+class TestTheDestinationComesFromTheFreshRow:
+    """The walk pages the whole table before it writes, so the paged row is
+    stale the moment anything touches it. The destination key and every column
+    are derived from the row as it stands at copy time, not as it was paged."""
+
+    class OwnerChangesUnderTheWalkDb(FakeLearningDb):
+        """The row changes owner between being paged and being copied."""
+
+        target_id = ""
+        new_owner = ""
+        _fired = False
+
+        def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+            if id == self.target_id and not self._fired:
+                self._fired = True
+                row = self.rows[id]
+                row["user_id"] = self.new_owner
+                row["content"] = {**row["content"], "user_id": self.new_owner}
+            return super().get_learning_by_id(id)
+
+    @MODES
+    async def test_a_row_that_changes_owner_lands_on_the_new_owners_key(self, use_async: bool) -> None:
+        db = self.OwnerChangesUnderTheWalkDb()
+        legacy_id = _seed_legacy(db, "acme", ALICE, _clean_content("acme", ALICE))
+        db.target_id = legacy_id
+        db.new_owner = BOB
+
+        report = await _rekey(db, use_async, dry_run=False)
+
+        assert report["rekeyed"] == [legacy_id]
+        # Keyed and owned by whoever holds the row now. The paged owner's key
+        # would hand one user's content to another.
+        assert _user_key("acme", "company", BOB) in db.rows
+        assert _user_key("acme", "company", ALICE) not in db.rows
+        assert db.rows[_user_key("acme", "company", BOB)]["user_id"] == BOB
+
+    @MODES
+    async def test_an_unchanged_row_still_lands_on_its_own_key(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        legacy_id = _seed_legacy(db, "acme", ALICE, _clean_content("acme", ALICE))
+
+        report = await _rekey(db, use_async, dry_run=False)
+
+        assert report["rekeyed"] == [legacy_id]
+        assert _user_key("acme", "company", ALICE) in db.rows
+        assert db.rows[_user_key("acme", "company", ALICE)]["user_id"] == ALICE

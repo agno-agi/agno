@@ -8,7 +8,7 @@ read their own data back. These tests pin the isolation property end to end,
 including the legacy-row self-heal for rows written under the old key.
 """
 
-import json
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
@@ -269,7 +269,10 @@ class TestRekeyMigration:
         assert sorted(report["purged"]) == sorted([dirty, unowned])
         assert len(db.rows) == 0
 
-    def test_existing_target_row_is_a_conflict(self) -> None:
+    def test_existing_target_row_absorbs_the_legacy_row(self) -> None:
+        """The application wrote to the entity before the migration ran, so the
+        target key is taken. The pre-3.0 row is older content for the same user
+        and entity, so it is folded in rather than abandoned."""
         from agno.learn.migrations import rekey_user_entity_learnings
 
         db = _PagingLearningDb()
@@ -282,13 +285,21 @@ class TestRekeyMigration:
             entity_type="company",
             namespace="user",
             user_id=ALICE,
-            content={"entity_id": "acme", "entity_type": "company", "user_id": ALICE},
+            content={
+                "entity_id": "acme",
+                "entity_type": "company",
+                "user_id": ALICE,
+                "facts": [{"id": "new", "content": "written after the upgrade"}],
+            },
         )
 
         report = rekey_user_entity_learnings(db, dry_run=False)  # type: ignore[arg-type]
 
-        assert report["conflicts"] == [legacy]
-        assert legacy in db.rows and new_id in db.rows
+        assert report["merged"] == [legacy]
+        assert report["conflicts"] == []
+        assert legacy not in db.rows and new_id in db.rows
+        facts = [f["content"] for f in db.rows[new_id]["content"]["facts"]]
+        assert "written after the upgrade" in facts
 
     def test_rekey_is_idempotent(self) -> None:
         from agno.learn.migrations import rekey_user_entity_learnings
@@ -393,57 +404,6 @@ class TestRekeyMigration:
 
         second = await arekey_user_entity_learnings(AsyncPagingDb(), dry_run=False)
         assert second["rekeyed"] == []
-
-
-class _SilentUpsertDb(RecordingLearningDb):
-    """Models the adapters: upsert_learning can write nothing and still return.
-
-    Every adapter catches its own write exception and log_debugs it, so the
-    caller sees a normal return from a save that never reached the table.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.writes_land = True
-
-    def upsert_learning(self, id: str, **kwargs: Any) -> None:
-        if not self.writes_land:
-            return
-        super().upsert_learning(id=id, **kwargs)
-
-
-def _async_facade(inner: RecordingLearningDb) -> Any:
-    """AsyncBaseDb facade over the recording fake so the awaited paths run."""
-    from agno.db.base import AsyncBaseDb
-
-    class FakeAsyncDb(AsyncBaseDb):
-        def __init__(self) -> None:
-            pass
-
-        async def get_learning(self, **kwargs: Any) -> Any:
-            return inner.get_learning(**kwargs)
-
-        async def get_learnings(self, **kwargs: Any) -> Any:
-            return inner.get_learnings(**kwargs)
-
-        async def search_learnings(self, query: str, **kwargs: Any) -> Any:
-            return inner.search_learnings(query, **kwargs)
-
-        async def upsert_learning(self, **kwargs: Any) -> None:
-            inner.upsert_learning(**kwargs)
-
-        async def get_learning_by_id(self, id: str) -> Any:
-            return inner.get_learning_by_id(id)
-
-        async def delete_learning(self, id: str) -> bool:
-            return inner.delete_learning(id)
-
-    FakeAsyncDb.__abstractmethods__ = frozenset()  # type: ignore[attr-defined]
-    return FakeAsyncDb()
-
-
-LEGACY_FACT = "legacy fact worth money"
-CURRENT_FACT = "post-upgrade fact worth money"
 
 
 class TestKeyedRowIdentityColumns:
@@ -656,46 +616,6 @@ class TestKeyedRowIdentityColumns:
         assert [f["content"] for f in entity.facts] == [ALICE_FACT]
 
 
-class _AsyncLearningDb(AsyncBaseDb):
-    """Async facade over the in-memory fake so the awaited branches run."""
-
-    def __init__(self, inner: RecordingLearningDb) -> None:
-        self.inner = inner
-
-    async def get_learning(self, **kwargs: Any) -> Any:
-        return self.inner.get_learning(**kwargs)
-
-    async def get_learnings(self, **kwargs: Any) -> Any:
-        return self.inner.get_learnings(**kwargs)
-
-    async def search_learnings(self, query: str, **kwargs: Any) -> Any:
-        return self.inner.search_learnings(query, **kwargs)
-
-    async def upsert_learning(self, **kwargs: Any) -> None:
-        self.inner.upsert_learning(**kwargs)
-
-    async def get_learning_by_id(self, id: str) -> Any:
-        return self.inner.get_learning_by_id(id)
-
-    async def delete_learning(self, id: str) -> bool:
-        return self.inner.delete_learning(id)
-
-
-_AsyncLearningDb.__abstractmethods__ = frozenset()  # type: ignore[attr-defined]
-
-
-class _ProbeCountingDb(RecordingLearningDb):
-    """Records every primary-key read so the skipped legacy probe is observable."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.by_id_reads: List[str] = []
-
-    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
-        self.by_id_reads.append(id)
-        return super().get_learning_by_id(id)
-
-
 class TestNonStringUserIds:
     """The owner column is a string column, so a non-string user id reads back as
     its ``str()``. The entity key applies the same coercion, so an integer user id
@@ -756,43 +676,6 @@ class TestNonStringUserIds:
 
 LEGACY_DESCRIPTION = "Enterprise customer since 2024"
 CURRENT_DESCRIPTION = "Renewal owned by the platform team"
-LEGACY_NOTE = "notes/acme-legacy.md"
-CURRENT_NOTE = "notes/acme-current.md"
-PILOT_EVENT = "signed the pilot"
-
-
-def _acme_row(
-    row_id: str,
-    facts: List[Dict[str, Any]],
-    description: Optional[str] = None,
-    note: Optional[str] = None,
-    events: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """Columns for one ALICE-owned acme/company row, ready to splat into upsert_learning."""
-    return {
-        "id": row_id,
-        "learning_type": "entity_memory",
-        "entity_id": "acme",
-        "entity_type": "company",
-        "namespace": "user",
-        "user_id": ALICE,
-        "content": {
-            "entity_id": "acme",
-            "entity_type": "company",
-            "name": "Acme",
-            "description": description,
-            "properties": {"note": note} if note else {},
-            "facts": facts,
-            "events": events or [],
-            "namespace": "user",
-            "user_id": ALICE,
-        },
-    }
-
-
-def _stored_content(rows: List[Dict[str, Any]]) -> str:
-    """Every learning row's content as one JSON blob, for "survives anywhere" checks."""
-    return json.dumps([row.get("content") for row in rows], default=str)
 
 
 class TestNonStringEntityTypeInStoredContent:
@@ -844,3 +727,233 @@ class TestNonStringEntityTypeInStoredContent:
         store.remember_about(entity="Sarah", entity_type="People", facts=["likes tea"])
 
         assert "entity_global_person_sarah" in db.rows
+
+
+class TestFarEdgeDetachIsScopedToTheRunsUser:
+    """Removing a relationship rewrites the far entity's row. That row is keyed
+    by the run's user, not by the user named in the near row's stored content:
+    content is arbitrary JSON over the REST create route, so it can name any
+    user, and a pre-3.0 row's recorded user can differ from the row's owner.
+    """
+
+    def _link_pair(self, store: EntityMemoryStore, user_id: str) -> None:
+        store.link_entities(entity="Radar", relation="runs_on", related_entity="Postgres", user_id=user_id)
+
+    def _rows_owned_by(self, db: RecordingLearningDb, user_id: str) -> Dict[str, Dict[str, Any]]:
+        return {key: deepcopy(row) for key, row in db.rows.items() if row.get("user_id") == user_id}
+
+    def _name_another_user_in_content(self, db: RecordingLearningDb, owner: str, named: str) -> None:
+        db.rows[_user_key("radar", "unknown", owner)]["content"]["user_id"] = named
+
+    def test_forget_leaves_the_other_users_linked_pair_untouched(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        self._link_pair(store, ALICE)
+        self._link_pair(store, BOB)
+        bob_rows = self._rows_owned_by(db, BOB)
+        assert len(bob_rows) == 2
+
+        message = store.forget(entity="Radar", fact="runs_on -> Postgres", user_id=ALICE)
+
+        assert "Removed relationship" in message
+        assert self._rows_owned_by(db, BOB) == bob_rows
+        alice_far = store.get(entity_id="postgres", entity_type="unknown", user_id=ALICE)
+        assert alice_far is not None and alice_far.relationships == []
+
+    def test_far_end_write_lands_on_the_callers_row_when_content_names_another_user(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        self._link_pair(store, ALICE)
+        self._link_pair(store, BOB)
+        self._name_another_user_in_content(db, owner=ALICE, named=BOB)
+        bob_rows = self._rows_owned_by(db, BOB)
+
+        message = store.forget(entity="Radar", fact="runs_on -> Postgres", user_id=ALICE)
+
+        assert "Removed relationship" in message
+        assert self._rows_owned_by(db, BOB) == bob_rows
+        alice_far = store.get(entity_id="postgres", entity_type="unknown", user_id=ALICE)
+        assert alice_far is not None and alice_far.relationships == []
+
+    def test_far_end_detaches_when_the_stored_content_names_a_user_with_no_rows(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # No row exists under the named user, so a far-end read keyed by it
+        # finds nothing and the near end is left holding a one-sided edge.
+        self._link_pair(store, ALICE)
+        self._name_another_user_in_content(db, owner=ALICE, named=BOB)
+
+        store.forget(entity="Radar", fact="runs_on -> Postgres", user_id=ALICE)
+
+        alice_far = store.get(entity_id="postgres", entity_type="unknown", user_id=ALICE)
+        assert alice_far is not None and alice_far.relationships == []
+
+    def test_far_end_detaches_when_the_stored_content_records_no_user(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        self._link_pair(store, ALICE)
+        db.rows[_user_key("radar", "unknown", ALICE)]["content"].pop("user_id", None)
+
+        store.forget(entity="Radar", fact="runs_on -> Postgres", user_id=ALICE)
+
+        alice_far = store.get(entity_id="postgres", entity_type="unknown", user_id=ALICE)
+        assert alice_far is not None and alice_far.relationships == []
+
+    async def test_aforget_leaves_the_other_users_linked_pair_untouched(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await store.alink_entities(entity="Radar", relation="runs_on", related_entity="Postgres", user_id=ALICE)
+        await store.alink_entities(entity="Radar", relation="runs_on", related_entity="Postgres", user_id=BOB)
+        self._name_another_user_in_content(db, owner=ALICE, named=BOB)
+        bob_rows = self._rows_owned_by(db, BOB)
+
+        message = await store.aforget(entity="Radar", fact="runs_on -> Postgres", user_id=ALICE)
+
+        assert "Removed relationship" in message
+        assert self._rows_owned_by(db, BOB) == bob_rows
+        alice_far = await store.aget(entity_id="postgres", entity_type="unknown", user_id=ALICE)
+        assert alice_far is not None and alice_far.relationships == []
+
+    async def test_aforget_far_end_detaches_when_the_stored_content_records_no_user(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await store.alink_entities(entity="Radar", relation="runs_on", related_entity="Postgres", user_id=ALICE)
+        db.rows[_user_key("radar", "unknown", ALICE)]["content"].pop("user_id", None)
+
+        await store.aforget(entity="Radar", fact="runs_on -> Postgres", user_id=ALICE)
+
+        alice_far = await store.aget(entity_id="postgres", entity_type="unknown", user_id=ALICE)
+        assert alice_far is not None and alice_far.relationships == []
+
+    def test_single_user_forget_still_detaches_the_far_end(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        self._link_pair(store, ALICE)
+
+        message = store.forget(entity="Radar", fact="runs_on -> Postgres", user_id=ALICE)
+
+        assert "Removed relationship" in message
+        near = store.get(entity_id="radar", entity_type="unknown", user_id=ALICE)
+        far = store.get(entity_id="postgres", entity_type="unknown", user_id=ALICE)
+        assert near is not None and near.relationships == []
+        assert far is not None and far.relationships == []
+        assert set(db.rows) == {_user_key("radar", "unknown", ALICE), _user_key("postgres", "unknown", ALICE)}
+
+    async def test_single_user_aforget_still_detaches_the_far_end(self, store: EntityMemoryStore) -> None:
+        await store.alink_entities(entity="Radar", relation="runs_on", related_entity="Postgres", user_id=ALICE)
+
+        message = await store.aforget(entity="Radar", fact="runs_on -> Postgres", user_id=ALICE)
+
+        assert "Removed relationship" in message
+        near = await store.aget(entity_id="radar", entity_type="unknown", user_id=ALICE)
+        far = await store.aget(entity_id="postgres", entity_type="unknown", user_id=ALICE)
+        assert near is not None and near.relationships == []
+        assert far is not None and far.relationships == []
+
+
+class _AsyncRecordingDb(AsyncBaseDb):
+    """AsyncBaseDb surface over a RecordingLearningDb.
+
+    The store reaches an async db through separate awaited branches, so the row
+    id its writes mint and the owner filter its reads pass are only executed
+    when the configured db is an AsyncBaseDb.
+    """
+
+    def __init__(self, inner: RecordingLearningDb) -> None:
+        self.inner = inner
+
+    async def get_learning(self, **kwargs: Any) -> Any:
+        return self.inner.get_learning(**kwargs)
+
+    async def get_learning_by_id(self, id: str) -> Any:
+        return self.inner.get_learning_by_id(id)
+
+    async def get_learnings(self, **kwargs: Any) -> Any:
+        return self.inner.get_learnings(**kwargs)
+
+    async def search_learnings(self, query: str, **kwargs: Any) -> Any:
+        return self.inner.search_learnings(query, **kwargs)
+
+    async def upsert_learning(self, **kwargs: Any) -> None:
+        self.inner.upsert_learning(**kwargs)
+
+    async def delete_learning(self, id: str) -> bool:
+        return self.inner.delete_learning(id)
+
+
+_AsyncRecordingDb.__abstractmethods__ = frozenset()  # type: ignore[attr-defined]
+
+
+@pytest.fixture
+def async_store(db: RecordingLearningDb) -> EntityMemoryStore:
+    """A user-namespaced store whose db is an AsyncBaseDb over the same table
+    the sync fixtures assert on."""
+    return EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=_AsyncRecordingDb(db)))
+
+
+class TestAsyncDbUserIsolation:
+    """The awaited AsyncBaseDb branches scope by user exactly as the sync ones."""
+
+    async def test_two_users_writing_one_entity_get_distinct_user_scoped_rows(
+        self, async_store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=[ALICE_FACT], user_id=ALICE)
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=[BOB_FACT], user_id=BOB)
+
+        assert sorted(db.rows) == sorted([_user_key("acme", "company", ALICE), _user_key("acme", "company", BOB)])
+        assert db.rows[_user_key("acme", "company", ALICE)].get("user_id") == ALICE
+        assert db.rows[_user_key("acme", "company", BOB)].get("user_id") == BOB
+
+    async def test_async_read_returns_only_the_calling_users_facts(
+        self, async_store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=[ALICE_FACT], user_id=ALICE)
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=[BOB_FACT], user_id=BOB)
+
+        alice_entity = await async_store.aget(entity_id="acme", entity_type="company", user_id=ALICE)
+        bob_entity = await async_store.aget(entity_id="acme", entity_type="company", user_id=BOB)
+
+        assert alice_entity is not None
+        assert bob_entity is not None
+        assert [f["content"] for f in alice_entity.facts] == [ALICE_FACT]
+        assert [f["content"] for f in bob_entity.facts] == [BOB_FACT]
+
+    async def test_async_read_by_another_users_id_finds_nothing(
+        self, async_store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=[ALICE_FACT], user_id=ALICE)
+
+        assert await async_store.aget(entity_id="acme", entity_type="company", user_id=BOB) is None
+        assert _user_key("acme", "company", ALICE) in db.rows
+
+    async def test_async_delete_removes_only_the_calling_users_row(
+        self, async_store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=[ALICE_FACT], user_id=ALICE)
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=[BOB_FACT], user_id=BOB)
+
+        assert await async_store.adelete(entity_id="acme", entity_type="company", user_id=BOB) is True
+
+        assert _user_key("acme", "company", BOB) not in db.rows
+        assert _user_key("acme", "company", ALICE) in db.rows
+        alice_entity = await async_store.aget(entity_id="acme", entity_type="company", user_id=ALICE)
+        assert alice_entity is not None
+        assert [f["content"] for f in alice_entity.facts] == [ALICE_FACT]
+
+    async def test_one_users_write_read_and_delete_round_trip(
+        self, async_store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=[ALICE_FACT], user_id=ALICE)
+
+        entity = await async_store.aget(entity_id="acme", entity_type="company", user_id=ALICE)
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == [ALICE_FACT]
+
+        await async_store.aremember_about(entity="Acme", entity_type="company", facts=["renewal in Q3"], user_id=ALICE)
+        entity = await async_store.aget(entity_id="acme", entity_type="company", user_id=ALICE)
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == [ALICE_FACT, "renewal in Q3"]
+
+        assert await async_store.adelete(entity_id="acme", entity_type="company", user_id=ALICE) is True
+        assert await async_store.aget(entity_id="acme", entity_type="company", user_id=ALICE) is None
+        assert db.rows == {}
