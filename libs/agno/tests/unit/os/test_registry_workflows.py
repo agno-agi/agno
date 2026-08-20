@@ -324,8 +324,8 @@ class TestNestedWorkflowSteps:
         with pytest.raises(ComponentRehydrationError, match="diverges from the original on: id, name, steps"):
             Step.from_dict({"name": "outer", "workflow_id": "swallowed-wf"}, registry=registry, strict=True)
 
-    def test_a_plain_workflow_holding_a_lossy_agent_is_refused_strictly(self):
-        """The agent tier already refuses this agent by agent_id; nesting must not launder it."""
+    def test_a_step_whose_agent_reference_is_lost_is_refused_strictly(self):
+        """A copy is refused when a step stops naming the executor the original named."""
         from agno.exceptions import ComponentRehydrationError
 
         class TopicAgent(Agent):
@@ -357,7 +357,9 @@ class TestNestedWorkflowSteps:
         assert step.workflow is not None
         assert step.workflow is not wf
 
-    def test_a_child_whose_to_dict_raises_is_not_refused(self):
+    def test_an_original_that_cannot_be_serialized_is_not_refused(self):
+        """Nothing to measure against, so the copy is admitted rather than condemned."""
+
         class OpaqueWorkflow(Workflow):
             def to_dict(self):
                 raise RuntimeError("not serializable")
@@ -370,6 +372,80 @@ class TestNestedWorkflowSteps:
 
         assert step.workflow is not None
         assert step.workflow is not wf
+
+    def test_a_copy_that_cannot_be_serialized_is_refused_strictly(self):
+        """A copy whose to_dict raises hides an arbitrary loss - here, every step."""
+        from agno.exceptions import ComponentRehydrationError
+
+        class UnserializableWorkflow(Workflow):
+            def to_dict(self):
+                raise RuntimeError("not serializable")
+
+        class BrokenCopyWorkflow(Workflow):
+            def deep_copy(self, *, update=None):
+                return UnserializableWorkflow(id=self.id, name=self.name, steps=[])
+
+        agent = Agent(id="broken-copy-agent", name="A", model=_model())
+        wf = BrokenCopyWorkflow(id="broken-copy-wf", name="Broken", steps=[Step(name="s1", agent=agent)])
+        registry = Registry(name="R", workflows=[wf])
+
+        with pytest.raises(ComponentRehydrationError, match="could not be serialized"):
+            Step.from_dict({"name": "outer", "workflow_id": "broken-copy-wf"}, registry=registry, strict=True)
+
+        # A lenient load still admits the lossy copy, with no new warning to raise on.
+        step = Step.from_dict({"name": "outer", "workflow_id": "broken-copy-wf"}, registry=registry, strict=False)
+        assert step.workflow is not None
+        assert step.workflow.steps == []
+
+    def test_a_value_whose_equality_is_not_a_bool_does_not_refuse_the_copy(self):
+        """An unmeasurable comparison means the copy is unmeasured, not diverged."""
+
+        class Ambiguous:
+            def __bool__(self):
+                raise ValueError("the truth value of this value is ambiguous")
+
+        class ArrayLike:
+            def __eq__(self, other):
+                return Ambiguous()
+
+            __hash__ = None
+
+        agent = Agent(id="ambiguous-agent", name="A", model=_model())
+        wf = Workflow(
+            id="ambiguous-wf",
+            name="Ambiguous",
+            description=ArrayLike(),
+            steps=[Step(name="s1", agent=agent)],
+        )
+        registry = Registry(name="R", workflows=[wf])
+
+        step = Step.from_dict({"name": "outer", "workflow_id": "ambiguous-wf"}, registry=registry, strict=True)
+
+        assert step.workflow is not None
+        assert step.workflow is not wf
+
+    def test_runtime_state_holding_a_per_instance_object_still_loads_strictly(self):
+        """session_state, dependencies and metadata are runtime state, not the work."""
+
+        class Client:
+            pass
+
+        for index, key in enumerate(("session_state", "dependencies", "metadata")):
+            agent = Agent(id=f"runtime-agent-{index}", name="A", model=_model())
+            wf = Workflow(
+                id=f"runtime-wf-{index}",
+                name="Runtime",
+                steps=[Step(name="s1", agent=agent)],
+                **{key: {"client": Client()}},
+            )
+            registry = Registry(name="R", workflows=[wf])
+
+            step = Step.from_dict(
+                {"name": "outer", "workflow_id": f"runtime-wf-{index}"}, registry=registry, strict=True
+            )
+
+            assert step.workflow is not None
+            assert step.workflow is not wf
 
 
 @pytest.mark.skipif(find_spec("fastmcp") is None, reason="fastmcp not installed")

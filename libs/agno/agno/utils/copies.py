@@ -27,7 +27,18 @@ def copy_divergence(original: Any, copied: Any) -> Optional[str]:
     return f"the copy diverges from the original on: {', '.join(diverging[:5])}"
 
 
+# Workflow.deep_copy mints a fresh step_id for every step, so ids are dropped
+# before a workflow copy is compared with its original.
 _REGENERATED_WORKFLOW_KEYS: FrozenSet[str] = frozenset({"step_id"})
+
+# Runtime state the divergence decision leaves out. The guard exists to catch a
+# copy that lost the work - its steps, their executors and their configuration.
+# These keys hold caller-supplied runtime state whose values are frequently
+# unhashable, unequal under identity, or deliberately per-instance, so a
+# difference there says nothing about whether the copy can still do the job.
+_RUNTIME_STATE_WORKFLOW_KEYS: FrozenSet[str] = frozenset({"session_state", "dependencies", "metadata"})
+
+_UNCOMPARED_WORKFLOW_KEYS: FrozenSet[str] = _REGENERATED_WORKFLOW_KEYS | _RUNTIME_STATE_WORKFLOW_KEYS
 
 
 def _without_keys(value: Any, keys: FrozenSet[str]) -> Any:
@@ -42,27 +53,40 @@ def _without_keys(value: Any, keys: FrozenSet[str]) -> Any:
 def workflow_copy_divergence(original: Any, copied: Any) -> Optional[str]:
     """How a workflow copy's serialized form differs from its original, or None.
 
-    Workflow.deep_copy mints a fresh step_id for every step, so a raw
-    serialization compare diverges for every workflow that declares steps.
-    Step ids are therefore dropped at any nesting depth - containers such as
-    Loop, Parallel, Condition, Steps and Router serialize their children's
-    step configs inside nested lists - and everything else is compared as
-    usual: id, name, step count, executor references and per-step
-    configuration.
+    What this catches is a copy that lost the work the stored config names:
+    its steps, its id, its name, or a step's own configuration. A nested
+    child's internals are not compared - a parent's Step.to_dict records only
+    the child's agent_id, team_id or workflow_id - so a child that keeps its
+    id while losing its own state reads as identical here.
 
-    Serializing a nested child workflow is not something the parent config
-    ever does, so a to_dict that raises is an inability to measure rather than
-    a divergence, and it is not held against the copy.
+    Step ids are dropped at any nesting depth before comparing, because
+    deep_copy regenerates them; containers such as Loop, Parallel, Condition,
+    Steps and Router serialize their children's step configs inside nested
+    lists, so the drop has to reach through those too. Session state,
+    dependencies and metadata are dropped as well: they carry runtime state
+    the caller supplied, not the work the copy has to be able to do.
+
+    An original that cannot be serialized or a comparison that cannot produce
+    a bool - a value whose __eq__ returns something else - leaves the copy
+    unmeasured rather than condemned. A copy whose own to_dict raises is a
+    divergence: a copy that cannot serialize is not a faithful one.
     """
     try:
-        original_dict = _without_keys(original.to_dict(), _REGENERATED_WORKFLOW_KEYS)
-        copied_dict = _without_keys(copied.to_dict(), _REGENERATED_WORKFLOW_KEYS)
+        original_dict = _without_keys(original.to_dict(), _UNCOMPARED_WORKFLOW_KEYS)
     except Exception as e:
         log_debug(f"Could not compare a workflow copy against its original (to_dict failed: {e})")
         return None
-    if original_dict == copied_dict:
+    try:
+        copied_dict = _without_keys(copied.to_dict(), _UNCOMPARED_WORKFLOW_KEYS)
+    except Exception as e:
+        return f"the copy could not be serialized (to_dict failed: {e})"
+    try:
+        if original_dict == copied_dict:
+            return None
+        diverging = sorted(
+            key for key in set(original_dict) | set(copied_dict) if original_dict.get(key) != copied_dict.get(key)
+        )
+    except Exception as e:
+        log_debug(f"Could not compare a workflow copy against its original (comparison failed: {e})")
         return None
-    diverging = sorted(
-        key for key in set(original_dict) | set(copied_dict) if original_dict.get(key) != copied_dict.get(key)
-    )
     return f"the copy diverges from the original on: {', '.join(diverging[:5])}"

@@ -627,9 +627,14 @@ class Step:
                         if strict:
                             from agno.utils.copies import workflow_copy_divergence
 
-                            # Compared with step ids stripped: deep_copy mints a
-                            # fresh one per step, so the agent/team tiers' plain
+                            # Catches a copy that lost the work: its steps, its
+                            # id, its name or a step's own configuration. Step
+                            # ids are stripped first - deep_copy mints a fresh
+                            # one per step, so the agent/team tiers' plain
                             # serialization compare would refuse every workflow.
+                            # A nested child's internals are not compared,
+                            # because a parent's Step.to_dict records only the
+                            # child's id.
                             divergence = workflow_copy_divergence(registry_workflow, workflow)
                             if divergence is not None:
                                 raise ComponentRehydrationError(
