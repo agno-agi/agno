@@ -135,6 +135,10 @@ SCHEDULES_COLLECTION_SCHEMA = [
     {"key": "locked_by"},
     {"key": "locked_at"},
     {"key": "user_id"},
+    # Control-plane marker and component target: nullable fields need no
+    # migration in Mongo, only these lookup indexes.
+    {"key": "managed_by"},
+    {"key": "target_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
     {"key": [("enabled", 1), ("next_run_at", 1)]},

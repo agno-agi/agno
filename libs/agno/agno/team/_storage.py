@@ -20,7 +20,9 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.agent._storage import is_auto_generated_memory_manager_id, resolve_memory_manager_reference
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
@@ -698,9 +700,24 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["parse_response"] = team.parse_response
 
     # --- Memory settings ---
-    # TODO: implement memory manager serialization
-    # if team.memory_manager is not None:
-    #     config["memory_manager"] = team.memory_manager.to_dict()
+    # Stored as a registry reference by id, like knowledge: the manager holds
+    # a model and callables, so the config names it and the registry supplies
+    # the live object on load. An auto-generated id is minted fresh every
+    # process, so it can never resolve in a new one: writing it would poison
+    # every future strict load. Only a stable, user-assigned id is referenced.
+    if team.memory_manager is not None:
+        memory_manager_id = getattr(team.memory_manager, "id", None)
+        if memory_manager_id and not is_auto_generated_memory_manager_id(memory_manager_id):
+            config["memory_manager"] = {"registry_id": memory_manager_id}
+        elif team.enable_agentic_memory or team.update_memory_on_run:
+            # The default manager initialize_team builds; it rebuilds itself
+            # from these flags on load, so there is nothing to reference.
+            log_debug("Team memory_manager has an auto-generated id; not saved, the default rebuilds on load.")
+        else:
+            log_warning(
+                "Team memory_manager has no stable id, so it cannot be referenced across processes and will "
+                "not be saved. Give the manager an explicit id and register it in the registry to keep it."
+            )
     if team.enable_agentic_memory:
         config["enable_agentic_memory"] = team.enable_agentic_memory
     if team.update_memory_on_run:
@@ -1079,13 +1096,8 @@ def from_dict(
                 log_warning(f"Team member of unknown type skipped: {member_type!r}")
 
     # --- Handle reasoning_model reconstruction ---
-    # TODO: implement reasoning model deserialization
-    # if "reasoning_model" in config:
-    #     model_data = config["reasoning_model"]
-    #     if isinstance(model_data, dict) and "id" in model_data:
-    #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-    #     elif isinstance(model_data, str):
-    #         config["reasoning_model"] = get_model(model_data)
+    if config.get("reasoning_model") is not None:
+        config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1190,10 +1202,7 @@ def from_dict(
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
-    # TODO: implement memory manager deserialization
-    # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
-    #     from agno.memory import MemoryManager
-    #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+    resolve_memory_manager_reference(config, registry, strict, component_label)
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization
@@ -1311,7 +1320,7 @@ def from_dict(
             use_json_mode=config.get("use_json_mode", False),
             parse_response=config.get("parse_response", True),
             # --- Memory settings ---
-            # memory_manager=config.get("memory_manager"),  # TODO
+            memory_manager=config.get("memory_manager"),
             enable_agentic_memory=config.get("enable_agentic_memory", False),
             update_memory_on_run=config.get("update_memory_on_run", False),
             add_memories_to_context=config.get("add_memories_to_context"),
@@ -1330,7 +1339,7 @@ def from_dict(
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO
             # --- Reasoning settings ---
-            # reasoning_model=config.get("reasoning_model"),  # TODO
+            reasoning_model=config.get("reasoning_model"),
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),
@@ -1347,7 +1356,7 @@ def from_dict(
             delay_between_retries=config.get("delay_between_retries", 1),
             exponential_backoff=config.get("exponential_backoff", False),
             # --- Metadata ---
-            metadata=config.get("metadata"),
+            metadata=strip_reserved_run_metadata(config.get("metadata")),
             # --- Debug and telemetry settings ---
             debug_mode=config.get("debug_mode", False),
             debug_level=config.get("debug_level", 1),
@@ -1538,6 +1547,7 @@ def load(
     label: Optional[str] = None,
     version: Optional[int] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional["Team"]:
     """
     Load a team by id, with hydrated members.
@@ -1553,6 +1563,15 @@ def load(
     Returns:
         The team loaded from the database with hydrated members, or None if not found.
     """
+    if published_only and version is None and label is None:
+        # Dispatch semantics on demand: resolve strictly through the live
+        # pointer instead of the current-or-latest-draft read fallback.
+        component_row = db.get_component(component_id=id)
+        current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+        if current_version is None:
+            return None
+        version = current_version
+
     # Use graph to load team + all members in a single DB call
     graph = db.load_component_graph(id, version=version, label=label)
     if graph is None:
@@ -1566,6 +1585,7 @@ def delete(
     *,
     db: Optional["BaseDb"] = None,
     hard_delete: bool = False,
+    require_no_dependents: bool = True,
 ) -> bool:
     """
     Delete the team component.
@@ -1573,9 +1593,17 @@ def delete(
     Args:
         db: The database to delete the component from.
         hard_delete: Whether to hard delete the component.
+        require_no_dependents: Refuse when another component pins this one.
+            The default protects a composition from losing a member it cannot
+            rebuild; pass False to delete anyway and leave those parents
+            pointing at nothing.
 
     Returns:
-        True if the component was deleted, False otherwise.
+        True if the component was deleted, False if there was nothing to delete.
+
+    Raises:
+        ComponentDependencyError: If another component pins this one and
+            require_no_dependents is True.
     """
     db_ = db or team.db
     if not db_:
@@ -1585,7 +1613,9 @@ def delete(
     if team.id is None:
         raise ValueError("Cannot delete team without an id")
 
-    return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
+    return db_.delete_component(
+        component_id=team.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+    )
 
 
 def get_session_metrics(team: "Team", session_id: Optional[str] = None):

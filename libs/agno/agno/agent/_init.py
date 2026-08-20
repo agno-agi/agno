@@ -68,8 +68,7 @@ def set_checkpoint(agent: Agent) -> None:
     Constructor default is None so that OS-level inheritance can fill it. If still
     None at first run, fall back to "runs" (today's terminal-only behavior).
 
-    "tools" is reserved for 3.0 (see ADR-006 in specs/agno/features/checkpointing/decisions.md)
-    and raises NotImplementedError if requested.
+    "tools" is reserved for 3.0 and raises NotImplementedError if requested.
     """
     if agent.checkpoint is None:
         agent.checkpoint = "runs"

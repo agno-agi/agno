@@ -32,6 +32,50 @@ class ComponentType(str, Enum):
     WORKFLOW = "workflow"
 
 
+# Stage marking a config version as deleted without freeing its number.
+# Tombstoned versions are invisible to every read unless include_deleted is
+# passed; the high-water version allocation counts them so numbers never
+# recycle into a history another component version may still cite.
+DELETED_CONFIG_STAGE = "_deleted"
+
+# Link kinds that pin a child component version for rebuild: team members and
+# the three step-executor kinds Step.get_links emits. Guards that enforce
+# "published parents pin published children" and "restore refuses orphaned
+# pins" filter on THIS tuple - a bare "step" kind does not exist, and a guard
+# written against it silently skips every workflow.
+PIN_LINK_KINDS = ("member", "step_agent", "step_team", "step_workflow")
+
+
+class ComponentVersionConflictError(ValueError):
+    """A compare-and-set guard did not match the stored version state.
+
+    Raised when expected_latest_version / expected_current_version disagrees
+    with the row, and when two concurrent appends race for one version
+    number. Retry after re-reading the component."""
+
+
+class ComponentArchivedError(ValueError):
+    """The component is archived; its id is reserved and its rows immutable.
+
+    Restore it explicitly (restore_component) before writing to it."""
+
+
+class ComponentDependencyError(ValueError):
+    """The operation would break another component's exact-version pin."""
+
+
+class ComponentCycleError(ValueError):
+    """The links being written would close a reference cycle."""
+
+
+class ComponentDraftRequiredError(ValueError):
+    """The operation applies only to draft versions; this one is published."""
+
+
+class ComponentLastConfigError(ValueError):
+    """A component must keep at least one visible config version."""
+
+
 class _ReentrantAsyncLock:
     """asyncio.Lock with RLock semantics: the owning task may re-acquire.
 
@@ -952,6 +996,7 @@ class BaseDb(ABC):
         component_id: str,
         component_type: Optional[ComponentType] = None,
         user_id: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a component by ID.
 
@@ -959,6 +1004,8 @@ class BaseDb(ABC):
             component_id: The component ID.
             component_type: Optional filter by type (agent|team|workflow).
             user_id: If set, only return the component if owned by this user or shared.
+            include_deleted: Also return an archived (soft-deleted) row. Archived
+                ids are reserved, so an existence check must pass True.
 
         Returns:
             Component dictionary or None if not found.
@@ -991,6 +1038,8 @@ class BaseDb(ABC):
 
         Raises:
             ValueError: If creating and component_type is not provided.
+            ComponentArchivedError: If the row is archived. Archived components
+                are immutable and their ids reserved; restore explicitly first.
         """
         raise NotImplementedError
 
@@ -999,16 +1048,57 @@ class BaseDb(ABC):
         component_id: str,
         hard_delete: bool = False,
         user_id: Optional[str] = None,
+        expected_current_version: Optional[int] = None,
+        require_no_dependents: bool = True,
+        cascade_stats: Optional[Dict[str, int]] = None,
     ) -> bool:
-        """Delete a component and all its configs/links.
+        """Delete a component. Soft delete archives it; the id stays reserved.
 
         Args:
             component_id: The component ID.
-            hard_delete: If True, permanently delete. Otherwise soft-delete.
+            hard_delete: If True, permanently delete rows and links. Otherwise
+                archive: stamp deleted_at, keep every version, reserve the id.
             user_id: If set, only delete the component if owned by this user.
+            expected_current_version: Optional compare-and-set guard on the
+                current published version; None skips the check.
+            require_no_dependents: Refuse when other components pin this one.
+                An archive checks active (non-archived) parents; a hard delete
+                checks every parent, because it would break even an archived
+                parent's history.
+            cascade_stats: Optional dict the delete fills in with what its
+                cascade touched, currently "schedules_disabled". The count is
+                only knowable inside the cascade - it counts the rows this
+                delete flipped from enabled, and restore does not re-enable
+                them - so a caller that reports it cannot recompute it from a
+                later read.
 
         Returns:
             True if deleted, False if not found or already deleted.
+
+        Raises:
+            ComponentDependencyError: If dependents exist and
+                require_no_dependents is True.
+            ComponentVersionConflictError: If the guard does not match.
+        """
+        raise NotImplementedError
+
+    def restore_component(
+        self,
+        component_id: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Restore an archived component: clear deleted_at, keep every version.
+
+        The current_version pointer is untouched, so a published component
+        comes back published. Schedules that were disabled when the component
+        was archived stay disabled; re-enabling them is a separate decision.
+
+        Args:
+            component_id: The component ID.
+            user_id: If set, only restore the component if owned by this user.
+
+        Returns:
+            True if restored, False if not found or not archived.
         """
         raise NotImplementedError
 
@@ -1082,18 +1172,43 @@ class BaseDb(ABC):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
 
+        Tombstoned versions (stage "_deleted") are invisible unless
+        include_deleted is passed; the current/latest fallbacks skip them.
+
         Args:
             component_id: The component ID.
-            version: Specific version number. If None, uses current.
+            version: Specific version number. If None, uses current, else the
+                latest visible version.
             label: Config label to lookup. Ignored if version is provided.
+            include_deleted: Also return a tombstoned version.
 
         Returns:
             Config dictionary or None if not found.
         """
         raise NotImplementedError
+
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """The current published config, or None when nothing is published.
+
+        Unlike get_config(version=None) this never falls back to a draft, so
+        it is the read dispatch surfaces build on.
+        """
+        raise NotImplementedError
+
+    def get_latest_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """The latest visible (non-tombstoned) config version, draft or published."""
+        raise NotImplementedError
+
+    def get_latest_configs(self, component_ids: Set[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Bulk get_latest_config: one result per requested id (None when absent).
+
+        Default implementation loops; adapters may override with one query.
+        """
+        return {component_id: self.get_latest_config(component_id) for component_id in component_ids}
 
     def upsert_config(
         self,
@@ -1104,22 +1219,40 @@ class BaseDb(ABC):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
         Rules:
-            - Draft configs can be edited freely
-            - Published configs are immutable
-            - Publishing a config automatically sets it as current_version
+            - version=None appends a new version. Numbering is high-water over
+              every row including tombstones, so numbers never recycle. Two
+              concurrent appends race for one number; the loser gets
+              ComponentVersionConflictError.
+            - Draft configs can still be edited in place by explicit version
+              (the AgentOS UI's contract); control planes that want immutable
+              history append instead.
+            - Published configs are immutable.
+            - Publishing sets current_version and re-projects the config's
+              name/description/metadata onto the component row atomically.
+            - expected_latest_version is an optional compare-and-set guard
+              against the latest visible version; a mismatch means someone
+              else wrote since the caller read.
 
         Args:
             component_id: The component ID.
             config: The config data. Required for create, optional for update.
-            version: If None, creates new version. If provided, updates that version.
+            version: If None, appends a new version. If provided, updates that version.
             label: Optional human-readable label.
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
             links: Optional list of links. Each link must have child_version set.
+            expected_latest_version: Optional CAS guard; None skips the check.
+            user_id: When set, the write applies only if this user owns the
+                component. A foreign or shared (unowned) row answers the same
+                ValueError a missing component answers, inside the write
+                transaction, so the refusal cannot be split from the write.
 
         Returns:
             Created/updated config dictionary.
@@ -1127,6 +1260,10 @@ class BaseDb(ABC):
         Raises:
             ValueError: If component doesn't exist, version not found, label conflict,
                         or attempting to update a published config.
+            ComponentVersionConflictError: If the guard does not match or a
+                concurrent append won the version number.
+            ComponentArchivedError: If the component is archived.
+            ComponentCycleError: If the links would close a reference cycle.
         """
         raise NotImplementedError
 
@@ -1134,21 +1271,30 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: int,
+        user_id: Optional[str] = None,
     ) -> bool:
-        """Delete a specific config version.
+        """Tombstone a specific config version. Its number is never reused.
 
-        Only draft configs can be deleted. Published configs are immutable.
-        Cannot delete the current version.
+        Only draft versions can be deleted, never the current version, never
+        the last visible version, and never a version another component pins.
 
         Args:
             component_id: The component ID.
             version: The version to delete.
+            user_id: When set, the delete applies only if this user owns the
+                component. A foreign or shared (unowned) row answers the same
+                False a missing version answers, inside the write transaction.
 
         Returns:
-            True if deleted, False if not found.
+            True if deleted, False if not found (or already tombstoned).
 
         Raises:
-            ValueError: If attempting to delete a published or current config.
+            ComponentDraftRequiredError: If the version is published.
+            ComponentArchivedError: If the component is archived; its history is
+                frozen so restore brings every version back.
+            ComponentLastConfigError: If it is the last visible version.
+            ComponentDependencyError: If an active parent pins this version.
+            ValueError: If it is the current version.
         """
         raise NotImplementedError
 
@@ -1156,12 +1302,14 @@ class BaseDb(ABC):
         self,
         component_id: str,
         include_config: bool = False,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """List all config versions for a component.
 
         Args:
             component_id: The component ID.
             include_config: If True, include full config blob. Otherwise just metadata.
+            include_deleted: Include tombstoned versions.
 
         Returns:
             List of config dictionaries, newest first.
@@ -1173,6 +1321,8 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: int,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -1183,12 +1333,19 @@ class BaseDb(ABC):
         Args:
             component_id: The component ID.
             version: The version to set as current (must be published).
+            expected_current_version: Optional compare-and-set guard on the
+                pointer being replaced; None skips the check.
+            user_id: When set, the pointer moves only if this user owns the
+                component; the predicate rides the UPDATE itself. A foreign or
+                shared (unowned) row answers the same False a missing
+                component answers.
 
         Returns:
             True if successful, False if component or version not found.
 
         Raises:
             ValueError: If attempting to set a draft config as current.
+            ComponentVersionConflictError: If the guard does not match.
         """
         raise NotImplementedError
 
@@ -1215,12 +1372,15 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: Optional[int] = None,
+        active_parents_only: bool = False,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
         Args:
             component_id: The component ID to find dependents of.
             version: Optional specific version. If None, finds links to any version.
+            active_parents_only: Only count links whose parent component is not
+                archived and whose parent version is not tombstoned.
 
         Returns:
             List of link dictionaries showing what depends on this component.
@@ -1558,6 +1718,32 @@ class BaseDb(ABC):
 
     def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component.
+
+        Matches provenance-tagged rows and generic rows whose endpoint is the
+        component's run endpoint, across owners (archiving the target is a
+        system action). ``reason`` lands in disabled_reason; enable clears it.
+
+        Returns:
+            The number of schedules disabled.
+        """
+        raise NotImplementedError
+
+    def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write control-plane provenance columns (managed_by, target_*,
+        created_by_*/updated_by_*) that the generic update_schedule refuses.
+
+        Returns:
+            True when the schedule row was updated.
+        """
         raise NotImplementedError
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -2389,6 +2575,191 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Components (Not supported for async) ---
+    # Plain (non-async) stubs matching the BaseDb signatures, so every async
+    # adapter fails the same way until an async catalog lands.
+    def get_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def upsert_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        current_version: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def delete_component(
+        self,
+        component_id: str,
+        hard_delete: bool = False,
+        user_id: Optional[str] = None,
+        expected_current_version: Optional[int] = None,
+        require_no_dependents: bool = True,
+    ) -> bool:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def restore_component(
+        self,
+        component_id: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def list_components(
+        self,
+        component_type: Optional[ComponentType] = None,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def create_component_with_config(
+        self,
+        component_id: str,
+        component_type: ComponentType,
+        name: Optional[str],
+        config: Dict[str, Any],
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+        stage: str = "draft",
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_config(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_latest_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_latest_configs(self, component_ids: Set[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def upsert_config(
+        self,
+        component_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        stage: Optional[str] = None,
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def delete_config(
+        self,
+        component_id: str,
+        version: int,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def list_configs(
+        self,
+        component_id: str,
+        include_config: bool = False,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def set_current_version(
+        self,
+        component_id: str,
+        version: int,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_links(
+        self,
+        component_id: str,
+        version: int,
+        link_kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_dependents(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        active_parents_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def load_component_graph(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
     # --- Learnings ---
     @abstractmethod
     async def get_learning(
@@ -2700,6 +3071,19 @@ class AsyncBaseDb(ABC):
 
     async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Async variant of BaseDb.disable_schedules_for_target."""
+        raise NotImplementedError
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Async variant of BaseDb.stamp_schedule_provenance."""
         raise NotImplementedError
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:

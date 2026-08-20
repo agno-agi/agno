@@ -673,7 +673,7 @@ class RunOutput:
     last_checkpoint_at_message_index: Optional[int] = None
 
     # Fork lineage. Distinct from parent_run_id (which carries team-member / workflow-step
-    # parentage); see ADR-007 in specs/agno/features/checkpointing/decisions.md.
+    # parentage).
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
 

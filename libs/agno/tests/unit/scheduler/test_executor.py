@@ -7,7 +7,7 @@ from urllib.parse import unquote
 
 import pytest
 
-from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER, Schedule
+from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY, SCHEDULE_OWNER_HEADER, Schedule
 from agno.scheduler.executor import ScheduleExecutor, _to_form_value
 
 
@@ -429,3 +429,61 @@ class TestScheduleOwnerAttribution:
 
         assert bg.await_args.args[3]["user_id"] == ""
         assert bg.await_args.args[2][SCHEDULE_OWNER_HEADER] == ""
+
+
+class TestForwardedMetadataIsAlwaysAcceptable:
+    """A stored payload must never make a schedule fail on every tick.
+
+    Run endpoints take ``metadata`` as a JSON object and answer 4xx for
+    anything else. The executor forwards stored payloads verbatim, so a
+    schedule created with a non-object metadata -- accepted at create time,
+    and accepted by the run routes before this contract tightened -- would
+    fail every attempt of every tick with no tick able to repair it.
+    """
+
+    @pytest.fixture
+    def executor(self):
+        return ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok", poll_interval=0)
+
+    async def _forwarded(self, executor, metadata):
+        """The form payload the executor would send to a run endpoint."""
+        captured = {}
+
+        async def _capture(client, url, headers, payload, resource_type, resource_id, timeout_seconds):
+            captured.update(payload)
+            return {"status": "success"}
+
+        schedule = Schedule(
+            id="sched-1",
+            name="s",
+            endpoint="/agents/a1/runs",
+            method="POST",
+            cron_expr="* * * * *",
+            payload={"message": "hi", "metadata": metadata},
+        )
+        with patch.object(executor, "_get_client", AsyncMock(return_value=MagicMock())):
+            with patch.object(executor, "_background_run", side_effect=_capture):
+                await executor._call_endpoint(schedule)
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_a_json_array_metadata_is_dropped(self, executor):
+        assert "metadata" not in await self._forwarded(executor, '["tag"]')
+
+    @pytest.mark.asyncio
+    async def test_a_decoded_list_metadata_is_dropped(self, executor):
+        assert "metadata" not in await self._forwarded(executor, ["tag"])
+
+    @pytest.mark.asyncio
+    async def test_a_scalar_metadata_is_dropped(self, executor):
+        assert "metadata" not in await self._forwarded(executor, "hello")
+
+    @pytest.mark.asyncio
+    async def test_an_object_metadata_still_rides(self, executor):
+        forwarded = await self._forwarded(executor, {"team": "growth"})
+        assert json.loads(forwarded["metadata"]) == {"team": "growth"}
+
+    @pytest.mark.asyncio
+    async def test_the_reserved_version_key_is_still_stripped(self, executor):
+        forwarded = await self._forwarded(executor, {"team": "growth", COMPONENT_VERSION_METADATA_KEY: 7})
+        assert json.loads(forwarded["metadata"]) == {"team": "growth"}
