@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import mimetypes
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -937,6 +938,9 @@ class Gemini(Model):
         return merged, system_message
 
     def _to_function_response_part(self, part: Part) -> Optional[FunctionResponsePart]:
+        if not self._supports_multimodal_function_responses():
+            return None
+
         if (
             part.inline_data is not None
             and part.inline_data.data is not None
@@ -947,12 +951,21 @@ class Gemini(Model):
                 data=part.inline_data.data,
                 mime_type=part.inline_data.mime_type,
             )
-        if self.vertexai and part.file_data is not None and part.file_data.file_uri is not None:
+        if (
+            self.vertexai
+            and part.file_data is not None
+            and part.file_data.file_uri is not None
+            and part.file_data.mime_type in _FUNCTION_RESPONSE_MEDIA_TYPES
+        ):
             return FunctionResponsePart.from_uri(
                 file_uri=part.file_data.file_uri,
                 mime_type=part.file_data.mime_type,
             )
         return None
+
+    def _supports_multimodal_function_responses(self) -> bool:
+        model_version = re.search(r"(?:^|/)gemini-(\d+)(?:\.\d+)?(?:-|$)", self.id)
+        return model_version is not None and int(model_version.group(1)) >= 3
 
     def _format_tool_result_media(self, message: Message) -> tuple[List[FunctionResponsePart], List[Part]]:
         media_parts: List[FunctionResponsePart] = []
