@@ -131,16 +131,16 @@ def test_workspace_context_excludes_agent_scratch_and_plural_venvs(tmp_path: Pat
     assert result["files"][0]["file"] == "src/app.py"
 
 
-def test_workspace_enforce_excludes_defaults_off(tmp_path: Path):
+def test_workspace_enforce_exclude_patterns_defaults_off(tmp_path: Path):
     (tmp_path / ".env").write_text("SECRET=1")
     p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools)
     workspace = p.get_tools()[0]
     assert "SECRET=1" in workspace.read_file(".env")
 
 
-def test_workspace_enforce_excludes_forwarded_to_tools(tmp_path: Path):
+def test_workspace_enforce_exclude_patterns_forwarded_to_tools(tmp_path: Path):
     (tmp_path / ".env").write_text("SECRET=1")
-    p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools, enforce_excludes=True)
+    p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools, enforce_exclude_patterns=True)
     workspace = p.get_tools()[0]
     assert workspace.read_file(".env") == "Error: path is excluded from this workspace"
 

@@ -229,7 +229,7 @@ class Workspace(Toolkit):
     ``node_modules``, etc.) by default. Pass ``exclude_patterns=[]`` to disable,
     or ``exclude_patterns=[...]`` to override. By default (case-sensitive
     matching) exclusion is a listing/search filter only — direct-path tools still
-    accept excluded paths. Pass ``enforce_excludes=True`` to make excluded paths
+    accept excluded paths. Pass ``enforce_exclude_patterns=True`` to make excluded paths
     fully off-limits to ``read_file`` / ``write_file`` / ``edit_file`` /
     ``move_file`` (source and destination) / ``delete_file``; excluded paths
     return the same error whether or not they exist. Under the flag, matching
@@ -270,7 +270,7 @@ class Workspace(Toolkit):
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
         exclude_patterns: Optional[List[str]] = None,
-        enforce_excludes: bool = False,
+        enforce_exclude_patterns: bool = False,
         **kwargs,
     ):
         # Resolve root to an absolute path once — never re-read cwd later (reload-safe).
@@ -285,7 +285,7 @@ class Workspace(Toolkit):
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
-        self.enforce_excludes = enforce_excludes
+        self.enforce_exclude_patterns = enforce_exclude_patterns
         # Tracks which paths have been read this session — used by require_read_before_write.
         # Resolved absolute paths so move/rename interactions are unambiguous.
         self._read_paths: Set[Path] = set()
@@ -401,13 +401,13 @@ class Workspace(Toolkit):
     def _is_excluded_for_listing(self, path: Path) -> bool:
         """Exclusion check for ``list_files`` / ``search_content``.
 
-        When ``enforce_excludes`` is set, the read surface matches the direct-path
+        When ``enforce_exclude_patterns`` is set, the read surface matches the direct-path
         guard (casefolded), so a case-variant of an excluded file cannot have its
         name listed or — more importantly — its content surfaced by
         ``search_content`` on a case-insensitive filesystem. Otherwise matching
         stays case-sensitive, a pure listing filter.
         """
-        if self.enforce_excludes:
+        if self.enforce_exclude_patterns:
             return self._is_excluded_enforced(path)
         return self._is_excluded(path)
 
@@ -464,7 +464,7 @@ class Workspace(Toolkit):
                 return "Error: path escapes workspace root"
             # Before the existence check so excluded paths error identically
             # whether or not they exist (no existence oracle).
-            if self.enforce_excludes and self._is_excluded_enforced(file_path):
+            if self.enforce_exclude_patterns and self._is_excluded_enforced(file_path):
                 return "Error: path is excluded from this workspace"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
@@ -694,7 +694,7 @@ class Workspace(Toolkit):
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
                 return "Error: path escapes workspace root"
-            if self.enforce_excludes and self._is_excluded_enforced(file_path):
+            if self.enforce_exclude_patterns and self._is_excluded_enforced(file_path):
                 return "Error: path is excluded from this workspace"
             if file_path.exists() and not overwrite:
                 return f"Error: file exists and overwrite=False: {path}"
@@ -747,7 +747,7 @@ class Workspace(Toolkit):
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 return "Error: path escapes workspace root"
-            if self.enforce_excludes and self._is_excluded_enforced(file_path):
+            if self.enforce_exclude_patterns and self._is_excluded_enforced(file_path):
                 return "Error: path is excluded from this workspace"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
@@ -798,7 +798,9 @@ class Workspace(Toolkit):
                 return "Error: dst escapes workspace root"
             # Destination too — otherwise a move could smuggle content into (or
             # rename it out of) the excluded set.
-            if self.enforce_excludes and (self._is_excluded_enforced(src_path) or self._is_excluded_enforced(dst_path)):
+            if self.enforce_exclude_patterns and (
+                self._is_excluded_enforced(src_path) or self._is_excluded_enforced(dst_path)
+            ):
                 return "Error: path is excluded from this workspace"
             if not src_path.exists():
                 return f"Error: src not found: {src}"
@@ -831,7 +833,7 @@ class Workspace(Toolkit):
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 return "Error: path escapes workspace root"
-            if self.enforce_excludes and self._is_excluded_enforced(file_path):
+            if self.enforce_exclude_patterns and self._is_excluded_enforced(file_path):
                 return "Error: path is excluded from this workspace"
             if not file_path.exists():
                 return f"Error: file not found: {path}"

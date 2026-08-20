@@ -224,31 +224,13 @@ _GIT_CREDENTIAL_HELPER = (
 class GitBackend(WikiBackend):
     """Wiki backend backed by a git remote.
 
-    On ``setup`` the backend either clones ``repo_url@branch`` into
-    ``local_path`` or validates that an existing clone matches. On
-    ``commit_after_write`` it stages, commits with an LLM-summarised
-    one-liner, rebases onto the remote, and pushes.
+    Clones ``repo_url@branch`` into ``local_path`` on setup. After each
+    write, stages, commits with an LLM-summarised message, rebases onto
+    the remote, and pushes.
 
-    PAT auth is the only auth supported today: pass ``github_token`` (or
-    let the caller pull it from the environment). The token is injected
-    into each remote-facing git call through an ephemeral credential
-    helper carried in the subprocess environment (``_git_env``): it is
-    never placed on the command line and never written to
-    ``.git/config`` — ``origin`` stays the bare ``repo_url``, and
-    ``setup`` rewrites token-bearing remotes left behind by older
-    versions. The backend's ``Scrubber`` is wired into every
-    ``git_ops.run`` call so token leakage from git's own stderr is
-    blocked at the source.
-
-    Requires git >= 2.31: credential injection rides on the
-    ``GIT_CONFIG_COUNT``/``GIT_CONFIG_KEY_n``/``GIT_CONFIG_VALUE_n``
-    environment entries, which older git ignores — remote operations
-    then fail with ``GitError`` ("could not read Username ... terminal
-    prompts disabled").
-
-    ``file://`` remotes are accepted for local mirrors and tests. Git
-    does not consult credential helpers for local transports, so the
-    token is unused there.
+    Auth: pass ``github_token`` (PAT). The token is injected via an
+    ephemeral credential helper — never written to disk or shown on argv.
+    Requires git >= 2.31.
     """
 
     def __init__(

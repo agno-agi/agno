@@ -844,14 +844,14 @@ def test_empty_exclude_patterns_opts_out():
 EXCLUDED_ERROR = "Error: path is excluded from this workspace"
 
 
-def test_enforce_excludes_off_by_default_direct_ops_still_work():
+def test_enforce_exclude_patterns_off_by_default_direct_ops_still_work():
     """Control: flag off — excluded paths stay hidden from list/search but
     direct-path ops (read/write/edit/move/delete) still accept them."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base = Path(tmp_dir)
         (base / ".env").write_text("SECRET=1")
         ws = Workspace(tmp_dir)
-        assert ws.enforce_excludes is False
+        assert ws.enforce_exclude_patterns is False
 
         listing = json.loads(ws.list_files())
         assert ".env" not in [e["path"] for e in listing["files"]]
@@ -866,14 +866,14 @@ def test_enforce_excludes_off_by_default_direct_ops_still_work():
         assert "Deleted" in ws.delete_file(".env")
 
 
-def test_enforce_excludes_blocks_all_direct_path_ops():
+def test_enforce_exclude_patterns_blocks_all_direct_path_ops():
     with tempfile.TemporaryDirectory() as tmp_dir:
         base = Path(tmp_dir)
         (base / ".env").write_text("SECRET=1")
         (base / "app_token.json").write_text('{"token": "t"}')
         (base / "readme.md").write_text("hello")
         patterns = list(DEFAULT_EXCLUDE_PATTERNS) + ["*_token.json"]
-        ws = Workspace(tmp_dir, exclude_patterns=patterns, enforce_excludes=True)
+        ws = Workspace(tmp_dir, exclude_patterns=patterns, enforce_exclude_patterns=True)
 
         for target in (".env", "app_token.json"):
             assert ws.read_file(target) == EXCLUDED_ERROR
@@ -894,33 +894,33 @@ def test_enforce_excludes_blocks_all_direct_path_ops():
         assert "Deleted" in ws.delete_file("notes2.txt")
 
 
-def test_enforce_excludes_blocks_excluded_move_destination():
+def test_enforce_exclude_patterns_blocks_excluded_move_destination():
     with tempfile.TemporaryDirectory() as tmp_dir:
         base = Path(tmp_dir)
         (base / "plain.txt").write_text("data")
-        ws = Workspace(tmp_dir, enforce_excludes=True)
+        ws = Workspace(tmp_dir, enforce_exclude_patterns=True)
 
         assert ws.move_file("plain.txt", ".env") == EXCLUDED_ERROR
         assert (base / "plain.txt").read_text() == "data"
 
 
-def test_enforce_excludes_no_existence_oracle():
+def test_enforce_exclude_patterns_no_existence_oracle():
     """Excluded paths error identically whether or not they exist."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        ws = Workspace(tmp_dir, enforce_excludes=True)
+        ws = Workspace(tmp_dir, enforce_exclude_patterns=True)
         assert ws.read_file(".env") == EXCLUDED_ERROR
         Path(tmp_dir, ".env").write_text("SECRET=1")
         assert ws.read_file(".env") == EXCLUDED_ERROR
 
 
-def test_enforce_excludes_async_read_blocked():
+def test_enforce_exclude_patterns_async_read_blocked():
     with tempfile.TemporaryDirectory() as tmp_dir:
         Path(tmp_dir, ".env").write_text("SECRET=1")
-        ws = Workspace(tmp_dir, enforce_excludes=True)
+        ws = Workspace(tmp_dir, enforce_exclude_patterns=True)
         assert asyncio.run(ws.aread_file(".env")) == EXCLUDED_ERROR
 
 
-def test_enforce_excludes_blocks_case_variants():
+def test_enforce_exclude_patterns_blocks_case_variants():
     """Enforcement casefolds: case variants of excluded names are blocked on
     every platform, so case-insensitive filesystems (macOS, Windows) cannot be
     used to reach an excluded file. The guard fires before the existence check,
@@ -929,7 +929,7 @@ def test_enforce_excludes_blocks_case_variants():
         base = Path(tmp_dir)
         (base / "plain.txt").write_text("data")
         patterns = list(DEFAULT_EXCLUDE_PATTERNS) + ["*_token.json"]
-        ws = Workspace(tmp_dir, exclude_patterns=patterns, enforce_excludes=True)
+        ws = Workspace(tmp_dir, exclude_patterns=patterns, enforce_exclude_patterns=True)
 
         assert ws.read_file(".ENV") == EXCLUDED_ERROR
         assert ws.write_file(".Env", "clobber") == EXCLUDED_ERROR
@@ -943,20 +943,20 @@ def test_enforce_excludes_blocks_case_variants():
         assert (base / "plain.txt").read_text() == "data"
 
 
-def test_enforce_excludes_blocks_unicode_normalization_variants():
+def test_enforce_exclude_patterns_blocks_unicode_normalization_variants():
     """NFD spellings of excluded names are blocked against NFC patterns."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Escapes, not literals, so source-file normalization cannot collapse the forms.
         nfc_pattern = "caf\u00e9*"
         nfd_name = "cafe\u0301.txt"
-        ws = Workspace(tmp_dir, exclude_patterns=[nfc_pattern], enforce_excludes=True)
+        ws = Workspace(tmp_dir, exclude_patterns=[nfc_pattern], enforce_exclude_patterns=True)
 
         assert ws.read_file(nfd_name) == EXCLUDED_ERROR
         assert ws.write_file(nfd_name, "x") == EXCLUDED_ERROR
         assert ws.delete_file(nfd_name) == EXCLUDED_ERROR
 
 
-def test_enforce_excludes_off_case_variants_not_blocked():
+def test_enforce_exclude_patterns_off_case_variants_not_blocked():
     """Control: with the flag off, case variants never hit the exclusion error.
     The result depends on filesystem case sensitivity (contents or not-found),
     but it is never the enforcement guard."""
@@ -988,14 +988,14 @@ def test_list_files_matching_stays_case_sensitive_by_default():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="fnmatch normcases pattern matching on Windows")
-def test_list_files_matching_casefolds_under_enforce_excludes():
-    """enforce_excludes tightens the read surface too: a case-variant of an
+def test_list_files_matching_casefolds_under_enforce_exclude_patterns():
+    """enforce_exclude_patterns tightens the read surface too: a case-variant of an
     excluded name is pruned from listings so it can't be discovered by casing."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base = Path(tmp_dir)
         (base / "keep.txt").write_text("keep")
         (base / ".VENV").mkdir()
-        ws = Workspace(tmp_dir, enforce_excludes=True)
+        ws = Workspace(tmp_dir, enforce_exclude_patterns=True)
 
         paths = [e["path"] for e in json.loads(ws.list_files())["files"]]
         assert "keep.txt" in paths
@@ -1004,12 +1004,12 @@ def test_list_files_matching_casefolds_under_enforce_excludes():
 
 def test_search_content_does_not_leak_case_variant_excluded_content():
     """The exfiltration path fix-1 closes for read_file must also hold for
-    search_content: with enforce_excludes, the content of a case-variant of an
+    search_content: with enforce_exclude_patterns, the content of a case-variant of an
     excluded file must not be surfaced (the direct read is already blocked)."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base = Path(tmp_dir)
         (base / "Secret.txt").write_text("password: TOPSECRET")
-        ws = Workspace(tmp_dir, exclude_patterns=["secret.txt"], enforce_excludes=True)
+        ws = Workspace(tmp_dir, exclude_patterns=["secret.txt"], enforce_exclude_patterns=True)
 
         assert ws.read_file("Secret.txt") == EXCLUDED_ERROR
         result = json.loads(ws.search_content("TOPSECRET"))
