@@ -34,6 +34,7 @@ from agno.db.utils import (
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
     run_index_lock_name,
+    table_schema_mismatch_error,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -172,15 +173,6 @@ class AsyncMySQLDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
-        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
-        if table_type == "runs":
-            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
-            if fq_sessions not in self.metadata.tables:
-                await self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
-                    create_table_if_not_found=True,
-                )
         try:
             # Pass traces_table_name and db_schema for spans table foreign key resolution
             table_schema = get_table_schema_definition(
@@ -189,6 +181,23 @@ class AsyncMySQLDb(AsyncBaseDb):
                 db_schema=self.db_schema,
                 session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        await self._resolve_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             log_debug(f"Creating table {self.db_schema}.{table_name} with schema: {table_schema}")
 
@@ -312,11 +321,16 @@ class AsyncMySQLDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-verify against the live database (one existence check each), so
+            # this call still recreates tables dropped externally - including
+            # tables registered only as an FK side effect of another reflection
+            if not await self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             await self._get_or_create_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
             )
 
-    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Table:
+    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
@@ -394,9 +408,9 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(
+    async def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
-    ) -> Table:
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
@@ -407,14 +421,17 @@ class AsyncMySQLDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
-
         async with self.async_session_factory() as sess, sess.begin():
             table_is_available = await ais_table_available(
                 session=sess, table_name=table_name, db_schema=self.db_schema
             )
 
-        if (not table_is_available) and create_table_if_not_found:
-            return await self._create_table(table_name=table_name, table_type=table_type)
+        if not table_is_available:
+            if not create_table_if_not_found:
+                return None
+            table = await self._create_table(table_name=table_name, table_type=table_type)
+            self._store_resolved_table(table_type, table_name, table)
+            return table
 
         if not await ais_valid_table(
             db_engine=self.db_engine,
@@ -422,7 +439,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             table_type=table_type,
             db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
+            raise table_schema_mismatch_error(f"{self.db_schema}.{table_name}", table_type=table_type)
 
         try:
             async with self.db_engine.connect() as conn:
@@ -431,6 +448,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     return Table(table_name, self.metadata, schema=self.db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
+                self._store_resolved_table(table_type, table_name, table)
                 return table
 
         except Exception as e:
@@ -453,6 +471,8 @@ class AsyncMySQLDb(AsyncBaseDb):
     async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
         table = await self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
         current_datetime = datetime.now().isoformat()
         async with self.async_session_factory() as sess, sess.begin():
             stmt = mysql.insert(table).values(  # type: ignore
@@ -504,7 +524,9 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             log_info(f"Dropping legacy runs column from {self.session_table_name}")
             await sess.execute(text(f"ALTER TABLE `{self.db_schema}`.`{self.session_table_name}` DROP COLUMN `runs`"))
-            return True
+
+        self._invalidate_table_cache(self.session_table_name)
+        return True
 
     # -- Run methods --
     async def _get_session_runs_data(
@@ -820,6 +842,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return False
             runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
@@ -855,6 +879,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return
             runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
@@ -901,6 +927,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return None
             runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess:
@@ -989,6 +1017,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return [] if deserialize else ([], 0)
             runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
@@ -1089,6 +1119,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return None
             runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
@@ -1153,6 +1185,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
             session_dict = session.to_dict(include_runs=False)
 
             if isinstance(session, AgentSession):
@@ -1256,6 +1290,15 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                log_info("Sessions table not available, falling back to individual upserts")
+                return [
+                    result
+                    for session in sessions
+                    if session is not None
+                    for result in [await self.upsert_session(session, deserialize=deserialize)]
+                    if result is not None
+                ]
 
             # Group sessions by type for batch processing
             agent_sessions = []
@@ -1462,6 +1505,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -1490,6 +1535,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
@@ -1516,6 +1563,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess, sess.begin():
                 # MySQL approach: extract JSON array elements differently
@@ -1563,6 +1612,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -1622,6 +1673,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -1677,6 +1730,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
@@ -1711,6 +1766,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return [], 0
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(
@@ -1773,6 +1830,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 if memory.memory_id is None:
@@ -1847,6 +1906,15 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         try:
             table = await self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                log_info("Memories table not available, falling back to individual upserts")
+                return [
+                    result
+                    for memory in memories
+                    if memory is not None
+                    for result in [await self.upsert_user_memory(memory, deserialize=deserialize)]
+                    if result is not None
+                ]
 
             # Prepare bulk data
             bulk_data = []
@@ -1935,6 +2003,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return []
             runs_table = await self._get_table(table_type="runs")
 
             columns = [
@@ -2040,6 +2110,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             starting_date = await self._get_metrics_calculation_starting_date(table)
 
@@ -2119,6 +2191,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return [], 0
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2162,6 +2236,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             user_id (Optional[str]): If set, only delete rows owned by this user. Unowned rows are not deleted.
         """
         table = await self._get_table(table_type="knowledge")
+        if table is None:
+            return None
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -2184,6 +2260,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
         table = await self._get_table(table_type="knowledge")
+        if table is None:
+            return None
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -2227,6 +2305,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         table = await self._get_table(table_type="knowledge")
+        if table is None:
+            return [], 0
 
         validate_pagination(limit, page)
         try:
@@ -2274,6 +2354,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
+            if table is None:
+                return None
             async with self.async_session_factory() as sess, sess.begin():
                 # A scoped write must not overwrite a row it does not own
                 if knowledge_row.user_id is not None and knowledge_row.id:
@@ -2360,6 +2442,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 current_time = int(time.time())
@@ -2384,6 +2468,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
@@ -2406,6 +2492,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
@@ -2441,6 +2529,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -2503,6 +2593,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2577,6 +2669,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return None
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
@@ -2604,6 +2698,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)

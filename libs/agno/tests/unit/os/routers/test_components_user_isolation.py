@@ -25,8 +25,8 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from agno.db.sqlite import SqliteDb
 from agno.db.base import ComponentType
+from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 

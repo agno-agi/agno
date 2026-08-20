@@ -495,6 +495,54 @@ def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
         raise ValueError(f"`page` must be >= 1 (pages are 1-indexed); got {page}.")
 
 
+# Table types MigrationManager.up() can migrate. Must stay in sync with
+# ``_table_type_to_attr`` in agno/db/migrations/manager.py, which cannot be
+# imported here: manager -> db.base -> this module would be a cycle.
+MIGRATABLE_TABLE_TYPES = frozenset(
+    {
+        "memories",
+        "sessions",
+        "metrics",
+        "evals",
+        "knowledge",
+        "approvals",
+        "components",
+        "schedules",
+        "schedule_runs",
+    }
+)
+
+
+def table_schema_mismatch_error(table_ref: str, table_type: Optional[str] = None) -> ValueError:
+    """Build the error raised when an existing table fails schema validation.
+
+    For table types MigrationManager can handle, the most common cause is an
+    upgrade across Agno versions whose migrations have not been applied yet
+    (e.g. v2.x data with a v3.x install), so the message points the user at
+    the migration path instead of dead-ending. Other table types have no
+    pending migrations, so migration advice would send the user in a circle;
+    they get repair guidance instead.
+    """
+    message = (
+        f"Table {table_ref} has an invalid schema: it does not match what this version of Agno "
+        "expects (see the warning or error logged above for details). "
+    )
+    if table_type is None or table_type in MIGRATABLE_TABLE_TYPES:
+        message += (
+            "If this database was created by an older version of Agno, apply the pending "
+            "migrations with `asyncio.run(MigrationManager(db).up())` (import it from "
+            "`agno.db.migrations.manager`; await the call directly in async code), or via the "
+            "AgentOS endpoint `POST /databases/all/migrate`."
+        )
+    else:
+        message += (
+            "No Agno migration covers this table, so it was likely created or modified outside "
+            "Agno. Compare it against the expected schema and repair it, or move Agno to a new "
+            "table name so the table is recreated."
+        )
+    return ValueError(message)
+
+
 def metric_record_day(record: Dict[str, Any]) -> Optional[date]:
     """Read the day off a stored metric record, or ``None`` if it has no usable one.
 
