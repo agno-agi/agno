@@ -427,6 +427,31 @@ class TestPublishProjectionOwnership:
         assert row["metadata"] == {"team": "ops"}
 
 
+class TestPublishProjectionOfNonMappingMetadata:
+    """The metadata column is untyped, so a config can carry a scalar or a list.
+
+    The stamp-only test asks a metadata value for its keys, which only a
+    mapping has. Anything else cannot be a provenance stamp, so it is owned as
+    it stands -- and a publish that carries one must go through, not raise.
+    """
+
+    def _operator_row(self, db):
+        _mk(db)
+        db.upsert_component(
+            component_id="comp-a",
+            component_type=ComponentType.AGENT,
+            name="comp-a",
+            metadata={"team": "ops"},
+        )
+
+    @pytest.mark.parametrize("metadata", [5, "hello", ["a", "b"], ["studio"], 0.5, True])
+    def test_a_non_mapping_metadata_publishes_and_lands_on_the_row(self, db, metadata):
+        self._operator_row(db)
+        config = db.upsert_config("comp-a", config={"name": "comp-a", "metadata": metadata}, stage="published")
+        assert config["config"]["metadata"] == metadata
+        assert db.get_component("comp-a")["metadata"] == metadata
+
+
 # ----------------------------------------------------------------------
 # Cycles
 # ----------------------------------------------------------------------

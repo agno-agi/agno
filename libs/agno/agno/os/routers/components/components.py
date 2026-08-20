@@ -970,9 +970,17 @@ def attach_routes(
                         detail=f"Config {component_id} v{body.current_version} not found",
                     )
                 # The row's identity follows the version that is now live,
-                # except where this request sets those fields itself.
-                for field, value in _project_live_version(db, component_id, scoped_user_id).items():
-                    update_kwargs.setdefault(field, value)
+                # except where this request sets those fields itself. The
+                # pointer move above is already committed, so a failure to read
+                # the live version back leaves the row stale rather than failing
+                # a request that already succeeded.
+                try:
+                    for field, value in _project_live_version(db, component_id, scoped_user_id).items():
+                        update_kwargs.setdefault(field, value)
+                except Exception as e:
+                    log_warning(
+                        f"Moved {component_id} to v{body.current_version} but could not re-project its row: {e}"
+                    )
 
             component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
             return ComponentResponse(**component)
@@ -1391,13 +1399,15 @@ def attach_routes(
 
             # The pointer moved, so the row's name/description/metadata must
             # follow it. The rollback itself is committed either way: a failure
-            # here leaves the row stale, which must not fail the request.
-            projection = _project_live_version(db, component_id, scoped_user_id)
-            if projection:
-                try:
+            # here leaves the row stale, which must not fail the request - which
+            # means reading the live version back has to be inside the guard
+            # too, not only the write it feeds.
+            try:
+                projection = _project_live_version(db, component_id, scoped_user_id)
+                if projection:
                     db.upsert_component(component_id=component_id, **projection, user_id=scoped_user_id)
-                except Exception as e:
-                    log_warning(f"Rolled back {component_id} to v{version} but could not re-project its row: {e}")
+            except Exception as e:
+                log_warning(f"Rolled back {component_id} to v{version} but could not re-project its row: {e}")
 
             # Fetch and return updated component
             component = db.get_component(component_id, user_id=scoped_user_id)

@@ -59,13 +59,17 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
     * ``description``: owned on key PRESENCE. Writers that go through
       ``upsert_component`` read None as "leave the column alone", so a
       present-but-empty description is returned as ``""`` to actually clear.
-    * ``metadata``: owned when it is not None, UNLESS its only content is the
-      platform's provenance stamp (the ``"studio"`` key) and the version does
-      not carry the ``metadata_authored`` marker. The stamp is written into
-      every config a scoped actor saves, so stamp-only metadata says nothing
-      about whether this version authored the metadata field; treating it as
-      owned would overwrite row-only metadata on every scoped publish. An
-      explicit empty dict is a deliberate clear and IS owned.
+    * ``metadata``: owned when it is not None, UNLESS it is a mapping whose
+      only content is the platform's provenance stamp (the ``"studio"`` key)
+      and the version does not carry the ``metadata_authored`` marker. The
+      stamp is written into every config a scoped actor saves, so stamp-only
+      metadata says nothing about whether this version authored the metadata
+      field; treating it as owned would overwrite row-only metadata on every
+      scoped publish. An explicit empty dict is a deliberate clear and IS
+      owned. A metadata value that is not a mapping at all cannot be a stamp,
+      so it is owned as it stands - the column is untyped and callers do store
+      scalars there, and probing a non-mapping for keys would raise and turn a
+      valid write into an error.
     """
     projection: Dict[str, Any] = {}
     if config.get("name") is not None:
@@ -74,7 +78,7 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
         projection["description"] = config.get("description") or ""
     metadata = config.get("metadata")
     if metadata is not None:
-        stamp_only = bool(metadata) and all(key == "studio" for key in metadata)
+        stamp_only = isinstance(metadata, dict) and bool(metadata) and all(key == "studio" for key in metadata)
         if config.get("metadata_authored") or not stamp_only:
             projection["metadata"] = metadata
     return projection

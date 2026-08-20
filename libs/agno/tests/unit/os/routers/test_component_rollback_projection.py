@@ -10,12 +10,15 @@ column alone", so projecting only the non-None fields leaves the PREVIOUS
 version's description and metadata on the row.
 """
 
+import logging
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
+from agno.os.routers.components import components as components_module
 from agno.os.routers.components import get_components_router
 from agno.os.settings import AgnoAPISettings
 
@@ -144,3 +147,65 @@ class TestRowOnlyFieldsSurviveAPointerMove:
         assert client.patch(f"/components/{row_only}", json={"current_version": 1}).status_code == 200
         assert client.patch(f"/components/{row_only}", json={"current_version": 3}).status_code == 200
         assert db.get_component(row_only)["metadata"] == {"studio": {"last_actor": "builder-1"}}
+
+
+class TestANonMappingMetadataStillPublishes:
+    """The metadata column is untyped and the route accepts whatever the config
+    carries, so the projection's stamp-only test must not assume a mapping:
+    asking a scalar for its keys raised, and the route's catch-all turned a
+    valid 201 into a 500.
+    """
+
+    @pytest.fixture
+    def component_id(self, client):
+        r = client.post(
+            "/components",
+            json={"component_id": "a1", "component_type": "agent", "name": "A1", "config": {"name": "A1"}},
+        )
+        assert r.status_code == 201, r.text
+        return "a1"
+
+    @pytest.mark.parametrize("metadata", [5, "hello", ["a", "b"], ["studio"], True])
+    def test_the_publish_is_accepted(self, client, db, component_id, metadata):
+        r = client.post(
+            f"/components/{component_id}/configs",
+            json={"config": {"name": "A1", "metadata": metadata}, "stage": "published"},
+        )
+        assert r.status_code == 201, (r.status_code, r.text)
+        assert r.json()["config"]["metadata"] == metadata
+        assert db.get_component(component_id)["metadata"] == metadata
+
+
+class TestAProjectionFailureDoesNotFailACommittedPointerMove:
+    """The pointer move commits before the row is re-projected. A projection
+    that blows up leaves the row stale, which is recoverable; answering 500 for
+    a rollback that actually happened is not -- the caller retries or reports a
+    failure that never was.
+    """
+
+    @pytest.fixture
+    def exploding_projection(self, monkeypatch):
+        def boom(config):
+            raise TypeError("projection exploded")
+
+        monkeypatch.setattr(components_module, "project_config_identity", boom)
+
+    def test_the_set_current_route_still_succeeds(self, client, db, two_versions, exploding_projection, caplog):
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            r = client.post(f"/components/{two_versions}/configs/1/set-current")
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert r.json()["current_version"] == 1
+        assert db.get_component(two_versions)["current_version"] == 1
+        assert any("could not re-project" in record.message for record in caplog.records)
+
+    def test_the_patch_route_still_succeeds(self, client, db, two_versions, exploding_projection, caplog):
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            r = client.patch(f"/components/{two_versions}", json={"current_version": 1})
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert db.get_component(two_versions)["current_version"] == 1
+        assert any("could not re-project" in record.message for record in caplog.records)
+
+    def test_a_field_the_request_sets_itself_still_lands(self, client, db, two_versions, exploding_projection):
+        r = client.patch(f"/components/{two_versions}", json={"current_version": 1, "description": "explicit"})
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert db.get_component(two_versions)["description"] == "explicit"
