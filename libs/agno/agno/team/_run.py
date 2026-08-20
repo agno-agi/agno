@@ -4221,6 +4221,9 @@ def arun_dispatch(  # type: ignore
 
     run_id = run_id or str(uuid4())
 
+    # Initialize Team
+    team.initialize_team(debug_mode=debug_mode)
+
     if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
         log_warning(
             "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
@@ -4243,11 +4246,8 @@ def arun_dispatch(  # type: ignore
             team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
         team._hooks_normalised = True
 
-    # Initialize session BEFORE resolve_run_options so session_id is known
+    # Initialize session
     session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
-
-    # Initialize Team
-    team.initialize_team(debug_mode=debug_mode)
 
     # Read the existing session so session-stored metadata is visible to
     # resolve_run_options via session_metadata.
