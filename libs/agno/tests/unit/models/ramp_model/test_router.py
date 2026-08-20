@@ -2,8 +2,9 @@
 
 Router is an OpenAI Responses API gateway, so the class is a thin OpenResponses subclass. These
 tests pin the defaults, the Router-only request fields, and the behaviors the class deliberately
-does not inherit, without any network access. (The to_dict/from_dict round-trip is covered
-generically by ``test_provider_resolution.py`` via the provider registry.)
+does not inherit, without any network access. (The class round-trip is covered generically by
+``test_provider_resolution.py`` via the provider registry; the routing-config round-trip is
+pinned here.)
 """
 
 import pytest
@@ -12,6 +13,7 @@ from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
 from agno.models.ramp import RampRouter
+from agno.models.utils import get_model_from_dict
 from agno.tools.function import Function
 
 
@@ -525,3 +527,60 @@ def test_request_carries_the_router_only_fields():
     assert body["provider_timeout"] == 30
     assert body["timeout_before_headers"] == 10
     assert body["metadata"] == {"team": "platform"}
+
+
+# --- Serialization round-trip -------------------------------------------------------------------
+#
+# Model.to_dict serializes only {id, name, provider}, and the rebuild path restores only those, so
+# routing config would silently revert to a single default `id`. RampRouter opts into a fuller
+# round-trip via to_dict/from_dict; credentials stay out.
+
+
+def test_to_dict_carries_the_routing_config():
+    """A routing model serializes the candidates and timeouts, not just its id."""
+    model = RampRouter(
+        api_key="test-key",
+        models=["openai:gpt-5-nano", "anthropic:claude-haiku-4-5"],
+        provider_timeout=30,
+        timeout_before_headers=10,
+        allow_flex_tier=False,
+    )
+    data = model.to_dict()
+
+    assert data["models"] == ["openai:gpt-5-nano", "anthropic:claude-haiku-4-5"]
+    assert data["provider_timeout"] == 30
+    assert data["timeout_before_headers"] == 10
+    assert data["allow_flex_tier"] is False
+
+
+def test_to_dict_omits_unset_routing_fields_and_the_api_key():
+    """A default model serializes identity only, and never the API key."""
+    data = RampRouter(api_key="super-secret").to_dict()
+
+    assert data == {"id": "gpt-5.6-luna", "name": "RampRouter", "provider": "RampRouter"}
+    assert "api_key" not in data
+
+
+def test_routing_config_survives_a_dict_round_trip():
+    """to_dict -> get_model_from_dict rebuilds the routing model, not one pinned to the default id."""
+    model = RampRouter(
+        api_key="test-key",
+        models=["openai:gpt-5-nano", "anthropic:claude-haiku-4-5"],
+        provider_timeout=30,
+    )
+
+    rebuilt = get_model_from_dict(model.to_dict())
+
+    assert isinstance(rebuilt, RampRouter)
+    assert rebuilt.models == ["openai:gpt-5-nano", "anthropic:claude-haiku-4-5"]
+    assert rebuilt.provider_timeout == 30
+    # The candidate list is what drives routing; `model` must stay omitted from the request.
+    assert rebuilt._get_model_request_kwargs() == {}
+
+
+def test_from_dict_ignores_unknown_and_sensitive_keys():
+    """from_dict passes only an allowlist to the constructor, so a stray api_key cannot slip in."""
+    rebuilt = RampRouter.from_dict({"id": "gpt-5.6-luna", "provider_timeout": 15, "api_key": "leaked", "unknown": "x"})
+
+    assert rebuilt.provider_timeout == 15
+    assert rebuilt.api_key is None

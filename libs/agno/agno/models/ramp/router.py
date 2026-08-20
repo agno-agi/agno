@@ -21,6 +21,10 @@ except ImportError as e:
 # the tool object to the upstream provider, which validates it.
 INTERNAL_TOOL_KEYS = ("requires_confirmation", "external_execution", "approval_type")
 
+# Non-secret routing config that survives to_dict/from_dict. `api_key` and connection params are
+# deliberately excluded: a persisted model recovers those by reusing its live registry instance.
+ROUTING_FIELDS = ("models", "allow_flex_tier", "provider_timeout", "timeout_before_headers")
+
 
 @dataclass
 class RampRouter(OpenResponses):
@@ -143,6 +147,30 @@ class RampRouter(OpenResponses):
             client_params.update(self.client_params)
 
         return client_params
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the model, including the Router-only routing config.
+
+        The base `to_dict` emits only `id`/`name`/`provider`, which would rebuild a routing model
+        (`models=[...]`) as one pinned to the default `id`. The routing fields are benign,
+        non-secret config, so they round-trip too; `from_dict` restores them. `api_key` never is.
+        """
+        model_dict = super().to_dict()
+        for key in ROUTING_FIELDS:
+            value = getattr(self, key)
+            if value is not None:
+                model_dict[key] = value
+        return model_dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RampRouter":
+        """Rebuild from a `to_dict` payload, restoring the routing config it carried.
+
+        Only an explicit allowlist of fields is passed to the constructor, so an unexpected key
+        (or a stray credential) in the payload can never reach it.
+        """
+        allowed = {"id", "name", "provider", *ROUTING_FIELDS}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
 
     def _get_model_request_kwargs(self) -> Dict[str, Any]:
         """Select a single model, or hand Router the candidate list to choose from.
