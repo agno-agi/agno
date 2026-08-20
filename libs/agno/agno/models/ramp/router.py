@@ -105,6 +105,14 @@ class RampRouter(OpenResponses):
             # no GET /v1/responses/{id}. The base class would poll a 404 until background_max_wait.
             raise ValueError("Router does not support background mode. Set background=False on RampRouter.")
 
+    def to_dict(self) -> Dict[str, Any]:
+        _dict = super().to_dict()
+        for field_name in ("models", "allow_flex_tier", "provider_timeout", "timeout_before_headers"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _dict[field_name] = value
+        return _dict
+
     def _get_client_params(self) -> Dict[str, Any]:
         """
         Returns client parameters for API requests, checking for RAMP_ROUTER_API_KEY.

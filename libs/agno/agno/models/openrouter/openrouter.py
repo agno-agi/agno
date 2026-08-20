@@ -39,6 +39,12 @@ class OpenRouter(OpenAILike):
     max_tokens: int = 1024
     models: Optional[List[str]] = None  # Dynamic model routing https://openrouter.ai/docs/features/model-routing
 
+    def to_dict(self) -> Dict[str, Any]:
+        _dict = super().to_dict()
+        if self.models is not None:
+            _dict["models"] = self.models
+        return _dict
+
     def _get_client_params(self) -> Dict[str, Any]:
         """
         Returns client parameters for API requests, checking for OPENROUTER_API_KEY.

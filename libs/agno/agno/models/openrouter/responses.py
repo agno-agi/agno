@@ -60,6 +60,12 @@ class OpenRouterResponses(OpenResponses):
     # OpenRouter's Responses API is stateless
     store: Optional[bool] = False
 
+    def to_dict(self) -> Dict[str, Any]:
+        _dict = super().to_dict()
+        if self.models is not None:
+            _dict["models"] = self.models
+        return _dict
+
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """
         OpenRouter models should not receive a `reasoning` block unless the caller
