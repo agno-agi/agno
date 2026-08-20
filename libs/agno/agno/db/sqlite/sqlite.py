@@ -61,6 +61,7 @@ from agno.db.utils import (
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
     serialize_session_json_fields,
+    table_schema_mismatch_error,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -725,7 +726,7 @@ class SqliteDb(BaseDb):
 
         # SQLite version of table validation (no schema)
         if not is_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
-            raise ValueError(f"Table {table_name} has an invalid schema")
+            raise table_schema_mismatch_error(table_name, table_type=table_type)
 
         try:
             table = Table(table_name, self.metadata, autoload_with=self.db_engine)
