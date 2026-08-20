@@ -710,7 +710,15 @@ class StudioTools(Toolkit):
         # another owner's draft under an archived component could be tombstoned
         # by delete_version (get_component without include_deleted reads the
         # archived row as absent, skipping the owner check).
-        row = self.db.get_component(component_id, include_deleted=True)
+        try:
+            row = self.db.get_component(component_id, include_deleted=True)
+        except NotImplementedError:
+            # An adapter without the component catalog cannot gate ownership,
+            # and every mutator behind this gate needs the same capability, so
+            # the capability refusal is answered here for all of them - this
+            # call runs before the tools' try blocks and would otherwise
+            # escape the envelope as a raw traceback.
+            return ("db_not_configured", "This database does not support the component catalog.")
         if row is None:
             return None  # No row: creates proceed; other paths produce their own not-found.
         owner = row.get("user_id")
@@ -1154,30 +1162,36 @@ class StudioTools(Toolkit):
         if db_err is not None:
             return None, None, db_err
         assert self.db is not None
-        row = self.db.get_component(identifier)
-        resolved_id: Optional[str] = identifier
-        if row is None:
-            from agno.db.base import ComponentType as _CT  # noqa: F401
+        try:
+            row = self.db.get_component(identifier)
+            resolved_id: Optional[str] = identifier
+            if row is None:
+                from agno.db.base import ComponentType as _CT  # noqa: F401
 
-            # limit spans the collisions: a published name can match several
-            # owners now, and the actor's own has to be found among them.
-            rows, total = _own_row_across_pages(self.db.list_components, actor, name=identifier, user_id=actor)
-            owned_rows = [r for r in rows if actor is not None and r.get("user_id") == actor]
-            if len(owned_rows) == 1:
-                rows, total = owned_rows, 1
-            if total > 1:
-                return (
-                    None,
-                    None,
-                    error_result(
-                        "ambiguous_reference",
-                        f"Display name '{identifier}' matches {total} components; use the exact id.",
-                        candidates=[r.get("component_id") for r in rows],
-                    ),
-                )
-            if rows:
-                resolved_id = rows[0].get("component_id")
-                row = self.db.get_component(resolved_id) if resolved_id else None
+                # limit spans the collisions: a published name can match several
+                # owners now, and the actor's own has to be found among them.
+                rows, total = _own_row_across_pages(self.db.list_components, actor, name=identifier, user_id=actor)
+                owned_rows = [r for r in rows if actor is not None and r.get("user_id") == actor]
+                if len(owned_rows) == 1:
+                    rows, total = owned_rows, 1
+                if total > 1:
+                    return (
+                        None,
+                        None,
+                        error_result(
+                            "ambiguous_reference",
+                            f"Display name '{identifier}' matches {total} components; use the exact id.",
+                            candidates=[r.get("component_id") for r in rows],
+                        ),
+                    )
+                if rows:
+                    resolved_id = rows[0].get("component_id")
+                    row = self.db.get_component(resolved_id) if resolved_id else None
+        except NotImplementedError as exc:
+            # This resolver runs before the tools' try blocks; without the
+            # catch an adapter that lacks the component catalog answers with a
+            # raw traceback instead of the capability envelope.
+            return None, None, self._error_from_exception(exc, "Failed to read component")
         if row is None:
             return None, None, error_result("component_not_found", f"Component not found: {identifier}")
         if not self._visible_to(row, actor):
@@ -1646,7 +1660,12 @@ class StudioTools(Toolkit):
             return err
         assert self.db is not None and row is not None
         current_version = row.get("current_version")
-        configs = self.db.list_configs(resolved_id, include_config=False)
+        try:
+            configs = self.db.list_configs(resolved_id, include_config=False)
+        except NotImplementedError as exc:
+            # Reachable only on an adapter that implements get_component but
+            # not list_configs; without the catch it escapes the envelope.
+            return self._error_from_exception(exc, "Failed to list versions")
         if not self._may_read_drafts(row, _actor_id(_agno_run_context)):
             # A non-owner sees the published history only: the draft numbers,
             # labels and timestamps above the live pointer are not theirs.
