@@ -152,7 +152,7 @@ Then run its repeatable HTTP client from another terminal:
 Each server defaults to port 7777. Set `PORT` for the server and
 `AGENT_OS_BASE_URL` for its client when that port is already occupied.
 
-Passing `agents_list` to `StudioTools` makes those code-defined Agents available
+Passing `include_agents` to `StudioTools` makes those code-defined Agents available
 to Team and Workflow composition and auto-enables their operations. A
 Studio-created component is persisted in the database; it is not appended to
 the code-defined Agent list.

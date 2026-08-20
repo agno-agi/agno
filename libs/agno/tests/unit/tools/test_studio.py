@@ -124,8 +124,15 @@ SCHEDULE_TOOLS = {
 
 
 class TestInitialization:
-    def test_default_registers_agents_discovery_lifecycle_and_versions(self, studio):
-        expected = DISCOVERY_TOOLS | LIFECYCLE_TOOLS | VERSIONING_TOOLS | {"create_agent", "edit_agent", "run_agent"}
+    def test_default_registers_every_component_type_plus_discovery_and_versions(self, studio):
+        expected = (
+            DISCOVERY_TOOLS
+            | LIFECYCLE_TOOLS
+            | VERSIONING_TOOLS
+            | {"create_agent", "edit_agent", "run_agent"}
+            | {"create_team", "edit_team", "run_team"}
+            | {"create_workflow", "edit_workflow", "run_workflow"}
+        )
         assert expected == set(studio.functions.keys())
 
     def test_versioning_tools_registered_by_default(self, studio):
@@ -168,16 +175,16 @@ class TestInitialization:
         assert StudioTools(registry=registry, db=db).add_instructions is True
         assert StudioTools(registry=registry, db=db, add_instructions=False).add_instructions is False
 
-    def test_default_does_not_register_team_or_workflow_tools(self, studio):
+    def test_default_registers_team_and_workflow_tools(self, studio):
         names = set(studio.functions.keys())
-        for absent in ("create_team", "create_workflow", "edit_team", "edit_workflow"):
-            assert absent not in names
+        for present in ("create_team", "create_workflow", "edit_team", "edit_workflow"):
+            assert present in names
 
     def test_async_surface_matches_sync_surface(self, studio):
         assert set(studio.async_functions.keys()) == set(studio.functions.keys())
 
     def test_async_surface_matches_when_everything_is_enabled(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, teams=True, workflows=True)
+        tool = StudioTools(registry=registry, db=db)
         assert {"run_agent", "run_team", "run_workflow"}.issubset(set(tool.async_functions.keys()))
         assert set(tool.async_functions.keys()) == set(tool.functions.keys())
 
@@ -270,7 +277,7 @@ class TestDiscovery:
 
     def test_list_components_merges_code_and_db_with_source(self, registry, db):
         code_agent = Agent(id="code-only", name="Code Only", model=OpenAIResponses(id="gpt-5.4"))
-        tool = StudioTools(registry=registry, db=db, agents_list=[code_agent])
+        tool = StudioTools(registry=registry, db=db, include_agents=[code_agent])
         tool.create_agent(name="math-king", instructions="i", model_id="gpt-5.4")
 
         data = _data(tool.list_components(component_type="agent"))
@@ -293,7 +300,7 @@ class TestDiscovery:
         tool.create_agent(name="shared", instructions="i", model_id="gpt-5.4")
 
         code_agent = Agent(id="shared", name="Shared Code", model=OpenAIResponses(id="gpt-5.4"))
-        tool2 = StudioTools(registry=registry, db=db, agents_list=[code_agent])
+        tool2 = StudioTools(registry=registry, db=db, include_agents=[code_agent])
 
         data = _data(tool2.list_components(component_type="agent"))
         shared_entries = [row for row in data["components"] if row["id"] == "shared"]
@@ -305,7 +312,7 @@ class TestDiscovery:
         tool.create_agent(name="Shared Name", instructions="i", model_id="gpt-5.4")
 
         code_agent = Agent(name="Shared Name", model=OpenAIResponses(id="gpt-5.4"))
-        tool2 = StudioTools(registry=registry, db=db, agents_list=[code_agent])
+        tool2 = StudioTools(registry=registry, db=db, include_agents=[code_agent])
 
         data = _data(tool2.list_components(component_type="agent"))
         shared_entries = [row for row in data["components"] if row["name"] == "Shared Name"]
@@ -320,13 +327,13 @@ class TestDiscovery:
         seed.create_agent(name="support", instructions="i", model_id="gpt-5.4")
 
         code_agent = Agent(id="code-1", name="support", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=db, agents_list=[code_agent])
+        studio = StudioTools(registry=registry, db=db, include_agents=[code_agent])
         ids = {row["id"] for row in _data(studio.list_components())["components"]}
         assert "code-1" in ids
         assert "support" in ids
 
     def test_list_components_covers_teams_and_workflows(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, teams=True, workflows=True)
+        tool = StudioTools(registry=registry, db=db)
         tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
         tool.create_team(name="squad", instructions="i", member_ids=["a1"], model_id="gpt-5.4")
         tool.create_workflow(name="pipeline", steps=[{"name": "s1", "agent_id": "a1"}])
@@ -404,7 +411,7 @@ class TestCreateAgent:
         assert error["details"]["existing_component_id"] == "custom-analyst"
 
     def test_component_ids_share_global_namespace(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, teams=True)
+        tool = StudioTools(registry=registry, db=db)
         tool.create_agent(name="member", instructions="i", model_id="gpt-5.4")
         team = _data(tool.create_team(name="Reporter", instructions="i", member_ids=["member"], model_id="gpt-5.4"))
         assert team["id"] == "reporter"
@@ -800,7 +807,7 @@ class TestMCPToolkitPersistence:
 class TestCreateTeam:
     @pytest.fixture
     def studio_teams(self, registry, db):
-        return StudioTools(registry=registry, db=db, teams=True)
+        return StudioTools(registry=registry, db=db)
 
     def _make_members(self, studio_teams, publish=True):
         studio_teams.create_agent(name="a1", instructions="i", model_id="gpt-5.4", publish=publish)
@@ -921,7 +928,7 @@ class TestCreateTeam:
         assert team.num_history_runs == 10
 
     def test_toolkit_default_num_history_runs_applies(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, teams=True, default_num_history_runs=5)
+        tool = StudioTools(registry=registry, db=db, default_num_history_runs=5)
         tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4", publish=True)
         tool.create_team(name="five", instructions="i", member_ids=["a1"], model_id="gpt-5.4")
 
@@ -948,7 +955,7 @@ class TestCreateTeam:
 class TestCreateWorkflow:
     @pytest.fixture
     def studio_workflows(self, registry, db):
-        return StudioTools(registry=registry, db=db, workflows=True)
+        return StudioTools(registry=registry, db=db)
 
     def _make_agents(self, studio_workflows, publish=True):
         studio_workflows.create_agent(name="a1", instructions="i", model_id="gpt-5.4", publish=publish)
@@ -1008,7 +1015,7 @@ class TestCompoundWorkflowSteps:
             return []
 
         registry.functions.extend([score_check, pick_route])
-        studio = StudioTools(registry=registry, db=db, workflows=True)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="w", instructions="i", model_id="gpt-5.4", publish=True)
         return studio
 
@@ -1143,7 +1150,7 @@ class TestWorkflowStepSpecCoercion:
 
     @pytest.fixture
     def studio_workflows(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, workflows=True)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="a1", instructions="i", model_id="gpt-5.4", publish=True)
         return studio
 
@@ -1361,7 +1368,7 @@ class TestEditWithoutVersioning:
 class TestEditTeam:
     @pytest.fixture
     def studio_teams(self, registry, db):
-        return StudioTools(registry=registry, db=db, teams=True)
+        return StudioTools(registry=registry, db=db)
 
     def _setup(self, studio_teams):
         studio_teams.create_agent(name="a1", instructions="i", model_id="gpt-5.4", publish=True)
@@ -1416,7 +1423,7 @@ class TestEditTeam:
 class TestEditWorkflow:
     @pytest.fixture
     def studio_workflows(self, registry, db):
-        return StudioTools(registry=registry, db=db, workflows=True)
+        return StudioTools(registry=registry, db=db)
 
     def _setup(self, studio_workflows):
         studio_workflows.create_agent(name="a1", instructions="i", model_id="gpt-5.4", publish=True)
@@ -1778,7 +1785,7 @@ class TestSchedules:
 
     def test_name_based_target_resolves_to_real_component_id(self, registry, db):
         live = Agent(id="live-agent", name="Live Agent", model=OpenAIResponses(id="gpt-5.4"))
-        tool = StudioTools(registry=registry, db=db, agents_list=[live], schedules=True)
+        tool = StudioTools(registry=registry, db=db, include_agents=[live], schedules=True)
 
         out = self._create_schedule(tool, target_id="Live Agent")
         assert out["status"] == "created"
@@ -2119,7 +2126,7 @@ class TestArchive:
         assert _loads(archived)["status"] == "archived"
 
     def test_archive_refuses_while_a_dependent_pins_the_component(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, teams=True)
+        tool = StudioTools(registry=registry, db=db)
         tool.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True)
         tool.create_team(name="crew", instructions="i", member_ids=["member"], model_id="gpt-5.4", publish=True)
 
@@ -2153,7 +2160,7 @@ class TestArchive:
             def delete(self, **kwargs):
                 raise AssertionError("archive_component should not call delete() on live agents")
 
-        tool = StudioTools(registry=registry, db=db, agents_list=[ShadowAgent()])
+        tool = StudioTools(registry=registry, db=db, include_agents=[ShadowAgent()])
 
         out = _loads(tool.archive_component("temp"))
         assert out["status"] == "archived"
@@ -2176,7 +2183,7 @@ class TestLookup:
 
     def test_find_agent_falls_back_to_live_list(self, registry, db):
         live = Agent(id="live-one", name="Live", model=OpenAIResponses(id="gpt-5.4"), db=db)
-        tool = StudioTools(registry=registry, db=db, agents_list=[live])
+        tool = StudioTools(registry=registry, db=db, include_agents=[live])
         found = tool._find_agent("live-one")
         assert found is live
 
@@ -2193,7 +2200,7 @@ class TestLookup:
         # silently returning "edited".
         studio.create_agent(name="shared", instructions="db", model_id="gpt-5.4", publish=True)
         live = Agent(id="shared", name="Shared", model=OpenAIResponses(id="gpt-5.4"), instructions="live")
-        tool = StudioTools(registry=registry, db=db, agents_list=[live])
+        tool = StudioTools(registry=registry, db=db, include_agents=[live])
 
         error = _error(tool.edit_agent(agent_id="shared", instructions="updated-live"))
 
@@ -2209,7 +2216,7 @@ class TestLookup:
 
 class TestTypeGuards:
     def _full(self, registry, db):
-        return StudioTools(registry=registry, db=db, teams=True, workflows=True)
+        return StudioTools(registry=registry, db=db)
 
     def test_get_component_reads_any_type(self, registry, db):
         tool = self._full(registry, db)
@@ -2293,25 +2300,27 @@ class TestRunPreviewGates:
 
 
 class TestEnableFlags:
-    def test_default_enables_agents_only(self, registry, db):
+    def test_every_component_type_is_buildable_by_default(self, registry, db):
         tool = StudioTools(registry=registry, db=db)
         assert tool.enable_agents is True
-        assert tool.enable_teams is False
-        assert tool.enable_workflows is False
+        assert tool.enable_teams is True
+        assert tool.enable_workflows is True
         names = set(tool.functions.keys())
         assert "create_agent" in names
+        assert "create_team" in names
+        assert "create_workflow" in names
+
+    def test_a_type_can_be_kept_out_of_the_palette(self, registry, db):
+        tool = StudioTools(registry=registry, db=db, create_teams=False)
+        assert tool.enable_agents is True
+        assert tool.enable_teams is False
+        assert tool.enable_workflows is True
+        names = set(tool.functions.keys())
         assert "create_team" not in names
-        assert "create_workflow" not in names
+        assert "create_agent" in names
 
-    def test_opt_in_teams(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, teams=True)
-        assert tool.enable_agents is True  # agents stays on by default
-        assert tool.enable_teams is True
-        assert tool.enable_workflows is False
-        assert "create_team" in set(tool.functions.keys())
-
-    def test_agents_disabled_explicitly(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, agents=False, teams=True)
+    def test_agents_can_be_disabled_while_teams_stay_buildable(self, registry, db):
+        tool = StudioTools(registry=registry, db=db, create_agents=False)
         assert tool.enable_agents is False
         assert tool.enable_teams is True
         names = set(tool.functions.keys())
@@ -2319,32 +2328,27 @@ class TestEnableFlags:
         assert "create_team" in names
 
     def test_workflows_only(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, agents=False, workflows=True)
-        assert tool.enable_agents is False
-        assert tool.enable_teams is False
+        tool = StudioTools(registry=registry, db=db, create_agents=False, create_teams=False)
         assert tool.enable_workflows is True
         names = set(tool.functions.keys())
         assert "create_workflow" in names
         assert "create_agent" not in names
 
-    def test_agents_list_auto_enables_teams_and_workflows(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, agents_list=[])
+    def test_the_include_lists_do_not_decide_the_palette(self, registry, db):
+        """Passing live components says what EXISTS, not what may be built.
+
+        The two used to be entangled: passing a list auto-enabled the types you
+        could build from it. Every type is buildable by default now, so the
+        lists carry one meaning only.
+        """
+        tool = StudioTools(registry=registry, db=db, include_agents=[], create_workflows=False)
         assert tool.enable_agents is True
         assert tool.enable_teams is True
-        assert tool.enable_workflows is True
-
-    def test_teams_list_auto_enables_workflows(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, teams_list=[])
-        assert tool.enable_workflows is True
-
-    def test_explicit_flag_overrides_auto_enable(self, registry, db):
-        # User passes agents_list but explicitly disables workflows.
-        tool = StudioTools(registry=registry, db=db, agents_list=[], workflows=False)
         assert tool.enable_workflows is False
 
     def test_discovery_tools_always_registered(self, registry, db):
         # Even with everything disabled, discovery tools stay registered.
-        tool = StudioTools(registry=registry, db=db, agents=False)
+        tool = StudioTools(registry=registry, db=db, create_agents=False, create_teams=False, create_workflows=False)
         assert DISCOVERY_TOOLS.issubset(set(tool.functions.keys()))
 
 
@@ -2377,14 +2381,14 @@ class _StubAgent:
 
 class TestRunSerialization:
     def test_run_agent_serializes_non_json_content(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, agents_list=[_StubAgent()])
+        tool = StudioTools(registry=registry, db=db, include_agents=[_StubAgent()])
         out = _loads(_tool(tool, "run_agent")("stub", "hi"))
         assert "error" not in out
         assert out["content"].startswith("2026-01-01")
 
     @pytest.mark.asyncio
     async def test_arun_agent_serializes_non_json_content(self, registry, db):
-        tool = StudioTools(registry=registry, db=db, agents_list=[_StubAgent()])
+        tool = StudioTools(registry=registry, db=db, include_agents=[_StubAgent()])
         out = _loads(await tool.async_functions["run_agent"].entrypoint("stub", "hi"))
         assert "error" not in out
         assert out["content"].startswith("2026-01-01")
@@ -2398,7 +2402,7 @@ class TestRunSerialization:
 class TestNoCascadePersistence:
     def test_create_team_does_not_persist_code_defined_member(self, registry, db):
         greeter = Agent(id="greeter-code", name="Greeter", model=OpenAIResponses(id="gpt-5.4"))
-        tool = StudioTools(registry=registry, db=db, agents_list=[greeter])
+        tool = StudioTools(registry=registry, db=db, include_agents=[greeter])
 
         tool.create_agent(name="studio-agent", instructions="i", model_id="gpt-5.4", publish=True)
         tool.create_team(
@@ -2417,7 +2421,7 @@ class TestNoCascadePersistence:
 
     def test_create_workflow_does_not_persist_code_defined_agent(self, registry, db):
         greeter = Agent(id="greeter-code", name="Greeter", model=OpenAIResponses(id="gpt-5.4"))
-        tool = StudioTools(registry=registry, db=db, agents_list=[greeter])
+        tool = StudioTools(registry=registry, db=db, include_agents=[greeter])
 
         tool.create_workflow(name="wf", steps=[{"name": "s1", "agent_id": "greeter-code"}])
         assert db.get_component("wf") is not None
@@ -2567,7 +2571,7 @@ class TestEditPreservation:
             knowledge=FakeKnowledge(),
         ).save(db=db)
 
-        studio = StudioTools(registry=Registry(), db=db, teams=True)
+        studio = StudioTools(registry=Registry(), db=db)
         out = _loads(studio.edit_team("mm-team", description="edited"))
         assert out.get("status") == "edited"
 
@@ -2592,7 +2596,7 @@ class TestEditPreservation:
             knowledge=FakeKnowledge(),
         ).save(db=db)
 
-        studio = StudioTools(registry=Registry(), db=db, teams=True)
+        studio = StudioTools(registry=Registry(), db=db)
         out = _loads(await studio.aedit_team("mm-team-async", description="edited"))
         assert out.get("status") == "edited"
 
@@ -2607,7 +2611,7 @@ class TestEditPreservation:
         member = Agent(id="rp-member", name="Member")
         Team(id="rp-team", name="Team", members=[member]).save(db=db)
 
-        studio = StudioTools(registry=Registry(), db=db, teams=True)
+        studio = StudioTools(registry=Registry(), db=db)
         out = _loads(studio.edit_team("rp-team", description="edited"))
         assert out.get("status") == "edited"
 
@@ -2623,7 +2627,7 @@ class TestEditPreservation:
         agent = Agent(id="rw-agent", name="A")
         Workflow(id="rw-wf", name="WF", steps=[Step(name="s1", agent=agent)]).save(db=db)
 
-        studio = StudioTools(registry=Registry(), db=db, workflows=True)
+        studio = StudioTools(registry=Registry(), db=db)
         out = _loads(studio.edit_workflow("rw-wf", description="edited"))
         assert out.get("status") == "edited"
 
@@ -2636,7 +2640,7 @@ class TestSnapshotSafety:
         db = SqliteDb(db_file=str(tmp_path / "create_pin.db"))
         Agent(id="cp-member", name="Member").save(db=db)
         model = OpenAIResponses(id="gpt-5.5")
-        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True)
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db)
 
         data = _data(studio.create_team(name="CP Crew", instructions="i", member_ids=["cp-member"], model_id="gpt-5.5"))
 
@@ -2657,7 +2661,7 @@ class TestSnapshotSafety:
         member.description = "v2"
         member.save(db=db)
 
-        studio = StudioTools(registry=Registry(dbs=[db]), db=db, teams=True)
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db)
         out = _loads(studio.edit_team("cf-team", description="edited"))
         assert out.get("status") == "edited"
 
@@ -2697,7 +2701,7 @@ class TestEditIdentityStability:
         Workflow(id="si-wf", name="WF", steps=[Step(name="s1", agent=agent)]).save(db=db)
         base_ids = [s["step_id"] for s in db.get_config(component_id="si-wf")["config"]["steps"]]
 
-        studio = StudioTools(registry=Registry(dbs=[db]), db=db, workflows=True)
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db)
         out = _loads(studio.edit_workflow("si-wf", description="edited"))
         assert out.get("status") == "edited"
 
@@ -2751,7 +2755,7 @@ class TestPinProvenance:
         code_agent = Agent(id="dual", name="Live Code Agent")
         team = Team(id="sh-team", name="Team", members=[code_agent])
 
-        studio = StudioTools(registry=Registry(dbs=[db]), db=db, teams=True, agents_list=[code_agent])
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db, include_agents=[code_agent])
         links = studio._links_for_component(team)
 
         assert links == []
@@ -2794,7 +2798,7 @@ class TestPinProvenance:
         parent = Workflow(id="par-flow", name="Par", steps=[Step(name="n", workflow=sub)])
         lookalike_agent = Agent(id="sub-flow", name="Unrelated Agent")
 
-        studio = StudioTools(registry=Registry(dbs=[db]), db=db, workflows=True, agents_list=[lookalike_agent])
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db, include_agents=[lookalike_agent])
         links = studio._links_for_component(parent)
 
         nested = [link for link in links if link["link_kind"] == "step_workflow"]
@@ -2808,13 +2812,13 @@ class TestMemberBinding:
     def _studio(self, db, **kwargs):
         model = OpenAIResponses(id="gpt-5.5")
         registry = Registry(models=[model], dbs=[db])
-        return StudioTools(registry=registry, db=db, teams=True, workflows=True, **kwargs)
+        return StudioTools(registry=registry, db=db, **kwargs)
 
     def test_create_refuses_an_id_claimed_by_code_and_the_db(self, tmp_path):
         db = SqliteDb(id="cat", db_file=str(tmp_path / "amb.db"))
         Agent(id="both", name="DB Row").save(db=db)
         code_agent = Agent(id="both", name="Live Code")
-        studio = self._studio(db, agents_list=[code_agent])
+        studio = self._studio(db, include_agents=[code_agent])
 
         error = _error(studio.create_team(name="AT", instructions="i", member_ids=["both"], model_id="gpt-5.5"))
 
@@ -2828,7 +2832,7 @@ class TestMemberBinding:
 
         db = SqliteDb(id="cat", db_file=str(tmp_path / "list.db"))
         list_agent = Agent(id="listed", name="Listed")
-        studio = self._studio(db, agents_list=[list_agent])
+        studio = self._studio(db, include_agents=[list_agent])
 
         data = _data(
             studio.create_team(name="LT", instructions="i", member_ids=["listed"], model_id="gpt-5.5", publish=True)
@@ -2845,11 +2849,11 @@ class TestSourceConsistency:
         list_agent = Agent(id="split", name="List Object")
 
         with pytest.raises(ValueError, match="distinct components with id 'split'"):
-            StudioTools(registry=Registry(agents=[registry_agent]), agents_list=[list_agent])
+            StudioTools(registry=Registry(agents=[registry_agent]), include_agents=[list_agent])
 
         # The same object in both places is consistent and accepted.
         shared = Agent(id="shared", name="Shared")
-        StudioTools(registry=Registry(agents=[shared]), agents_list=[shared])
+        StudioTools(registry=Registry(agents=[shared]), include_agents=[shared])
 
     def test_edit_workflow_step_replacement_refuses_code_db_ambiguity(self, tmp_path):
         from agno.workflow.step import Step
@@ -2862,9 +2866,7 @@ class TestSourceConsistency:
         Workflow(id="ew-wf", name="WF", steps=[Step(name="s1", agent=clean)]).save(db=db)
         code_agent = Agent(id="amb", name="Live Code")
         model = OpenAIResponses(id="gpt-5.5")
-        studio = StudioTools(
-            registry=Registry(models=[model], dbs=[db]), db=db, workflows=True, agents_list=[code_agent]
-        )
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, include_agents=[code_agent])
 
         error = _error(studio.edit_workflow("ew-wf", steps=[{"name": "s1", "agent_id": "amb"}]))
 
@@ -2877,7 +2879,7 @@ class TestSourceConsistency:
         member = Agent(id="sn-member", name="M", description="v1")
         member.save(db=db)
         model = OpenAIResponses(id="gpt-5.5")
-        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True)
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db)
 
         real_get_config = db.get_config
         state = {"calls": 0}
@@ -2938,7 +2940,7 @@ class TestResolutionPrecedence:
         db = SqliteDb(id="cat", db_file=str(tmp_path / "late.db"))
         live: list = []
         model = OpenAIResponses(id="gpt-5.5")
-        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True, agents_list=live)
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, include_agents=live)
         live.append(Agent(id="late", name="Late Arrival"))
 
         data = _data(
@@ -2954,7 +2956,7 @@ class TestResolutionPrecedence:
         original = Agent(id="swap", name="Original")
         live = [original]
         model = OpenAIResponses(id="gpt-5.5")
-        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True, agents_list=live)
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, include_agents=live)
         live[0] = Agent(id="swap", name="Replacement")
 
         error = _error(studio.create_team(name="RL", instructions="i", member_ids=["swap"], model_id="gpt-5.5"))
@@ -2968,7 +2970,7 @@ class TestResolutionPrecedence:
         db.upsert_component(component_id="draft-child", component_type=ComponentType.AGENT, name="D")
         db.upsert_config(component_id="draft-child", config={"id": "draft-child", "name": "D"}, stage="draft")
         model = OpenAIResponses(id="gpt-5.5")
-        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True)
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db)
 
         error = _error(
             studio.create_team(
@@ -2993,7 +2995,7 @@ class TestPublishedParentsPinPublishedChildren:
 
     @pytest.fixture
     def studio3(self, registry, db):
-        return StudioTools(registry=registry, db=db, teams=True, workflows=True)
+        return StudioTools(registry=registry, db=db)
 
     def _draft_agent(self, studio, name="pinned-child"):
         return _data(studio.create_agent(name=name, instructions="i", model_id="gpt-5.4"))["id"]
@@ -3083,7 +3085,7 @@ class TestNoCatalogAdapter:
 
     def test_create_schedule_for_code_defined_target_still_works(self, registry, no_catalog_db):
         live = Agent(id="live-agent", name="Live Agent", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=no_catalog_db, agents_list=[live], schedules=True)
+        studio = StudioTools(registry=registry, db=no_catalog_db, include_agents=[live], schedules=True)
         out = _loads(
             studio.create_schedule(
                 name="code-target",
@@ -3160,9 +3162,7 @@ class TestTemplateContract:
     not on Railway."""
 
     def test_default_confirmation_set_covers_the_deletion_shaped_tools(self, registry, db):
-        studio = StudioTools(
-            registry=registry, db=db, agents=True, teams=True, workflows=True, versions=True, schedules=True
-        )
+        studio = StudioTools(registry=registry, db=db, versions=True, schedules=True)
         confirm = set(getattr(studio, "requires_confirmation_tools", []) or [])
         assert {"archive_component", "delete_version", "delete_schedule"} <= confirm
         # and NOT the additive, reversible operations
@@ -3184,9 +3184,6 @@ class TestTemplateContract:
         studio = StudioTools(
             registry=registry,
             db=db,
-            agents=True,
-            teams=True,
-            workflows=True,
             versions=True,
             schedules=True,
             default_num_history_runs=5,
@@ -3238,7 +3235,7 @@ class TestRoundThreeStudioFixes:
         assert v4["instructions"] == "v3-pub"
 
     def test_function_step_round_trips_through_view(self, db, registry):
-        studio_workflows = StudioTools(registry=registry, db=db, workflows=True)
+        studio_workflows = StudioTools(registry=registry, db=db)
 
         # B8: a function-executor step serializes under executor_ref; the view
         # must surface it as function_name so read->edit works.

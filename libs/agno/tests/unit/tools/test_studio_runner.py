@@ -209,7 +209,7 @@ class TestRegistration:
 class TestIdentityThreading:
     def test_run_agent_threads_user_and_derived_session(self, db):
         stub = _StubAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
         out = _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))
         assert stub.seen == {
             "message": "hi",
@@ -231,7 +231,7 @@ class TestIdentityThreading:
         # is a per-call copy or rebuild, so each such run starts a session of its
         # own; a component constructed with an explicit session_id keeps using it.
         stub = _StubAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
         out = _loads(runner.run_agent("stub", "hi"))
         assert stub.seen is not None and stub.seen["user_id"] is None
         assert stub.seen["session_id"] is None
@@ -241,7 +241,7 @@ class TestIdentityThreading:
 
     def test_run_agent_resolves_code_defined_by_name(self, db):
         stub = _StubAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
         out = _loads(runner.run_agent("Stub", "hi", _agno_run_context=_context()))
         assert "error" not in out
         # The payload and the derived session both carry the component's real id.
@@ -250,7 +250,7 @@ class TestIdentityThreading:
 
     def test_run_team_threads_identity(self, db):
         stub = _StubTeam()
-        runner = StudioRunnerTools(db=db, teams_list=[stub])
+        runner = StudioRunnerTools(db=db, include_teams=[stub])
         out = _loads(runner.run_team("stub-team", "hi", _agno_run_context=_context()))
         assert stub.seen == {
             "message": "hi",
@@ -262,7 +262,7 @@ class TestIdentityThreading:
 
     def test_run_workflow_threads_identity(self, db):
         stub = _StubWorkflow()
-        runner = StudioRunnerTools(db=db, workflows_list=[stub])
+        runner = StudioRunnerTools(db=db, include_workflows=[stub])
         out = _loads(runner.run_workflow("stub-wf", "go", _agno_run_context=_context()))
         assert stub.seen == {
             "input": "go",
@@ -275,7 +275,7 @@ class TestIdentityThreading:
     @pytest.mark.asyncio
     async def test_arun_agent_threads_identity(self, db):
         stub = _StubAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
         out = _loads(await runner.arun_agent("stub", "hi", _agno_run_context=_context()))
         assert stub.seen == {
             "message": "hi",
@@ -289,7 +289,7 @@ class TestIdentityThreading:
     async def test_arun_team_and_workflow_pin_stream_off(self, db):
         team = _StubTeam()
         wf = _StubWorkflow()
-        runner = StudioRunnerTools(db=db, teams_list=[team], workflows_list=[wf])
+        runner = StudioRunnerTools(db=db, include_teams=[team], include_workflows=[wf])
         await runner.arun_team("stub-team", "hi")
         await runner.arun_workflow("stub-wf", "go")
         assert team.seen is not None and team.seen["stream"] is False
@@ -301,7 +301,7 @@ class TestIdentityThreading:
         # session on the async path must fail, not pass by partial match.
         team = _StubTeam()
         wf = _StubWorkflow()
-        runner = StudioRunnerTools(db=db, teams_list=[team], workflows_list=[wf])
+        runner = StudioRunnerTools(db=db, include_teams=[team], include_workflows=[wf])
         await runner.arun_team("stub-team", "hi", _agno_run_context=_context())
         await runner.arun_workflow("stub-wf", "go", _agno_run_context=_context())
         assert team.seen == {
@@ -326,7 +326,7 @@ class TestIdentityThreading:
 class TestPausedRuns:
     def test_paused_run_returns_requirements_and_resume_ids(self, db):
         stub = _StubAgent(output=_PausedRunOutput())
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
         out = _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))
         assert out["status"] == "PAUSED"
         assert out["run_id"] == "run-p"
@@ -334,7 +334,7 @@ class TestPausedRuns:
         assert out["requirements"] == [{"id": "req-1", "confirmation": None}]
 
     def test_completed_run_carries_no_requirements_key(self, db):
-        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent()])
+        runner = StudioRunnerTools(db=db, include_agents=[_StubAgent()])
         out = _loads(runner.run_agent("stub", "hi"))
         assert "requirements" not in out
         assert "media" not in out
@@ -342,7 +342,7 @@ class TestPausedRuns:
     def test_media_bearing_run_reports_counts(self, db):
         output = _StubRunOutput()
         output.images = [object(), object()]  # type: ignore[attr-defined]
-        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent(output=output)])
+        runner = StudioRunnerTools(db=db, include_agents=[_StubAgent(output=output)])
         out = _loads(runner.run_agent("stub", "hi"))
         assert out["media"] == {"images": 2}
 
@@ -350,19 +350,19 @@ class TestPausedRuns:
         # RunOutput carries produced file artifacts on `files`; they must be counted too.
         output = _StubRunOutput()
         output.files = [object(), object(), object()]  # type: ignore[attr-defined]
-        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent(output=output)])
+        runner = StudioRunnerTools(db=db, include_agents=[_StubAgent(output=output)])
         out = _loads(runner.run_agent("stub", "hi"))
         assert out["media"] == {"files": 3}
 
     def test_structured_content_serializes_as_json_not_repr(self, db):
-        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent(output=_StructuredRunOutput())])
+        runner = StudioRunnerTools(db=db, include_agents=[_StubAgent(output=_StructuredRunOutput())])
         out = _loads(runner.run_agent("stub", "hi"))
         assert json.loads(out["content"]) == {"title": "Q3", "n": 3}
 
     @pytest.mark.asyncio
     async def test_async_paused_run_returns_requirements(self, db):
         stub = _StubAgent(output=_PausedRunOutput())
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
         out = _loads(await runner.arun_agent("stub", "hi"))
         assert out["status"] == "PAUSED"
         assert out["requirements"] == [{"id": "req-1", "confirmation": None}]
@@ -383,7 +383,7 @@ async def _async_passthrough_hook(function_name, function_call, arguments):
 
 class TestInjectionGuard:
     def _registered_run_agent(self, db, stub, tool_hooks=None):
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
         function = runner.functions["run_agent"]
         function.process_entrypoint()
         function.tool_hooks = tool_hooks
@@ -424,7 +424,7 @@ class TestInjectionGuard:
     @pytest.mark.asyncio
     async def test_spoofed_context_is_dropped_on_the_async_hooks_path(self, db):
         stub = _StubAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
         function = runner.async_functions["run_agent"]
         function.process_entrypoint()
         function.tool_hooks = [_async_passthrough_hook]
@@ -492,7 +492,7 @@ class TestResolution:
         assert out == {"error": "Agent not found: nope"}
 
     def test_run_agent_rejects_team_id(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
         studio.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
 
@@ -507,7 +507,7 @@ class TestResolution:
         target = _StubAgent()
         target.id = "researcher"
         target.name = "Researcher"
-        runner = StudioRunnerTools(db=db, agents_list=[shadow, target])
+        runner = StudioRunnerTools(db=db, include_agents=[shadow, target])
         assert runner._find_agent("researcher") is target
 
     def test_db_exact_id_beats_code_defined_display_name(self, registry, db):
@@ -516,7 +516,7 @@ class TestResolution:
         shadow = _StubAgent()
         shadow.id = "other"
         shadow.name = "radar"
-        runner = StudioRunnerTools(registry=registry, db=db, agents_list=[shadow])
+        runner = StudioRunnerTools(registry=registry, db=db, include_agents=[shadow])
         found = runner._find_agent("radar")
         assert found is not shadow
         assert getattr(found, "id", None) == "radar"
@@ -524,7 +524,7 @@ class TestResolution:
     def test_display_name_resolves_across_type_slug_collision(self, registry, db):
         # The team owns the base slug; the same-named agent got a -2 suffix.
         # Name resolution is typed, so each type's lookup reaches its own component.
-        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True)
         studio.create_team(name="Radar Scout", instructions="i", member_ids=["member"], model_id="gpt-5.4")
         # The base slug is taken, so the same-named agent needs an explicit id.
@@ -593,7 +593,7 @@ class TestResolution:
         twin_b = _StubAgent()
         twin_b.id = "twin-b"
         twin_b.name = "Twin"
-        runner = StudioRunnerTools(db=db, agents_list=[twin_a, twin_b])
+        runner = StudioRunnerTools(db=db, include_agents=[twin_a, twin_b])
         out = _loads(runner.run_agent("Twin", "hi"))
         assert "Ambiguous" in out["error"]
         assert "twin-a" in out["error"] and "twin-b" in out["error"]
@@ -633,7 +633,7 @@ class TestResolution:
         from agno.db.in_memory import InMemoryDb
 
         stub = _StubAgent()
-        runner = StudioRunnerTools(db=InMemoryDb(), agents_list=[stub])
+        runner = StudioRunnerTools(db=InMemoryDb(), include_agents=[stub])
         out = _loads(runner.run_agent("Stub", "hi"))
         assert out["agent_id"] == "stub"
         missing = _loads(runner.run_agent("nope", "hi"))
@@ -660,7 +660,7 @@ class TestDispatchIsolation:
         stub = _StubAgent()
         team = _StubTeam()
         wf = _StubWorkflow()
-        runner = StudioRunnerTools(db=db, agents_list=[stub], teams_list=[team], workflows_list=[wf])
+        runner = StudioRunnerTools(db=db, include_agents=[stub], include_teams=[team], include_workflows=[wf])
         runner.run_agent("stub", "hi")
         runner.run_team("stub-team", "hi")
         runner.run_workflow("stub-wf", "go")
@@ -673,7 +673,7 @@ class TestDispatchIsolation:
         team = _StubTeam()
         team.id = "shared"
         team.name = "Shared Team"
-        runner = StudioRunnerTools(db=db, agents_list=[agent], teams_list=[team])
+        runner = StudioRunnerTools(db=db, include_agents=[agent], include_teams=[team])
         runner.run_agent("shared", "hi", _agno_run_context=_context())
         runner.run_team("shared", "hi", _agno_run_context=_context())
         assert agent.seen is not None and team.seen is not None
@@ -710,29 +710,29 @@ class TestDispatchIsolation:
                 return copy
 
         lossy = _LossyCopyAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[lossy])
+        runner = StudioRunnerTools(db=db, include_agents=[lossy])
         out = _loads(runner.run_agent("stub", "hi"))
         assert "lost its identity" in out["error"]
         assert lossy.seen is None
 
         raising = _RaisingCopyAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[raising])
+        runner = StudioRunnerTools(db=db, include_agents=[raising])
         out = _loads(runner.run_agent("stub", "hi"))
         assert "deep_copy failed" in out["error"]
         assert raising.seen is None
 
-        runner = StudioRunnerTools(db=db, agents_list=[_NoCopyAgent()])
+        runner = StudioRunnerTools(db=db, include_agents=[_NoCopyAgent()])
         out = _loads(runner.run_agent("stub", "hi"))
         assert "has no deep_copy" in out["error"]
 
         selfish = _SelfCopyAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[selfish])
+        runner = StudioRunnerTools(db=db, include_agents=[selfish])
         out = _loads(runner.run_agent("stub", "hi"))
         assert "returned the shared instance" in out["error"]
         assert selfish.seen is None
 
         downcast = _BaseClassCopyAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[downcast])
+        runner = StudioRunnerTools(db=db, include_agents=[downcast])
         out = _loads(runner.run_agent("stub", "hi"))
         assert "lost its identity" in out["error"]
         assert downcast.seen is None
@@ -772,13 +772,13 @@ class TestDispatchIsolation:
 
         for agent_cls in (_ModelDroppingAgent, _InstructionsDroppingAgent):
             agent = agent_cls()
-            runner = StudioRunnerTools(db=db, agents_list=[agent])
+            runner = StudioRunnerTools(db=db, include_agents=[agent])
             out = _loads(runner.run_agent("stub", "hi"))
             assert "lost its identity" in out["error"]
             assert agent.seen is None
 
         team = _MemberSharingTeam()
-        runner = StudioRunnerTools(db=db, teams_list=[team])
+        runner = StudioRunnerTools(db=db, include_teams=[team])
         out = _loads(runner.run_team("stub-team", "hi"))
         assert "still shares member 'stub' with the original" in out["error"]
         assert team.seen is None
@@ -794,7 +794,7 @@ class TestDispatchIsolation:
         member_b = AgentClass(id="m-b", name="B")
         agent = AgentClass(id="real-agent", name="Real", instructions="be real")
         team = TeamClass(id="real-team", name="Real Team", members=[member_a, member_b])
-        runner = StudioRunnerTools(db=db, agents_list=[agent], teams_list=[team])
+        runner = StudioRunnerTools(db=db, include_agents=[agent], include_teams=[team])
 
         fresh_agent = runner._agent_for_run("real-agent")
         assert fresh_agent is not None and fresh_agent is not agent
@@ -821,7 +821,7 @@ class TestDispatchIsolation:
                 return blank
 
         blank = _BlankCopyAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[blank])
+        runner = StudioRunnerTools(db=db, include_agents=[blank])
         out = _loads(runner.run_agent("Helper", "hi"))
         assert "lost its identity" in out["error"]
         assert blank.seen is None
@@ -858,12 +858,12 @@ class TestDiscovery:
     def test_list_agents_reports_what_dispatch_admits(self, registry, db):
         # The instructions tell the caller to list first and run by id, so a
         # component that runs and cannot be found leaves it no way in. An
-        # explicit agents_list is an allowlist FOR dispatch, so it is listed --
+        # explicit include_agents is an allowlist FOR dispatch, so it is listed --
         # code first, which is the order dispatch resolves in.
         studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Radar", instructions="i", model_id="gpt-5.4", description="scans the week")
 
-        runner = StudioRunnerTools(registry=registry, db=db, agents_list=[_StubAgent()])
+        runner = StudioRunnerTools(registry=registry, db=db, include_agents=[_StubAgent()])
         out = _loads(runner.list_agents())
         assert out["agents"][-1] == {"id": "radar", "name": "Radar", "description": "scans the week", "status": "draft"}
         assert any(entry["id"] == _StubAgent().id for entry in out["agents"])
@@ -948,7 +948,7 @@ class TestDiscovery:
 class TestStudioEmbedding:
     def test_public_run_methods_forward_to_the_runner(self, registry, db):
         stub = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        studio = StudioTools(registry=registry, db=db, include_agents=[stub])
         for name in ("run_agent", "run_team", "run_workflow", "arun_agent", "arun_team", "arun_workflow"):
             assert hasattr(studio, name)
         out = _loads(studio.run_agent("stub", "hi"))
@@ -958,7 +958,7 @@ class TestStudioEmbedding:
     @pytest.mark.asyncio
     async def test_public_arun_agent_forwards_to_the_runner(self, registry, db):
         stub = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        studio = StudioTools(registry=registry, db=db, include_agents=[stub])
         out = _loads(await studio.arun_agent("stub", "hi"))
         assert out["agent_id"] == "stub"
 
@@ -966,7 +966,7 @@ class TestStudioEmbedding:
         # The registered tool must be StudioTools' own method, not the embedded
         # runner's bound method, or a subclass override never sits on the path the
         # model takes.
-        studio = StudioTools(registry=registry, db=db, teams=True, workflows=True)
+        studio = StudioTools(registry=registry, db=db)
         for name in ("run_agent", "run_team", "run_workflow"):
             entrypoint = studio.functions[name].entrypoint
             assert getattr(entrypoint, "__self__", None) is studio
@@ -982,7 +982,7 @@ class TestStudioEmbedding:
                 return super().run_agent(agent_id, message, version=version, _agno_run_context=_agno_run_context)
 
         stub = _StubAgent()
-        studio = Guarded(registry=registry, db=db, agents_list=[stub])
+        studio = Guarded(registry=registry, db=db, include_agents=[stub])
         out = _loads(studio.functions["run_agent"].entrypoint("stub", "hi", _agno_run_context=_context()))
         assert calls == ["stub"]
         assert out["agent_id"] == "stub"
@@ -991,7 +991,7 @@ class TestStudioEmbedding:
 
     def test_identity_threads_through_studio_registered_tool(self, registry, db):
         stub = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        studio = StudioTools(registry=registry, db=db, include_agents=[stub])
         out = _loads(studio.functions["run_agent"].entrypoint("stub", "hi", _agno_run_context=_context()))
         assert stub.seen == {
             "message": "hi",
@@ -1025,7 +1025,7 @@ class TestStudioEmbedding:
         assert fetched["data"]["instructions"] == "updated"
 
     def test_exact_team_member_id_beats_agent_display_name(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True)
         studio.create_team(name="support", instructions="i", member_ids=["member"], model_id="gpt-5.4", publish=True)
         # An agent NAMED "support" (stored as support-2) must not steal the
@@ -1044,7 +1044,7 @@ class TestStudioEmbedding:
         code_agent = _StubAgent()
         code_agent.id = "support"
         code_agent.name = "Support Code"
-        shadowed = StudioTools(registry=registry, db=db, agents_list=[code_agent])
+        shadowed = StudioTools(registry=registry, db=db, include_agents=[code_agent])
         created = _loads(
             shadowed.create_agent(name="support", instructions="i", model_id="gpt-5.4", component_id="support-2")
         )
@@ -1061,7 +1061,7 @@ class TestStudioEmbedding:
         shadow = _StubAgent()
         shadow.id = "code-1"
         shadow.name = "Radar Scout"
-        shadowed = StudioTools(registry=registry, db=db, agents_list=[shadow])
+        shadowed = StudioTools(registry=registry, db=db, include_agents=[shadow])
         error = _loads(shadowed.edit_agent("Radar Scout", instructions="x"))["error"]
         assert error["code"] == "invalid_request"
         assert "Cannot edit code-defined agent" in error["message"]
@@ -1070,18 +1070,18 @@ class TestStudioEmbedding:
     def test_cross_type_member_id_collision_errors(self, registry, db):
         # An agent and team may legally share an id (uniqueness is per type);
         # member resolution must refuse rather than silently pick the agent.
-        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4", publish=True)
         studio.create_team(name="shared", instructions="i", member_ids=["helper"], model_id="gpt-5.4", publish=True)
         code_agent = _StubAgent()
         code_agent.id = "shared"
         code_agent.name = "Shared Agent"
-        shadowed = StudioTools(registry=registry, db=db, teams=True, agents_list=[code_agent])
+        shadowed = StudioTools(registry=registry, db=db, include_agents=[code_agent])
         out = _loads(shadowed.create_team(name="squad", instructions="i", member_ids=["shared"], model_id="gpt-5.4"))
         assert "matches both an agent and a team" in out["error"]["message"]
 
     def test_cross_type_member_name_collision_errors(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Ops", instructions="i", model_id="gpt-5.4", publish=True)
         studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4", publish=True)
         # The agent owns the "ops" slug, so the same-named team needs an explicit id.
@@ -1125,7 +1125,7 @@ class TestStudioEmbedding:
             tools=[CalculatorTools()],
             dbs=[db],
         )
-        studio = StudioTools(registry=armed_registry, db=db, teams=True)
+        studio = StudioTools(registry=armed_registry, db=db)
         studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"], publish=True)
         studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4", publish=True)
 
@@ -1146,7 +1146,7 @@ class TestStudioEmbedding:
             tools=[CalculatorTools()],
             dbs=[db],
         )
-        studio = StudioTools(registry=armed_registry, db=db, teams=True, workflows=True)
+        studio = StudioTools(registry=armed_registry, db=db)
         studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"], publish=True)
         studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4", publish=True)
         studio.create_workflow(name="Flow", steps=[{"name": "s1", "agent_id": "armed"}], publish=True)
@@ -1169,7 +1169,7 @@ class TestStudioEmbedding:
 
     def test_registry_less_runner_refuses_workflow_with_code_defined_step(self, registry, db):
         code_agent = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, workflows=True, agents_list=[code_agent])
+        studio = StudioTools(registry=registry, db=db, include_agents=[code_agent])
         studio.create_workflow(name="Flow", steps=[{"name": "s1", "agent_id": "stub"}], publish=True)
 
         runner = StudioRunnerTools(db=db)
@@ -1207,7 +1207,7 @@ class TestStudioEmbedding:
         armed_registry = Registry(
             name="Armed Registry", models=[OpenAIResponses(id="gpt-5.4")], tools=[CalculatorTools()], dbs=[db]
         )
-        studio = StudioTools(registry=armed_registry, db=db, workflows=True)
+        studio = StudioTools(registry=armed_registry, db=db)
         studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"], publish=True)
         studio.create_workflow(name="Direct", steps=[{"name": "s", "agent_id": "armed"}], publish=True)
         # StudioTools cannot author a compound step, so the persisted config for
@@ -1268,7 +1268,7 @@ class TestStudioEmbedding:
 
         leaky = _SelfCopy(id="leaky", name="Leaky", model=OpenAIResponses(id="gpt-5.4"))
         wf = Workflow(id="flow", name="Flow", db=db, steps=[leaky])
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_workflows=[wf])
 
         assert "is still shared" in _loads(runner.run_workflow("flow", "hi"))["error"]
 
@@ -1376,7 +1376,7 @@ class TestStudioEmbedding:
             return Workflow(id=workflow_id, name=workflow_id, db=db, steps=[nested])
 
         shallow, deep = _wrapped(4, "shallow"), _wrapped(40, "deep")
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[shallow, deep])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_workflows=[shallow, deep])
 
         assert runner._workflow_for_run("shallow") is not None
         assert "nests deeper than" in _loads(runner.run_workflow("deep", "hi"))["error"]
@@ -1431,7 +1431,7 @@ class TestStudioEmbedding:
         agent = Agent(id="a", name="A", model=OpenAIResponses(id="gpt-5.4"))
         condition = Condition(name="c", evaluator=lambda *_: True, steps=[Step(name="s", agent=agent)], else_steps=[])
         wf = Workflow(id="cond", name="cond", db=db, steps=[condition])
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_workflows=[wf])
 
         assert runner._workflow_for_run("cond") is not None
 
@@ -1450,7 +1450,7 @@ class TestStudioEmbedding:
 
         leaky = _SelfCopy(id="leaky", name="Leaky", model=OpenAIResponses(id="gpt-5.4"))
         wf = Workflow(id="boxed", name="boxed", db=db, steps=Steps(name="box", steps=[Step(name="s", agent=leaky)]))
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_workflows=[wf])
 
         assert "is still shared" in _loads(runner.run_workflow("boxed", "hi"))["error"]
 
@@ -1587,7 +1587,7 @@ class TestStudioEmbedding:
         from agno.agent.agent import Agent as AgentClass
 
         helper = AgentClass(name="Helper", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=db, teams=True, workflows=True, agents_list=[helper])
+        studio = StudioTools(registry=registry, db=db, include_agents=[helper])
 
         created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["Helper"], model_id="gpt-5.4"))
         assert "no id" in created["error"]["message"]
@@ -1600,21 +1600,21 @@ class TestStudioEmbedding:
         # the load guard's falsiness test, or the component is created and
         # listed but never loadable.
         blank = AgentClass(id="", name="Blank", model=OpenAIResponses(id="gpt-5.4"))
-        studio_blank = StudioTools(registry=registry, db=db, teams=True, agents_list=[blank])
+        studio_blank = StudioTools(registry=registry, db=db, include_agents=[blank])
         created = _loads(
             studio_blank.create_team(name="crew2", instructions="i", member_ids=["Blank"], model_id="gpt-5.4")
         )
         assert "no id" in created["error"]["message"]
 
     def test_edit_team_keeps_agents_list_members_resolvable(self, registry, db):
-        # StudioTools mirrors agents_list into the registry so rehydration can
+        # StudioTools mirrors include_agents into the registry so rehydration can
         # see those members: an unrelated edit now succeeds and the stored
         # roster survives, where it previously had to refuse to avoid
         # publishing a silently shrunken version.
         from agno.agent.agent import Agent as AgentClass
 
         worker = AgentClass(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[worker])
+        studio = StudioTools(registry=registry, db=db, include_agents=[worker])
         created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["worker"], model_id="gpt-5.4"))
         assert "error" not in created
 
@@ -1709,7 +1709,7 @@ class TestStudioEmbedding:
             "ai", id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db
         )
         reg = Registry(name="Singleton Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
-        studio = StudioTools(registry=reg, db=db, workflows=True)
+        studio = StudioTools(registry=reg, db=db)
         created = _loads(
             studio.create_workflow(name="Flow", steps=[{"name": "s1", "agent_id": "researcher"}], publish=True)
         )
@@ -1730,7 +1730,7 @@ class TestStudioEmbedding:
 
         researcher = AgentClass(id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db)
         reg = Registry(name="Healthy Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
-        studio = StudioTools(registry=reg, db=db, workflows=True)
+        studio = StudioTools(registry=reg, db=db)
         studio.create_workflow(name="Flow", steps=[{"name": "s1", "agent_id": "researcher"}], publish=True)
 
         loaded = StudioRunnerTools(registry=reg, db=db)._workflow_for_run("flow")
@@ -1777,7 +1777,7 @@ class TestStudioEmbedding:
 
     def test_compat_run_methods_carry_legacy_id_key(self, registry, db):
         stub = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        studio = StudioTools(registry=registry, db=db, include_agents=[stub])
         payload = _loads(studio.run_agent("stub", "hi"))
         assert payload["id"] == payload["agent_id"] == "stub"
 
@@ -1785,7 +1785,7 @@ class TestStudioEmbedding:
         assert "error" in error and "id" not in error
 
     def test_create_team_ambiguous_member_name_errors(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4", publish=True)
         studio.create_agent(
             name="Radar Scout", instructions="i", model_id="gpt-5.4", component_id="radar-scout-2", publish=True
@@ -1809,7 +1809,7 @@ class TestStudioEmbedding:
         shadow = _StubAgent()
         shadow.id = "code-1"
         shadow.name = "support"
-        shadowed = StudioTools(registry=registry, db=db, agents_list=[shadow])
+        shadowed = StudioTools(registry=registry, db=db, include_agents=[shadow])
         got = _loads(shadowed.get_component("support"))
         assert got["data"]["id"] == "support"
         out = _loads(shadowed.edit_agent("support", instructions="updated"))
@@ -1830,13 +1830,13 @@ class TestStudioEmbedding:
             name="support", instructions="i", model_id="gpt-5.4", publish=False, _agno_run_context=_context("alice")
         )
         shadow = Agent(id="code-1", name="support", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=db, agents_list=[shadow])
+        studio = StudioTools(registry=registry, db=db, include_agents=[shadow])
         with_row = _loads(studio.get_component("support", _agno_run_context=_context("bob")))
         assert with_row["data"]["id"] == "code-1"
         assert with_row["data"]["source"] == "code"
         # Same read against a db that never held the row: identical data.
         clean_db = SqliteDb(id="clean-db", db_file=str(tmp_path / "clean.db"))
-        clean = StudioTools(registry=registry, db=clean_db, agents_list=[shadow])
+        clean = StudioTools(registry=registry, db=clean_db, include_agents=[shadow])
         without_row = _loads(clean.get_component("support", _agno_run_context=_context("bob")))
         assert without_row["data"] == with_row["data"]
 
@@ -1853,7 +1853,7 @@ class TestStudioEmbedding:
             name="support", instructions="i", model_id="gpt-5.4", publish=True, _agno_run_context=_context("alice")
         )
         shadow = Agent(id="code-1", name="support", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=db, agents_list=[shadow])
+        studio = StudioTools(registry=registry, db=db, include_agents=[shadow])
         read = _loads(studio.get_component("support", _agno_run_context=_context("bob")))
         assert read["data"]["id"] == "support"
         assert read["data"]["source"] == "db"
@@ -1910,7 +1910,7 @@ class TestDispatchCheckInvariants:
         node: Any = Agent(id="leaf", name="Leaf", model=OpenAIResponses(id="gpt-5.4"))
         for index in range(40):
             node = Team(id=f"t{index}", name=f"t{index}", model=OpenAIResponses(id="gpt-5.4"), members=[node])
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, teams_list=[node])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_teams=[node])
         assert "nests deeper than" in _loads(runner.run_team(node.id, "hi"))["error"]
 
     def test_shared_member_search_reaches_past_the_old_bound(self):
@@ -1980,7 +1980,7 @@ class TestDispatchCheckInvariants:
 
         member = Agent(id="m", name="M", model=OpenAIResponses(id="gpt-5.4"))
         lazy = Team(id="lazy", name="Lazy", model=OpenAIResponses(id="gpt-5.4"), members=lambda: [member])
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, teams_list=[lazy])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_teams=[lazy])
 
         import logging
 
@@ -2272,7 +2272,7 @@ class TestDispatchCheckInvariants:
         from agno.registry import Registry
 
         coded = Agent(id="helper", name="Helper", model=OpenAIResponses(id="gpt-5.4"))
-        runner = StudioRunnerTools(registry=Registry(name="R"), agents_list=[coded])
+        runner = StudioRunnerTools(registry=Registry(name="R"), include_agents=[coded])
 
         listing = _loads(runner.list_agents())
         assert listing["agents"] == [{"id": "helper", "name": "Helper", "description": None}]
@@ -2379,7 +2379,7 @@ class TestDispatchCheckInvariants:
         runner = StudioRunnerTools(
             registry=registry,
             db=db,
-            agents_list=[Agent(id="database-target", name="Code Target", model=OpenAIResponses(id="gpt-5.4"))],
+            include_agents=[Agent(id="database-target", name="Code Target", model=OpenAIResponses(id="gpt-5.4"))],
         )
 
         assert "names the stored agent" in _loads(runner.run_agent("Database Target", "hi"))["error"]
@@ -2407,7 +2407,7 @@ class TestDispatchCheckInvariants:
             registry=registry,
             db=db,
             list_limit=2,
-            agents_list=[Agent(id="shadowed", name="code-shadowed", model=OpenAIResponses(id="gpt-5.4"))],
+            include_agents=[Agent(id="shadowed", name="code-shadowed", model=OpenAIResponses(id="gpt-5.4"))],
         )
         listing = _loads(runner.list_agents())
         assert listing["total"] == 5
@@ -2435,7 +2435,7 @@ class TestDispatchCheckInvariants:
         runner = StudioRunnerTools(
             registry=registry,
             db=db,
-            agents_list=[Agent(id="dup", name="dup-in-code", model=OpenAIResponses(id="gpt-5.4"))],
+            include_agents=[Agent(id="dup", name="dup-in-code", model=OpenAIResponses(id="gpt-5.4"))],
         )
         listing = _loads(runner.list_agents())
         assert [entry["id"] for entry in listing["agents"]] == ["dup"]
@@ -2506,7 +2506,7 @@ class TestDispatchCheckInvariants:
 
         owned = Agent(id="svc", name="Svc", model=OpenAIResponses(id="gpt-5.4"), user_id="service-default")
         unowned = Agent(id="plain", name="Plain", model=OpenAIResponses(id="gpt-5.4"))
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, agents_list=[owned, unowned])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_agents=[owned, unowned])
         anonymous = RunContext(run_id="r1", session_id="s1", user_id=None)
 
         error = _loads(runner.run_agent("svc", "hi", _agno_run_context=anonymous)).get("error", "")
@@ -2737,7 +2737,7 @@ class TestMemberIsolation:
         inner = TeamClass(id="inner", name="Inner", model=OpenAIResponses(id="gpt-5.4"), members=[grandchild])
         outer = TeamClass(id="outer", name="Outer", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
 
-        out = _loads(StudioRunnerTools(db=db, teams_list=[outer]).run_team("outer", "hi"))
+        out = _loads(StudioRunnerTools(db=db, include_teams=[outer]).run_team("outer", "hi"))
         assert "still shares member 'grandchild'" in out["error"]
 
     def test_healthy_nested_team_dispatches(self, db):
@@ -2780,7 +2780,7 @@ class TestIncludeAllComponents:
 
     def test_explicit_list_needs_no_flag(self, db):
         # Passing the component IS the allowlist.
-        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent()])
+        runner = StudioRunnerTools(db=db, include_agents=[_StubAgent()])
         assert _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))["agent_id"] == "stub"
 
     def test_reads_still_see_the_registry_component(self, registry_with_agent, db):
@@ -2989,7 +2989,7 @@ class TestMemberStructureFidelity:
         wf = Workflow(id="flow", name="Flow", db=db, steps=[Step(name="s", agent=shared)])
         # Not in the registry: the copy is judged against the original, so the
         # refusal does not depend on knowing the registry's instances.
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_workflows=[wf])
 
         result = _loads(runner.run_workflow("flow", "hello"))
         assert "agent is still shared" in result["error"]
@@ -3010,7 +3010,7 @@ class TestMemberStructureFidelity:
         member = _SelfCopy(id="nested-leaky", name="Nested", model=OpenAIResponses(id="gpt-5.4"))
         crew = Team(id="crew", name="Crew", model=OpenAIResponses(id="gpt-5.4"), members=[member])
         wf = Workflow(id="flow", name="Flow", db=db, steps=[Step(name="s", team=crew)])
-        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, include_workflows=[wf])
 
         result = _loads(runner.run_workflow("flow", "hello"))
         assert "still shares member 'nested-leaky'" in result["error"]
@@ -3079,7 +3079,7 @@ class TestMemberStructureFidelity:
             def deep_copy(self, **kwargs):
                 return self
 
-        runner = StudioRunnerTools(db=db, agents_list=[_Broken(id="b", name="B")])
+        runner = StudioRunnerTools(db=db, include_agents=[_Broken(id="b", name="B")])
         error = _loads(runner.run_agent("b", "x", _agno_run_context=_context()))["error"]
         assert error.startswith("deep_copy of 'b'")
 

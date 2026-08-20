@@ -39,7 +39,7 @@ def registry(db):
 
 @pytest.fixture
 def studio(registry, db):
-    return StudioTools(registry=registry, db=db, teams=True, workflows=True)
+    return StudioTools(registry=registry, db=db)
 
 
 def _loads(s: str) -> Dict[str, Any]:

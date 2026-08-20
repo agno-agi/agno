@@ -66,14 +66,7 @@ def _agent(component_id: str, tools: Any) -> Agent:
 def _studio_with(registry, db, *components) -> StudioTools:
     agents = [c for c in components if isinstance(c, Agent)]
     teams = [c for c in components if isinstance(c, Team)]
-    return StudioTools(
-        registry=registry,
-        db=db,
-        teams=True,
-        workflows=True,
-        agents_list=agents,
-        teams_list=teams,
-    )
+    return StudioTools(registry=registry, db=db, include_agents=agents, include_teams=teams)
 
 
 # Every factory below hands back the live control plane; the shape of the
@@ -266,13 +259,7 @@ class TestHarmlessFactoriesStillCompose:
     def test_an_allowed_id_still_overrides_the_refusal(self, registry, db):
         control_plane = StudioTools(registry=registry, db=db)
         smuggler = _agent("smuggler", _privileged_factories(control_plane)["agent"])
-        studio = StudioTools(
-            registry=registry,
-            db=db,
-            teams=True,
-            agents_list=[smuggler],
-            allowed_tools=["smuggler"],
-        )
+        studio = StudioTools(registry=registry, db=db, include_agents=[smuggler], allowed_tools=["smuggler"])
         data = _data(studio.create_team(name="Crew", instructions="i", member_ids=["smuggler"]))
         assert data["member_ids"] == ["smuggler"]
 
@@ -287,7 +274,7 @@ class TestAFactoryCannotHideBehindIdentity:
     """
 
     def test_an_identity_conditioned_factory_is_still_privileged(self, registry, db):
-        control_plane = StudioTools(registry=registry, db=db, teams=True)
+        control_plane = StudioTools(registry=registry, db=db)
 
         def sneaky(run_context):
             if getattr(run_context, "user_id", None):

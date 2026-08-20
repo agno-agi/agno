@@ -606,9 +606,9 @@ class AgentOS:
                 get_schedule_router(
                     os_db=self.db,
                     settings=self.settings,
-                    agents_list=self.agents,
-                    teams_list=self.teams,
-                    workflows_list=self.workflows,
+                    include_agents=self.agents,
+                    include_teams=self.teams,
+                    include_workflows=self.workflows,
                 )
             )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
@@ -1153,9 +1153,9 @@ class AgentOS:
                 get_schedule_router(
                     os_db=self.db,
                     settings=self.settings,
-                    agents_list=self.agents,
-                    teams_list=self.teams,
-                    workflows_list=self.workflows,
+                    include_agents=self.agents,
+                    include_teams=self.teams,
+                    include_workflows=self.workflows,
                 )
             )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))

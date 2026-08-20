@@ -47,7 +47,7 @@ def studio(db):
         models=[OpenAIResponses(id="gpt-5.5")],
         dbs=[db],
     )
-    return StudioTools(registry=registry, db=db, teams=True, workflows=True, schedules=True)
+    return StudioTools(registry=registry, db=db, schedules=True)
 
 
 def _loads(raw: str) -> Dict[str, Any]:

@@ -35,7 +35,7 @@ def studio(tmp_path):
         models=[OpenAIResponses(id="gpt-5.5")],
         dbs=[db],
     )
-    return StudioTools(registry=registry, db=db, agents=True, teams=True, workflows=True, schedules=True)
+    return StudioTools(registry=registry, db=db, schedules=True)
 
 
 class TestSyncAsyncParity:

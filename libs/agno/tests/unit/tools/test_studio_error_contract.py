@@ -40,7 +40,7 @@ def registry(db):
 
 @pytest.fixture
 def studio(registry, db):
-    return StudioTools(registry=registry, db=db, teams=True, workflows=True)
+    return StudioTools(registry=registry, db=db)
 
 
 def _data(s: str) -> Dict[str, Any]:
@@ -156,7 +156,7 @@ class TestAmbiguousNamesKeepTheirCandidates:
         # A code-defined component is not editable; that refusal is prose the
         # caller can act on, and must not be swallowed by the ambiguity branch.
         live = Agent(id="live", name="Live", model=OpenAIResponses(id="gpt-5.5"))
-        studio = StudioTools(registry=registry, db=db, agents_list=[live])
+        studio = StudioTools(registry=registry, db=db, include_agents=[live])
         assert _error(studio.edit_agent("live", instructions="x"))["code"] == "invalid_request"
 
 

@@ -86,7 +86,7 @@ class TestConfiglessCatalogRowsStaySchedulable:
         assert db.list_configs("news-agent", include_config=False) == []
 
         live = Agent(id="news-agent", name="News", model=OpenAIResponses(id="gpt-5.5"))
-        studio = StudioTools(registry=registry, db=db, agents_list=[live], schedules=True)
+        studio = StudioTools(registry=registry, db=db, include_agents=[live], schedules=True)
 
         data = _data(_create_schedule(studio))
         assert data["endpoint"] == "/agents/news-agent/runs"
@@ -111,7 +111,7 @@ class TestThePublishedProbeIsOwnerScoped:
         assert db.get_component("news-agent")["user_id"] == "bob"
 
         alice_agent = Agent(id="news-agent", name="News", model=OpenAIResponses(id="gpt-5.5"))
-        studio = StudioTools(registry=registry, db=db, agents_list=[alice_agent], schedules=True)
+        studio = StudioTools(registry=registry, db=db, include_agents=[alice_agent], schedules=True)
 
         data = _data(_create_schedule(studio, _agno_run_context=ALICE))
         assert data["endpoint"] == "/agents/news-agent/runs"

@@ -19,7 +19,7 @@ Typical use:
 Mount it INSTEAD of StudioTools, not beside it. StudioTools embeds this same
 toolkit and already exposes list_agents/list_teams/list_workflows/run_agent,
 plus run_team and run_workflow once teams or workflows are enabled (an explicit
-agents_list enables both), and agno's tool namespace is flat: co-mounting
+include_agents enables both), and agno's tool namespace is flat: co-mounting
 collapses the overlapping names to
 whichever toolkit the tools list holds first, and a warning names the skipped
 one. Two runners scoped to different component lists collapse the same way, so
@@ -86,8 +86,8 @@ Semantics:
       you cannot run. Code-defined components arrive through the registry,
       which is passed so persisted components can rehydrate rather than to
       grant the runner the run of the application, so dispatching them is
-      opt-in via include_all_components. An explicit agents_list/teams_list/
-      workflows_list is itself the allowlist and always runs. 'total' reports
+      opt-in via include_all_components. An explicit include_agents/include_teams/
+      include_workflows is itself the allowlist and always runs. 'total' reports
       the full DB count, so a capped list is visible as capped.
 
 StudioTools embeds this toolkit for its own run_* tools and delegates its
@@ -248,9 +248,9 @@ class StudioRunnerTools(Toolkit):
         self,
         registry: Optional["Registry"] = None,
         db: Optional["BaseDb"] = None,
-        agents_list: Optional[List["Agent"]] = None,
-        teams_list: Optional[List["Team"]] = None,
-        workflows_list: Optional[List["Workflow"]] = None,
+        include_agents: Optional[List["Agent"]] = None,
+        include_teams: Optional[List["Team"]] = None,
+        include_workflows: Optional[List["Workflow"]] = None,
         agents: bool = True,
         teams: bool = True,
         workflows: bool = True,
@@ -263,9 +263,9 @@ class StudioRunnerTools(Toolkit):
         self.db: Optional["BaseDb"] = (
             db if db is not None else (registry.dbs[0] if registry is not None and registry.dbs else None)
         )
-        self.agents_list = agents_list
-        self.teams_list = teams_list
-        self.workflows_list = workflows_list
+        self.include_agents = include_agents
+        self.include_teams = include_teams
+        self.include_workflows = include_workflows
         self.enable_agents = agents
         self.enable_teams = teams
         self.enable_workflows = workflows
@@ -325,28 +325,28 @@ class StudioRunnerTools(Toolkit):
         The registry half is opt-in for dispatch (``include_all_components``).
         A registry is passed so persisted components can rehydrate their tools
         and members, which is not the same as consenting to run every agent the
-        application happens to define. An explicit ``agents_list`` is itself the
+        application happens to define. An explicit ``include_agents`` is itself the
         allowlist and always runs. ``list_*`` report exactly this admitted set
         alongside the database, so what can be run can be found.
         Lookups that are not dispatch (get, edit, members, steps) see the full
         set either way."""
-        if self.agents_list is not None:
-            return list(self.agents_list)
+        if self.include_agents is not None:
+            return list(self.include_agents)
         if for_dispatch and not self.include_all_components:
             return []
         return list(self.registry.agents) if self.registry is not None else []
 
     def _iter_teams(self, for_dispatch: bool = False) -> List["Team"]:
         """Code-defined teams: passed-in list, else registry (see _iter_agents)."""
-        if self.teams_list is not None:
-            return list(self.teams_list)
+        if self.include_teams is not None:
+            return list(self.include_teams)
         if for_dispatch and not self.include_all_components:
             return []
         return list(self.registry.teams) if self.registry is not None else []
 
     def _iter_workflows(self, for_dispatch: bool = False) -> List["Workflow"]:
         """Code-defined workflows. Always an explicit list, so never gated."""
-        return list(self.workflows_list) if self.workflows_list is not None else []
+        return list(self.include_workflows) if self.include_workflows is not None else []
 
     def _find_agent(self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None) -> Optional["Agent"]:
         """Lookup order: code-defined exact id, DB exact id, code-defined display

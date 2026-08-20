@@ -37,23 +37,23 @@ _SchedulerDbMethod = Literal[
 def get_schedule_router(
     os_db: Any,
     settings: Any,
-    agents_list: Optional[Sequence[Any]] = None,
-    teams_list: Optional[Sequence[Any]] = None,
-    workflows_list: Optional[Sequence[Any]] = None,
+    include_agents: Optional[Sequence[Any]] = None,
+    include_teams: Optional[Sequence[Any]] = None,
+    include_workflows: Optional[Sequence[Any]] = None,
 ) -> APIRouter:
     """Factory that creates and returns the schedule router.
 
     Args:
         os_db: The AgentOS-level DB adapter (must support scheduler methods).
         settings: AgnoAPISettings instance.
-        agents_list: The code-defined agents this process serves. The run routes
+        include_agents: The code-defined agents this process serves. The run routes
             resolve those in process before they consult the component catalog,
             so a schedule aimed at one is exempt from the draft-only refusal: a
             catalog row of the same id never decides whether the endpoint
             answers. Without the list the catalog is the only evidence there is,
             and a code-defined target that also carries a draft row is refused.
-        teams_list: Same as ``agents_list`` but for teams.
-        workflows_list: Same as ``agents_list`` but for workflows.
+        include_teams: Same as ``include_agents`` but for teams.
+        include_workflows: Same as ``include_agents`` but for workflows.
 
     Returns:
         An APIRouter with all schedule endpoints attached.
@@ -63,7 +63,7 @@ def get_schedule_router(
 
     router = APIRouter(tags=["Schedules"])
     auth_dependency = get_authentication_dependency(settings)
-    is_code_defined = code_defined_probe(agents_list, teams_list, workflows_list)
+    is_code_defined = code_defined_probe(include_agents, include_teams, include_workflows)
 
     # ------------------------------------------------------------------
     # Helpers

@@ -70,12 +70,12 @@ reporter = Agent(
 )
 
 # Versioning is on by default: this construction carries the full lifecycle
-# (drafts, validate, publish, rollback). Passing agents_list makes the two
+# (drafts, validate, publish, rollback). Passing include_agents makes the two
 # code-defined Agents available as Team members and Workflow steps.
 studio_tools = StudioTools(
     registry=registry,
     db=db,
-    agents_list=[greeter, reporter],
+    include_agents=[greeter, reporter],
     default_model_id="gpt-5.5",
 )
 

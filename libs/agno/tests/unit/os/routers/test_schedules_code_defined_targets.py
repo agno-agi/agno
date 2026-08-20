@@ -33,7 +33,7 @@ def _client(db, **lists):
 
 @pytest.fixture
 def client(db):
-    return _client(db, agents_list=[SimpleNamespace(id="news-agent")], teams_list=[SimpleNamespace(id="crew")])
+    return _client(db, include_agents=[SimpleNamespace(id="news-agent")], include_teams=[SimpleNamespace(id="crew")])
 
 
 @pytest.fixture

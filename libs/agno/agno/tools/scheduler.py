@@ -435,15 +435,15 @@ class SchedulerTools(Toolkit):
             owner is taken from the run's ``user_id`` (injected via
             ``run_context``), so each user's agent only sees and edits that
             user's schedules.
-        agents_list: Optional live list (e.g. ``agent_os.agents``) of the
+        include_agents: Optional live list (e.g. ``agent_os.agents``) of the
             code-defined agents this process serves. Schedules aimed at one are
             exempt from the draft-only refusal: run routes resolve code-defined
             components before they consult the component catalog, so a catalog
             row of the same id never decides whether the endpoint answers.
             Without the list the catalog is the only evidence there is, and a
             code-defined target that also carries a draft row is refused.
-        teams_list: Same as ``agents_list`` but for teams.
-        workflows_list: Same as ``agents_list`` but for workflows.
+        include_teams: Same as ``include_agents`` but for teams.
+        include_workflows: Same as ``include_agents`` but for workflows.
     """
 
     def __init__(
@@ -454,9 +454,9 @@ class SchedulerTools(Toolkit):
         default_timezone: str = "UTC",
         default_payload: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        agents_list: Optional[Sequence[Any]] = None,
-        teams_list: Optional[Sequence[Any]] = None,
-        workflows_list: Optional[Sequence[Any]] = None,
+        include_agents: Optional[Sequence[Any]] = None,
+        include_teams: Optional[Sequence[Any]] = None,
+        include_workflows: Optional[Sequence[Any]] = None,
         **kwargs: Any,
     ):
         self.manager = ScheduleManager(db=db)
@@ -465,9 +465,9 @@ class SchedulerTools(Toolkit):
         self.default_method = default_method
         self.default_timezone = default_timezone
         self.default_payload = default_payload
-        self.agents_list = agents_list
-        self.teams_list = teams_list
-        self.workflows_list = workflows_list
+        self.include_agents = include_agents
+        self.include_teams = include_teams
+        self.include_workflows = include_workflows
 
         tools: List[Callable] = [
             self.create_schedule,
@@ -527,7 +527,7 @@ class SchedulerTools(Toolkit):
         component lists it is handed, so those lists are commonly assigned
         afterwards.
         """
-        return code_defined_probe(self.agents_list, self.teams_list, self.workflows_list)
+        return code_defined_probe(self.include_agents, self.include_teams, self.include_workflows)
 
     # ------------------------------------------------------------------
     # Sync tools

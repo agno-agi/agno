@@ -165,7 +165,7 @@ class TestCreateExemptsCodeDefinedTargets:
 
     @pytest.fixture
     def tools(self, db, news_agent):
-        return SchedulerTools(db=db, default_payload={"message": "go"}, agents_list=[news_agent])
+        return SchedulerTools(db=db, default_payload={"message": "go"}, include_agents=[news_agent])
 
     def test_code_defined_target_with_a_draft_row_is_scheduled(self, db, tools):
         _draft_only(db, "news-agent")
@@ -204,7 +204,7 @@ class TestCreateExemptsCodeDefinedTargets:
         _draft_only(db, "news-agent")
         late = SchedulerTools(db=db, default_payload={"message": "go"})
         assert _create(late, "before", "/agents/news-agent/runs").get("error_type") == "target_not_published"
-        late.agents_list = [news_agent]
+        late.include_agents = [news_agent]
         assert _create(late, "after", "/agents/news-agent/runs").get("status") == "created"
 
     def test_a_code_defined_agent_does_not_exempt_a_draft_team(self, db, tools):
@@ -227,8 +227,8 @@ class TestCreateExemptsCodeDefinedTargets:
         tools = SchedulerTools(
             db=db,
             default_payload={"message": "go"},
-            teams_list=[SimpleNamespace(id="crew")],
-            workflows_list=[SimpleNamespace(id="pipeline")],
+            include_teams=[SimpleNamespace(id="crew")],
+            include_workflows=[SimpleNamespace(id="pipeline")],
         )
         assert _create(tools, "crew-run", "/teams/crew/runs").get("status") == "created"
         assert _create(tools, "pipeline-run", "/workflows/pipeline/runs").get("status") == "created"
@@ -266,7 +266,9 @@ class TestEnableExemptsCodeDefinedTargets:
         sid = self._armed(db, blind, "news", "/agents/news-agent/runs")
         _draft_only(db, "news-agent")
         assert json.loads(blind.enable_schedule(sid)).get("error_type") == "target_not_published"
-        tools = SchedulerTools(db=db, default_payload={"message": "go"}, agents_list=[SimpleNamespace(id="news-agent")])
+        tools = SchedulerTools(
+            db=db, default_payload={"message": "go"}, include_agents=[SimpleNamespace(id="news-agent")]
+        )
         out = json.loads(tools.enable_schedule(sid))
         assert out.get("status") == "enabled", out
 
@@ -276,12 +278,16 @@ class TestEnableExemptsCodeDefinedTargets:
         sid = self._armed(db, blind, "news-async", "/agents/news-agent/runs")
         _draft_only(db, "news-agent")
         assert json.loads(await blind.aenable_schedule(sid)).get("error_type") == "target_not_published"
-        tools = SchedulerTools(db=db, default_payload={"message": "go"}, agents_list=[SimpleNamespace(id="news-agent")])
+        tools = SchedulerTools(
+            db=db, default_payload={"message": "go"}, include_agents=[SimpleNamespace(id="news-agent")]
+        )
         out = json.loads(await tools.aenable_schedule(sid))
         assert out.get("status") == "enabled", out
 
     def test_a_genuinely_draft_only_target_still_refuses_to_re_arm(self, db):
-        tools = SchedulerTools(db=db, default_payload={"message": "go"}, agents_list=[SimpleNamespace(id="news-agent")])
+        tools = SchedulerTools(
+            db=db, default_payload={"message": "go"}, include_agents=[SimpleNamespace(id="news-agent")]
+        )
         sid = self._armed(db, tools, "db-only", "/agents/db-only-agent/runs")
         _draft_only(db, "db-only-agent")
         out = json.loads(tools.enable_schedule(sid))
@@ -289,7 +295,9 @@ class TestEnableExemptsCodeDefinedTargets:
 
     @pytest.mark.asyncio
     async def test_a_genuinely_draft_only_target_still_refuses_to_re_arm_async(self, db):
-        tools = SchedulerTools(db=db, default_payload={"message": "go"}, agents_list=[SimpleNamespace(id="news-agent")])
+        tools = SchedulerTools(
+            db=db, default_payload={"message": "go"}, include_agents=[SimpleNamespace(id="news-agent")]
+        )
         sid = self._armed(db, tools, "db-only-async", "/agents/db-only-agent/runs")
         _draft_only(db, "db-only-agent")
         out = json.loads(await tools.aenable_schedule(sid))
@@ -304,23 +312,23 @@ class TestOwnerScopingSurvivesTheExemption:
         return SqliteDb(id="sched-code-defined-scope", db_file=str(tmp_path / "scope.db"))
 
     @staticmethod
-    def _tools(db, owner, agents_list=None):
-        return SchedulerTools(db=db, user_id=owner, default_payload={"message": "go"}, agents_list=agents_list)
+    def _tools(db, owner, include_agents=None):
+        return SchedulerTools(db=db, user_id=owner, default_payload={"message": "go"}, include_agents=include_agents)
 
     def test_another_owners_draft_row_is_still_not_reported(self, db):
         _draft_only(db, "their-draft", user_id="other-owner")
-        out = _create(self._tools(db, "scoped-owner", agents_list=[]), "invisible", "/agents/their-draft/runs")
+        out = _create(self._tools(db, "scoped-owner", include_agents=[]), "invisible", "/agents/their-draft/runs")
         assert out.get("status") == "created", out
         assert "published" not in json.dumps(out)
 
     def test_the_callers_own_draft_row_is_still_refused(self, db):
         _draft_only(db, "my-draft", user_id="scoped-owner")
-        out = _create(self._tools(db, "scoped-owner", agents_list=[]), "mine", "/agents/my-draft/runs")
+        out = _create(self._tools(db, "scoped-owner", include_agents=[]), "mine", "/agents/my-draft/runs")
         assert out.get("error_type") == "target_not_published", out
 
     def test_a_shared_unowned_draft_row_is_still_refused(self, db):
         _draft_only(db, "shared-draft")
-        out = _create(self._tools(db, "scoped-owner", agents_list=[]), "shared", "/agents/shared-draft/runs")
+        out = _create(self._tools(db, "scoped-owner", include_agents=[]), "shared", "/agents/shared-draft/runs")
         assert out.get("error_type") == "target_not_published", out
 
 
@@ -377,15 +385,15 @@ class TestTheDeploymentActuallyWiresTheProbe:
         studio = StudioTools(
             registry=Registry(name="r", dbs=[db]),
             db=db,
-            agents_list=[Agent(id="news-agent", name="News")],
+            include_agents=[Agent(id="news-agent", name="News")],
             schedules=True,
         )
         assert studio._scheduler_tools is not None
-        assert studio._scheduler_tools.agents_list is studio.agents_list
+        assert studio._scheduler_tools.include_agents is studio.include_agents
         _draft_only(db, "news-agent")
         probe = code_defined_probe(
-            studio._scheduler_tools.agents_list,
-            studio._scheduler_tools.teams_list,
-            studio._scheduler_tools.workflows_list,
+            studio._scheduler_tools.include_agents,
+            studio._scheduler_tools.include_teams,
+            studio._scheduler_tools.include_workflows,
         )
         assert probe("agent", "news-agent") is True

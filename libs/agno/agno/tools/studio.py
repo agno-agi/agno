@@ -54,9 +54,9 @@ Palette policy:
       the same way. list_tools reports buildable and source per row.
 
 Enable flags:
-    * agents=True by default; teams/workflows auto-enable when their lists are
-      passed; versions=True by default (set False to publish every edit
-      immediately and hide the version tools); schedules=False by default.
+    * create_agents/create_teams/create_workflows are all True by default;
+      versions=True by default (set False to publish every edit immediately and
+      hide the version tools); schedules=False by default.
     * requires_confirmation_tools defaults to the deletion-shaped operations
       (archive_component, delete_version, delete_schedule); a consumer may
       replace the list, including with [].
@@ -160,20 +160,22 @@ class StudioTools(Toolkit):
         registry: Registry holding models, tools, databases, and code-defined
             agents/teams available for composition.
         db: Database for persisting components. Falls back to ``registry.dbs[0]``.
-        agents_list: Optional live list (e.g. ``agent_os.agents``) used only for
-            discovery in ``list_agents()``. Studio-created components are NOT
-            appended to this list -- they are DB components, so appending would
-            duplicate them in AgentOS's ``/agents`` response.
-        teams_list: Same as ``agents_list`` but for teams.
-        workflows_list: Same as ``agents_list`` but for workflows.
+        include_agents: Optional live list (e.g. ``agent_os.agents``) of the
+            code-defined agents to include alongside the registry's own, used
+            for discovery in ``list_agents()``. Studio-created components are
+            NOT appended to this list -- they are DB components, so appending
+            would duplicate them in AgentOS's ``/agents`` response.
+        include_teams: Same as ``include_agents`` but for teams.
+        include_workflows: Same as ``include_agents`` but for workflows.
         default_model_id: Model id to use when a caller omits one.
         default_num_history_runs: History depth for created agents and teams
             when a caller omits ``num_history_runs``. None lets the
             component's own default apply.
-        agents: Expose agent operations. Defaults to True.
-        teams: Expose team operations. Defaults to False (see module docstring
-            for auto-enable rules).
-        workflows: Expose workflow operations. Defaults to False.
+        create_agents: Expose the agent build operations. Defaults to True.
+        create_teams: Expose the team build operations. Defaults to True.
+        create_workflows: Expose the workflow build operations. Defaults to
+            True. Set any of the three False to keep that component type out of
+            the palette; setting all three False leaves only discovery tools.
         versions: Expose versioning tools (list_versions, publish_component,
             set_current_version, delete_version). Defaults to True, so create_*
             and edit_* write drafts that serve nobody until publish_component
@@ -206,14 +208,14 @@ class StudioTools(Toolkit):
         self,
         registry: "Registry",
         db: Optional["BaseDb"] = None,
-        agents_list: Optional[List["Agent"]] = None,
-        teams_list: Optional[List["Team"]] = None,
-        workflows_list: Optional[List["Workflow"]] = None,
+        include_agents: Optional[List["Agent"]] = None,
+        include_teams: Optional[List["Team"]] = None,
+        include_workflows: Optional[List["Workflow"]] = None,
         default_model_id: Optional[str] = None,
         default_num_history_runs: Optional[int] = None,
-        agents: Optional[bool] = None,
-        teams: Optional[bool] = None,
-        workflows: Optional[bool] = None,
+        create_agents: bool = True,
+        create_teams: bool = True,
+        create_workflows: bool = True,
         versions: bool = True,
         schedules: bool = False,
         list_limit: int = 100,
@@ -223,16 +225,16 @@ class StudioTools(Toolkit):
     ):
         self.registry = registry
         self.db: Optional["BaseDb"] = db if db is not None else (registry.dbs[0] if registry.dbs else None)
-        self.agents_list = agents_list
-        self.teams_list = teams_list
-        self.workflows_list = workflows_list
+        self.include_agents = include_agents
+        self.include_teams = include_teams
+        self.include_workflows = include_workflows
         # Rehydration resolves code-defined references through the registry
         # only; a component reachable solely via these live lists could be
         # referenced at create time but never reload. Make the lists visible.
         pending_mirrors: List[tuple] = []
         for source, bucket, source_name in (
-            (agents_list, registry.agents, "agents_list"),
-            (teams_list, registry.teams, "teams_list"),
+            (include_agents, registry.agents, "include_agents"),
+            (include_teams, registry.teams, "include_teams"),
         ):
             for component in source or []:
                 component_id = getattr(component, "id", None)
@@ -266,9 +268,9 @@ class StudioTools(Toolkit):
         self._runner_tools = StudioRunnerTools(
             registry=registry,
             db=self.db,
-            agents_list=agents_list,
-            teams_list=teams_list,
-            workflows_list=workflows_list,
+            include_agents=include_agents,
+            include_teams=include_teams,
+            include_workflows=include_workflows,
             # The Studio holds the registry as its build palette and its run_* are
             # the smoke test for what it just composed, so its reach over registry
             # components is the point rather than an accident. A standalone runner
@@ -277,13 +279,9 @@ class StudioTools(Toolkit):
             list_limit=list_limit,
         )
 
-        self.enable_agents, self.enable_teams, self.enable_workflows = _resolve_flags(
-            agents=agents,
-            teams=teams,
-            workflows=workflows,
-            has_agents_list=agents_list is not None,
-            has_teams_list=teams_list is not None,
-        )
+        self.enable_agents = create_agents
+        self.enable_teams = create_teams
+        self.enable_workflows = create_workflows
         self.enable_versions: bool = versions
         self.enable_schedules: bool = schedules
         # Schedule management is shared with SchedulerTools; Studio owns only
@@ -297,9 +295,9 @@ class StudioTools(Toolkit):
             # refuse a code-defined target that create_schedule just allowed.
             self._scheduler_tools = SchedulerTools(
                 db=self.db,
-                agents_list=self.agents_list,
-                teams_list=self.teams_list,
-                workflows_list=self.workflows_list,
+                include_agents=self.include_agents,
+                include_teams=self.include_teams,
+                include_workflows=self.include_workflows,
             )
 
         tools: List[Callable] = [
@@ -866,7 +864,7 @@ class StudioTools(Toolkit):
             return False
         if name in self._allowed_tools:
             return True
-        if name in self.registry.folded_tool_names:
+        if not self.registry.tool_is_declared(name):
             return False
         # Top-level names take precedence in resolution; only a name that is
         # not a top-level tool is judged as a toolkit member.
@@ -885,7 +883,7 @@ class StudioTools(Toolkit):
                     return False
                 if tool.name in self._allowed_tools:
                     return True
-                if tool.name in self.registry.folded_tool_names:
+                if not self.registry.tool_is_declared(tool.name):
                     return False
         return True
 
@@ -1396,7 +1394,7 @@ class StudioTools(Toolkit):
                     "name": name,
                     "kind": kind,
                     "buildable": self._buildable_tool(name),
-                    "source": "folded" if name in self.registry.folded_tool_names else "declared",
+                    "source": "declared" if self.registry.tool_is_declared(name) else "discovered",
                     "functions": functions,
                 }
             )
@@ -3746,7 +3744,7 @@ class StudioTools(Toolkit):
                     target_type,
                     component_id,
                     user_id=actor,
-                    is_code_defined=code_defined_probe(self.agents_list, self.teams_list, self.workflows_list),
+                    is_code_defined=code_defined_probe(self.include_agents, self.include_teams, self.include_workflows),
                 )
                 is not None
             ):
@@ -4733,7 +4731,7 @@ def _persist_only(
 
     Agno's built-in ``component.save()`` recursively persists every member of
     a team and every agent/team referenced by a workflow step. That pulls
-    code-defined agents (ones you passed via ``agents_list`` or the registry)
+    code-defined agents (ones you passed via ``include_agents`` or the registry)
     into the DB as components, which is not what studio should do.
 
     This helper saves only the top-level component row and its config. Member
@@ -4827,38 +4825,6 @@ def _persist_only(
         user_id=user_id,
     )
     return result.get("version")
-
-
-def _resolve_flags(
-    agents: Optional[bool],
-    teams: Optional[bool],
-    workflows: Optional[bool],
-    has_agents_list: bool,
-    has_teams_list: bool,
-) -> tuple[bool, bool, bool]:
-    """Resolve the enable flags for the three capability groups.
-
-    * Agents are enabled by default unless ``agents=False`` is explicit.
-    * Teams and workflows are disabled by default unless explicitly enabled
-      or auto-enabled by live component lists.
-    * Passing ``agents=False`` without enabling another component type leaves
-      only discovery tools registered.
-    * Passing ``agents_list`` auto-enables teams and workflows (you can build
-      them from those agents). Passing ``teams_list`` auto-enables workflows.
-      Explicit flags take precedence over these auto-enables.
-    """
-    a = bool(agents) if agents is not None else True
-    t = bool(teams) if teams is not None else False
-    w = bool(workflows) if workflows is not None else False
-
-    if has_agents_list and teams is None:
-        t = True
-    if has_agents_list and workflows is None:
-        w = True
-    if has_teams_list and workflows is None:
-        w = True
-
-    return a, t, w
 
 
 def _component_type(component: Component) -> Any:

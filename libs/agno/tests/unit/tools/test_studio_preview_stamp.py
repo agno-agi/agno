@@ -96,7 +96,7 @@ def studio(registry, db, models):
     Workflow(id="pv-flow", name="PV Flow", steps=[Step(name="s", agent=member)]).save(db=db, stage="published")
     Workflow(id="pv-flow", name="PV Flow", steps=[Step(name="s", agent=member)]).save(db=db, stage="draft")
 
-    return StudioTools(registry=registry, db=db, teams=True, workflows=True)
+    return StudioTools(registry=registry, db=db)
 
 
 def _payload(raw: str) -> Dict[str, Any]:
