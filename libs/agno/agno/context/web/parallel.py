@@ -17,7 +17,7 @@ from os import getenv
 from typing import Any
 
 from agno.context.backend import ContextBackend
-from agno.context.provider import Status
+from agno.context.types import Status
 from agno.tools import tool
 from agno.utils.log import log_error
 

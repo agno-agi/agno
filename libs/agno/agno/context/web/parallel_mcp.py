@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 from agno import __version__ as _AGNO_VERSION
 from agno.context.backend import ContextBackend
-from agno.context.provider import Status
+from agno.context.types import Status
 from agno.utils.log import log_info, log_warning
 
 _BASE_URL = "https://search.parallel.ai/mcp"

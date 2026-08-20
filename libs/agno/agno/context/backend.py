@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from agno.context.provider import Status
+from agno.context.types import Status
 
 
 class ContextBackend(ABC):
