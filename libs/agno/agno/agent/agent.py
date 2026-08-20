@@ -33,9 +33,7 @@ from agno.agent import (
     _utils,
 )
 from agno.compression.manager import CompressionManager
-from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
@@ -47,7 +45,6 @@ from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
-from agno.models.response import ToolExecution
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -123,8 +120,6 @@ class Agent:
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     update_memory_on_run: bool = False
-    # Soon to be deprecated. Use update_memory_on_run
-    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
 
@@ -133,7 +128,7 @@ class Agent:
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     # --- Checkpointing ---
-    # When to persist run state to the database. See specs/agno/features/checkpointing/.
+    # When to persist run state to the database.
     #   "runs"  — default, write only at terminal states (today's behavior)
     #   "tool-batch" — write after each model turn (post-gather barrier)
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
@@ -198,12 +193,9 @@ class Agent:
     _run_hooks_in_background: Optional[bool] = None
 
     # --- Agent Reasoning ---
-    # Enable reasoning by working through the problem step by step.
-    reasoning: bool = False
+    # Enable reasoning by providing a reasoning_model (must be a native reasoning model).
     reasoning_model: Optional[Model] = None
     reasoning_agent: Optional[Agent] = None
-    reasoning_min_steps: int = 1
-    reasoning_max_steps: int = 10
 
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
@@ -349,17 +341,6 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
-    # --- Experimental Features ---
-    # --- Agent Culture ---
-    # Culture manager to use for this agent
-    culture_manager: Optional[CultureManager] = None
-    # Enable the agent to manage cultural knowledge
-    enable_agentic_culture: bool = False
-    # Update cultural knowledge after every run
-    update_cultural_knowledge: bool = False
-    # If True, the agent adds cultural knowledge in the response
-    add_culture_to_context: Optional[bool] = None
-
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
@@ -402,9 +383,6 @@ class Agent:
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
-        # Deprecated params — kept for backward compatibility
-        search_session_history: Optional[bool] = None,
-        num_history_sessions: Optional[int] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
@@ -412,7 +390,6 @@ class Agent:
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
-        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
@@ -440,11 +417,8 @@ class Agent:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
-        reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
-        reasoning_min_steps: int = 1,
-        reasoning_max_steps: int = 10,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -493,10 +467,6 @@ class Agent:
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
-        culture_manager: Optional[CultureManager] = None,
-        enable_agentic_culture: bool = False,
-        update_cultural_knowledge: bool = False,
-        add_culture_to_context: Optional[bool] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
@@ -524,12 +494,6 @@ class Agent:
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
 
-        # Deprecated param mapping
-        if search_session_history is not None and not search_past_sessions:
-            search_past_sessions = search_session_history
-        if num_history_sessions is not None and num_past_sessions_to_search is None:
-            num_past_sessions_to_search = num_history_sessions
-
         self.search_past_sessions = search_past_sessions
         self.num_past_sessions_to_search = num_past_sessions_to_search
         self.num_past_session_runs_in_search = num_past_session_runs_in_search
@@ -543,12 +507,7 @@ class Agent:
 
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
-
-        if enable_user_memories is not None:
-            self.update_memory_on_run = enable_user_memories
-        else:
-            self.update_memory_on_run = update_memory_on_run
-        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+        self.update_memory_on_run = update_memory_on_run
 
         self.add_memories_to_context = add_memories_to_context
 
@@ -611,11 +570,8 @@ class Agent:
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
 
-        self.reasoning = reasoning
         self.reasoning_model = reasoning_model  # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent
-        self.reasoning_min_steps = reasoning_min_steps
-        self.reasoning_max_steps = reasoning_max_steps
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
@@ -676,11 +632,6 @@ class Agent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
 
-        self.culture_manager = culture_manager
-        self.enable_agentic_culture = enable_agentic_culture
-        self.update_cultural_knowledge = update_cultural_knowledge
-        self.add_culture_to_context = add_culture_to_context
-
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:
             log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
@@ -707,7 +658,7 @@ class Agent:
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
 
-        # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+        # Lazy-initialized shared thread pool executor for background tasks (memory, learning, etc.)
         self._background_executor: Optional[Any] = None
 
         # Callable factory settings
@@ -975,16 +926,27 @@ class Agent:
         label: Optional[str] = None,
         version: Optional[int] = None,
         strict: bool = False,
+        published_only: bool = False,
     ) -> Optional["Agent"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
+        return _storage.load(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            published_only=published_only,
+        )
 
     def delete(
         self,
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
-        return _storage.delete(self, db=db, hard_delete=hard_delete)
+        return _storage.delete(self, db=db, hard_delete=hard_delete, require_no_dependents=require_no_dependents)
 
     def get_run_output(
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
@@ -1140,12 +1102,6 @@ class Agent:
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         return await _managers.aget_user_memories(self, user_id=user_id)
 
-    def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return _managers.get_culture_knowledge(self)
-
-    async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return await _managers.aget_culture_knowledge(self)
-
     # ---------------------------------------------------------------
     # _response module delegates
     # ---------------------------------------------------------------
@@ -1162,7 +1118,7 @@ class Agent:
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _default_tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result, user_id=self.user_id)
 
     # ---------------------------------------------------------------
     # _cli module delegates
@@ -1563,7 +1519,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
@@ -1582,7 +1537,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
@@ -1600,7 +1554,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         input: Optional[str] = None,
         continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -1624,7 +1577,6 @@ class Agent:
             self,
             run_response=run_response,
             run_id=run_id,
-            updated_tools=updated_tools,
             requirements=requirements,
             input=input,
             continue_from=continue_from,
@@ -1653,7 +1605,6 @@ class Agent:
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1672,7 +1623,6 @@ class Agent:
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1688,7 +1638,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         input: Optional[str] = None,
         continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -1713,7 +1662,6 @@ class Agent:
             self,
             run_response=run_response,
             run_id=run_id,
-            updated_tools=updated_tools,
             requirements=requirements,
             input=input,
             continue_from=continue_from,
@@ -1747,7 +1695,9 @@ def get_agent_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
     strict: bool = False,
+    published_only: bool = True,
 ) -> Optional["Agent"]:
     """
     Get an Agent by id from the database (new entities/configs schema).
@@ -1761,6 +1711,7 @@ def get_agent_by_id(
         id: Agent entity_id.
         label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the agent when owned by this user or shared.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
 
@@ -1774,7 +1725,22 @@ def get_agent_by_id(
     from agno.utils.log import log_error
 
     try:
-        row = db.get_config(component_id=id, label=label, version=version)
+        # Only resolve the agent if owned by this user or shared.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
+        if published_only and version is None and label is None:
+            # Dispatch surfaces resolve only a published version; a draft-only
+            # component is not runnable. Uses the
+            # component row rather than get_current_config so third-party
+            # adapters with only the old surface keep working.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            row = db.get_config(component_id=id, version=current_version)
+        else:
+            row = db.get_config(component_id=id, label=label, version=version)
         if row is None:
             return None
 
@@ -1807,18 +1773,25 @@ def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     exclude_component_ids: Optional[Set[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List["Agent"]:
     """
     Get all agents from the database.
 
     Sets _version and _stage on each agent from the component metadata.
+
+    Args:
+        db: Database to load agents from
+        registry: Optional registry for rehydrating tools
+        exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load agents owned by this user or shared.
     """
     from agno.utils.log import log_error
 
     agents: List[Agent] = []
     try:
         components, _ = db.list_components(
-            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
+            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids, user_id=user_id
         )
         for component in components:
             try:

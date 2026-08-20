@@ -49,7 +49,6 @@ def _has_async_db(entity: Union["Agent", "Team"]) -> bool:
 
 async def await_for_open_threads(
     memory_task: Optional[Task] = None,
-    cultural_knowledge_task: Optional[Task] = None,
     learning_task: Optional[Task] = None,
 ) -> None:
     if memory_task is not None:
@@ -57,12 +56,6 @@ async def await_for_open_threads(
             await memory_task
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
-
-    if cultural_knowledge_task is not None:
-        try:
-            await cultural_knowledge_task
-        except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
     if learning_task is not None:
         try:
@@ -73,7 +66,6 @@ async def await_for_open_threads(
 
 def wait_for_open_threads(
     memory_future: Optional[Future] = None,
-    cultural_knowledge_future: Optional[Future] = None,
     learning_future: Optional[Future] = None,
 ) -> None:
     if memory_future is not None:
@@ -81,13 +73,6 @@ def wait_for_open_threads(
             memory_future.result()
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
-
-    # Wait for cultural knowledge creation
-    if cultural_knowledge_future is not None:
-        try:
-            cultural_knowledge_future.result()
-        except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
     if learning_future is not None:
         try:
@@ -99,7 +84,6 @@ def wait_for_open_threads(
 async def await_for_thread_tasks_stream(
     run_response: Union[RunOutput, TeamRunOutput],
     memory_task: Optional[Task] = None,
-    cultural_knowledge_task: Optional[Task] = None,
     learning_task: Optional[Task] = None,
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
@@ -155,12 +139,6 @@ async def await_for_thread_tasks_stream(
                     store_events=store_events,
                 )
 
-    if cultural_knowledge_task is not None:
-        try:
-            await cultural_knowledge_task
-        except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
-
     if learning_task is not None:
         try:
             await learning_task
@@ -171,7 +149,6 @@ async def await_for_thread_tasks_stream(
 def wait_for_thread_tasks_stream(
     run_response: Union[TeamRunOutput, RunOutput],
     memory_future: Optional[Future] = None,
-    cultural_knowledge_future: Optional[Future] = None,
     learning_future: Optional[Future] = None,
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
@@ -222,14 +199,6 @@ def wait_for_thread_tasks_stream(
                     store_events=store_events,
                 )
 
-    # Wait for cultural knowledge creation
-    if cultural_knowledge_future is not None:
-        # TODO: Add events
-        try:
-            cultural_knowledge_future.result()
-        except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
-
     if learning_future is not None:
         try:
             learning_future.result()
@@ -242,7 +211,7 @@ def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:
 
     Call this after wait_for_open_threads / await_for_open_threads (or the
     streaming variants) to gather the isolated metrics collectors produced by
-    background memory, culture, and learning tasks.  Each argument can be a
+    background memory and learning tasks.  Each argument can be a
     ``concurrent.futures.Future``, ``asyncio.Task``, or ``None``.
     """
     collected: List[RunMetrics] = []

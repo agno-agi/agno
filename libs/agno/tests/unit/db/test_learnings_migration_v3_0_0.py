@@ -148,11 +148,16 @@ class TestContaminatedRowsLeaveTheReadableNamespace:
 
 
 class TestOtherTablesAreUntouched:
-    async def test_a_non_learnings_table_type_is_a_no_op(self, db: SqliteDb) -> None:
+    async def test_another_table_type_does_not_run_the_rekey(self, db: SqliteDb) -> None:
+        """The module also carries the runs and user_id work. Migrating another
+        table must leave the learnings rows alone."""
         from agno.db.migrations.versions import v3_0_0
 
-        assert v3_0_0.up(db, "sessions", "agno_sessions") is False
-        assert v3_0_0.down(db, "sessions", "agno_sessions") is False
+        legacy_id = _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")
+
+        v3_0_0.up(db, "memories", db.memory_table_name)
+
+        assert db.get_learning_by_id(legacy_id) is not None
 
     async def test_the_rekey_has_no_reverse(self, db: SqliteDb) -> None:
         legacy_id = _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")

@@ -1,5 +1,5 @@
 import asyncio
-import warnings
+import contextlib
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
@@ -19,6 +19,7 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
@@ -42,7 +43,9 @@ from agno.os.config import (
     TracesConfig,
     TracesDomainConfig,
 )
+from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
+from agno.os.job_queue import apply_queue_config, queue_lifespan
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
@@ -51,6 +54,7 @@ from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
+from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
@@ -126,7 +130,18 @@ async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
             return
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
-            log_warning(f"Timed out draining {len(pending)} cancel-persist task(s) before database shutdown")
+            # Cancel stragglers NOW, while the pool is still open, so their
+            # CancelledError handlers can persist a terminal status. Without
+            # this they are cancelled at loop teardown - AFTER _close_databases
+            # - and their persists silently hit a closed pool.
+            log_warning(
+                f"Drain timeout: cancelling {len(pending)} background task(s) so terminal "
+                "statuses persist before database shutdown"
+            )
+            for task in pending:
+                task.cancel()
+            with contextlib.suppress(Exception):
+                await asyncio.wait(pending, timeout=5.0)
             return
         await asyncio.wait(pending, timeout=remaining)
 
@@ -254,15 +269,14 @@ class AgentOS:
         tracing: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
+        queue: Optional[QueueConfig] = None,
+        event_stream: Optional[BaseEventStream] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
         scheduler: bool = False,
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
-        # Deprecated aliases for mcp_server
-        enable_mcp_server: Optional[bool] = None,
-        mcp_config: Optional[MCPServerConfig] = None,
     ):
         """Initialize AgentOS.
 
@@ -273,8 +287,8 @@ class AgentOS:
             version: Version of the AgentOS instance
             db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
             checkpoint: Default checkpoint level for agents in this AgentOS. Agents without their own
-                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools" (see
-                specs/agno/features/checkpointing/). None means no OS-level default; each agent falls
+                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools".
+                None means no OS-level default; each agent falls
                 back to "runs" at first-run time.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
@@ -309,17 +323,28 @@ class AgentOS:
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
+            queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
+                execute through it today; it is not a message-broker integration.
+                background=True runs are accepted immediately as PENDING and execute under
+                queue.max_concurrency per replica (shared across agents, teams and workflows;
+                enforced per event loop, so process-wide in the standard deployment). Runs beyond
+                the cap wait in line and can still be cancelled while waiting. 0 or below disables
+                capping. Setting queue.redis (URL or RedisCoordination) additionally enables
+                BOTH cross-container transports for background runs, built from shared clients:
+                distributed cancellation (control in) and the Redis event stream (events out), so
+                cancel and /resume work from any replica. Process-global: last setter wins if
+                multiple AgentOS instances configure it, and None leaves the current process
+                settings untouched (concurrency falls back to the AGNO_BACKGROUND_MAX_CONCURRENCY
+                env var or the default of 32).
+            event_stream: Explicit event stream override (granular escape hatch). Takes
+                precedence over the stream queue.redis would configure. Defaults to the
+                in-memory stream when neither is set.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
-            enable_mcp_server: Deprecated alias for ``mcp_server``. Used when
-                ``mcp_server`` is left at its default.
-            mcp_config: Deprecated. Pass the ``MCPServerConfig`` as ``mcp_server``
-                instead. Configures the MCP server but does not enable it.
-
         """
         if not agents and not workflows and not teams and not knowledge and not db:
             raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
@@ -360,36 +385,7 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
-        if enable_mcp_server is not None:
-            if mcp_server is False:
-                warnings.warn(
-                    "AgentOS(enable_mcp_server=...) is deprecated, use mcp_server instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                mcp_server = enable_mcp_server
-            else:
-                warnings.warn(
-                    "Both mcp_server and enable_mcp_server are provided. "
-                    "enable_mcp_server is deprecated; mcp_server will be used.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        if mcp_config is not None:
-            if isinstance(mcp_server, MCPServerConfig):
-                warnings.warn(
-                    "Both mcp_server and mcp_config carry an MCPServerConfig. "
-                    "mcp_config is deprecated; the mcp_server value will be used.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            else:
-                warnings.warn(
-                    "AgentOS(mcp_config=...) is deprecated, pass the MCPServerConfig as mcp_server instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        self.mcp_config: Optional[MCPServerConfig] = mcp_config
+        self.mcp_config: Optional[MCPServerConfig] = None
         self.mcp_server = mcp_server
         self.mcp_auth: Optional["AuthProvider"] = mcp_auth
         # Resolved lazily (and once): the MultiAuth-wrapped provider handed to FastMCP.
@@ -419,6 +415,24 @@ class AgentOS:
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
+
+        # Queue configuration. None keeps the process defaults (env var or
+        # library default for the concurrency cap, in-memory transports).
+        # queue.redis wires the cross-container transports over the process
+        # defaults only; the explicit event_stream parameter is applied first
+        # and survives the wiring regardless of its type.
+        self.queue = queue
+
+        # Event stream FIRST: the coordination wiring below only replaces the
+        # never-explicitly-set defaults and warns on asymmetric transports - it
+        # must see the user's explicit stream, or the one split-Redis config it
+        # exists to catch (custom stream on Redis A, wired cancellation on
+        # Redis B) never warns.
+        if event_stream is not None:
+            set_event_stream(event_stream)
+
+        if queue is not None:
+            apply_queue_config(queue)
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler
@@ -461,7 +475,7 @@ class AgentOS:
 
         # Track MCP tools declared on the registry so they connect in the same
         # lifespan as agent/team/workflow MCP tools (e.g. for components created
-        # from registry tools via StudioTool)
+        # from registry tools via StudioTools)
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
 
         # Check for duplicate IDs
@@ -488,15 +502,6 @@ class AgentOS:
             self.mcp_config = value
         else:
             self._mcp_enabled = bool(value)
-
-    @property
-    def enable_mcp_server(self) -> bool:
-        """Deprecated alias for ``mcp_server``."""
-        return self._mcp_enabled
-
-    @enable_mcp_server.setter
-    def enable_mcp_server(self, value: bool) -> None:
-        self._mcp_enabled = bool(value)
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -597,7 +602,15 @@ class AgentOS:
                 updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 updated_routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
-            updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            updated_routers.append(
+                get_schedule_router(
+                    os_db=self.db,
+                    settings=self.settings,
+                    include_agents=self.agents,
+                    include_teams=self.teams,
+                    include_workflows=self.workflows,
+                )
+            )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
@@ -649,6 +662,15 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
+
+        # Job queue operations surface (DLQ, requeue, stats) - only meaningful
+        # when the durable queue is enabled
+        if self.queue is not None and self.queue.durable:
+            self._add_router(app, get_queue_router(self, settings=self.settings))
+        else:
+            # Parity with every other switchable feature: answer 503 naming
+            # the switch instead of 404ing the whole surface
+            self._add_router(app, _get_disabled_feature_router("/queue", "Queue", "queue=QueueConfig(durable=True)"))
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -740,10 +762,10 @@ class AgentOS:
             # Track all MCP tools to later handle their connection
             if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
-                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    # Checking if the tool is an instance of MCPTools or a subclass of it
                     if hasattr(type(tool), "__mro__"):
                         mro_names = {cls.__name__ for cls in type(tool).__mro__}
-                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                        if "MCPTools" in mro_names:
                             if tool not in self.mcp_tools:
                                 self.mcp_tools.append(tool)
 
@@ -1044,6 +1066,10 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -1084,6 +1110,10 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -1119,7 +1149,15 @@ class AgentOS:
                 routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
-            routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            routers.append(
+                get_schedule_router(
+                    os_db=self.db,
+                    settings=self.settings,
+                    include_agents=self.agents,
+                    include_teams=self.teams,
+                    include_workflows=self.workflows,
+                )
+            )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
@@ -1183,9 +1221,17 @@ class AgentOS:
 
                 log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
 
+                status_code = getattr(exc, "status_code", 500)
+                # 4xx exceptions that carry their own status wrote their
+                # message for the client; 5xx details must never echo
+                # str(exc) - unhandled server errors are routinely store or
+                # driver failures whose text carries connection strings, SQL
+                # fragments, and hostnames. The full traceback is in the
+                # server log above; the wire gets the exception type only.
+                detail = str(exc) if status_code < 500 else f"Internal server error ({type(exc).__name__})"
                 return JSONResponse(
-                    status_code=getattr(exc, "status_code", 500),
-                    content={"detail": str(exc)},
+                    status_code=status_code,
+                    content={"detail": detail},
                 )
 
         # Update CORS middleware
@@ -1695,7 +1741,6 @@ class AgentOS:
         """Get the table names for a database"""
         table_names = {
             "session_table_name": db.session_table_name,
-            "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
             "learnings_table_name": db.learnings_table_name,
             "metrics_table_name": db.metrics_table_name,

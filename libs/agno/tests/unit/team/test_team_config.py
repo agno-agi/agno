@@ -142,6 +142,23 @@ def sample_team_config() -> Dict[str, Any]:
 # =============================================================================
 
 
+def _force_delete_config(db, component_id: str, version: int) -> None:
+    """Simulate a corrupt/legacy catalog by removing a config row directly.
+
+    The hardened delete_config refuses to break
+    a pin, so the broken state these tests exercise can only arrive from
+    outside the API - which is exactly what this raw delete reproduces.
+    """
+    table = db._get_table(table_type="component_configs")
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            table.delete().where(
+                table.c.component_id == component_id,
+                table.c.version == version,
+            )
+        )
+
+
 class TestTeamToDict:
     """Tests for Team.to_dict() method."""
 
@@ -525,7 +542,9 @@ class TestTeamFromDict:
 
             team = Team.from_dict(config, db=mock_db, strict=True)
 
-            mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, version=None, registry=None, strict=True)
+            mock_get_agent.assert_called_once_with(
+                id="agent-1", db=mock_db, version=None, registry=None, user_id=None, strict=True
+            )
             assert team.members == [mock_agent]
 
     def test_from_dict_falls_back_to_registry_for_member_agent(self, mock_db, member_agent):
@@ -886,7 +905,7 @@ class TestTeamLoad:
         registry = Registry(agents=[member_agent])
 
         # DB lookup only resolves the graph-backed member; registry resolves the other
-        def fake_get_agent(id, db, version=None, registry=None, strict=True):  # noqa: A002
+        def fake_get_agent(id, db, version=None, registry=None, user_id=None, strict=True):  # noqa: A002
             if id == "db-agent":
                 agent = Agent(id="db-agent", name="DB Agent")
                 return agent
@@ -1064,7 +1083,9 @@ class TestTeamDelete:
         basic_team.db = mock_db
         result = basic_team.delete()
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-team", hard_delete=False)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=False, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_hard_delete(self, basic_team, mock_db):
@@ -1074,7 +1095,9 @@ class TestTeamDelete:
         basic_team.db = mock_db
         result = basic_team.delete(hard_delete=True)
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-team", hard_delete=True)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=True, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_explicit_db(self, basic_team, mock_db):
@@ -1125,6 +1148,8 @@ class TestGetTeamById:
 
     def test_get_team_by_id_returns_team(self, mock_db):
         """Test get_team_by_id returns team from database."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {"config": {"id": "found-team", "name": "Found Team"}}
 
         team = get_team_by_id(db=mock_db, id="found-team")
@@ -1151,6 +1176,8 @@ class TestGetTeamById:
 
     def test_get_team_by_id_with_registry(self, mock_db):
         """Test get_team_by_id passes registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {"config": {"id": "registry-team", "tools": [{"name": "calc"}]}}
 
         mock_registry = MagicMock()
@@ -1170,6 +1197,8 @@ class TestGetTeamById:
 
     def test_get_team_by_id_sets_db(self, mock_db):
         """Test get_team_by_id sets db on returned team via registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         # The db is set via registry lookup when config contains a serialized db reference
         mock_db.id = "test-db"
         mock_db.get_config.return_value = {
@@ -1231,7 +1260,9 @@ class TestGetTeams:
 
         get_teams(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.TEAM, exclude_component_ids=None)
+        mock_db.list_components.assert_called_once_with(
+            component_type=ComponentType.TEAM, exclude_component_ids=None, user_id=None
+        )
 
     def test_get_teams_with_registry(self, mock_db):
         """Test get_teams passes registry to from_dict."""
@@ -1340,7 +1371,7 @@ class TestMemberPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="pm-team", version=1)
         pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
-        assert db.delete_config(component_id="pm-member", version=pinned)
+        _force_delete_config(db, "pm-member", pinned)
 
         with pytest.raises(ComponentRehydrationError, match=f"pins member agent 'pm-member' at version {pinned}"):
             get_team_by_id(db=db, id="pm-team", strict=True)
@@ -1357,7 +1388,7 @@ class TestMemberPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="ps-team", version=1)
         pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
-        assert db.delete_config(component_id="ps-member", version=pinned)
+        _force_delete_config(db, "ps-member", pinned)
         registry = Registry(agents=[Agent(id="ps-member", name="Code Member")])
 
         with pytest.raises(ComponentRehydrationError, match="pins member agent 'ps-member'"):
@@ -1461,3 +1492,300 @@ def test_team_provider_envelope_tools_survive_save_and_strict_reload(tmp_path):
     # And a load-save cycle keeps it too.
     loaded.save(db=db)
     assert db.get_config(component_id="env-team")["config"].get("tools") == [envelope]
+
+
+# =============================================================================
+# Memory manager round-trip (A3 regression: auto-generated ids 422'd dispatch)
+# =============================================================================
+
+
+class TestTeamMemoryManagerRoundTrip:
+    """Mirror of the agent memory_manager round-trip: a saved reference must
+    never refuse a team that would rebuild a default manager on its own, and
+    must round-trip a registered manager to the same live instance."""
+
+    def test_auto_created_manager_survives_fresh_registry_strict_load(self):
+        from agno.team._init import initialize_team
+
+        team = Team(id="mem-team", name="Mem Team", members=[], enable_agentic_memory=True)
+        initialize_team(team)
+        assert team.memory_manager is not None
+        assert team.memory_manager.id.startswith("memory_manager_")
+
+        config = team.to_dict()
+        assert "memory_manager" not in config
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.enable_agentic_memory is True
+        initialize_team(loaded)
+        assert loaded.memory_manager is not None
+
+    def test_registered_manager_round_trips_to_same_instance(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="shared-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager)
+
+        config = team.to_dict()
+        assert config["memory_manager"] == {"registry_id": "shared-memory"}
+
+        loaded = Team.from_dict(config, registry=Registry(memory_managers=[manager]), strict=True)
+        assert loaded.memory_manager is manager
+
+    def test_unregistered_manager_with_memory_flags_still_raises_strict(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="my-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager, update_memory_on_run=True)
+        config = team.to_dict()
+        assert config["memory_manager"] == {"registry_id": "my-memory"}
+
+        # Teams share the agent module's memory manager resolution.
+        with pytest.raises(ComponentRehydrationError, match="my-memory"):
+            Team.from_dict(config, registry=Registry(), strict=True)
+
+        # strict=False still loads the component without it.
+        loaded = Team.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.memory_manager is None
+
+    def test_unregistered_manager_without_flags_raises_strict(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="my-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager)
+        config = team.to_dict()
+
+        with pytest.raises(ComponentRehydrationError, match="memory manager 'my-memory'"):
+            Team.from_dict(config, registry=Registry(), strict=True)
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.memory_manager is None
+
+    def test_auto_generated_id_never_serialized_even_for_explicit_manager(self):
+        from agno.memory.manager import MemoryManager
+
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=MemoryManager())
+        with patch("agno.team._storage.log_warning") as mock_warn:
+            config = team.to_dict()
+        assert "memory_manager" not in config
+        assert mock_warn.called
+
+    def test_legacy_auto_id_reference_dropped_under_strict(self):
+        config = {
+            "id": "legacy-team",
+            "name": "Legacy Team",
+            "memory_manager": {"registry_id": "memory_manager_ab12cd34"},
+        }
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.memory_manager is None
+
+
+class TestTeamMemoryManagerReferenceShapes:
+    """Mirror of the agent reference-shape suite: a config authored against
+    the registry listing carries the resource's name or id, and every shape
+    has to bind the same live manager."""
+
+    def _team_config(self, manager_ref):
+        return {"id": "mem-team", "name": "Mem Team", "members": [], "memory_manager": manager_ref}
+
+    def test_registry_id_key_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"registry_id": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_id_key_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"id": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_name_key_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"name": "Support Memory", "description": "picked in the UI"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_name_key_resolves_to_id_when_manager_is_unnamed(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1")
+        loaded = Team.from_dict(
+            self._team_config({"name": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_bare_string_reference_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1")
+        loaded = Team.from_dict(
+            self._team_config("mm-1"),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_id_wins_over_name(self):
+        from agno.memory.manager import MemoryManager
+
+        by_name = MemoryManager(id="mm-1", name="shared-key")
+        by_id = MemoryManager(id="shared-key", name="Other Memory")
+        loaded = Team.from_dict(
+            self._team_config({"name": "shared-key"}),
+            registry=Registry(memory_managers=[by_name, by_id]),
+            strict=True,
+        )
+        assert loaded.memory_manager is by_id
+
+    def test_ambiguous_name_refuses_strict(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        first = MemoryManager(id="mm-1", name="Support Memory")
+        second = MemoryManager(id="mm-2", name="Support Memory")
+        registry = Registry(memory_managers=[first, second])
+
+        with pytest.raises(ComponentRehydrationError, match="two distinct"):
+            Team.from_dict(self._team_config({"name": "Support Memory"}), registry=registry, strict=True)
+
+        loaded = Team.from_dict(self._team_config({"name": "Support Memory"}), registry=registry, strict=False)
+        assert loaded.memory_manager is first
+
+    def test_unresolvable_name_still_raises_strict_and_drops_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(memory_managers=[MemoryManager(id="mm-1", name="Support Memory")])
+
+        with pytest.raises(ComponentRehydrationError, match="memory manager 'Other Memory'"):
+            Team.from_dict(self._team_config({"name": "Other Memory"}), registry=registry, strict=True)
+
+        loaded = Team.from_dict(self._team_config({"name": "Other Memory"}), registry=registry, strict=False)
+        assert loaded.memory_manager is None
+
+    def test_keyless_reference_reports_the_payload(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        payload = {"class_path": "agno.memory.manager.MemoryManager"}
+
+        with pytest.raises(ComponentRehydrationError) as exc_info:
+            Team.from_dict(self._team_config(payload), registry=Registry(), strict=True)
+        message = str(exc_info.value)
+        assert "'None'" not in message
+        assert "class_path" in message
+        assert "serving" in message
+
+        loaded = Team.from_dict(self._team_config(payload), registry=Registry(), strict=False)
+        assert loaded.memory_manager is None
+
+    def test_ambiguous_name_refuses_even_with_the_memory_flags_set(self):
+        """A team whose own settings rebuild a default manager never needed
+        the referenced one, so an ambiguous name must drop with a warning
+        rather than make the team permanently unloadable."""
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(
+            memory_managers=[
+                MemoryManager(id="mm-1", name="Support Memory"),
+                MemoryManager(id="mm-2", name="Support Memory"),
+            ]
+        )
+        config = self._team_config({"name": "Support Memory"})
+        config["update_memory_on_run"] = True
+
+        # Teams share the agent module's memory manager resolution.
+        with pytest.raises(ComponentRehydrationError, match="Support Memory"):
+            Team.from_dict(config, registry=registry, strict=True)
+
+        # strict=False keeps the documented lenient behaviour: warn, and bind
+        # the first of the competing managers.
+        loaded = Team.from_dict(config, registry=registry, strict=False)
+        assert loaded.update_memory_on_run is True
+        assert loaded.memory_manager is not None
+
+    def test_stale_id_key_falls_back_to_the_name_key(self):
+        """The registry listing emits both an id and a name, so a config
+        authored from it carries both; a manager re-registered under a new id
+        must still bind through the name."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-new", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"id": "mm-old", "name": "Support Memory"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_stale_auto_generated_id_falls_back_to_the_name_key(self):
+        """An auto-generated id is minted fresh every process, so the name is
+        the only key that can resolve; the stale id must not swallow the
+        reference and leave the team silently without memory."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"id": "memory_manager_deadbeef", "name": "Support Memory"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_auto_generated_id_with_unresolvable_name_still_raises_strict(self):
+        """The auto-id escape covers a reference carrying nothing else; a real
+        name alongside it is a manager the user asked for by name."""
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(memory_managers=[MemoryManager(id="mm-1", name="Support Memory")])
+
+        with pytest.raises(ComponentRehydrationError) as exc_info:
+            Team.from_dict(
+                self._team_config({"id": "memory_manager_deadbeef", "name": "Other Memory"}),
+                registry=registry,
+                strict=True,
+            )
+        message = str(exc_info.value)
+        assert "memory_manager_deadbeef" in message
+        assert "Other Memory" in message
+
+    def test_lenient_ambiguous_name_warns_naming_the_competing_managers(self):
+        """Lenient stays lenient and binds the first match, but the arbitrary
+        choice must not be silent."""
+        from agno.memory.manager import MemoryManager
+
+        first = MemoryManager(id="mm-1", name="Support Memory")
+        second = MemoryManager(id="mm-2", name="Support Memory")
+
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Team.from_dict(
+                self._team_config({"name": "Support Memory"}),
+                registry=Registry(memory_managers=[first, second]),
+                strict=False,
+            )
+        assert loaded.memory_manager is first
+        warnings = " ".join(str(c) for c in mock_warn.call_args_list)
+        assert "mm-1" in warnings
+        assert "mm-2" in warnings

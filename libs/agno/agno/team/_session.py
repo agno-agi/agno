@@ -21,6 +21,7 @@ from agno.db.base import SessionType
 from agno.metrics import SessionMetrics
 from agno.models.message import Message
 from agno.run import RunStatus
+from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
@@ -428,6 +429,57 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
         else:
             _upsert_session(team, session=storage_session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
+
+
+def save_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Persist a single run to the database (O(1) operation).
+
+    Use this instead of save_session() when only a single run has changed.
+    """
+    from agno.team._init import _has_async_db
+    from agno.team._run import _scrub_member_responses
+    from agno.team._storage import _upsert_run
+
+    if _has_async_db(team):
+        raise ValueError("Cannot use sync save_run() with an async database. Use asave_run() instead.")
+
+    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+        storage_run = run
+        if hasattr(run, "member_responses"):
+            if not team.store_member_responses:
+                storage_run = _scrub_member_responses_keeping_paused(team, run)
+            else:
+                _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
+        _upsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
+
+
+async def asave_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Async version of ``save_run``."""
+    from agno.team._run import _scrub_member_responses
+    from agno.team._storage import _aupsert_run
+
+    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+        storage_run = run
+        if hasattr(run, "member_responses"):
+            if not team.store_member_responses:
+                storage_run = _scrub_member_responses_keeping_paused(team, run)
+            else:
+                _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
+        await _aupsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
 
 
 # ---------------------------------------------------------------------------

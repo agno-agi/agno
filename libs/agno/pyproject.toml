@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.9.0"
+version = "3.0.0a2"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -63,6 +63,9 @@ dev = [
   "sqlalchemy",
   "aiosqlite",
   "greenlet",
+  # Driver for the Postgres adapter suites under tests/unit/db; without it
+  # they importorskip away and only the SQLite half of each guard is run.
+  "agno[postgres]",
   # First-party interfaces exercised by the unit suite
   "agno[slack]",
   "agno[agui]",
@@ -95,7 +98,7 @@ infinity = ["infinity_client"]
 litellm = ["litellm<=1.82.6"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
-mistral = ["mistralai"]
+mistral = ["mistralai>=2.0.0"]
 ollama = ["ollama"]
 openai = ["openai"]
 portkey = ["portkey-ai"]
@@ -126,6 +129,7 @@ elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py>=2.0.0"]
 fal = ["fal_client"]
+finance = ["yfinance"]  # default FinanceTools provider; financialdatasets.ai needs only httpx (core)
 firecrawl = ["firecrawl-py==3.4.0"]
 github = ["PyGithub"]
 gitlab = ["python-gitlab", "httpx"]
@@ -143,7 +147,7 @@ opencv = ["opencv-python"]
 oxylabs = ["oxylabs"]
 parallel = ["parallel-web>=1.0"]
 plivo = ["plivo"]
-psycopg = ["psycopg-binary", "psycopg"]
+psycopg = ["psycopg[binary]"]
 redmine = ["python-redmine"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
@@ -171,8 +175,8 @@ async-postgres = ["asyncpg"]
 firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
-postgres = ["psycopg-binary"]
-redis = ["redis", "redisvl>=0.12.1"]
+postgres = ["sqlalchemy", "psycopg[binary]"]
+redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
 sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]
@@ -252,7 +256,7 @@ models = [
   # "agno[litellm]",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
   "agno[lmstudio]",
   "agno[meta]",
-  # "agno[mistral]",  # Temporarily disabled - mistralai quarantined on PyPI (May 12, 2026)
+  "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
   "agno[portkey]",
@@ -276,6 +280,7 @@ tools = [
   "agno[evm]",
   "agno[exa]",
   "agno[fal]",
+  "agno[finance]",
   "agno[firecrawl]",
   "agno[github]",
   "agno[gitlab]",
@@ -590,6 +595,7 @@ module = [
   "psycopg.*",
   "pyarrow.*",
   "pycountry.*",
+  "pymilvus.*",
   "pymongo.*",
   "pypdf.*",
   "pytz.*",

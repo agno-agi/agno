@@ -7,7 +7,8 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "feat/environments"
+      - "feat/v3.0"
+      - "fix/sql-table-cache"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -681,7 +682,6 @@ jobs:
           ./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
           ./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
           ./libs/agno/tests/integration/agent/test_session.py \
-          ./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
           ./libs/agno/tests/integration/agent/test_introduction.py \
           ./libs/agno/tests/integration/agent/test_followups.py \
           ./libs/agno/tests/integration/agent/test_tool_hooks.py \
@@ -727,7 +727,6 @@ jobs:
           --ignore=./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
           --ignore=./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
           --ignore=./libs/agno/tests/integration/agent/test_session.py \
-          --ignore=./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
           --ignore=./libs/agno/tests/integration/agent/test_introduction.py
 
   test-teams-1:
@@ -808,13 +807,12 @@ jobs:
           ./libs/agno/tests/integration/teams/test_session_state.py \
           ./libs/agno/tests/integration/teams/test_storage_and_memory.py \
           ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_tool_hitl.py \
-          ./libs/agno/tests/integration/teams/test_reasoning_content_default_COT.py \
           ./libs/agno/tests/integration/teams/test_filter_tool_calls.py \
           ./libs/agno/tests/integration/teams/test_multimodal.py
 
   test-teams-3:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Green runs take 24-26 min; split the job to get under 20
+    timeout-minutes: 40 # Green runs take 24-26 min; one slow provider window pushed three runs past 30. Split the job to get under 20.
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1013,6 +1011,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
+          export SSL_CERT_FILE="$(python -m certifi)"
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
