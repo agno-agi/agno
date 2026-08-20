@@ -143,15 +143,18 @@ class TestNestedBlocksAreRedactedToo:
         assert r.json()["config"]["members"][0]["db"]["id"] == "prod"
 
 
-class TestASharedComponentIsReadWhole:
-    """Redaction is for configs the caller cannot write back.
+class TestRedactionFollowsTheWriteRule:
+    """Redaction is decided by the write rule, not by a rule of its own.
 
-    An unowned row -- what `agent.save(db=...)` produces, and anything created
-    before ownership stamping -- is readable AND writable by every
-    authenticated caller. The only write the API offers is a whole config, so
-    redacting the read and accepting it back on the next save would destroy
-    the stored connection; for a nested block that loss is permanent, because
-    the resolver repairs only the top-level one.
+    The only write the API offers is a whole config, so a caller that may save
+    a row must be shown that row whole: hand it a redacted body and its next
+    save stores the redaction, destroying the connection. A caller that may
+    NOT save the row has no such claim on the connection, so it reads without.
+
+    Both halves are pinned against BOTH clients on purpose. The predicate used
+    to be read from an identity that ignores ``user_isolation`` while the write
+    guard read one that honours it, and a suite that asserted the read under
+    one client and the write under the other could not see them disagree.
     """
 
     @pytest.fixture
@@ -169,25 +172,65 @@ class TestASharedComponentIsReadWhole:
         return "shared-agent"
 
     @pytest.mark.parametrize("route", ["/components/shared-agent/configs", "/components/shared-agent/configs/current"])
-    def test_an_authenticated_caller_reads_it_whole(self, db, shared, route):
-        r = _client(db, "bob").get(route)
-        assert r.status_code == 200, (r.status_code, r.text)
-        assert "hunter2" in r.text
+    def test_a_scoped_caller_cannot_write_a_shared_row_so_it_reads_redacted(self, db, shared, route):
+        client = _client(db, "bob")
+        assert "hunter2" not in client.get(route).text
+        # The other half of the rule, in the same test: this caller really is
+        # refused the write, so nothing was taken away from it.
+        config = client.get("/components/shared-agent/configs/current").json()["config"]
+        assert client.post("/components/shared-agent/configs", json={"config": config}).status_code == 403
 
-    def test_a_read_modify_write_keeps_the_connection(self, db, shared):
-        # user_isolation OFF is the default and the shape that matters:
-        # get_scoped_user_id returns None so the write guard never fires, while
-        # draft_preview_identity still reports the JWT subject. The two rules
-        # disagreeing is exactly what made the round trip lossy.
+    def test_an_unscoped_caller_may_write_a_shared_row_so_it_reads_it_whole(self, db, shared):
         client = _unscoped_write_client(db, "bob")
         config = client.get("/components/shared-agent/configs/current").json()["config"]
+        assert config["db"]["db_url"] == "postgresql://user:hunter2@h/db"
         config["name"] = "renamed"
         assert client.post("/components/shared-agent/configs", json={"config": config}).status_code == 201
         stored = db.get_config("shared-agent", version=2)["config"]
         assert stored["db"]["db_url"] == "postgresql://user:hunter2@h/db"
 
     def test_another_owners_component_is_still_redacted(self, db, published):
-        """The rule narrowed to unowned rows, not to nothing."""
         r = _client(db, "bob").get(f"/components/{published}/configs/current")
         assert r.status_code == 200
         assert "hunter2" not in r.text
+
+
+class TestAnUnscopedCallerRoundTripsAnotherOwnersConfig:
+    """The regression this predicate was changed to fix.
+
+    With ``user_isolation`` off -- the default -- every authenticated caller is
+    unscoped: it may edit, and even delete, any owner's component. Redacting
+    its read while accepting its write turned an ordinary authorised edit into
+    silent data loss, and no test covered it because the suite asserted reads
+    under the scoped client and writes under the unscoped one.
+    """
+
+    @pytest.fixture
+    def alice_team(self, db):
+        db.create_component_with_config(
+            component_id="alice-team",
+            component_type=ComponentType.TEAM,
+            name="alice-team",
+            config={
+                "name": "alice-team",
+                "db": {"id": "prod", "type": "postgres", "db_url": "postgresql://u:hunter2@h/agno"},
+                "members": [
+                    {"name": "m1", "db": {"id": "prod", "type": "postgres", "db_url": "postgresql://u:nested@h/agno"}}
+                ],
+            },
+            stage="published",
+            user_id="alice",
+        )
+        return "alice-team"
+
+    def test_the_stored_connection_survives_the_round_trip(self, db, alice_team):
+        client = _unscoped_write_client(db, "bob")
+        config = client.get(f"/components/{alice_team}/configs/current").json()["config"]
+        config["name"] = "renamed by bob"
+        assert client.post(f"/components/{alice_team}/configs", json={"config": config}).status_code == 201
+
+        stored = db.get_config(alice_team, version=2)["config"]
+        assert stored["db"]["db_url"] == "postgresql://u:hunter2@h/agno"
+        # The nested block is the half no resolver repairs, so it is the half
+        # that proves the read was not redacted rather than merely repaired.
+        assert stored["members"][0]["db"]["db_url"] == "postgresql://u:nested@h/agno"

@@ -280,6 +280,67 @@ def _validate_referenced_component_ownership(
             raise HTTPException(status_code=404, detail=f"Component {referenced_id} not found")
 
 
+_BAD_VERSION = "Link child_version {raw!r} is not an integer version number"
+
+# Versions are stored in an INTEGER column. A value outside its range reaches
+# the database as a query parameter and comes back as a driver error, i.e. a
+# 500 on caller input, so the range is part of the shape check.
+_MAX_VERSION = 2**31 - 1
+
+
+def _require_version_in_range(version: int) -> None:
+    if version < 1 or version > _MAX_VERSION:
+        raise HTTPException(status_code=400, detail=f"Link child_version {version} is out of range")
+
+
+def _normalize_link_versions(links: Optional[List[Dict[str, Any]]]) -> None:
+    """Make every ``child_version`` an int, in place, before anything reads it.
+
+    The links body is ``List[Dict[str, Any]]``, so the version arrives however
+    JSON spelled it. Letting the guard convert it one way and the INTEGER
+    column convert it another is the whole bug: ``int()`` truncates, while
+    Postgres assignment-casts a float by ROUNDING, so a pin sent as ``2.6``
+    was checked at version 2 and stored at version 3. Whatever survives here
+    is what both the guard and the adapter see, so they cannot disagree.
+
+    A spelling that names no version is refused rather than skipped -- skipping
+    is how a guard on a caller-supplied field gets walked around.
+    """
+    if not links:
+        return
+    for link in links:
+        if not isinstance(link, dict) or "child_version" not in link:
+            continue
+        raw = link["child_version"]
+        if raw is None:
+            continue  # The adapter requires it and says so; not this rule's refusal.
+        # bool is an int subclass; True would otherwise be stored as version 1.
+        if isinstance(raw, bool):
+            raise HTTPException(status_code=400, detail=_BAD_VERSION.format(raw=raw))
+        if isinstance(raw, int):
+            _require_version_in_range(raw)
+            continue
+        if isinstance(raw, float):
+            # 2.0 names version 2; 2.6 names no version at all and must not be
+            # rounded into one by the column on the way in.
+            if not raw.is_integer():
+                raise HTTPException(status_code=400, detail=_BAD_VERSION.format(raw=raw))
+            _require_version_in_range(int(raw))
+            link["child_version"] = int(raw)
+            continue
+        if isinstance(raw, str):
+            try:
+                coerced = int(raw.strip())
+            except (TypeError, ValueError):
+                # Without this the string reaches the INTEGER column and the
+                # driver error surfaces as a 500 on caller input.
+                raise HTTPException(status_code=400, detail=_BAD_VERSION.format(raw=raw))
+            _require_version_in_range(coerced)
+            link["child_version"] = coerced
+            continue
+        raise HTTPException(status_code=400, detail=_BAD_VERSION.format(raw=raw))
+
+
 def _validate_pinned_versions_readable(
     db: BaseDb,
     links: Optional[List[Dict[str, Any]]],
@@ -309,18 +370,8 @@ def _validate_pinned_versions_readable(
         child_id = link.get("child_component_id")
         if not isinstance(child_id, str):
             continue
-        # The version is whatever JSON carried: the links body is
-        # List[Dict[str, Any]], so "2" and 2.0 arrive unconverted and the
-        # adapter's INTEGER column coerces them on the way in. Coerce here the
-        # same way rather than skipping what is not already an int -- skipping
-        # is how a guard on a caller-supplied field gets walked around. bool is
-        # an int subclass and is not a version.
-        raw_version = link.get("child_version")
-        if isinstance(raw_version, bool) or raw_version is None:
-            continue
-        try:
-            child_version = int(raw_version)
-        except (TypeError, ValueError):
+        child_version = link.get("child_version")
+        if not isinstance(child_version, int):
             continue
         try:
             child_row = db.get_component(child_id)
@@ -363,24 +414,26 @@ def _redact_db_connection(value: Any) -> Any:
 
 
 def _config_response(
-    config: Dict[str, Any], component_row: Optional[Dict[str, Any]], request: Request
+    config: Dict[str, Any], component_row: Optional[Dict[str, Any]], scoped_user_id: Optional[str]
 ) -> ComponentConfigResponse:
     """A config as this caller may read it.
 
-    The owner, an unscoped caller and a privileged one read the config as
-    stored; anyone else reads it without the database's connection details.
+    Redaction is for configs the caller cannot write back, so it is decided by
+    the write rule itself rather than by a second rule of its own. The only
+    write the API offers is a whole config: hand a caller a redacted body it is
+    allowed to save, and the next save stores the redaction, destroying the
+    connection - permanently for a nested block, since the resolver repairs
+    only the top-level one.
 
-    An UNOWNED (shared) row is read whole, the same rule may_read_draft_configs
-    uses. That is not a courtesy: a caller who may READ a shared component may
-    also WRITE it, and the only write the API offers is a whole config. Handing
-    such a caller a redacted body and taking it back on the next save would
-    destroy the stored connection - and for a nested block, permanently, since
-    the resolver repairs only the top-level one. Redaction is for configs the
-    caller cannot write back.
+    So the predicate here is exactly the negation of ``_require_write_ownership``:
+    a caller that guard would refuse reads the config without the database's
+    connection details, and a caller it would let through reads it whole. Both
+    rules must read the SAME identity - ``get_scoped_user_id`` - because it is
+    the one that honours ``user_isolation``; deciding reads from a different
+    identity is what let the two disagree.
     """
-    actor, privileged = draft_preview_identity(request)
     owner = (component_row or {}).get("user_id")
-    if not privileged and actor is not None and owner is not None and owner != actor:
+    if scoped_user_id is not None and owner != scoped_user_id:
         blob = config.get("config")
         if isinstance(blob, dict):
             config = {**config, "config": _redact_db_connection(blob)}
@@ -1028,14 +1081,15 @@ def attach_routes(
         include_config: bool = Query(True, description="Include full config blob"),
     ) -> List[ComponentConfigResponse]:
         try:
-            component_row = db.get_component(component_id, user_id=get_scoped_user_id(request))
+            scoped_user_id = get_scoped_user_id(request)
+            component_row = db.get_component(component_id, user_id=scoped_user_id)
             if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             configs = db.list_configs(component_id, include_config=include_config)
             actor, privileged = draft_preview_identity(request)
             if not may_read_draft_configs(component_row, actor, privileged):
                 configs = [c for c in configs if c.get("stage") == "published"]
-            return [_config_response(c, component_row, request) for c in configs]
+            return [_config_response(c, component_row, scoped_user_id) for c in configs]
         except HTTPException:
             raise
         except Exception as e:
@@ -1076,6 +1130,7 @@ def attach_routes(
             )
             # A link names a version as well as a component, and visibility is
             # not readable depth.
+            _normalize_link_versions(body.links)
             _validate_pinned_versions_readable(db, body.links, request)
 
             _reject_unsupported_guard(body.guard, "latest_version")
@@ -1140,6 +1195,7 @@ def attach_routes(
             )
             # A link names a version as well as a component, and visibility is
             # not readable depth.
+            _normalize_link_versions(body.links)
             _validate_pinned_versions_readable(db, body.links, request)
 
             _reject_unsupported_guard(body.guard, "latest_version")
@@ -1184,13 +1240,14 @@ def attach_routes(
         component_id: str = Path(description="Component ID"),
     ) -> ComponentConfigResponse:
         try:
-            component_row = db.get_component(component_id, user_id=get_scoped_user_id(request))
+            scoped_user_id = get_scoped_user_id(request)
+            component_row = db.get_component(component_id, user_id=scoped_user_id)
             if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id)
             if config is None:
                 raise HTTPException(status_code=404, detail=f"No current config for {component_id}")
-            return _config_response(config, component_row, request)
+            return _config_response(config, component_row, scoped_user_id)
         except HTTPException:
             raise
         except Exception as e:
@@ -1212,7 +1269,8 @@ def attach_routes(
         version: int = Path(description="Version number"),
     ) -> ComponentConfigResponse:
         try:
-            component_row = db.get_component(component_id, user_id=get_scoped_user_id(request))
+            scoped_user_id = get_scoped_user_id(request)
+            component_row = db.get_component(component_id, user_id=scoped_user_id)
             if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id, version=version)
@@ -1228,7 +1286,7 @@ def attach_routes(
 
             if config is None:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
-            return _config_response(config, component_row, request)
+            return _config_response(config, component_row, scoped_user_id)
         except HTTPException:
             raise
         except Exception as e:
