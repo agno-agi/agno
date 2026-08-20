@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -19,13 +20,14 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.registry.registry import Registry
+from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.tools.function import Function
@@ -40,6 +42,140 @@ from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
+
+# MemoryManager.__init__ (agno/memory/manager.py) auto-generates
+# ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
+# every process, so a config carrying it can never resolve against a registry
+# in a new process; it must not be written as a registry reference.
+_AUTO_MEMORY_MANAGER_ID_RE = re.compile(r"memory_manager_[0-9a-f]{8}")
+
+
+def is_auto_generated_memory_manager_id(manager_id: Any) -> bool:
+    """True when the id has the shape MemoryManager auto-generates per instance."""
+    return isinstance(manager_id, str) and _AUTO_MEMORY_MANAGER_ID_RE.fullmatch(manager_id) is not None
+
+
+# Keys a serialized memory_manager reference can carry. to_dict writes
+# ``registry_id``; a config authored against the registry listing carries the
+# resource's ``id`` or ``name`` the way a knowledge reference does. A bare
+# string is the id itself.
+_MEMORY_MANAGER_REF_KEYS = ("registry_id", "id", "name")
+
+
+def _memory_manager_ref_keys(manager_ref: Any) -> List[str]:
+    """Every registry key a serialized memory_manager reference carries.
+
+    The registry listing emits both an id and a name for each manager, so a
+    config authored from it carries both. Either one may be the key that still
+    resolves in the process doing the load, so all of them are candidates.
+    """
+    if isinstance(manager_ref, str):
+        return [manager_ref] if manager_ref else []
+    if isinstance(manager_ref, dict):
+        keys: List[str] = []
+        for key in _MEMORY_MANAGER_REF_KEYS:
+            value = manager_ref.get(key)
+            if isinstance(value, str) and value and value not in keys:
+                keys.append(value)
+        return keys
+    return []
+
+
+def _competing_memory_manager_ids(registry: Registry, name: str) -> List[str]:
+    """Ids of the registered managers a single listing name matches."""
+    return [
+        str(getattr(manager, "id", None))
+        for manager in (registry.memory_managers or [])
+        if _memory_manager_resource_name(manager) == name
+    ]
+
+
+def resolve_memory_manager_reference(
+    config: Dict[str, Any],
+    registry: Optional[Registry],
+    strict: bool,
+    component_label: str,
+) -> None:
+    """Replace ``config["memory_manager"]`` with the live instance it references.
+
+    Agents and teams write and read the reference identically, so both call
+    this. A reference that cannot be resolved is dropped, or refused under
+    strict when dropping it would lose memory the component asked for.
+    """
+    manager_ref = config.get("memory_manager")
+    if manager_ref is None:
+        return
+
+    ref_keys = _memory_manager_ref_keys(manager_ref)
+    resolved_manager = None
+    ambiguous_key: Optional[str] = None
+    if registry is not None:
+        # Keys are tried in priority order, and each is resolved as an id
+        # before a name: within one key an id match beats a name match, but an
+        # earlier key always outranks a later one. Resolving every key as an id
+        # first would let the reference's name field outrank its own
+        # registry_id whenever some unrelated manager's id equals that name.
+        for key in ref_keys:
+            resolved_manager = registry.get_memory_manager(key)
+            if resolved_manager is not None:
+                break
+            if registry.memory_manager_name_is_ambiguous(key):
+                # A name two distinct managers share could bind the wrong one.
+                # A strict load leaves it unresolved so the remaining keys
+                # decide; a lenient load stays lenient and takes the first
+                # match, naming the managers that competed.
+                if strict:
+                    if ambiguous_key is None:
+                        ambiguous_key = key
+                    continue
+                competing = ", ".join(_competing_memory_manager_ids(registry, key))
+                log_warning(
+                    f"Memory manager name '{key}' matches more than one registered manager "
+                    f"({competing}); binding the first."
+                )
+            resolved_manager = registry.get_memory_manager_by_name(key)
+            if resolved_manager is not None:
+                break
+
+    if resolved_manager is not None:
+        config["memory_manager"] = resolved_manager
+        return
+
+    # A reference carrying nothing but an auto-generated id (written by configs
+    # saved before ids were filtered) can never resolve in a new process, so
+    # refusing on it would 422 the component forever. That escape is weighed
+    # before any refusal, including the ambiguous-name one.
+    #
+    # There is deliberately no escape for "the component rebuilds a default
+    # manager anyway": the serializer writes this reference ONLY for a manager
+    # with a stable, deliberately-assigned id, so what a default rebuild
+    # produces is a different manager - the agent's own model, no capture
+    # instructions - writing memories under rules nobody asked for, while the
+    # caller is told the load succeeded. A missing model, knowledge or tool
+    # reference refuses on this same path; so does this one.
+    only_auto_ids = bool(ref_keys) and all(is_auto_generated_memory_manager_id(key) for key in ref_keys)
+    tried = " or ".join(f"'{key}'" for key in ref_keys) if ref_keys else repr(manager_ref)
+    if strict and not only_auto_ids:
+        if ambiguous_key is not None:
+            raise ComponentRehydrationError(
+                f"{component_label} references memory manager '{ambiguous_key}', but two distinct "
+                "managers are registered under that name, so the reference could bind the "
+                "wrong manager. Give the managers distinct names."
+            )
+        raise ComponentRehydrationError(
+            f"{component_label} references memory manager {tried} which was not "
+            "found in the registry. Register the manager in the process serving the component, or "
+            "pass strict=False to load the component without it."
+        )
+    if ambiguous_key is not None:
+        log_warning(
+            f"Memory manager name '{ambiguous_key}' matches two distinct registered managers; "
+            "loading the component without it."
+        )
+    else:
+        log_warning(f"Memory manager {tried} not found in registry; loading the component without it.")
+    config.pop("memory_manager", None)
+
 
 # ---------------------------------------------------------------------------
 # Run output accessors
@@ -652,9 +788,24 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["add_dependencies_to_context"] = agent.add_dependencies_to_context
 
     # --- Agentic Memory settings ---
-    # TODO: implement agentic memory serialization
-    # if agent.memory_manager is not None:
-    # config["memory_manager"] = agent.memory_manager.to_dict()
+    # Stored as a registry reference by id, like knowledge: the manager holds
+    # a model and callables, so the config names it and the registry supplies
+    # the live object on load. An auto-generated id is minted fresh every
+    # process, so it can never resolve in a new one: writing it would poison
+    # every future strict load. Only a stable, user-assigned id is referenced.
+    if agent.memory_manager is not None:
+        memory_manager_id = getattr(agent.memory_manager, "id", None)
+        if memory_manager_id and not is_auto_generated_memory_manager_id(memory_manager_id):
+            config["memory_manager"] = {"registry_id": memory_manager_id}
+        elif agent.enable_agentic_memory or agent.update_memory_on_run:
+            # The default manager initialize_agent builds; it rebuilds itself
+            # from these flags on load, so there is nothing to reference.
+            log_debug("Agent memory_manager has an auto-generated id; not saved, the default rebuilds on load.")
+        else:
+            log_warning(
+                "Agent memory_manager has no stable id, so it cannot be referenced across processes and will "
+                "not be saved. Give the manager an explicit id and register it in the registry to keep it."
+            )
     if agent.enable_agentic_memory:
         config["enable_agentic_memory"] = agent.enable_agentic_memory
     if agent.update_memory_on_run:
@@ -962,13 +1113,8 @@ def from_dict(
         config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle reasoning_model reconstruction ---
-    # TODO: implement reasoning model deserialization
-    # if "reasoning_model" in config:
-    #     model_data = config["reasoning_model"]
-    #     if isinstance(model_data, dict) and "id" in model_data:
-    #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-    #     elif isinstance(model_data, str):
-    #         config["reasoning_model"] = get_model(model_data)
+    if config.get("reasoning_model") is not None:
+        config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1067,10 +1213,7 @@ def from_dict(
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
-    # TODO: implement memory manager deserialization
-    # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
-    #     from agno.memory import MemoryManager
-    #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+    resolve_memory_manager_reference(config, registry, strict, component_label)
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization
@@ -1142,7 +1285,7 @@ def from_dict(
         dependencies=config.get("dependencies"),
         add_dependencies_to_context=config.get("add_dependencies_to_context", False),
         # --- Agentic Memory settings ---
-        # memory_manager=config.get("memory_manager"),  # TODO
+        memory_manager=config.get("memory_manager"),
         enable_agentic_memory=config.get("enable_agentic_memory", False),
         update_memory_on_run=config.get("update_memory_on_run", False),
         add_memories_to_context=config.get("add_memories_to_context"),
@@ -1167,7 +1310,7 @@ def from_dict(
         tool_call_limit=config.get("tool_call_limit"),
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
-        # reasoning_model=config.get("reasoning_model"),  # TODO
+        reasoning_model=config.get("reasoning_model"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),
@@ -1219,7 +1362,7 @@ def from_dict(
         store_events=config.get("store_events", False),
         role=config.get("role"),
         # --- Metadata ---
-        metadata=config.get("metadata"),
+        metadata=strip_reserved_run_metadata(config.get("metadata")),
         # --- Compression settings ---
         compress_tool_results=config.get("compress_tool_results", False),
         # compression_manager=config.get("compression_manager"),  # TODO
@@ -1300,6 +1443,7 @@ def load(
     label: Optional[str] = None,
     version: Optional[int] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional[Agent]:
     """
     Load an agent by id.
@@ -1317,6 +1461,15 @@ def load(
     Returns:
         The agent loaded from the database or None if not found.
     """
+
+    if published_only and version is None and label is None:
+        # Dispatch semantics on demand: resolve strictly through the live
+        # pointer instead of the current-or-latest-draft read fallback.
+        component_row = db.get_component(component_id=id)
+        current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+        if current_version is None:
+            return None
+        version = current_version
 
     data = db.get_config(component_id=id, label=label, version=version)
     if data is None:
@@ -1344,6 +1497,7 @@ def delete(
     *,
     db: Optional[BaseDb] = None,
     hard_delete: bool = False,
+    require_no_dependents: bool = True,
 ) -> bool:
     """
     Delete the agent component.
@@ -1352,9 +1506,17 @@ def delete(
         agent: The Agent instance.
         db: The database to delete the component from.
         hard_delete: Whether to hard delete the component.
+        require_no_dependents: Refuse when another component pins this one.
+            The default protects a composition from losing a member it cannot
+            rebuild; pass False to delete anyway and leave those parents
+            pointing at nothing.
 
     Returns:
-        True if the component was deleted, False otherwise.
+        True if the component was deleted, False if there was nothing to delete.
+
+    Raises:
+        ComponentDependencyError: If another component pins this one and
+            require_no_dependents is True.
     """
     db_ = db or agent.db
     if not db_:
@@ -1364,4 +1526,6 @@ def delete(
     if agent.id is None:
         raise ValueError("Cannot delete agent without an id")
 
-    return db_.delete_component(component_id=agent.id, hard_delete=hard_delete)
+    return db_.delete_component(
+        component_id=agent.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+    )
