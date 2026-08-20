@@ -1831,7 +1831,8 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): Exact model id from list_models. Omit for the default.
             tool_names (Optional[List[str]]): Exact buildable names from list_tools.
                 Include EVERY tool the user asked for.
-            description (Optional[str]): Concise purpose shown in listings.
+            description (Optional[str]): A description of the agent added at the
+                beginning of the system message.
             component_id (Optional[str]): Explicit id; overrides the name mint.
             publish (bool): True publishes version 1 immediately, putting the
                 agent on the platform for every user; False leaves a draft only
@@ -1939,7 +1940,8 @@ class StudioTools(Toolkit):
                 published team requires published members; a draft may reference
                 drafts.
             model_id (Optional[str]): Leader model. Omit for the default.
-            description (Optional[str]): Concise purpose shown in listings.
+            description (Optional[str]): A description of the team added at the
+                beginning of the system message.
             component_id (Optional[str]): Explicit id; overrides the name mint.
             publish (bool): True publishes version 1 immediately, putting the team
                 on the platform for every user; a draft stays private to you.
@@ -2062,7 +2064,7 @@ class StudioTools(Toolkit):
                 exactly one of agent_id / team_id / function_name; compound
                 steps (type parallel, loop, condition, router, steps) nest
                 further steps. See the WorkflowStepSpec fields.
-            description (Optional[str]): What the workflow does.
+            description (Optional[str]): A description of the workflow.
             component_id (Optional[str]): Explicit id; overrides the name mint.
             publish (bool): True publishes version 1 immediately, putting the
                 workflow on the platform for every user; a draft stays private
@@ -2427,7 +2429,8 @@ class StudioTools(Toolkit):
             instructions (Optional[str]): New instructions.
             model_id (Optional[str]): New exact model id from list_models.
             tool_names (Optional[List[str]]): Replacement tool list; [] clears.
-            description (Optional[str]): New description; "" clears.
+            description (Optional[str]): New description added at the beginning
+                of the system message; "" clears.
             role (Optional[str]): New member role; "" clears.
             markdown (Optional[bool]): Format responses as markdown.
             expected_output (Optional[str]): What a good answer looks like; "" clears.
@@ -2512,7 +2515,8 @@ class StudioTools(Toolkit):
             instructions (Optional[str]): New collaboration instructions.
             model_id (Optional[str]): New leader model id.
             member_ids (Optional[List[str]]): Replacement member list (exact ids).
-            description (Optional[str]): New description; "" clears.
+            description (Optional[str]): New description added at the beginning
+                of the system message; "" clears.
             mode (Optional[str]): 'coordinate', 'route', 'broadcast', or 'tasks'.
             markdown (Optional[bool]): Format responses as markdown.
             expected_output (Optional[str]): What a good answer looks like; "" clears.
