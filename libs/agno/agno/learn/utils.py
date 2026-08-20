@@ -57,6 +57,20 @@ def build_learning_id(
     return None
 
 
+def same_user(left: Any, right: Any) -> bool:
+    """Whether two user ids identify the same user.
+
+    The owner column is a string column, so a non-string user id reads back as its
+    ``str()``. The entity key applies the same coercion (see :func:`build_learning_id`),
+    so ``123`` and ``"123"`` address the same record and must compare equal here too.
+
+    ``None`` means "no owner" and matches nothing, not even another ``None``.
+    """
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
 def content_values_text(content: Any) -> str:
     """Flatten a content payload to a lowercased text of its VALUES only.
 
