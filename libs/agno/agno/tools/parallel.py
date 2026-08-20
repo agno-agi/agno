@@ -4,21 +4,12 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
+from agno.utils.serialize import to_json_str
 
 try:
     from parallel import Parallel as ParallelClient
 except ImportError:
     raise ImportError("`parallel-web` not installed. Please install using `pip install parallel-web`")
-
-
-class CustomJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles non-serializable types by converting them to strings."""
-
-    def default(self, obj):
-        try:
-            return super().default(obj)
-        except TypeError:
-            return str(obj)
 
 
 class ParallelTools(Toolkit):
@@ -188,10 +179,10 @@ class ParallelTools(Toolkit):
 
             search_result = self.parallel_client.search(**search_params)
 
-            # Prefer SDK's model_dump() for complete response, fall back to manual formatting
+            # Prefer SDK's model for complete response, fall back to manual formatting
             try:
                 if hasattr(search_result, "model_dump"):
-                    return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
+                    return to_json_str(search_result)
             except Exception:
                 pass
             formatted_results: Dict[str, Any] = {
@@ -217,7 +208,7 @@ class ParallelTools(Toolkit):
             if hasattr(search_result, "usage"):
                 formatted_results["usage"] = search_result.usage
 
-            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
+            return to_json_str(formatted_results)
 
         except Exception as e:
             log_error(f"Error searching Parallel for objective '{objective}': {str(e)}")
@@ -284,10 +275,10 @@ class ParallelTools(Toolkit):
 
             extract_result = self.parallel_client.extract(**extract_params)
 
-            # Prefer SDK's model_dump() for complete response, fall back to manual formatting
+            # Prefer SDK's model for complete response, fall back to manual formatting
             try:
                 if hasattr(extract_result, "model_dump"):
-                    return json.dumps(extract_result.model_dump(), cls=CustomJSONEncoder)
+                    return to_json_str(extract_result)
             except Exception:
                 pass
 
@@ -324,7 +315,7 @@ class ParallelTools(Toolkit):
             if hasattr(extract_result, "usage"):
                 formatted_results["usage"] = extract_result.usage
 
-            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
+            return to_json_str(formatted_results)
 
         except Exception as e:
             log_error(f"Error extracting from Parallel: {str(e)}")
@@ -411,7 +402,7 @@ class ParallelTools(Toolkit):
             )
 
             output_data = self._format_task_output(run_id, task_result)
-            return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
+            return to_json_str(output_data)
 
         except Exception as e:
             log_error(f"Error getting result for task {run_id}: {str(e)}")
@@ -439,7 +430,6 @@ class ParallelTools(Toolkit):
                     "created_at": task_run.created_at,
                     "modified_at": task_run.modified_at,
                 },
-                cls=CustomJSONEncoder,
                 indent=2,
             )
 

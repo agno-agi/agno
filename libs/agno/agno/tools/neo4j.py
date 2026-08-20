@@ -9,6 +9,7 @@ except ImportError:
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
+from agno.utils.serialize import to_json_str
 
 
 class Neo4jTools(Toolkit):
@@ -129,7 +130,7 @@ class Neo4jTools(Toolkit):
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.schema.visualization()")
                 schema_data = result.data()
-            return json.dumps(schema_data)
+            return to_json_str(schema_data)
         except Exception as e:
             logger.exception("Error getting Neo4j schema")
             return json.dumps({"error": str(e)})
@@ -149,7 +150,7 @@ class Neo4jTools(Toolkit):
             with self.driver.session(database=self.database) as session:
                 result = session.run(query)  # type: ignore[arg-type]
                 data = result.data()
-            return json.dumps(data)
+            return to_json_str(data)
         except Exception as e:
             logger.exception("Error running Cypher query")
             return json.dumps({"error": str(e)})
