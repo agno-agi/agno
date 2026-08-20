@@ -33,22 +33,25 @@ def dataclass_to_dict(dataclass_object, exclude: Optional[set[str]] = None, excl
 
 
 def nested_model_dump(value):
-    """Recursively convert pydantic models and dataclasses to dicts.
+    """Recursively convert pydantic models, dataclasses, and plain objects to dicts.
 
     Handles nested structures: dicts, lists, tuples, sets.
-    Uses mode='json' to auto-convert datetime/enum to JSON-compatible types.
+    Also handles plain classes with __dict__ (e.g. Todoist SDK).
     """
     from pydantic import BaseModel
 
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
-    # Dataclasses (e.g. Exa SDK responses) — is_dataclass returns True for classes too, so exclude types
+    # Dataclasses (e.g. Exa SDK responses)
     elif dataclasses.is_dataclass(value) and not isinstance(value, type):
         return asdict(value)
     elif isinstance(value, dict):
         return {k: nested_model_dump(v) for k, v in value.items()}
     elif isinstance(value, (list, tuple, set)):
         return [nested_model_dump(item) for item in value]
+    # Plain objects with __dict__ (e.g. Todoist SDK)
+    elif hasattr(value, "__dict__") and not isinstance(value, type):
+        return {k: nested_model_dump(v) for k, v in value.__dict__.items() if not k.startswith("_")}
     return value
 
 

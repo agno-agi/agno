@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_exception
+from agno.utils.serialize import to_json_str
 
 try:
     from todoist_api_python.api import TodoistAPI
@@ -63,34 +64,6 @@ class TodoistTools(Toolkit):
 
         super().__init__(name="todoist", tools=tools, **kwargs)
 
-    def _task_to_dict(self, task: Any) -> Dict[str, Any]:
-        """Convert a Todoist task to a dictionary with proper typing."""
-        task_dict: Dict[str, Any] = {
-            "id": task.id,
-            "content": task.content,
-            "description": task.description,
-            "project_id": task.project_id,
-            "section_id": task.section_id,
-            "parent_id": task.parent_id,
-            "order": task.order,
-            "priority": task.priority,
-            "url": task.url,
-            "creator_id": task.creator_id,
-            "created_at": task.created_at,
-            "labels": task.labels,
-        }
-        if hasattr(task, "comment_count"):
-            task_dict["comment_count"] = task.comment_count
-        if task.due:
-            task_dict["due"] = {
-                "date": task.due.date,
-                "string": task.due.string,
-                "lang": task.due.lang,
-                "is_recurring": task.due.is_recurring,
-                "timezone": task.due.timezone,
-            }
-        return task_dict
-
     def create_task(
         self,
         content: str,
@@ -115,9 +88,7 @@ class TodoistTools(Toolkit):
             task = self.api.add_task(
                 content=content, project_id=project_id, due_string=due_string, priority=priority, labels=labels or []
             )
-            # Convert task to a dictionary and handle the Due object
-            task_dict = self._task_to_dict(task)
-            return json.dumps(task_dict, default=str)
+            return to_json_str(task)
         except Exception as e:
             log_exception("Failed to create task")
             return json.dumps({"error": str(e)})
@@ -126,8 +97,7 @@ class TodoistTools(Toolkit):
         """Get a specific task by ID."""
         try:
             task = self.api.get_task(task_id)
-            task_dict = self._task_to_dict(task)
-            return json.dumps(task_dict, default=str)
+            return to_json_str(task)
         except Exception as e:
             log_exception("Failed to get task")
             return json.dumps({"error": str(e)})
@@ -217,12 +187,8 @@ class TodoistTools(Toolkit):
         """Get all active (not completed) tasks."""
         try:
             tasks_response = self.api.get_tasks()
-            # Flatten all pages from the iterator
-            tasks_list = []
-            for page in tasks_response:
-                for task in page:
-                    tasks_list.append(self._task_to_dict(task))
-            return json.dumps(tasks_list, default=str)
+            tasks_list = [task for page in tasks_response for task in page]
+            return to_json_str(tasks_list)
         except Exception as e:
             log_exception("Failed to get active tasks")
             return json.dumps({"error": str(e)})
@@ -230,13 +196,9 @@ class TodoistTools(Toolkit):
     def get_projects(self) -> str:
         """Get all projects."""
         try:
-            # Flatten all pages from the iterator
             projects_response = self.api.get_projects()
-            projects_list = []
-            for page in projects_response:
-                for project in page:
-                    projects_list.append(project.__dict__)
-            return json.dumps(projects_list)
+            projects_list = [project for page in projects_response for project in page]
+            return to_json_str(projects_list)
         except Exception as e:
             log_exception("Failed to get projects")
             return json.dumps({"error": str(e)})
