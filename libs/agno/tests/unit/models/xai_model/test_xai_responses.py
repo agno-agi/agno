@@ -89,13 +89,19 @@ def test_async_client_receives_async_token_provider():
 
 def test_token_manager_derives_providers_at_build_time():
     manager = MagicMock()
+    manager.aget_access_token = AsyncMock()
     model = xAIResponses(token_manager=manager)
 
+    # The baked callable wraps the manager rather than being it: it resolves the
+    # deployment slot and must not raise when that slot is empty, because the SDK
+    # invokes it on every bearer-authed request (per-user ones included).
     client = model.get_client()
-    assert client._api_key_provider == manager.get_access_token
+    assert client._api_key_provider() is manager.get_access_token.return_value
+    manager.get_access_token.assert_called_once_with(user_id="")
 
     async_client = model.get_async_client()
-    assert async_client._api_key_provider == manager.aget_access_token
+    assert asyncio.run(async_client._api_key_provider()) is manager.aget_access_token.return_value
+    manager.aget_access_token.assert_called_once_with(user_id="")
 
     # Derivation happens in the getters, never in __post_init__: the explicit
     # provider fields stay None so deep-copy and dict round-trips stay correct.
@@ -632,3 +638,117 @@ def test_package_exports_xai_responses():
 
     assert "xAIResponses" in xai_package.__all__
     assert xai_package.xAIResponses is xAIResponses
+
+
+# ---------------------------------------------------------------------------
+# Per-user credential resolution at request assembly
+#
+# The manager resolves per user; the model picks the user off run_response and
+# applies the token as a per-request Authorization header, leaving the shared
+# client's baked deployment credential untouched.
+# ---------------------------------------------------------------------------
+
+NO_TOKEN_MESSAGE = (
+    "No SuperGrok token found. Sign in with the device login, or set XAI_API_KEY to use pay-per-token access."
+)
+
+
+def _run(user_id=None):
+    from agno.run.agent import RunOutput
+
+    return RunOutput(user_id=user_id)
+
+
+def _stored_manager(sqlite_db, fake_clock, **rows):
+    """A manager holding one token per named user; key '_' is the deployment slot."""
+    from agno.models.xai.oauth import XAITokenManager
+
+    manager = XAITokenManager(db=sqlite_db, encrypt_tokens=False, now_fn=fake_clock)
+    for user_id, token in rows.items():
+        manager._save(
+            {"access_token": token, "expires_at": fake_clock() + 21600},
+            user_id="" if user_id == "_" else user_id,
+        )
+    return manager
+
+
+def _auth_header(params):
+    return (params.get("extra_headers") or {}).get("Authorization")
+
+
+def test_a_signed_in_user_spends_their_own_subscription(sqlite_db, fake_clock):
+    manager = _stored_manager(sqlite_db, fake_clock, _="deployment-token", u1="user-one-token")
+    model = xAIResponses(token_manager=manager)
+
+    params = model.get_request_params(messages=_messages(), run_response=_run("u1"))
+
+    assert _auth_header(params) == "Bearer user-one-token"
+
+
+def test_a_user_without_a_row_falls_back_to_the_deployment_slot(sqlite_db, fake_clock):
+    """The default policy: shared-subscription deployments keep working."""
+    manager = _stored_manager(sqlite_db, fake_clock, _="deployment-token")
+    model = xAIResponses(token_manager=manager)
+
+    params = model.get_request_params(messages=_messages(), run_response=_run("u2"))
+
+    # No per-request override: the client's baked deployment credential serves it
+    assert _auth_header(params) is None
+
+
+def test_a_script_user_without_a_run_response_uses_the_deployment_slot(sqlite_db, fake_clock):
+    manager = _stored_manager(sqlite_db, fake_clock, _="deployment-token")
+    model = xAIResponses(token_manager=manager)
+
+    params = model.get_request_params(messages=_messages())
+
+    assert _auth_header(params) is None
+
+
+def test_api_key_mode_is_untouched_by_per_user_resolution():
+    model = xAIResponses(api_key="test-key")
+
+    params = model.get_request_params(messages=_messages(), run_response=_run("u1"))
+
+    assert "extra_headers" not in params or _auth_header(params) is None
+
+
+def test_require_user_token_refuses_the_deployment_slot_for_an_identified_user(sqlite_db, fake_clock):
+    manager = _stored_manager(sqlite_db, fake_clock, _="deployment-token")
+    model = xAIResponses(token_manager=manager, require_user_token=True)
+
+    with pytest.raises(ModelAuthenticationError) as exc_info:
+        model.get_request_params(messages=_messages(), run_response=_run("u2"))
+
+    assert str(exc_info.value) == (
+        "No SuperGrok sign-in found for user 'u2' and this deployment requires per-user tokens "
+        "(require_user_token=True). Ask the user to sign in with SuperGrok first."
+    )
+
+
+def test_require_user_token_still_serves_the_script_user(sqlite_db, fake_clock):
+    """An unidentified caller made no per-user promise, so the deployment slot stands."""
+    manager = _stored_manager(sqlite_db, fake_clock, _="deployment-token")
+    model = xAIResponses(token_manager=manager, require_user_token=True)
+
+    assert _auth_header(model.get_request_params(messages=_messages())) is None
+
+
+def test_no_credential_anywhere_raises_at_request_assembly(sqlite_db, fake_clock):
+    manager = _stored_manager(sqlite_db, fake_clock)
+    model = xAIResponses(token_manager=manager)
+
+    with pytest.raises(ModelAuthenticationError) as exc_info:
+        model.get_request_params(messages=_messages(), run_response=_run("u1"))
+
+    assert str(exc_info.value) == NO_TOKEN_MESSAGE
+
+
+def test_the_baked_callable_never_raises_for_an_absent_deployment_row(sqlite_db, fake_clock):
+    """The SDK invokes it on every bearer-authed request, including per-user ones."""
+    manager = _stored_manager(sqlite_db, fake_clock, u1="user-one-token")
+    model = xAIResponses(token_manager=manager)
+
+    token = model._sync_token_callable()()
+
+    assert isinstance(token, str) and token
