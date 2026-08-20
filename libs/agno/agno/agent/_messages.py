@@ -132,14 +132,6 @@ def _learning_message_text(input: Any) -> Optional[str]:
     return str(input)
 
 
-OFFLOAD_INSTRUCTION = (
-    "Large tool results are stored as files and shown to you as a short preview with a "
-    "result id. The preview is not the whole result. Use search_result to locate what you "
-    "need and read_result to read that range; do not answer from the preview when the "
-    "preview was truncated."
-)
-
-
 def get_system_message(
     agent: Agent,
     session: AgentSession,
@@ -267,7 +259,9 @@ def get_system_message(
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
     # Tell the model what a result envelope is and how to read the rest
-    if agent.offload_tool_results and agent._result_store is not None:
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
         additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 3.3 Build the default system message for the Agent.
@@ -571,7 +565,9 @@ async def aget_system_message(
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
     # Tell the model what a result envelope is and how to read the rest
-    if agent.offload_tool_results and agent._result_store is not None:
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
         additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 3.3 Build the default system message for the Agent.

@@ -53,14 +53,8 @@ from agno.utils.log import log_debug, log_warning
 
 
 def _active_result_store(owner: Any) -> Optional["ResultStore"]:
-    """The owner's ResultStore when result offloading is on, else None.
-
-    The continue-run executors serve Teams as well as Agents, and a Team has
-    no offloading settings, so the attributes are read with a default.
-    """
-    if getattr(owner, "offload_tool_results", False):
-        return getattr(owner, "_result_store", None)
-    return None
+    """The ResultStore of the Agent or Team this run belongs to, or None when offloading is off."""
+    return getattr(owner, "_result_store", None)
 
 
 def raise_if_async_tools(agent: Agent) -> None:
@@ -185,9 +179,11 @@ def get_tools(
         agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=False))
 
     # Read-back tools for offloaded results
-    if agent.offload_tool_results and agent._result_store is not None:
-        agent_tools.append(_default_tools.get_read_result_function(agent, run_context=run_context, async_mode=False))
-        agent_tools.append(_default_tools.get_search_result_function(agent, run_context=run_context, async_mode=False))
+    if agent._result_store is not None:
+        from agno.offload.tools import get_read_result_function, get_search_result_function
+
+        agent_tools.append(get_read_result_function(agent, run_context=run_context, async_mode=False))
+        agent_tools.append(get_search_result_function(agent, run_context=run_context, async_mode=False))
 
     # Add learning machine tools
     if agent._learning is not None:
@@ -318,9 +314,11 @@ async def aget_tools(
         agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=True))
 
     # Read-back tools for offloaded results
-    if agent.offload_tool_results and agent._result_store is not None:
-        agent_tools.append(_default_tools.get_read_result_function(agent, run_context=run_context, async_mode=True))
-        agent_tools.append(_default_tools.get_search_result_function(agent, run_context=run_context, async_mode=True))
+    if agent._result_store is not None:
+        from agno.offload.tools import get_read_result_function, get_search_result_function
+
+        agent_tools.append(get_read_result_function(agent, run_context=run_context, async_mode=True))
+        agent_tools.append(get_search_result_function(agent, run_context=run_context, async_mode=True))
 
     # Add learning machine tools (async)
     if agent._learning is not None:

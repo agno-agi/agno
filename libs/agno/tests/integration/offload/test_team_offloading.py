@@ -1,0 +1,551 @@
+"""Team-level result offloading against SQLite and PostgreSQL.
+
+A member's answer reaches the leader as the result of the delegation tool, so
+it is the payload that grows a team session. These tests pin that the leader's
+transcript holds an envelope rather than the answer, on the sync, async and
+streaming paths, and that a member can read back what the leader stored.
+"""
+
+import json
+import os
+import uuid
+from typing import Any, AsyncIterator, Iterator, List
+
+import pytest
+from sqlalchemy import create_engine, text
+
+from agno.agent import Agent
+from agno.db.base import SessionType
+from agno.db.sqlite import SqliteDb
+from agno.models.base import Model
+from agno.models.message import Message, MessageMetrics
+from agno.models.response import ModelResponse
+from agno.offload import ResultStore
+from agno.team import Team
+
+pytestmark = pytest.mark.integration
+
+PG_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+PG_SCHEMA = f"offload_team_test_{os.getpid()}"
+
+BIG = "\n".join(f"finding {i}: " + "d" * 60 for i in range(1, 3001))
+NEEDLE = "finding 2500: "
+
+
+class LeaderModel(Model):
+    """Delegates once to the named member, then answers."""
+
+    def __init__(self, member_id: str = "researcher", task: str = "summarise the corpus"):
+        super().__init__(id="leader", name="leader", provider="test")
+        self.member_id = member_id
+        self.task = task
+        self.calls = 0
+        # The team does not retain the resolved tool list, so capture what it
+        # hands the model.
+        self.seen_functions: dict = {}
+        # Characters in each prompt the leader is handed. RunOutput.messages
+        # holds only the messages one run created, so it is not the same thing.
+        self.prompt_sizes: List[int] = []
+
+    def response(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self._capture(args, kwargs)
+        return super().response(*args, **kwargs)
+
+    async def aresponse(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self._capture(args, kwargs)
+        return await super().aresponse(*args, **kwargs)
+
+    def response_stream(self, *args: Any, **kwargs: Any) -> Any:
+        self._capture(args, kwargs)
+        return super().response_stream(*args, **kwargs)
+
+    def aresponse_stream(self, *args: Any, **kwargs: Any) -> Any:
+        self._capture(args, kwargs)
+        return super().aresponse_stream(*args, **kwargs)
+
+    def _capture(self, args: tuple, kwargs: dict) -> None:
+        for tool in kwargs.get("tools") or []:
+            name = getattr(tool, "name", None)
+            if name:
+                self.seen_functions[name] = tool
+        messages = kwargs.get("messages") or (args[0] if args else None)
+        self.prompt_sizes.append(sum(len(message.content or "") for message in (messages or [])))
+
+    def _next(self) -> ModelResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "delegate_task_to_member",
+                            "arguments": json.dumps({"member_id": self.member_id, "task": self.task}),
+                        },
+                    }
+                ],
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(role="assistant", content="done", response_usage=MessageMetrics())
+
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next()
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next()
+
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
+        yield self._next()
+
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
+        yield self._next()
+
+    def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response
+
+
+class MemberModel(Model):
+    """Answers with one long body."""
+
+    def __init__(self, body: str = BIG):
+        super().__init__(id="member", name="member", provider="test")
+        self.body = body
+
+    def _answer(self) -> ModelResponse:
+        return ModelResponse(role="assistant", content=self.body, response_usage=MessageMetrics())
+
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._answer()
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._answer()
+
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
+        yield self._answer()
+
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
+        yield self._answer()
+
+    def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response
+
+
+@pytest.fixture(scope="session")
+def pg_engine():
+    engine = create_engine(PG_URL)
+    with engine.begin() as conn:
+        conn.execute(text("SELECT 1"))
+        conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{PG_SCHEMA}"'))
+    yield engine
+    with engine.begin() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{PG_SCHEMA}" CASCADE'))
+        # Payloads live in the shared fs schema, which other lanes use too.
+        # Remove this module's rows by namespace rather than the table.
+        conn.execute(text("DELETE FROM fs.agno_fs WHERE namespace LIKE 'tool-results/offload-team-%'"))
+    engine.dispose()
+
+
+@pytest.fixture(params=["sqlite", "postgresql"])
+def db(request, tmp_path):
+    if request.param == "sqlite":
+        yield SqliteDb(db_file=str(tmp_path / "team.db"))
+    else:
+        from agno.db.postgres import PostgresDb
+
+        request.getfixturevalue("pg_engine")
+        pg_db = PostgresDb(db_url=PG_URL, db_schema=PG_SCHEMA)
+        yield pg_db
+        with pg_db.db_engine.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{PG_SCHEMA}" CASCADE'))
+            conn.execute(text(f'CREATE SCHEMA "{PG_SCHEMA}"'))
+
+
+def _sid() -> str:
+    return f"offload-team-{uuid.uuid4().hex[:10]}"
+
+
+def _member(body: str = BIG, member_id: str = "researcher") -> Agent:
+    return Agent(name=member_id, id=member_id, model=MemberModel(body=body))
+
+
+def _team(db, offload_tool_results=True, body: str = BIG, **kwargs) -> Team:
+    return Team(
+        name="platform",
+        id="platform",
+        members=[_member(body=body)],
+        model=LeaderModel(),
+        db=db,
+        offload_tool_results=offload_tool_results,
+        **kwargs,
+    )
+
+
+def _tool_messages(run_output) -> List[Any]:
+    return [m for m in (run_output.messages or []) if m.role == "tool"]
+
+
+def _result_id(content: str) -> str:
+    return content.split('id="')[1].split('"')[0]
+
+
+# ------------------------------------------------------------------
+# The member response is the payload
+# ------------------------------------------------------------------
+
+
+def test_member_response_is_replaced_by_an_envelope(db):
+    team = _team(db)
+    output = team.run("go", session_id=_sid())
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.tool_name == "delegate_task_to_member"
+    assert len(tool_message.content) < 1500
+    assert tool_message.content.startswith('<result id="res_')
+    assert 'tool="delegate_task_to_member"' in tool_message.content
+    assert BIG not in tool_message.content
+
+
+def test_the_stored_payload_is_the_whole_member_response(db):
+    team = _team(db)
+    output = team.run("go", session_id=_sid())
+    result_id = _result_id(_tool_messages(output)[0].content)
+    page = team._result_store.read(result_id, 1, 3000)
+    assert page.line_count == 3000
+    assert page.text.startswith("finding 1: ")
+
+
+def test_offloading_off_leaves_the_member_response_inline(db):
+    team = _team(db, offload_tool_results=False)
+    output = team.run("go", session_id=_sid())
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content == BIG
+    assert team._result_store is None
+
+
+def test_a_short_member_response_stays_inline(db):
+    team = _team(db, body="short answer")
+    output = team.run("go", session_id=_sid())
+    assert _tool_messages(output)[0].content == "short answer"
+
+
+def test_the_persisted_session_row_carries_the_envelope(db):
+    team = _team(db)
+    session_id = _sid()
+    team.run("go", session_id=session_id)
+    session = db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+    stored = json.dumps(session.to_dict())
+    assert "res_" in stored
+    assert BIG not in stored
+
+
+# ------------------------------------------------------------------
+# Every path the leader can take
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_run_offloads_the_member_response(db):
+    team = _team(db)
+    output = await team.arun("go", session_id=_sid())
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+
+
+def test_streamed_run_offloads_the_member_response(db):
+    team = _team(db)
+    session_id = _sid()
+    events = list(team.run("go", session_id=session_id, stream=True, stream_events=True))
+    output = events[-1] if hasattr(events[-1], "messages") else team.get_last_run_output(session_id=session_id)
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+
+
+@pytest.mark.asyncio
+async def test_async_streamed_run_offloads_the_member_response(db):
+    team = _team(db)
+    session_id = _sid()
+    async for _ in team.arun("go", session_id=session_id, stream=True, stream_events=True):
+        pass
+    output = team.get_last_run_output(session_id=session_id)
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+
+
+# ------------------------------------------------------------------
+# Tools and instructions on the leader
+# ------------------------------------------------------------------
+
+
+def test_leader_gets_the_read_back_tools(db):
+    team = _team(db)
+    team.run("go", session_id=_sid())
+    assert "read_result" in team.model.seen_functions
+    assert "search_result" in team.model.seen_functions
+
+
+def test_no_read_back_tools_when_disabled(db):
+    team = _team(db, offload_tool_results=False)
+    team.run("go", session_id=_sid())
+    assert "read_result" not in team.model.seen_functions
+    assert "search_result" not in team.model.seen_functions
+
+
+def test_leader_system_message_gains_the_instruction(db):
+    team = _team(db)
+    output = team.run("go", session_id=_sid())
+    system = [m for m in (output.messages or []) if m.role == "system"][0]
+    assert "Large tool results are stored as files" in system.content
+
+
+def test_leader_can_read_and_search_the_stored_response(db):
+    team = _team(db)
+    output = team.run("go", session_id=_sid())
+    result_id = _result_id(_tool_messages(output)[0].content)
+
+    read_tool = team.model.seen_functions["read_result"]
+    reply = read_tool.entrypoint(result_id=result_id, start_line=1, end_line=3)
+    assert "finding 1: " in reply
+    assert "lines 1-3 of 3000" in reply
+
+    search_tool = team.model.seen_functions["search_result"]
+    hits = search_tool.entrypoint(result_id=result_id, pattern=NEEDLE)
+    assert "2500:" in hits
+
+
+# ------------------------------------------------------------------
+# Members share the leader's store
+# ------------------------------------------------------------------
+
+
+def test_member_inherits_the_teams_store(db):
+    member = _member()
+    team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    team.initialize_team()
+    # The member's own declared setting is left alone; only the runtime store is shared.
+    assert member.offload_tool_results is False
+    assert member._result_store is team._result_store
+
+
+def test_a_member_that_set_its_own_store_keeps_its_settings(db):
+    member = _member()
+    member.offload_tool_results = ResultStore(threshold_chars=100)
+    team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    team.initialize_team()
+    assert member._result_store is not team._result_store
+    assert member._result_store.threshold_chars == 100
+    # On the team's database, so the leader and the other members can read it.
+    assert member._result_store.db is team._result_store.db
+
+
+def test_a_member_with_no_db_of_its_own_still_gets_offloading(db):
+    member = _member()
+    member.offload_tool_results = True
+    member.db = None
+    team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    team.initialize_team()
+    assert member._result_store is team._result_store
+    member.initialize_agent()
+    assert member._result_store is team._result_store
+
+
+def test_a_member_reads_a_result_stored_in_the_same_session(db):
+    team = _team(db)
+    session_id = _sid()
+    output = team.run("go", session_id=session_id)
+    result_id = _result_id(_tool_messages(output)[0].content)
+
+    from agno.offload.tools import get_read_result_function
+    from agno.run import RunContext
+
+    member = team.members[0]
+    run_context = RunContext(session_id=session_id, run_id="r1", user_id=None)
+    reply = get_read_result_function(member, run_context=run_context).entrypoint(result_id=result_id, end_line=2)
+    assert "finding 1: " in reply
+
+
+def test_a_result_from_another_session_is_refused(db):
+    team = _team(db)
+    output = team.run("go", session_id=_sid())
+    result_id = _result_id(_tool_messages(output)[0].content)
+
+    from agno.offload.tools import get_read_result_function
+    from agno.run import RunContext
+
+    other = RunContext(session_id=_sid(), run_id="r1", user_id=None)
+    reply = get_read_result_function(team, run_context=other).entrypoint(result_id=result_id)
+    assert reply.startswith("Error: result ")
+    assert "different session" in reply
+
+
+# ------------------------------------------------------------------
+# Results that end the run keep their text
+# ------------------------------------------------------------------
+
+
+def test_respond_directly_keeps_the_member_response_verbatim(db):
+    team = _team(db, respond_directly=True)
+    output = team.run("go", session_id=_sid())
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content == BIG
+    # The delegation result is the answer the caller receives.
+    assert output.content == BIG
+
+
+# ------------------------------------------------------------------
+# The point of the feature: a long session stays flat
+# ------------------------------------------------------------------
+
+
+def _largest_prompt_over_six_turns(db, offload: bool) -> int:
+    """The biggest prompt the leader is handed across six delegating turns."""
+    team = _team(db, offload_tool_results=offload, add_history_to_context=True, num_history_runs=10)
+    session_id = _sid()
+    for _ in range(6):
+        team.model.calls = 0
+        team.run("go", session_id=session_id)
+    return max(team.model.prompt_sizes)
+
+
+def test_six_delegations_stay_flat_with_offloading(db):
+    with_offload = _largest_prompt_over_six_turns(db, offload=True)
+    without_offload = _largest_prompt_over_six_turns(db, offload=False)
+
+    # History replays every earlier delegation result, so the leader's prompt
+    # grows by one member answer per turn. Offloading replaces each with an
+    # envelope: measured here, 1,120,927 characters becomes 8,807.
+    assert without_offload > 4 * len(BIG)
+    assert with_offload < len(BIG) // 10
+    assert with_offload * 50 < without_offload
+
+
+def test_both_the_team_row_and_the_member_row_are_small(db):
+    """The leader's row holds an envelope, and so does the member's own row.
+
+    The member's stored run is what it replays as its own history, so it is
+    context as well as storage.
+    """
+    team = _team(db)
+    session_id = _sid()
+    team.run("go", session_id=session_id)
+
+    session = db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+    sizes = {}
+    for run in session.to_dict().get("runs", []):
+        kind = "team" if run.get("parent_run_id") is None else "member"
+        sizes[kind] = sum(len(str(message.get("content") or "")) for message in (run.get("messages") or []))
+
+    assert sizes["team"] < 10_000
+    assert sizes["member"] < 10_000
+
+
+def test_the_caller_still_gets_the_whole_member_answer(db):
+    """Offloading changes what a model reads, never what a caller reads."""
+    team = _team(db)
+    output = team.run("go", session_id=_sid())
+    assert output.member_responses[0].content == BIG
+
+
+def test_a_paused_member_run_is_stored_whole(db):
+    """Resuming replays a paused run's messages, so they must survive intact."""
+    from agno.offload.runs import offload_run_for_storage
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+
+    team = _team(db)
+    team.initialize_team()
+    messages = [Message(role="assistant", content=BIG)]
+
+    paused = RunOutput(run_id="r-paused", messages=list(messages), status=RunStatus.paused)
+    assert paused.is_paused
+    same = offload_run_for_storage(team._result_store, paused, session_id="s1")
+    assert same is paused
+    assert same.messages[0].content == BIG
+
+    # The same run, not paused, is offloaded.
+    running = RunOutput(run_id="r-done", messages=list(messages), status=RunStatus.completed)
+    stored = offload_run_for_storage(team._result_store, running, session_id="s1")
+    assert stored is not running
+    assert stored.messages[0].content.startswith('<result id="res_')
+    assert running.messages[0].content == BIG
+
+
+# ------------------------------------------------------------------
+# share_member_interactions must not nest
+# ------------------------------------------------------------------
+
+
+class RoundRobinLeaderModel(LeaderModel):
+    """Delegates once to each member in turn, then answers."""
+
+    def __init__(self, member_ids: List[str]):
+        super().__init__()
+        self.member_ids = member_ids
+
+    def _next(self) -> ModelResponse:
+        self.calls += 1
+        if self.calls <= len(self.member_ids):
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": f"call-{self.calls}",
+                        "type": "function",
+                        "function": {
+                            "name": "delegate_task_to_member",
+                            "arguments": json.dumps({"member_id": self.member_ids[self.calls - 1], "task": "go"}),
+                        },
+                    }
+                ],
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(role="assistant", content="done", response_usage=MessageMetrics())
+
+
+def test_shared_member_interactions_grow_one_answer_per_member(db):
+    """Each member sees the answers before it, once each.
+
+    The member's prompt is assembled by wrapping the leader's task in the block
+    of prior interactions. Recording that assembled prompt as the interaction's
+    own task would nest every block inside the next one, and the copies would
+    double per member instead of growing by one.
+    """
+    marker = "ANSWER-MARKER"
+    member_ids = ["m1", "m2", "m3", "m4", "m5"]
+    members = [Agent(name=i, id=i, model=MemberModel(body=f"{marker} from {i}")) for i in member_ids]
+
+    seen: List[int] = []
+    for member in members:
+
+        def record(model=member.model):
+            def invoke(*args: Any, **kwargs: Any) -> ModelResponse:
+                messages = kwargs.get("messages") or (args[0] if args else None)
+                prompt = "\n".join(m.content or "" for m in (messages or []))
+                seen.append(prompt.count(marker))
+                return model._answer()
+
+            return invoke
+
+        member.model.invoke = record()
+
+    team = Team(
+        name="platform",
+        id="platform",
+        members=members,
+        model=RoundRobinLeaderModel(member_ids),
+        db=db,
+        offload_tool_results=True,
+        share_member_interactions=True,
+    )
+    team.run("go", session_id=_sid())
+
+    assert seen == [0, 1, 2, 3, 4]

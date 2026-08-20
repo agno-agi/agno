@@ -38,6 +38,7 @@ from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.utils import get_model
+from agno.offload.store import ResultStore
 from agno.run.agent import RunEvent
 from agno.run.team import (
     TeamRunEvent,
@@ -154,6 +155,7 @@ def __init__(
     add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
+    offload_tool_results: Union[bool, "ResultStore"] = False,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
@@ -334,6 +336,11 @@ def __init__(
     team.compress_tool_results = compress_tool_results
     team.compression_manager = compression_manager
 
+    # Result offloading settings
+    team.offload_tool_results = offload_tool_results
+    team._result_store = None
+    team._inherited_result_store = None
+
     team.metadata = metadata
 
     team.reasoning_model = reasoning_model  # type: ignore[assignment]
@@ -472,6 +479,33 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
         member.debug_mode = True
         member.debug_level = team.debug_level
 
+    # Members offload through the team's store. One store plus the shared
+    # session id means a member can read back a result the leader or another
+    # member stored, so a result id in the task text is enough to hand over a
+    # large payload. A member's own ResultStore keeps its settings but is
+    # bound to the team's database, so its results stay reachable from the
+    # rest of the team. The binding is redone on every team initialization:
+    # a member moved to another team follows that team, a team without
+    # offloading clears a store an earlier team handed down, and the member's
+    # own declared setting is never modified.
+    inherited = getattr(member, "_inherited_result_store", None)
+    if member._result_store is None or member._result_store is inherited or member._result_store.db is not team.db:
+        store: Optional[ResultStore] = None
+        if team._result_store is not None:
+            if isinstance(member.offload_tool_results, ResultStore):
+                from agno.offload.setup import build_result_store
+
+                store = (
+                    build_result_store(
+                        setting=member.offload_tool_results, db=team.db, owner=member, owner_kind="member"
+                    )
+                    or team._result_store
+                )
+            else:
+                store = team._result_store
+        member._result_store = store
+        member._inherited_result_store = store
+
     if isinstance(member, Agent):
         member.team_id = team.id
         member._team = team
@@ -565,6 +599,19 @@ def _set_session_summary_manager(team: "Team") -> None:
 
     if team.add_session_summary_to_context is None:
         team.add_session_summary_to_context = team.enable_session_summaries or team.session_summary_manager is not None
+
+
+def _set_result_store(team: "Team") -> None:
+    """Resolve ``team.offload_tool_results`` into the store the run uses.
+
+    A None store means offloading is off. The public setting keeps whatever the
+    caller passed, so a failure never rewrites their configuration.
+    """
+    from agno.offload.setup import build_result_store
+
+    team._result_store = build_result_store(
+        setting=team.offload_tool_results, db=team.db, owner=team, owner_kind="team"
+    )
 
 
 def _set_compression_manager(team: "Team") -> None:
@@ -735,6 +782,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_session_summary_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
+    if team.offload_tool_results and team._result_store is None:
+        _set_result_store(team)
     if team.learning is not None and team.learning is not False:
         _set_learning_machine(team)
 

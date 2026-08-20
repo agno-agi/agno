@@ -545,7 +545,7 @@ def _get_delegate_task_function(
     def _process_delegate_task_to_member(
         member_agent_run_response: Optional[Union[TeamRunOutput, RunOutput]],
         member_agent: Union[Agent, "Team"],
-        member_agent_task: Union[str, Message],
+        delegated_task: Union[str, Message],
         member_session_state_copy: Dict[str, Any],
     ):
         # Add team run id to the member run
@@ -561,10 +561,13 @@ def _get_delegate_task_function(
 
         # Update the team run context
         member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"
-        if isinstance(member_agent_task, str):
-            normalized_task = member_agent_task
-        elif member_agent_task.content:
-            normalized_task = str(member_agent_task.content)
+        # The task the leader asked for, never the prompt assembled from it.
+        # That prompt already contains every earlier interaction, so recording
+        # it here would nest each block inside the next one.
+        if isinstance(delegated_task, str):
+            normalized_task = delegated_task
+        elif delegated_task.content:
+            normalized_task = str(delegated_task.content)
         else:
             normalized_task = ""
         add_interaction_to_team_run_context(
@@ -722,7 +725,7 @@ def _get_delegate_task_function(
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
             raise
@@ -734,7 +737,7 @@ def _get_delegate_task_function(
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
             yield f"Member '{member_agent.name}' requires human input before continuing."
@@ -774,7 +777,7 @@ def _get_delegate_task_function(
         _process_delegate_task_to_member(
             member_agent_run_response,
             member_agent,
-            member_agent_task,  # type: ignore
+            task,  # type: ignore
             member_session_state_copy,  # type: ignore
         )
 
@@ -908,7 +911,7 @@ def _get_delegate_task_function(
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
             raise
@@ -920,7 +923,7 @@ def _get_delegate_task_function(
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
             yield f"Member '{member_agent.name}' requires human input before continuing."
@@ -957,7 +960,7 @@ def _get_delegate_task_function(
         _process_delegate_task_to_member(
             member_agent_run_response,
             member_agent,
-            member_agent_task,  # type: ignore
+            task,  # type: ignore
             member_session_state_copy,  # type: ignore
         )
 
@@ -1080,7 +1083,7 @@ def _get_delegate_task_function(
                 _process_delegate_task_to_member(
                     member_agent_run_response,
                     member_agent,
-                    member_agent_task,  # type: ignore
+                    task,  # type: ignore
                     member_session_state_copy,  # type: ignore
                 )
                 raise
@@ -1092,7 +1095,7 @@ def _get_delegate_task_function(
                 _process_delegate_task_to_member(
                     member_agent_run_response,
                     member_agent,
-                    member_agent_task,  # type: ignore
+                    task,  # type: ignore
                     member_session_state_copy,  # type: ignore
                 )
                 yield f"Agent {member_agent.name}: Requires human input before continuing."
@@ -1123,7 +1126,7 @@ def _get_delegate_task_function(
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
 
@@ -1231,7 +1234,7 @@ def _get_delegate_task_function(
                             _process_delegate_task_to_member(
                                 member_agent_run_response,
                                 agent,
-                                member_agent_task,  # type: ignore
+                                task,  # type: ignore
                                 member_session_state_copy,  # type: ignore
                             )
                             await queue.put(f"Agent {agent.name}: Requires human input before continuing.")
@@ -1239,7 +1242,7 @@ def _get_delegate_task_function(
                             _process_delegate_task_to_member(
                                 member_agent_run_response,
                                 agent,
-                                member_agent_task,  # type: ignore
+                                task,  # type: ignore
                                 member_session_state_copy,  # type: ignore
                             )
                 finally:
@@ -1325,7 +1328,7 @@ def _get_delegate_task_function(
                         _process_delegate_task_to_member(
                             member_agent_run_response,
                             member_agent,
-                            member_agent_task,  # type: ignore
+                            task,  # type: ignore
                             member_session_state_copy,  # type: ignore
                         )
                         raise
@@ -1337,7 +1340,7 @@ def _get_delegate_task_function(
                         _process_delegate_task_to_member(
                             member_agent_run_response,
                             member_agent,
-                            member_agent_task,  # type: ignore
+                            task,  # type: ignore
                             member_session_state_copy,  # type: ignore
                         )
                         return (
@@ -1349,7 +1352,7 @@ def _get_delegate_task_function(
                     _process_delegate_task_to_member(
                         member_agent_run_response,
                         member_agent,
-                        member_agent_task,  # type: ignore
+                        task,  # type: ignore
                         member_session_state_copy,  # type: ignore
                     )
 

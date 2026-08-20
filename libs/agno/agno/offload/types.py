@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+# Tools whose own output is already capped and must never be offloaded. They
+# are also exempt from the tool call limit: they exist because offloading
+# replaced a result the model was told to go and read.
+NEVER_OFFLOADED_TOOLS = ("read_result", "search_result")
+
 
 @dataclass
 class ResultRef:
@@ -44,4 +49,4 @@ class ResultMatch:
     line: str
 
 
-__all__ = ["ResultMatch", "ResultPage", "ResultRef"]
+__all__ = ["NEVER_OFFLOADED_TOOLS", "ResultMatch", "ResultPage", "ResultRef"]

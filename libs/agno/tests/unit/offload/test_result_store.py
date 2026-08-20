@@ -13,8 +13,10 @@ from agno.fs.errors import QuotaExceededError
 from agno.offload import ResultStore, result_id_for
 from agno.offload.store import (
     NEVER_OFFLOADED_TOOLS,
+    READ_MAX_CHARS,
     render_refused_envelope,
     render_stored_envelope,
+    SWEEP_INTERVAL_SECONDS,
 )
 
 
@@ -22,7 +24,7 @@ from agno.offload.store import (
 def store(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "offload.db"))
     fs = FileSystem(backend=db, namespace="tool-results")
-    return ResultStore(fs, db=db, threshold=100)
+    return ResultStore(db=db, fs=fs, threshold_chars=100)
 
 
 def _offload(store, output, *, session_id="S1", run_id="r1", tool_call_id="tc1", tool_name="fetch_page", **kwargs):
@@ -50,12 +52,12 @@ def test_threshold_plus_one_offloads(store):
     assert store.should_offload("fetch_page", "x" * 101) is True
 
 
-def test_default_threshold_is_4000():
+def test_default_threshold_matches_one_read_result_page():
     db = SqliteDb(db_file=os.path.join(tempfile.mkdtemp(), "d.db"))
-    default_store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db)
-    assert default_store.threshold == 4000
-    assert default_store.should_offload("t", "x" * 4000) is False
-    assert default_store.should_offload("t", "x" * 4001) is True
+    default_store = ResultStore(db=db, fs=FileSystem(backend=db, namespace="tool-results"))
+    assert default_store.threshold_chars == 16000 == READ_MAX_CHARS
+    assert default_store.should_offload("t", "x" * 16000) is False
+    assert default_store.should_offload("t", "x" * 16001) is True
 
 
 def test_non_string_output_is_measured_as_text(store):
@@ -121,13 +123,13 @@ def test_refused_envelope_omits_marker_when_everything_fits(store):
 def test_preview_honours_lines_then_chars(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "p.db"))
     fs = FileSystem(backend=db, namespace="tool-results")
-    line_bound = ResultStore(fs, db=db, threshold=10, preview_lines=3, preview_chars=10_000)
+    line_bound = ResultStore(db=db, fs=fs, threshold_chars=10, preview_lines=3, preview_chars=10_000)
     ref = line_bound.offload(
         session_id="S", run_id="r", tool_call_id="t1", tool_name="x", tool_args={}, output="a\nb\nc\nd\ne"
     )
     assert line_bound.get_row(ref.result_id)["preview"] == "a\nb\nc"
 
-    char_bound = ResultStore(fs, db=db, threshold=10, preview_lines=100, preview_chars=3)
+    char_bound = ResultStore(db=db, fs=fs, threshold_chars=10, preview_lines=100, preview_chars=3)
     ref2 = char_bound.offload(
         session_id="S", run_id="r", tool_call_id="t2", tool_name="x", tool_args={}, output="a\nb\nc\nd\ne"
     )
@@ -272,7 +274,7 @@ def test_search_reports_1_indexed_line_numbers(store):
 def test_quota_refusal_produces_the_head_tail_envelope_and_does_not_raise(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "quota.db"))
     fs = FileSystem(backend=db, namespace="tool-results")
-    store = ResultStore(fs, db=db, threshold=10)
+    store = ResultStore(db=db, fs=fs, threshold_chars=10)
     payload = "\n".join(f"line {i}" for i in range(1, 501))
 
     # Force the write to be refused the way a full namespace does.
@@ -292,7 +294,7 @@ def test_quota_refusal_produces_the_head_tail_envelope_and_does_not_raise(tmp_pa
 def test_backend_error_produces_a_refused_envelope_and_does_not_raise(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "err.db"))
     fs = FileSystem(backend=db, namespace="tool-results")
-    store = ResultStore(fs, db=db, threshold=10)
+    store = ResultStore(db=db, fs=fs, threshold_chars=10)
 
     def boom(*args, **kwargs):
         raise RuntimeError("backend down")
@@ -363,8 +365,8 @@ def test_delete_for_sessions_removes_rows_and_payloads(store):
 def test_sweep_deletes_only_expired_rows(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "ttl.db"))
     fs = FileSystem(backend=db, namespace="tool-results")
-    expiring = ResultStore(fs, db=db, threshold=10, ttl_seconds=60)
-    forever = ResultStore(fs, db=db, threshold=10, ttl_seconds=None)
+    expiring = ResultStore(db=db, fs=fs, threshold_chars=10, ttl_seconds=60)
+    forever = ResultStore(db=db, fs=fs, threshold_chars=10, ttl_seconds=None)
     ref_expiring = expiring.offload(
         session_id="S", run_id="r", tool_call_id="t1", tool_name="x", tool_args={}, output="a" * 100
     )
@@ -377,22 +379,12 @@ def test_sweep_deletes_only_expired_rows(tmp_path):
     assert forever.get_row(ref_forever.result_id) is not None
 
 
-def test_maybe_sweep_runs_at_most_once_per_session(tmp_path, monkeypatch):
-    db = SqliteDb(db_file=str(tmp_path / "once.db"))
-    store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db, ttl_seconds=60)
-    calls = []
-    monkeypatch.setattr(store, "sweep_expired", lambda now=None: calls.append(1) or 0)
-    store.maybe_sweep("S1")
-    store.maybe_sweep("S1")
-    assert len(calls) == 1
-
-
 def test_maybe_sweep_is_a_noop_without_ttl(tmp_path, monkeypatch):
     db = SqliteDb(db_file=str(tmp_path / "nottl.db"))
-    store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db)
+    store = ResultStore(db=db, fs=FileSystem(backend=db, namespace="tool-results"))
     calls = []
     monkeypatch.setattr(store, "sweep_expired", lambda now=None: calls.append(1) or 0)
-    store.maybe_sweep("S1")
+    store.maybe_sweep()
     assert calls == []
 
 
@@ -416,7 +408,7 @@ def test_search_of_unknown_id_raises_key_error(store):
 # ------------------------------------------------------------------
 def test_two_session_ids_that_normalise_alike_stay_separate(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "ns.db"))
-    store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db, threshold=10)
+    store = ResultStore(db=db, fs=FileSystem(backend=db, namespace="tool-results"), threshold_chars=10)
     upper = store.offload(
         session_id="Alpha", run_id="R1", tool_call_id="c1", tool_name="fetch", tool_args={}, output="A" * 200
     )
@@ -434,7 +426,7 @@ def test_two_session_ids_that_normalise_alike_stay_separate(tmp_path):
 
 def test_two_sessions_that_reuse_a_run_id_keep_separate_results(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "runid.db"))
-    store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db, threshold=10)
+    store = ResultStore(db=db, fs=FileSystem(backend=db, namespace="tool-results"), threshold_chars=10)
     first = store.offload(
         session_id="S1", run_id="shared-run", tool_call_id="c1", tool_name="fetch", tool_args={}, output="one" * 100
     )
@@ -456,3 +448,45 @@ def test_namespace_for_is_canonical_and_within_the_segment_limit():
         assert all(len(segment) <= MAX_SEGMENT_CHARS for segment in namespace.split("/")), session_id
     assert namespace_for("Alpha") != namespace_for("alpha")
     assert namespace_for("a b") != namespace_for("a-b")
+
+
+def test_maybe_sweep_runs_at_most_once_per_interval(tmp_path, monkeypatch):
+    db = SqliteDb(db_file=str(tmp_path / "once.db"))
+    store = ResultStore(db=db, fs=FileSystem(backend=db, namespace="tool-results"), ttl_seconds=60)
+    calls = []
+    monkeypatch.setattr(store, "sweep_expired", lambda now=None: calls.append(1) or 0)
+    store.maybe_sweep()
+    store.maybe_sweep()
+    assert len(calls) == 1
+    store._last_sweep_at -= SWEEP_INTERVAL_SECONDS
+    store.maybe_sweep()
+    assert len(calls) == 2
+
+
+def test_offloading_runs_the_sweep(tmp_path, monkeypatch):
+    db = SqliteDb(db_file=str(tmp_path / "sweeponwrite.db"))
+    store = ResultStore(db=db, fs=FileSystem(backend=db, namespace="tool-results"), ttl_seconds=60, threshold_chars=10)
+    calls = []
+    monkeypatch.setattr(store, "sweep_expired", lambda now=None: calls.append(1) or 0)
+    store.offload_for_model(
+        session_id="S1",
+        run_id="R1",
+        tool_call_id="call-1",
+        tool_name="fetch",
+        tool_args={},
+        output="x" * 200,
+    )
+    assert len(calls) == 1
+
+
+def test_two_tool_call_ids_that_sanitise_alike_do_not_share_a_path(store):
+    first = store.offload(
+        session_id="S1", run_id="R1", tool_call_id="call/1", tool_name="fetch", tool_args={}, output="a" * 200
+    )
+    second = store.offload(
+        session_id="S1", run_id="R1", tool_call_id="call_1", tool_name="fetch", tool_args={}, output="b" * 200
+    )
+    assert first.result_id != second.result_id
+    assert first.path != second.path
+    assert store.read(first.result_id).text.startswith("a")
+    assert store.read(second.result_id).text.startswith("b")

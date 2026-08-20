@@ -388,6 +388,7 @@ def _run_tasks(
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
+                result_store=team._result_store,
                 after_tool_results=build_team_after_tool_results_callback(
                     team, run_response, session, run_messages, run_context
                 ),
@@ -1225,6 +1226,7 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    result_store=team._result_store,
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
@@ -2240,6 +2242,7 @@ async def _arun_tasks(
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
+                result_store=team._result_store,
                 after_tool_results=abuild_team_after_tool_results_callback(
                     team, run_response, team_session, run_messages, run_context
                 ),
@@ -3167,6 +3170,7 @@ async def _arun(
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    result_store=team._result_store,
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
                     ),
@@ -4531,6 +4535,20 @@ def _iter_member_runs_for_team_run(session: TeamSession, team_run_id: Optional[s
             yield idx, entry
 
 
+def _member_run_for_storage(team: "Team", session: TeamSession, member_run: Any) -> Any:
+    """The member run as it should be stored, with big messages offloaded.
+
+    The live object is returned unchanged when offloading is off, so callers
+    reading ``RunOutput.member_responses`` always see the whole answer.
+    """
+    store = team._result_store
+    if store is None or not store.member_responses:
+        return member_run
+    from agno.offload.runs import offload_run_for_storage
+
+    return offload_run_for_storage(store, member_run, session_id=session.session_id, user_id=session.user_id)
+
+
 def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_run_id: Optional[str]) -> None:
     from agno.team._session import save_run
 
@@ -4538,7 +4556,7 @@ def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_r
         try:
             save_run(
                 team,
-                run=member_run,
+                run=_member_run_for_storage(team, session, member_run),
                 session_id=session.session_id,
                 user_id=session.user_id,
                 run_index=idx,
@@ -4554,7 +4572,7 @@ async def _apersist_member_runs_for_team_run(team: "Team", session: TeamSession,
         try:
             await asave_run(
                 team,
-                run=member_run,
+                run=_member_run_for_storage(team, session, member_run),
                 session_id=session.session_id,
                 user_id=session.user_id,
                 run_index=idx,
@@ -6635,6 +6653,7 @@ async def _ahandle_model_response_for_continue(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        result_store=team._result_store,
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, team_session, run_messages, run_context
         ),
@@ -7945,6 +7964,7 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    result_store=team._result_store,
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),

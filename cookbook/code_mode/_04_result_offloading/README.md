@@ -1,6 +1,6 @@
 # Result offloading
 
-`Agent(offload_tool_results=True)` sets the threshold to 4000 characters; `offload_tool_results=12000` sets it explicitly. Results over the threshold are written to AgentFS and the message gets an envelope:
+`Agent(offload=True)` sets the threshold to 4000 characters; `Agent(offload=ResultStore(threshold=12000))` sets it explicitly. Results over the threshold are written to AgentFS and the message gets an envelope:
 
 ```
 <result id="res_a91c4f20b3" tool="search_content" lines="8412" size="612KB">

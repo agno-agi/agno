@@ -1,7 +1,7 @@
 """ResultStore — big tool results become AgentFS files, not messages.
 
 When a tool result crosses the threshold, the full payload is written to
-AgentFS (namespace ``tool-results/{session_id}``) and the transcript gets a
+AgentFS (one namespace per session) and the transcript gets a
 short envelope: a head preview, the total size, and a ``result_id``. Three
 properties are non-negotiable: lossless (the full bytes are recoverable),
 free (no model call on the write path), and bounded (every read back through
@@ -24,12 +24,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from agno.fs import FileSystem
 from agno.fs._paths import MAX_SEGMENT_CHARS
 from agno.fs.errors import QuotaExceededError
-from agno.offload.types import ResultMatch, ResultPage, ResultRef
+from agno.offload.types import NEVER_OFFLOADED_TOOLS, ResultMatch, ResultPage, ResultRef
 from agno.utils.log import log_debug, log_warning
 from agno.utils.string import hash_string_sha256
-
-# Tools whose own output is already capped and must never be offloaded.
-NEVER_OFFLOADED_TOOLS = ("read_result", "search_result")
 
 # Per-result and per-session-namespace quotas, raised from the AgentFS
 # defaults for this store.
@@ -40,12 +37,28 @@ MAX_CALL_ID_ATTEMPTS = 1000
 # read_result caps: whichever binds first.
 READ_MAX_LINES = 400
 READ_MAX_CHARS = 16_000
+# A result below one read_result page costs more to read back than to keep inline.
+DEFAULT_THRESHOLD_CHARS = READ_MAX_CHARS
+DEFAULT_PREVIEW_LINES = 20
+DEFAULT_PREVIEW_CHARS = 1200
 
 # search_result caps.
 SEARCH_MAX_MATCHES = 20
 SEARCH_LINE_CLIP = 500
 
 _TAIL_LINES = 5
+
+# The longest one store instance waits between TTL sweeps. A shorter TTL
+# sweeps at its own length instead.
+SWEEP_INTERVAL_SECONDS = 300
+
+
+def _canonical_args_hash(tool_args: Optional[Dict[str, Any]]) -> str:
+    try:
+        canonical = json.dumps(tool_args or {}, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        canonical = str(tool_args)
+    return hash_string_sha256(canonical)
 
 
 def result_id_for(session_id: str, run_id: str, tool_call_id: str) -> str:
@@ -115,14 +128,6 @@ def _looks_like_json(output: str) -> bool:
         return False
 
 
-def _canonical_args_hash(tool_args: Optional[Dict[str, Any]]) -> str:
-    try:
-        canonical = json.dumps(tool_args or {}, sort_keys=True, separators=(",", ":"), default=str)
-    except (TypeError, ValueError):
-        canonical = str(tool_args)
-    return hash_string_sha256(canonical)
-
-
 def _safe_segment(value: str) -> str:
     """Make a caller-supplied id safe as one path segment."""
     cleaned = re.sub(r"[\\/\x00-\x1f]", "_", value) or "_"
@@ -151,6 +156,12 @@ def namespace_for(session_id: str) -> str:
 class ResultStore:
     """Stores oversized tool results as AgentFS files with a small index table.
 
+    This is also the settings object: pass one as
+    ``Agent(offload_tool_results=ResultStore(...))`` or
+    ``Team(offload_tool_results=ResultStore(...))`` to set the threshold, the
+    preview size, the lifetime, or where payloads live. ``db`` is taken from
+    the agent or team when unset.
+
     Usable without an agent. The sync and ``a``-prefixed async surfaces are
     equivalent; the async one uses the db's native async methods when the db
     is async, and worker threads otherwise.
@@ -158,21 +169,76 @@ class ResultStore:
 
     def __init__(
         self,
-        fs: FileSystem,
         *,
         db: Optional[Any] = None,
-        threshold: int = 4000,
-        preview_lines: int = 20,
-        preview_chars: int = 1200,
+        fs: Optional[FileSystem] = None,
+        threshold_chars: int = DEFAULT_THRESHOLD_CHARS,
+        preview_lines: int = DEFAULT_PREVIEW_LINES,
+        preview_chars: int = DEFAULT_PREVIEW_CHARS,
         ttl_seconds: Optional[int] = None,
+        member_responses: bool = True,
     ) -> None:
-        self.fs = fs
+        if threshold_chars < 1:
+            raise ValueError("ResultStore threshold_chars must be at least 1")
+        self._fs = fs
         self.db = db
-        self.threshold = threshold
+        # Results at or over this many characters are stored. The default
+        # matches what one read_result call returns, so a stored result is
+        # never cheaper to read back in one piece than it was to leave inline.
+        self.threshold_chars = threshold_chars
         self.preview_lines = preview_lines
         self.preview_chars = preview_chars
         self.ttl_seconds = ttl_seconds
-        self._swept_sessions: set = set()
+        # Team only. A member's answer reaches the leader as a tool result and
+        # is offloaded either way; this covers the member's own stored run.
+        self.member_responses = member_responses
+        self._last_sweep_at: float = 0.0
+
+    @property
+    def fs(self) -> FileSystem:
+        """The filesystem, built from ``db`` on first use when none was given."""
+        if self._fs is None:
+            if self.db is None:
+                raise RuntimeError("ResultStore needs a db or a FileSystem")
+            from agno.fs import FileSystem as _FileSystem
+
+            self._fs = _FileSystem(backend=self.db, namespace="tool-results")
+        return self._fs
+
+    def bound(self, db: Optional[Any]) -> "ResultStore":
+        """A copy of these settings bound to ``db`` when this store has none.
+
+        The settings object a user passes is never modified, so one
+        ``ResultStore`` can configure several agents on different databases.
+        """
+        return ResultStore(
+            db=self.db if self.db is not None else db,
+            fs=self._fs,
+            threshold_chars=self.threshold_chars,
+            preview_lines=self.preview_lines,
+            preview_chars=self.preview_chars,
+            ttl_seconds=self.ttl_seconds,
+            member_responses=self.member_responses,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """The settings, without db or fs; those are supplied at build time."""
+        data: Dict[str, Any] = {}
+        if self.threshold_chars != DEFAULT_THRESHOLD_CHARS:
+            data["threshold_chars"] = self.threshold_chars
+        if self.preview_lines != DEFAULT_PREVIEW_LINES:
+            data["preview_lines"] = self.preview_lines
+        if self.preview_chars != DEFAULT_PREVIEW_CHARS:
+            data["preview_chars"] = self.preview_chars
+        if self.ttl_seconds is not None:
+            data["ttl_seconds"] = self.ttl_seconds
+        if not self.member_responses:
+            data["member_responses"] = False
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ResultStore":
+        return cls(**data)
 
     # ------------------------------------------------------------------
     # db bridging (sync callers need a sync db; async callers take either)
@@ -249,12 +315,19 @@ class ResultStore:
             "expires_at": created_at + self.ttl_seconds if self.ttl_seconds else None,
         }
 
-    def _plan(self, *, run_id: str, tool_call_id: str, output: str, shared: bool) -> Tuple[str, str]:
-        """(path, content_type) for a payload."""
+    def _plan(self, *, session_id: str, run_id: str, tool_call_id: str, output: str, shared: bool) -> Tuple[str, str]:
+        """(path, content_type) for a payload.
+
+        The file is named by the result id, so two results can never share a
+        path: the index has a unique constraint on (namespace, path), and a
+        path built from a sanitised tool call id would collide for two ids that
+        differ only in a character sanitising replaces.
+        """
         content_type = "json" if _looks_like_json(output) else "text"
         extension = "json" if content_type == "json" else "txt"
         prefix = "shared" if shared else "results"
-        path = f"{prefix}/{_safe_segment(run_id)}/{_safe_segment(tool_call_id)}.{extension}"
+        result_id = result_id_for(session_id, run_id, tool_call_id)
+        path = f"{prefix}/{_safe_segment(run_id)}/{result_id}.{extension}"
         return path, content_type
 
     @staticmethod
@@ -312,7 +385,9 @@ class ResultStore:
         """Store one payload and its index row. Raises ``QuotaExceededError``
         when the store refuses the write."""
         tool_call_id = self._free_call_id(session_id, run_id, tool_call_id)
-        path, content_type = self._plan(run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared)
+        path, content_type = self._plan(
+            session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
+        )
         session_fs = self._session_fs(session_id)
         session_fs.write(path, output)
         row = self._build_row(
@@ -352,7 +427,9 @@ class ResultStore:
     ) -> ResultRef:
         """Async variant of ``offload``."""
         tool_call_id = await self._afree_call_id(session_id, run_id, tool_call_id)
-        path, content_type = self._plan(run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared)
+        path, content_type = self._plan(
+            session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
+        )
         session_fs = self._session_fs(session_id)
         await session_fs.awrite(path, output)
         row = self._build_row(
@@ -388,7 +465,7 @@ class ResultStore:
             return False
         if not isinstance(output, str):
             output = str(output) if output is not None else ""
-        return len(output) > self.threshold
+        return len(output) > self.threshold_chars
 
     def _quota_reason(self, error: QuotaExceededError) -> str:
         if error.scope == "namespace":
@@ -411,6 +488,7 @@ class ResultStore:
 
         Never raises: failure is loud in the envelope, and the run continues.
         """
+        self.maybe_sweep()
         try:
             ref = self.offload(
                 session_id=session_id,
@@ -449,6 +527,7 @@ class ResultStore:
         shared: bool = False,
     ) -> str:
         """Async variant of ``offload_for_model``."""
+        await self.amaybe_sweep()
         try:
             ref = await self.aoffload(
                 session_id=session_id,
@@ -640,11 +719,24 @@ class ResultStore:
         rows = await self._adb_call("get_expired_tool_results", int(now if now is not None else time.time()))
         return await self._adelete_rows_and_payloads(rows)
 
-    def maybe_sweep(self, session_id: str) -> None:
-        """Run the TTL sweep at most once per session per store instance."""
-        if not self.ttl_seconds or session_id in self._swept_sessions:
+    def _sweep_is_due(self) -> bool:
+        """True at most once every SWEEP_INTERVAL_SECONDS, and only with a TTL.
+
+        The sweep is store-wide, not per session, so it is paced by time rather
+        than by how many sessions the store has seen.
+        """
+        if not self.ttl_seconds:
+            return False
+        now = time.time()
+        if now - self._last_sweep_at < min(SWEEP_INTERVAL_SECONDS, self.ttl_seconds):
+            return False
+        self._last_sweep_at = now
+        return True
+
+    def maybe_sweep(self) -> None:
+        """Run the TTL sweep when one is due."""
+        if not self._sweep_is_due():
             return
-        self._swept_sessions.add(session_id)
         try:
             swept = self.sweep_expired()
             if swept:
@@ -652,11 +744,10 @@ class ResultStore:
         except Exception as e:
             log_warning(f"Result TTL sweep failed: {e}")
 
-    async def amaybe_sweep(self, session_id: str) -> None:
+    async def amaybe_sweep(self) -> None:
         """Async variant of ``maybe_sweep``."""
-        if not self.ttl_seconds or session_id in self._swept_sessions:
+        if not self._sweep_is_due():
             return
-        self._swept_sessions.add(session_id)
         try:
             swept = await self.asweep_expired()
             if swept:

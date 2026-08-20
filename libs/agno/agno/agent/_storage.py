@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.offload.store import ResultStore
 
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
@@ -180,6 +181,15 @@ def resolve_memory_manager_reference(
 # ---------------------------------------------------------------------------
 # Run output accessors
 # ---------------------------------------------------------------------------
+
+
+def _offload_from_config(value: Any) -> Union[bool, "ResultStore"]:
+    """The offload_tool_results setting from a stored config: True, False, or a ResultStore."""
+    if isinstance(value, dict):
+        from agno.offload.store import ResultStore
+
+        return ResultStore.from_dict(value)
+    return bool(value)
 
 
 def get_run_output(
@@ -1063,9 +1073,9 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
     # --- Result offloading settings ---
     if agent.offload_tool_results:
-        config["offload_tool_results"] = agent.offload_tool_results
-    if agent.result_ttl_seconds is not None:
-        config["result_ttl_seconds"] = agent.result_ttl_seconds
+        config["offload_tool_results"] = (
+            True if agent.offload_tool_results is True else agent.offload_tool_results.to_dict()
+        )
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
@@ -1371,10 +1381,9 @@ def from_dict(
         metadata=strip_reserved_run_metadata(config.get("metadata")),
         # --- Compression settings ---
         compress_tool_results=config.get("compress_tool_results", False),
-        # --- Result offloading settings ---
-        offload_tool_results=config.get("offload_tool_results", False),
-        result_ttl_seconds=config.get("result_ttl_seconds"),
         # compression_manager=config.get("compression_manager"),  # TODO
+        # --- Result offloading settings ---
+        offload_tool_results=_offload_from_config(config.get("offload_tool_results", False)),
         # --- Debug and telemetry settings ---
         debug_mode=config.get("debug_mode", False),
         debug_level=config.get("debug_level", 1),

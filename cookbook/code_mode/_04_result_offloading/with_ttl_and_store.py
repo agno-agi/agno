@@ -9,7 +9,7 @@ sweep expired rows. Every method has an `a`-prefixed async twin.
 `live_ids()` is the seam the post-compaction survival notice consumes: the
 session's stored results, newest first, capped at 20.
 
-`result_ttl_seconds` stamps an expiry so a sweep can reclaim old payloads;
+`ttl_seconds` stamps an expiry so a sweep can reclaim old payloads;
 without it, results live until the session is deleted, and deleting a session
 cascades to both the index rows and the stored bytes.
 """

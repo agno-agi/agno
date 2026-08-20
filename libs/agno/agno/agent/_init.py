@@ -11,8 +11,6 @@ from typing import (
     Literal,
     Optional,
     Sequence,
-    Set,
-    Tuple,
     Union,
     cast,
 )
@@ -193,64 +191,17 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
-DEFAULT_OFFLOAD_THRESHOLD = 4000
-
-# Result offloading needs the agno_tool_results index table and a database
-# that can back the payload filesystem, which is sync. SqliteDb and PostgresDb
-# qualify. On any other backend the flag is treated as off, with one warning:
-# a run must never believe its payloads are recoverable when they are not.
-_OFFLOAD_SUPPORTED_DBS = ("SqliteDb", "PostgresDb")
-
-
-# Degrade warnings already emitted, keyed by agent and reason. AgentOS runs a
-# fresh copy of an agent per request, so the key outlives any one instance.
-_OFFLOAD_WARNED: Set[Tuple[Any, str]] = set()
-
-
-def _offload_unavailable(agent: Agent, reason: str) -> None:
-    """Leave offloading off for this agent and say why, once.
-
-    The declared ``offload_tool_results`` is kept as the caller set it: the
-    runtime reads ``_result_store``, and a saved config must carry the
-    declared setting, not the outcome of one startup.
-    """
-    agent._result_store = None
-    key = (agent.id or agent.name or id(agent), reason)
-    if key not in _OFFLOAD_WARNED:
-        _OFFLOAD_WARNED.add(key)
-        log_warning(reason)
-
-
 def set_result_store(agent: Agent) -> None:
-    """Build the agent's ResultStore, or degrade loudly and leave it off."""
-    if not agent.offload_tool_results:
-        return
-    if agent.db is None:
-        _offload_unavailable(agent, "offload_tool_results needs a db; offloading is off for this agent.")
-        return
-    backend_name = type(agent.db).__name__
-    if backend_name not in _OFFLOAD_SUPPORTED_DBS:
-        _offload_unavailable(
-            agent,
-            f"Result offloading is not available on {backend_name}; offloading is off for this agent. "
-            "It needs SqliteDb or PostgresDb, because stored payloads go through the sync filesystem backend.",
-        )
-        return
+    """Resolve ``agent.offload_tool_results`` into the store the run uses.
 
-    from agno.fs import FileSystem
-    from agno.offload import ResultStore
+    A None store means offloading is off. The public setting keeps whatever
+    the caller passed, so a failure never rewrites their configuration.
+    """
+    from agno.offload.setup import build_result_store
 
-    threshold = DEFAULT_OFFLOAD_THRESHOLD if agent.offload_tool_results is True else int(agent.offload_tool_results)
-    try:
-        # The namespace here is a placeholder: every operation rebinds to the
-        # per-session namespace tool-results/{session_id}.
-        fs = FileSystem(backend=agent.db, namespace="tool-results")
-    except Exception as e:
-        _offload_unavailable(
-            agent, f"Result offloading could not reach the filesystem backend ({e}); offloading is off."
-        )
-        return
-    agent._result_store = ResultStore(fs, db=agent.db, threshold=threshold, ttl_seconds=agent.result_ttl_seconds)
+    agent._result_store = build_result_store(
+        setting=agent.offload_tool_results, db=agent.db, owner=agent, owner_kind="agent"
+    )
 
 
 def _initialize_session_state(

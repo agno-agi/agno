@@ -2091,11 +2091,15 @@ class Model(ABC):
         """The output as text when it qualifies for offloading, else None.
 
         Never offloaded: failed calls (the model needs the error text
-        verbatim), empty results, sub-threshold results, and the read-back
-        tools' own output. Only the message content is ever replaced — media
-        on the FunctionExecutionResult is untouched.
+        verbatim), empty results, sub-threshold results, the read-back tools'
+        own output, and any result that ends the run. A result that ends the
+        run is the answer the caller receives, so a pointer in its place would
+        replace the answer with a reference to it. Only the message content is
+        ever replaced - media on the FunctionExecutionResult is untouched.
         """
         if not success or not output:
+            return None
+        if function_call.function.stop_after_tool_call:
             return None
         text = output
         if not result_store.should_offload(function_call.function.name, text):
@@ -2399,12 +2403,18 @@ class Model(ABC):
         function_call_limit: Optional[int] = None,
         result_store: Optional["ResultStore"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
             additional_input = []
 
         for fc in function_calls:
-            if function_call_limit is not None:
+            # The read-back tools exist only because offloading replaced a result
+            # the model was told to go and read. Counting them against the limit
+            # can refuse the very read the run needs to answer.
+            counts_against_limit = result_store is None or fc.function.name not in NEVER_OFFLOADED_TOOLS
+            if function_call_limit is not None and counts_against_limit:
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
@@ -2605,9 +2615,15 @@ class Model(ABC):
         if additional_input is None:
             additional_input = []
 
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
         function_calls_to_run = []
         for fc in function_calls:
-            if function_call_limit is not None:
+            # The read-back tools exist only because offloading replaced a result
+            # the model was told to go and read. Counting them against the limit
+            # can refuse the very read the run needs to answer.
+            counts_against_limit = result_store is None or fc.function.name not in NEVER_OFFLOADED_TOOLS
+            if function_call_limit is not None and counts_against_limit:
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:

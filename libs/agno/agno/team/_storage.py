@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.mode import TeamMode
     from agno.team.team import Team
+    from agno.offload.store import ResultStore
 
 from typing import (
     Any,
@@ -57,6 +58,15 @@ from agno.utils.string import generate_id_from_name
 # ---------------------------------------------------------------------------
 # Run output accessors
 # ---------------------------------------------------------------------------
+
+
+def _offload_from_config(value: Any) -> Union[bool, "ResultStore"]:
+    """The offload_tool_results setting from a stored config: True, False, or a ResultStore."""
+    if isinstance(value, dict):
+        from agno.offload.store import ResultStore
+
+        return ResultStore.from_dict(value)
+    return bool(value)
 
 
 def get_run_output(
@@ -768,6 +778,12 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- Compression settings ---
     if team.compress_tool_results:
         config["compress_tool_results"] = team.compress_tool_results
+
+    # --- Result offloading settings ---
+    if team.offload_tool_results:
+        config["offload_tool_results"] = (
+            True if team.offload_tool_results is True else team.offload_tool_results.to_dict()
+        )
     # TODO: implement compression manager serialization
     # if team.compression_manager is not None:
     #     config["compression_manager"] = team.compression_manager.to_dict()
@@ -1338,6 +1354,8 @@ def from_dict(
             # --- Compression settings ---
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Result offloading settings ---
+            offload_tool_results=_offload_from_config(config.get("offload_tool_results", False)),
             # --- Reasoning settings ---
             reasoning_model=config.get("reasoning_model"),
             # --- Streaming settings ---

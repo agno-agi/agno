@@ -19,3 +19,13 @@ Tested 2026-08-08 against `gpt-5.5` (OpenAIResponses), agno 3.0.0a1, ipykernel 7
 **Description:** `%%bash` cells for shell orchestration. The agent was asked to count Python files in the tree and report the environment's Python version.
 
 **Result:** Response in 9.4s. The model used a `%%bash` cell for the file count and read the Python version from the kernel, reporting both. Shell orchestration cost no extra tool surface — the model still holds exactly `execute` and `restart`.
+
+### Re-run 2026-08-19, after merging feat/v3.0
+
+**Status:** PASS
+
+**Description:** Both files in this folder were run again on the refreshed branch, against a live model. This is the check that the 47 commits merged in from feat/v3.0 did not break the feature.
+
+**Result:** Same behaviour as the first run. No changes needed.
+
+---

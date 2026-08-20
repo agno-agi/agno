@@ -36,6 +36,7 @@ from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.response import ModelResponse
+from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
@@ -329,6 +330,14 @@ class Team:
     # Compression manager for compressing tool call results
     compression_manager: Optional["CompressionManager"] = None
 
+    # --- Result Offloading ---
+    # Store large tool results as files and leave a short envelope with a
+    # result id in the message. True uses the defaults (results of 16000
+    # characters or more), for the leader's own tool results and for every
+    # member answer. A ResultStore sets the threshold, the preview, the
+    # lifetime, and where payloads live.
+    offload_tool_results: Union[bool, "ResultStore"] = False
+
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
@@ -421,6 +430,8 @@ class Team:
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run
     _connectable_tools_initialized_on_run: Optional[List[Any]] = None
+    # Store for offloaded results, shared with the members
+    _result_store: Optional["ResultStore"] = None
     # Internal resolved LearningMachine instance
     _learning: Optional[LearningMachine] = None
     # Whether learning init has been attempted (prevents repeated attempts when db is None)
@@ -526,6 +537,7 @@ class Team:
         add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
+        offload_tool_results: Union[bool, "ResultStore"] = False,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -643,6 +655,7 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
+            offload_tool_results=offload_tool_results,
             metadata=metadata,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,

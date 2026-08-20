@@ -19,3 +19,13 @@ Tested 2026-08-08 against `gpt-5.5` (OpenAIResponses), agno 3.0.0a1, ipykernel 7
 **Description:** `FileSystem.tools()` composed into CodeMode as the `filesystem` handle over a SqliteDb. The agent was asked to compute mean and standard deviation in the kernel, then append a summary line to `stats/summary.md` through the filesystem handle.
 
 **Result:** Response in 18.1s. The agent computed the statistics in the kernel and wrote the note through the bridged `append_file` call, then reported what it had written. Compute and durable write happened through one tool surface.
+
+### Re-run 2026-08-19, after merging feat/v3.0
+
+**Status:** PASS
+
+**Description:** Both files in this folder were run again on the refreshed branch, against a live model. This is the check that the 47 commits merged in from feat/v3.0 did not break the feature.
+
+**Result:** Same behaviour as the first run. No changes needed.
+
+---

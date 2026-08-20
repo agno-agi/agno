@@ -20,6 +20,7 @@ from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse, ToolExecution
+from agno.offload import ResultStore
 from agno.tools.function import ToolResult
 
 pytestmark = pytest.mark.integration
@@ -201,11 +202,21 @@ def test_read_result_returns_the_stored_payload(db):
     assert store._read_payload(store.get_row(result_id)) == BIG
 
 
-def test_explicit_int_threshold_is_honoured(db):
-    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=12_000)
-    assert agent._result_store is None or agent._result_store.threshold == 12_000
+def test_explicit_threshold_is_honoured(db):
+    settings = ResultStore(threshold_chars=12_000)
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=settings)
     agent.initialize_agent()
-    assert agent._result_store.threshold == 12_000
+    assert agent._result_store.threshold_chars == 12_000
+    # The settings object the caller passed is bound as a copy, never modified.
+    assert agent._result_store is not settings
+    assert settings.db is None
+    assert agent.offload_tool_results is settings
+
+
+def test_an_int_setting_is_refused_with_a_clear_message(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=12_000)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="threshold_chars"):
+        agent.initialize_agent()
 
 
 # ------------------------------------------------------------------
@@ -572,27 +583,29 @@ def test_a_small_externally_executed_result_stays_inline(db):
 # Configuration
 # ------------------------------------------------------------------
 def test_offload_settings_survive_the_config_round_trip(db):
-    agent = Agent(model=ScriptedToolModel(), db=db, offload_tool_results=12000, result_ttl_seconds=3600)
+    settings = ResultStore(threshold_chars=12000, ttl_seconds=3600)
+    agent = Agent(model=ScriptedToolModel(), db=db, offload_tool_results=settings)
     config = agent.to_dict()
-    assert config["offload_tool_results"] == 12000
-    assert config["result_ttl_seconds"] == 3600
+    assert config["offload_tool_results"] == {"threshold_chars": 12000, "ttl_seconds": 3600}
 
     config.pop("model", None)
     restored = Agent.from_dict(config)
-    assert restored.offload_tool_results == 12000
-    assert restored.result_ttl_seconds == 3600
+    assert isinstance(restored.offload_tool_results, ResultStore)
+    assert restored.offload_tool_results.threshold_chars == 12000
+    assert restored.offload_tool_results.ttl_seconds == 3600
 
+    simple = Agent(model=ScriptedToolModel(), db=db, offload_tool_results=True).to_dict()
+    assert simple["offload_tool_results"] is True
     plain = Agent(model=ScriptedToolModel(), db=db).to_dict()
     assert "offload_tool_results" not in plain
-    assert "result_ttl_seconds" not in plain
 
 
 def test_async_db_degrades_to_off_with_a_warning(tmp_path, monkeypatch):
-    from agno.agent import _init
     from agno.db.sqlite import AsyncSqliteDb
+    from agno.offload import setup
 
     warnings: List[str] = []
-    monkeypatch.setattr(_init, "log_warning", warnings.append)
+    monkeypatch.setattr(setup, "log_warning", warnings.append)
     agent = Agent(
         model=ScriptedToolModel(),
         db=AsyncSqliteDb(db_file=str(tmp_path / "async.db")),
@@ -615,22 +628,22 @@ def test_async_db_degrades_to_off_with_a_warning(tmp_path, monkeypatch):
 
 
 def test_a_degraded_agent_still_saves_its_declared_settings(tmp_path, monkeypatch):
-    from agno.agent import _init
+    from agno.offload import setup
 
-    monkeypatch.setattr(_init, "log_warning", lambda *_: None)
-    agent = Agent(model=ScriptedToolModel(), tools=[fetch_page], offload_tool_results=12000, result_ttl_seconds=3600)
+    monkeypatch.setattr(setup, "log_warning", lambda *_: None)
+    settings = ResultStore(threshold_chars=12000, ttl_seconds=3600)
+    agent = Agent(model=ScriptedToolModel(), tools=[fetch_page], offload_tool_results=settings)
     output = agent.run("go", session_id=_sid())
     # No db: the payload stays inline and the run completes.
     assert BIG in _tool_messages(output)[0].content
     config = agent.to_dict()
-    assert config["offload_tool_results"] == 12000
-    assert config["result_ttl_seconds"] == 3600
+    assert config["offload_tool_results"] == {"threshold_chars": 12000, "ttl_seconds": 3600}
 
 
 def test_an_agent_that_gains_a_db_starts_offloading(tmp_path, monkeypatch, db):
-    from agno.agent import _init
+    from agno.offload import setup
 
-    monkeypatch.setattr(_init, "log_warning", lambda *_: None)
+    monkeypatch.setattr(setup, "log_warning", lambda *_: None)
     agent = Agent(model=ScriptedToolModel(), tools=[fetch_page], offload_tool_results=True)
     assert BIG in _tool_messages(agent.run("go", session_id=_sid()))[0].content
     agent.db = db
@@ -829,3 +842,50 @@ def test_an_external_result_that_ends_the_run_stays_inline(db):
 
     output = agent.continue_run(paused, session_id=session_id)
     assert _tool_messages(output)[0].content == BIG
+
+
+def test_read_result_refuses_a_result_belonging_to_another_user(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id, user_id="bob")
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+
+    from agno.offload.tools import get_read_result_function
+    from agno.run import RunContext
+
+    as_alice = RunContext(session_id=session_id, run_id="r1", user_id="alice")
+    reply = get_read_result_function(agent, run_context=as_alice).entrypoint(result_id=result_id)
+    assert reply.startswith("Error: result ")
+    assert "different user" in reply
+
+
+def test_the_read_back_tools_do_not_spend_the_tool_call_limit(db):
+    agent = Agent(
+        model=ScriptedToolModel(),
+        db=db,
+        tools=[fetch_page],
+        offload_tool_results=True,
+        tool_call_limit=1,
+    )
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id)
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+
+    read_tool = agent.model.seen_functions["read_result"]
+    call = agent.model.get_function_call_to_run_from_tool_execution(
+        ToolExecution(tool_call_id="call-2", tool_name="read_result", tool_args={"result_id": result_id}),
+        {"read_result": read_tool},
+    )
+    # The delegation already spent the budget; the read-back must still run.
+    results: List[Any] = []
+    list(
+        agent.model.run_function_calls(
+            [call],
+            results,
+            current_function_call_count=1,
+            function_call_limit=1,
+            result_store=agent._result_store,
+        )
+    )
+    assert "Tool call limit" not in str(results[0].content)
+    assert "row 1: " in str(results[0].content)
