@@ -8,6 +8,13 @@ from pydantic import BaseModel, field_validator, model_validator
 from agno.utils.log import log_error
 
 
+def normalize_mime_type(mime_type: Optional[str]) -> Optional[str]:
+    """Return a canonical MIME type for case-insensitive comparisons."""
+    if mime_type is None:
+        return None
+    return mime_type.strip().lower()
+
+
 class Image(BaseModel):
     """Unified Image class for all use cases (input, output, artifacts)"""
 
@@ -415,6 +422,7 @@ class File(BaseModel):
     @classmethod
     def validate_mime_type(cls, v):
         """Validate that the mime_type is one of the allowed types."""
+        v = normalize_mime_type(v)
         if v is not None and v not in cls.valid_mime_types():
             raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
         return v

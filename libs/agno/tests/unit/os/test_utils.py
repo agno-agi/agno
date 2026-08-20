@@ -171,6 +171,18 @@ class TestClassifyUploadFile:
         # An image content type with a misleading .txt name is still an image.
         assert classify_upload_file(_make_upload_file("photo.txt", "image/png")) == "image"
 
+    @pytest.mark.parametrize(
+        "content_type, filename, expected",
+        [
+            (" IMAGE/PNG ", "中文 图像 (v1).png", "image"),
+            ("Application/PDF", "报告 (final).v2.pdf", "document"),
+            ("VIDEO/MP4", "clip (1).mp4", "video"),
+            ("application/octet-stream", "无扩展名", None),
+        ],
+    )
+    def test_normalizes_mime_types_without_trusting_filenames(self, content_type, filename, expected):
+        assert classify_upload_file(_make_upload_file(filename, content_type)) == expected
+
 
 class TestProcessDocument:
     """process_document must build a FileMedia with a mime_type accepted by File.valid_mime_types()."""
@@ -195,6 +207,11 @@ class TestProcessDocument:
         with pytest.raises(HTTPException) as exc_info:
             process_document(_make_upload_file("notes.md", "text/markdown", b""))
         assert exc_info.value.status_code == 400
+
+    def test_mixed_case_mime_type_is_normalized(self):
+        result = process_document(_make_upload_file("报告 (final).pdf", " Application/PDF ", b"data"))
+        assert result is not None
+        assert result.mime_type == "application/pdf"
 
 
 class TestDocumentMimeTypesConsistency:

@@ -20,7 +20,7 @@ from agno.factory import (
     RequestContext,
 )
 from agno.knowledge.knowledge import Knowledge
-from agno.media import Audio, Image, Video
+from agno.media import Audio, Image, Video, normalize_mime_type
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
@@ -677,7 +677,7 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     to be useful (common for `.md` and `.pptx` uploaded from browsers), falls back to the
     filename extension. Returns None if the file type is not supported.
     """
-    content_type = file.content_type
+    content_type = normalize_mime_type(file.content_type)
     if content_type in IMAGE_MIME_TYPES:
         return "image"
     if content_type in AUDIO_MIME_TYPES:
@@ -699,7 +699,7 @@ def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Image(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Image(content=content, format=extract_format(file), mime_type=normalize_mime_type(file.content_type))
 
 
 def process_audio(file: UploadFile) -> Audio:
@@ -713,7 +713,7 @@ def process_video(file: UploadFile) -> Video:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Video(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Video(content=content, format=extract_format(file), mime_type=normalize_mime_type(file.content_type))
 
 
 # Map document file extensions to their canonical MIME type, used to recover a valid
@@ -749,12 +749,13 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
     documents with ambiguous content types (e.g. `.md` sent as octet-stream) still get a
     mime_type accepted by `FileMedia`.
     """
-    if file.content_type and file.content_type in DOCUMENT_MIME_TYPES:
-        return file.content_type
+    content_type = normalize_mime_type(file.content_type)
+    if content_type and content_type in DOCUMENT_MIME_TYPES:
+        return content_type
     if file.filename and "." in file.filename:
         extension = file.filename.rsplit(".", 1)[-1].lower()
         return _DOCUMENT_EXTENSION_MIME.get(extension)
-    return file.content_type
+    return content_type
 
 
 def process_document(file: UploadFile) -> Optional[FileMedia]:
