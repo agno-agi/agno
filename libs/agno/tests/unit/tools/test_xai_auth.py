@@ -19,7 +19,8 @@ from agno.run import RunContext
 from agno.tools.xai_auth import XAIAuth
 from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key, is_encrypted
 
-STORE_KEY = ("xai", "", "supergrok")
+STORE_KEY = ("xai", "", "supergrok")  # the deployment slot: script users and shared deployments
+USER_KEY = ("xai", "u1", "supergrok")  # a signed-in user spends their own subscription
 PENDING_SERVICE = "supergrok-pending"
 
 SIGN_IN_MESSAGE = (
@@ -31,6 +32,7 @@ ALREADY_SIGNED_IN = (
     "say 'sign out and sign in again' — I'll restart the login."
 )
 SIGNED_IN = "Signed in with SuperGrok. The xAI model will now use this subscription."
+SIGNED_IN_PER_USER = "Signed in with SuperGrok. Requests you make will now use this subscription."
 NOT_APPROVED = "Not approved yet. Open the link, approve the sign-in, then tell me again when you're done."
 NO_SIGN_IN = "No sign-in is in progress. Call sign_in_with_supergrok first."
 NOT_SAVED = (
@@ -38,6 +40,10 @@ NOT_SAVED = (
     "Set it (see the cookbook) and sign in again, or pass encrypt_tokens=False for local dev."
 )
 FILE_DEGRADE_NOTE = " (Note: token stored to a local file — this database does not support token storage.)"
+MEMORY_DEGRADE_NOTE = (
+    " (Note: the token is kept in memory for this process only - a per-user sign-in needs a database "
+    "that supports token storage.)"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -234,13 +240,13 @@ def test_force_signs_out_the_stored_session_then_starts_a_fresh_flow(endpoint, s
     auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
     auth.sign_in_with_supergrok(run_context=_ctx("u1"))
     auth.check_supergrok_login(run_context=_ctx("u1"))
-    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+    assert sqlite_db.get_auth_token(*USER_KEY) is not None
 
     payload = json.loads(auth.sign_in_with_supergrok(run_context=_ctx("u1"), force=True))
 
     assert payload == {"message": SIGN_IN_MESSAGE, "url": APPROVAL_URL}
     # sign_out() wiped the durable row before the new flow started
-    assert sqlite_db.get_auth_token(*STORE_KEY) is None
+    assert sqlite_db.get_auth_token(*USER_KEY) is None
     assert len(endpoint.device_requests) == 2
 
 
@@ -255,8 +261,8 @@ def test_check_login_stores_the_token_at_the_deployment_slot(endpoint, sqlite_db
 
     payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
 
-    assert payload == {"message": SIGNED_IN}
-    row = sqlite_db.get_auth_token(*STORE_KEY)
+    assert payload == {"message": SIGNED_IN_PER_USER}
+    row = sqlite_db.get_auth_token(*USER_KEY)
     assert row is not None
     assert row["granted_scopes"] == XAI_OAUTH_SCOPE.split()
     assert decrypt_dict(row["token_data"], key=encryption_key)["access_token"] == "access-token-1"
@@ -310,9 +316,9 @@ def test_a_pending_turn_leaves_the_login_resumable(endpoint, sqlite_db, encrypti
 
     payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
 
-    assert payload == {"message": SIGNED_IN}
+    assert payload == {"message": SIGNED_IN_PER_USER}
     assert len(endpoint.poll_requests) == 2
-    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+    assert sqlite_db.get_auth_token(*USER_KEY) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +344,7 @@ def test_a_terminal_poll_reports_the_reason_and_drops_the_pending_login(
 
     assert payload == {"error": f"Sign-in failed: {reason}. Start again with sign_in_with_supergrok."}
     assert sqlite_db.get_auth_token("xai", "u1", PENDING_SERVICE) is None
-    assert sqlite_db.get_auth_token(*STORE_KEY) is None
+    assert sqlite_db.get_auth_token(*USER_KEY) is None
 
 
 def test_an_unknown_poll_error_is_reported_as_a_failed_sign_in(endpoint, sqlite_db, encryption_key):
@@ -467,16 +473,17 @@ def test_the_framework_injects_run_context_into_the_tool(endpoint, sqlite_db, en
     assert _stash(sqlite_db, "injected-user", encryption_key)["device_code"] == "device-code-1"
 
 
-def test_the_pending_row_follows_the_requester_while_the_token_row_stays_shared(endpoint, sqlite_db, encryption_key):
+def test_both_the_pending_row_and_the_token_row_follow_the_requester(endpoint, sqlite_db, encryption_key):
+    """The two keys match: the login that started under a user finishes under them."""
     auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
 
     auth.sign_in_with_supergrok(run_context=_ctx("u1"))
     assert _stash(sqlite_db, "u1", encryption_key)["device_code"] == "device-code-1"
 
     auth.check_supergrok_login(run_context=_ctx("u1"))
-    # PR 2 provisions the deployment credential; per-user resolution lands later
-    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
-    assert sqlite_db.get_auth_token("xai", "u1", "supergrok") is None
+    assert sqlite_db.get_auth_token(*USER_KEY) is not None
+    # The shared deployment slot is untouched by one user signing in
+    assert sqlite_db.get_auth_token(*STORE_KEY) is None
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +499,7 @@ def test_a_signed_in_user_is_told_when_the_token_could_not_be_saved(endpoint, sq
     payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
 
     assert payload == {"error": NOT_SAVED}
-    assert sqlite_db.get_auth_token(*STORE_KEY) is None
+    assert sqlite_db.get_auth_token(*USER_KEY) is None
 
 
 def test_encryption_off_stores_the_token_and_reports_plain_success(endpoint, sqlite_db):
@@ -501,8 +508,8 @@ def test_encryption_off_stores_the_token_and_reports_plain_success(endpoint, sql
 
     payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
 
-    assert payload == {"message": SIGNED_IN}
-    row = sqlite_db.get_auth_token(*STORE_KEY)
+    assert payload == {"message": SIGNED_IN_PER_USER}
+    row = sqlite_db.get_auth_token(*USER_KEY)
     assert row is not None
     assert not is_encrypted(row["token_data"])
 
@@ -513,13 +520,28 @@ def test_a_db_without_token_storage_degrades_to_a_file_and_says_so(endpoint, tmp
     db.get_auth_token.side_effect = NotImplementedError
     db.delete_auth_token.side_effect = NotImplementedError
     auth = _toolkit(endpoint, db=db, token_path=str(tmp_path / "token.json"), encryption_key=encryption_key)
-    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+    auth.sign_in_with_supergrok()
 
-    payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
+    payload = json.loads(auth.check_supergrok_login())
 
     assert payload == {"message": SIGNED_IN + FILE_DEGRADE_NOTE}
     stored = json.loads((tmp_path / "token.json").read_text())
     assert decrypt_dict(stored, key=encryption_key)["access_token"] == "access-token-1"
+
+
+def test_a_db_without_token_storage_keeps_a_users_token_in_memory_and_says_so(endpoint, tmp_path, encryption_key):
+    """One file cannot hold one session per user, so a per-user sign-in stays in the process."""
+    db = MagicMock()
+    db.upsert_auth_token.side_effect = NotImplementedError
+    db.get_auth_token.side_effect = NotImplementedError
+    db.delete_auth_token.side_effect = NotImplementedError
+    auth = _toolkit(endpoint, db=db, token_path=str(tmp_path / "token.json"), encryption_key=encryption_key)
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+
+    payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"message": SIGNED_IN_PER_USER + MEMORY_DEGRADE_NOTE}
+    assert not (tmp_path / "token.json").exists()
 
 
 def test_an_async_db_degrades_to_a_file_and_says_so(endpoint, tmp_path, encryption_key):
@@ -536,9 +558,9 @@ def test_an_async_db_degrades_to_a_file_and_says_so(endpoint, tmp_path, encrypti
             return True
 
     auth = _toolkit(endpoint, db=AsyncOnlyDb(), token_path=str(tmp_path / "token.json"), encryption_key=encryption_key)
-    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+    auth.sign_in_with_supergrok()
 
-    payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
+    payload = json.loads(auth.check_supergrok_login())
 
     assert payload == {"message": SIGNED_IN + FILE_DEGRADE_NOTE}
     stored = json.loads((tmp_path / "token.json").read_text())
@@ -577,8 +599,8 @@ def test_a_seeded_pending_row_from_another_process_completes_the_login(
 
     payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
 
-    assert payload == {"message": SIGNED_IN}
-    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+    assert payload == {"message": SIGNED_IN_PER_USER}
+    assert sqlite_db.get_auth_token(*USER_KEY) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -645,9 +667,9 @@ async def test_the_async_flow_signs_in_and_polls_exactly_once(endpoint, sqlite_d
     payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
 
     assert started == {"message": SIGN_IN_MESSAGE, "url": APPROVAL_URL}
-    assert payload == {"message": SIGNED_IN}
+    assert payload == {"message": SIGNED_IN_PER_USER}
     assert len(endpoint.poll_requests) == 1
-    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+    assert sqlite_db.get_auth_token(*USER_KEY) is not None
     assert sqlite_db.get_auth_token("xai", "u1", PENDING_SERVICE) is None
 
 
@@ -665,8 +687,8 @@ async def test_an_async_db_carries_the_pending_login_across_replicas(endpoint, s
     replica_b = _async_toolkit(endpoint, db=db, encryption_key=encryption_key)
     payload = json.loads(await replica_b.acheck_supergrok_login(run_context=_ctx("u1")))
 
-    assert payload == {"message": SIGNED_IN}
-    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+    assert payload == {"message": SIGNED_IN_PER_USER}
+    assert sqlite_db.get_auth_token(*USER_KEY) is not None
 
 
 async def test_the_async_check_reports_not_approved_yet_and_re_stashes_the_interval(
@@ -686,7 +708,7 @@ async def test_the_async_force_signs_out_then_starts_a_fresh_login(endpoint, sql
     auth = _async_toolkit(endpoint, db=AsyncDb(sqlite_db), encryption_key=encryption_key)
     await auth.asign_in_with_supergrok(run_context=_ctx("u1"))
     await auth.acheck_supergrok_login(run_context=_ctx("u1"))
-    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+    assert sqlite_db.get_auth_token(*USER_KEY) is not None
 
     payload = json.loads(await auth.asign_in_with_supergrok(run_context=_ctx("u1"), force=True))
 
@@ -714,3 +736,75 @@ async def test_an_async_terminal_poll_reports_the_reason_and_drops_the_pending_l
 
     assert payload["error"].startswith("Sign-in failed:")
     assert sqlite_db.get_auth_token("xai", "u1", PENDING_SERVICE) is None
+
+
+# ---------------------------------------------------------------------------
+# The per-user flip: the final token row follows the caller, like the pending row
+# ---------------------------------------------------------------------------
+
+
+def test_check_login_stores_the_token_under_the_caller(endpoint, sqlite_db, encryption_key):
+    auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+
+    payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"message": SIGNED_IN_PER_USER}
+    assert sqlite_db.get_auth_token("xai", "u1", "supergrok") is not None
+    # The deployment slot is not written by a per-user sign-in
+    assert sqlite_db.get_auth_token(*STORE_KEY) is None
+
+
+def test_a_script_user_still_signs_in_to_the_deployment_slot(endpoint, sqlite_db, encryption_key):
+    """No run_context means no user; behaviour is byte-identical to before the flip."""
+    auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
+    auth.sign_in_with_supergrok()
+
+    payload = json.loads(auth.check_supergrok_login())
+
+    assert payload == {"message": SIGNED_IN}
+    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+
+
+def test_one_users_session_does_not_sign_another_user_in(endpoint, sqlite_db, encryption_key):
+    """Tool 1 checks the caller's row, not the deployment's."""
+    auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+    auth.check_supergrok_login(run_context=_ctx("u1"))
+
+    payload = json.loads(auth.sign_in_with_supergrok(run_context=_ctx("u2")))
+
+    # u2 gets a fresh approval link rather than "already signed in"
+    assert payload == {"message": SIGN_IN_MESSAGE, "url": APPROVAL_URL}
+
+
+def test_a_signed_in_user_is_told_they_are_already_signed_in(endpoint, sqlite_db, encryption_key):
+    auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+    auth.check_supergrok_login(run_context=_ctx("u1"))
+
+    payload = json.loads(auth.sign_in_with_supergrok(run_context=_ctx("u1")))
+
+    assert payload == {"message": ALREADY_SIGNED_IN}
+
+
+def test_force_signs_out_only_the_caller(endpoint, sqlite_db, encryption_key):
+    auth = _toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
+    for user in ("u1", "u2"):
+        auth.sign_in_with_supergrok(run_context=_ctx(user))
+        auth.check_supergrok_login(run_context=_ctx(user))
+
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"), force=True)
+
+    assert sqlite_db.get_auth_token("xai", "u1", "supergrok") is None
+    assert sqlite_db.get_auth_token("xai", "u2", "supergrok") is not None
+
+
+async def test_the_async_check_stores_the_token_under_the_caller(endpoint, sqlite_db, encryption_key):
+    auth = _async_toolkit(endpoint, db=AsyncDb(sqlite_db), encryption_key=encryption_key)
+    await auth.asign_in_with_supergrok(run_context=_ctx("u1"))
+
+    payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"message": SIGNED_IN_PER_USER}
+    assert sqlite_db.get_auth_token("xai", "u1", "supergrok") is not None

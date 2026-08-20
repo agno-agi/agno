@@ -23,6 +23,7 @@ _ALREADY_SIGNED_IN = (
     "say 'sign out and sign in again' — I'll restart the login."
 )
 _SIGNED_IN = "Signed in with SuperGrok. The xAI model will now use this subscription."
+_SIGNED_IN_PER_USER = "Signed in with SuperGrok. Requests you make will now use this subscription."
 _NOT_APPROVED = "Not approved yet. Open the link, approve the sign-in, then tell me again when you're done."
 _NO_PENDING = "No sign-in is in progress. Call sign_in_with_supergrok first."
 _NOT_SAVED = (
@@ -30,6 +31,10 @@ _NOT_SAVED = (
     "Set it (see the cookbook) and sign in again, or pass encrypt_tokens=False for local dev."
 )
 _FILE_DEGRADE_NOTE = " (Note: token stored to a local file — this database does not support token storage.)"
+_MEMORY_DEGRADE_NOTE = (
+    " (Note: the token is kept in memory for this process only - a per-user sign-in needs a database "
+    "that supports token storage.)"
+)
 
 
 def _requester(run_context: Optional[RunContext]) -> str:
@@ -50,12 +55,14 @@ class XAIAuth(Toolkit):
     The agent calls sign_in_with_supergrok() to get the approval URL for the
     user, then check_supergrok_login() to finish.
 
-    Signing in provisions the deployment's SuperGrok credential (single-user
-    mode): the token is stored on the slot the xAI model already reads.
+    Each user signs in to their own SuperGrok account: the token is stored under
+    the caller's user_id, taken from run_context, and the xAI model spends that
+    user's subscription on their runs. ``force=True`` signs out the caller alone.
 
-    That slot is shared, so every user of this toolkit signs in to, and spends,
-    the SAME subscription - and ``force=True`` signs the deployment out, not one
-    user. Keep it to single-tenant deployments until per-user tokens land.
+    A caller with no user_id - a script, or any run without a run_context - signs
+    the deployment in instead, on the shared slot that users without a session of
+    their own fall back to. Pass ``require_user_token=True`` to the model to
+    refuse that fallback for identified users.
     """
 
     def __init__(
@@ -106,9 +113,10 @@ class XAIAuth(Toolkit):
         Returns:
             JSON string containing the approval message and URL, or an error message.
         """
+        user_id = _requester(run_context)
         if force:
-            self.token_manager.sign_out()
-        elif self._is_signed_in():
+            self.token_manager.sign_out(user_id=user_id)
+        elif self._is_signed_in(user_id):
             return json.dumps({"message": _ALREADY_SIGNED_IN})
 
         try:
@@ -117,7 +125,7 @@ class XAIAuth(Toolkit):
             return json.dumps({"error": str(e)})
 
         self._stash(
-            _requester(run_context),
+            user_id,
             {"device_code": info.device_code, "interval": info.interval, "deadline": time() + info.expires_in},
         )
         return json.dumps(
@@ -148,7 +156,7 @@ class XAIAuth(Toolkit):
             return json.dumps({"error": _NO_PENDING})
 
         try:
-            result = self.token_manager.poll_once(pending["device_code"], int(pending["interval"]))
+            result = self.token_manager.poll_once(pending["device_code"], int(pending["interval"]), user_id=user_id)
         except ModelAuthenticationError as e:
             self._clear_pending(user_id)
             return json.dumps({"error": _failed(str(e))})
@@ -165,7 +173,7 @@ class XAIAuth(Toolkit):
         # poll_once already persisted the token through the manager's own save path
         if self.token_manager.encrypt_tokens and not self.token_manager.encryption_key:
             return json.dumps({"error": _NOT_SAVED})
-        return json.dumps({"message": _SIGNED_IN + self._degrade_note()})
+        return json.dumps({"message": self._signed_in_message(user_id) + self._degrade_note(user_id)})
 
     async def asign_in_with_supergrok(self, run_context: Optional[RunContext] = None, force: bool = False) -> str:
         """Start a SuperGrok sign-in and give the user a link to approve it.
@@ -177,9 +185,10 @@ class XAIAuth(Toolkit):
         Returns:
             JSON string containing the approval message and URL, or an error message.
         """
+        user_id = _requester(run_context)
         if force:
-            await self.token_manager.asign_out()
-        elif await self._ais_signed_in():
+            await self.token_manager.asign_out(user_id=user_id)
+        elif await self._ais_signed_in(user_id):
             return json.dumps({"message": _ALREADY_SIGNED_IN})
 
         try:
@@ -188,7 +197,7 @@ class XAIAuth(Toolkit):
             return json.dumps({"error": str(e)})
 
         await self._astash(
-            _requester(run_context),
+            user_id,
             {"device_code": info.device_code, "interval": info.interval, "deadline": time() + info.expires_in},
         )
         return json.dumps(
@@ -219,7 +228,9 @@ class XAIAuth(Toolkit):
             return json.dumps({"error": _NO_PENDING})
 
         try:
-            result = await self.token_manager.apoll_once(pending["device_code"], int(pending["interval"]))
+            result = await self.token_manager.apoll_once(
+                pending["device_code"], int(pending["interval"]), user_id=user_id
+            )
         except ModelAuthenticationError as e:
             await self._aclear_pending(user_id)
             return json.dumps({"error": _failed(str(e))})
@@ -236,9 +247,23 @@ class XAIAuth(Toolkit):
         # apoll_once already persisted the token through the manager's own save path
         if self.token_manager.encrypt_tokens and not self.token_manager.encryption_key:
             return json.dumps({"error": _NOT_SAVED})
-        return json.dumps({"message": _SIGNED_IN + await self._adegrade_note()})
+        return json.dumps({"message": self._signed_in_message(user_id) + await self._adegrade_note(user_id)})
 
-    def _is_signed_in(self) -> bool:
+    @staticmethod
+    def _degrade_target(user_id: str) -> str:
+        """Where the token went when the database could not hold it.
+
+        The file store holds one session, so it can only ever carry the
+        deployment slot; an identified user's token stays in this process.
+        """
+        return _MEMORY_DEGRADE_NOTE if user_id else _FILE_DEGRADE_NOTE
+
+    @staticmethod
+    def _signed_in_message(user_id: str) -> str:
+        """A user signs their own account in; a script signs the deployment in."""
+        return _SIGNED_IN_PER_USER if user_id else _SIGNED_IN
+
+    def _is_signed_in(self, user_id: str = "") -> bool:
         """Whether a usable SuperGrok session already exists, refreshing it if needed.
 
         A refresh here reaches the network, so a transport failure counts as "no
@@ -246,12 +271,12 @@ class XAIAuth(Toolkit):
         rather than letting an exception escape a tool that never raises.
         """
         try:
-            self.token_manager.get_access_token()
+            self.token_manager.get_access_token(user_id=user_id)
             return True
         except (ModelAuthenticationError, httpx.HTTPError):
             return False
 
-    async def _ais_signed_in(self) -> bool:
+    async def _ais_signed_in(self, user_id: str = "") -> bool:
         """Whether a usable SuperGrok session already exists, refreshing it if needed.
 
         A refresh here reaches the network, so a transport failure counts as "no
@@ -259,7 +284,7 @@ class XAIAuth(Toolkit):
         rather than letting an exception escape a tool that never raises.
         """
         try:
-            await self.token_manager.aget_access_token()
+            await self.token_manager.aget_access_token(user_id=user_id)
             return True
         except (ModelAuthenticationError, httpx.HTTPError):
             return False
@@ -273,7 +298,7 @@ class XAIAuth(Toolkit):
 
         return await _maybe_await(result)
 
-    def _degrade_note(self) -> str:
+    def _degrade_note(self, user_id: str = "") -> str:
         """The note for a database that could not hold the token, so the manager wrote a file."""
         db = self.token_manager.db
         if db is None:
@@ -282,18 +307,18 @@ class XAIAuth(Toolkit):
             # An async backend cannot be read from these sync tools - and the
             # manager's own sync path fell through to the file store for exactly
             # that reason, so the note is the accurate answer here.
-            return _FILE_DEGRADE_NOTE
+            return self._degrade_target(user_id)
         try:
             # The manager owns the deployment slot; read it rather than restate it
-            if db.get_auth_token(*self.token_manager._store_key()) is not None:
+            if db.get_auth_token(*self.token_manager._store_key(user_id)) is not None:
                 return ""
         except NotImplementedError:
             pass
         except Exception as e:
             log_debug(f"Could not confirm where the SuperGrok token was stored: {e}")
-        return _FILE_DEGRADE_NOTE
+        return self._degrade_target(user_id)
 
-    async def _adegrade_note(self) -> str:
+    async def _adegrade_note(self, user_id: str = "") -> str:
         """The note for a database that could not hold the token, so the manager wrote a file.
 
         Reads the store for real, where the sync twin has to assume a file: this
@@ -304,13 +329,13 @@ class XAIAuth(Toolkit):
             return ""
         try:
             # The manager owns the deployment slot; read it rather than restate it
-            if await self._await_db(db.get_auth_token(*self.token_manager._store_key())) is not None:
+            if await self._await_db(db.get_auth_token(*self.token_manager._store_key(user_id))) is not None:
                 return ""
         except NotImplementedError:
             pass
         except Exception as e:
             log_debug(f"Could not confirm where the SuperGrok token was stored: {e}")
-        return _FILE_DEGRADE_NOTE
+        return self._degrade_target(user_id)
 
     # ------------------------------------------------------------------
     # The pending login: a db row when the backend can hold one, else memory
