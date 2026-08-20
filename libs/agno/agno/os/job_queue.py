@@ -712,11 +712,29 @@ class QueueWorker:
             )
             outcome = await self._persist_run_error_outcome(job, error)
             if outcome is None:
-                # The run row could not be terminalized (component missing
-                # after a deploy, session store fault). Failing the ticket now
-                # would orphan the run row RUNNING/PENDING forever with nothing
-                # left to revisit it - keep the ticket running under our sweep
-                # lock; it is re-swept when that lock goes stale.
+                # The run row could not be terminalized. Check if the component
+                # is permanently unresolvable - if so, fail the ticket directly
+                # to free the concurrency slot (the run row, if it exists, is
+                # already unreachable). For transient failures (store fault),
+                # keep the ticket running for re-sweep.
+                component_type = job.get("component_type", "")
+                component_id = job.get("component_id", "")
+                component = self.resolve_component(component_type, component_id)
+                if component is None:
+                    # Component permanently gone: fail the ticket directly
+                    error = (
+                        f"Component not found: {component_type}/{component_id}. "
+                        "The run row (if any) is orphaned. Re-register the component and requeue "
+                        "via POST /queue/jobs/{id}/requeue if recovery is needed."
+                    )
+                    await self._terminate_stream_view(job)
+                    await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
+                    log_warning(
+                        f"Job queue: swept job {job['id']} failed - {component_type}/{component_id} unresolvable"
+                    )
+                    continue
+                # Transient failure (store fault): keep the ticket running for
+                # re-sweep when the sweep lock goes stale
                 log_error(
                     f"Job queue: could not persist run-row error for swept job {job['id']}; "
                     "it will be re-swept when the sweep lock goes stale"
@@ -1567,12 +1585,9 @@ class QueueWorker:
             return
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
-            # Same rule as every terminal path: never terminalize the ticket
-            # while the run row (prepared PENDING at accept) cannot be
-            # terminalized with it - without the component there is no way to
-            # reach the row, and a failed ticket would orphan it forever.
-            # Leave the claim to go stale: a replica that has the component
-            # back reclaims it, or the sweep retries the persist each tick.
+            # Component not on this replica: leave claim stale for cross-replica
+            # recovery (another replica may have it). If permanently gone, the
+            # sweep fails it after lock_grace via the orphan path.
             log_error(
                 f"Job queue: component not found for job {job_id} "
                 f"({job['component_type']}/{job['component_id']}); leaving the claim to go stale "
