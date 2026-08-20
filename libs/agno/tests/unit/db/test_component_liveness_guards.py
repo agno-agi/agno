@@ -822,3 +822,43 @@ class TestTheHardDeleteReAssertsItsGuardToo:
 
         assert isinstance(outcome.get("error"), ComponentDependencyError), outcome
         assert second.get_component("victim") is not None
+
+
+class TestCreatingAPublishedParentReAssertsItsPins:
+    """create_component_with_config runs its pin checks before any write and
+    takes no lock, so a child archived in the gap left a brand-new PUBLISHED
+    parent pinning an archived child -- exactly what upsert_config's publish
+    gate raises to prevent, on the one surface that skipped it.
+    """
+
+    def test_a_child_archived_in_the_gap_rolls_the_creation_back(self, dbs):
+        first, second = dbs
+        _agent(second, "doomed-child")
+
+        outcome = _interleave(
+            first,
+            lambda: first.create_component_with_config(
+                component_id="fresh-team",
+                component_type=ComponentType.TEAM,
+                name="fresh-team",
+                config={"name": "fresh-team"},
+                stage="published",
+                links=[_member("doomed-child")],
+            ),
+            lambda: second.delete_component("doomed-child"),
+        )
+
+        assert isinstance(outcome.get("error"), ComponentDependencyError), outcome
+        assert second.get_component("fresh-team", include_deleted=True) is None
+
+    def test_a_live_child_still_creates(self, db):
+        _agent(db, "live-child")
+        component, _config = db.create_component_with_config(
+            component_id="fine-team",
+            component_type=ComponentType.TEAM,
+            name="fine-team",
+            config={"name": "fine-team"},
+            stage="published",
+            links=[_member("live-child")],
+        )
+        assert component["current_version"] == 1

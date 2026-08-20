@@ -4571,6 +4571,29 @@ class SqliteDb(BaseDb):
                             )
                         )
 
+                if stage == "published" and links and links_table is not None:
+                    # The pin checks above are check-then-write: they run before
+                    # any row is written, take no lock, and a child archived in
+                    # the gap would leave a brand-new PUBLISHED parent pinning
+                    # an archived child - the state upsert_config's publish gate
+                    # raises to prevent. Re-assert the liveness half here, where
+                    # the write lock is held, so a lost race rolls the creation
+                    # back rather than committing that state.
+                    for link in links:
+                        if link.get("link_kind") not in PIN_LINK_KINDS:
+                            continue
+                        child_deleted_at = sess.execute(
+                            select(components_table.c.deleted_at)
+                            .where(components_table.c.component_id == link["child_component_id"])
+                            .with_for_update()
+                        ).scalar()
+                        if child_deleted_at is not None:
+                            raise ComponentDependencyError(
+                                f"Cannot publish {component_id} v{version}: pinned "
+                                f"{link['link_kind']} '{link['child_component_id']}' is archived; "
+                                "restore it first."
+                            )
+
                 # Both halves of the answer are read inside the transaction that
                 # wrote them, and without the archived filter. A read taken after
                 # the commit can be overtaken by an archive on another connection,
