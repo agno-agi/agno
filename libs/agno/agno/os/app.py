@@ -988,10 +988,16 @@ class AgentOS:
         serving that toolkit never reads. Binding follows the OS that SERVES
         the toolkit, which does not depend on construction order.
 
+        The binding records WHICH OS made it, so this OS can replace its own
+        binding whenever it runs again - a resync, or its db swapped in place
+        - and only a second, different OS naming a different db is held off.
+
         A toolkit served by an OS with no usable db is deliberately left
         unbound so it falls through to the registry declaration: that keeps a
         db-less deployment working once another OS names a catalog db.
         """
+        from weakref import ref
+
         from agno.tools.studio import StudioTools
         from agno.tools.studio_runner import StudioRunnerTools
 
@@ -1011,22 +1017,38 @@ class AgentOS:
                 if getattr(tool, "registry", None) is not self.registry or getattr(tool, "_db", None) is not None:
                     continue
                 already = getattr(tool, "_os_db", None)
-                if already is not None and already is not os_db:
+                binding = getattr(tool, "_os_binding", None)
+                # Held weakly, so a collected OS reads as None here. That is
+                # not this OS either way, and the first binding stands: making
+                # a rebind depend on whether the other OS happens to still be
+                # alive would make the outcome depend on collection timing.
+                bound_by = binding() if binding is not None else None
+                if bound_by is not self and already is not None and already is not os_db:
                     if os_db is not None:
                         label = getattr(component, "id", None) or getattr(component, "name", None)
+                        bound_id = getattr(already, "id", None)
+                        this_id = getattr(os_db, "id", None)
+                        # Two dbs can carry the same id, and naming both would
+                        # then read as a contradiction rather than a conflict.
+                        which = (
+                            f"two distinct db instances sharing the id '{bound_id}'"
+                            if bound_id == this_id
+                            else f"bound '{bound_id}', this OS '{this_id}'"
+                        )
                         log_warning(
                             f"Component '{label}' carries {type(tool).__name__} served by more than one "
-                            f"AgentOS with different databases (bound '{already.id}', this OS '{os_db.id}'); "
-                            "keeping the first. Pass the toolkit its own db (StudioTools(db=...)) to make "
-                            "the choice explicit."
+                            f"AgentOS with different databases ({which}); keeping the first. Pass the "
+                            "toolkit its own db (StudioTools(db=...)) to make the choice explicit."
                         )
                 else:
                     # StudioTools delegates its component lookups to an embedded
                     # runner toolkit, so both halves have to resolve one db.
                     tool._os_db = os_db
+                    tool._os_binding = ref(self)
                     embedded = getattr(tool, "_runner_tools", None)
                     if embedded is not None and getattr(embedded, "_db", None) is None:
                         embedded._os_db = os_db
+                        embedded._os_binding = ref(self)
 
     def _iter_component_carriers(self) -> Iterator[Any]:
         """Every served component that can carry a toolkit: top-level

@@ -477,7 +477,12 @@ class TestASharedRegistryBindsPerOS:
         serving = AgentOS(agents=[builder], registry=registry, db=db_a)
 
         assert studio.db is db_a
+        # The embedded runner answers every component lookup StudioTools makes,
+        # so a half-bound toolkit writes to db_a and lists out of db_b: the
+        # agent just created would be missing from its own listing.
+        assert studio._runner_tools.db is db_a
         assert _loads(studio.create_agent(name="Made", instructions="i", publish=True))["ok"] is True
+        assert "made" in [row["id"] for row in _loads(studio._runner_tools.list_agents())["agents"]]
 
         client = TestClient(serving.get_app())
         listed = client.get("/components", params={"component_type": "agent"}).json()["data"]
@@ -534,6 +539,68 @@ class TestASharedRegistryBindsPerOS:
         assert studio.db is db_a
         assert any("served by more than one" in r.message for r in caplog.records)
 
+    def test_the_warning_reads_when_the_two_dbs_share_an_id(self, tmp_path, caplog):
+        """Nothing forces db ids to be unique, and quoting the same id twice
+        would read as a contradiction rather than as the conflict it is."""
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry)
+        AgentOS(agents=[builder], registry=registry, db=SqliteDb(id="same", db_file=str(tmp_path / "a.db")))
+
+        with caplog.at_level("WARNING"):
+            AgentOS(agents=[builder], registry=registry, db=SqliteDb(id="same", db_file=str(tmp_path / "b.db")))
+
+        split = [r.message for r in caplog.records if "served by more than one" in r.message]
+        assert split, [r.message for r in caplog.records]
+        assert all("two distinct db instances sharing the id 'same'" in message for message in split)
+        assert not any("bound 'same', this OS 'same'" in message for message in split)
+
+    def test_the_same_os_rebinding_its_own_toolkit_is_silent(self, tmp_path, caplog):
+        """One AgentOS, one toolkit: swapping the OS db and resyncing moves the
+        catalog with it. Holding the first binding here would strand the Studio
+        on a db this OS no longer serves, and warn about a second OS that does
+        not exist."""
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry)
+        first = SqliteDb(id="db-first", db_file=str(tmp_path / "first.db"))
+        second = SqliteDb(id="db-second", db_file=str(tmp_path / "second.db"))
+
+        agent_os = AgentOS(agents=[builder], registry=registry, db=first)
+        app = agent_os.get_app()
+        assert studio.db is first
+
+        with caplog.at_level("WARNING"):
+            agent_os.db = second
+            agent_os.resync(app)
+
+        assert studio.db is second
+        assert studio._runner_tools.db is second
+        assert not any("served by more than one" in r.message for r in caplog.records), [
+            r.message for r in caplog.records
+        ]
+        assert _loads(studio.create_agent(name="Made", instructions="i", publish=True))["ok"] is True
+        assert [row["component_id"] for row in second.list_components()[0]] == ["made"]
+        assert first.list_components()[0] == []
+
+    def test_a_resync_does_not_take_back_a_toolkit_another_os_serves(self, tmp_path, caplog):
+        """The rebind above is keyed to the OS that made the binding, not to
+        being the most recent caller: a resync of the OS that lost the split
+        must not quietly win it on the second pass."""
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry)
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        db_b = SqliteDb(id="db-b", db_file=str(tmp_path / "b.db"))
+
+        # Kept in a local: the binding is keyed to the OS, and a collected one
+        # would decide this by refcount timing rather than by the rule.
+        winner = AgentOS(agents=[builder], registry=registry, db=db_a)
+        loser = AgentOS(agents=[builder], registry=registry, db=db_b)
+
+        with caplog.at_level("WARNING"):
+            loser.resync(loser.get_app())
+
+        assert winner.db is db_a
+        assert studio.db is db_a
+
     def test_a_registry_declared_db_survives_a_db_less_os(self, tmp_path):
         """The user named the catalog db on the Registry itself; an OS with no
         db of its own has nothing better to say and must not overrule it."""
@@ -552,7 +619,9 @@ class TestASharedRegistryBindsPerOS:
 
         Collecting the component tree first would put an agent-private session
         db in that list, and the db-less fallback would then adopt it - a
-        catalog written where no OS surface reads it.
+        catalog written where no OS surface reads it. Construction and resync
+        are the only two callers, so both are exercised here; get_app() does
+        not populate the registry at all.
         """
         from agno.registry.registry import Registry as RegistryClass
 
@@ -571,7 +640,9 @@ class TestASharedRegistryBindsPerOS:
         RegistryClass.declare_component_db = _record
         try:
             agent_os = AgentOS(agents=[builder], registry=registry)
-            agent_os.get_app()
+            # get_app() collects the component tree, so the resync after it
+            # runs with the private db already on registry.dbs.
+            agent_os.resync(agent_os.get_app())
         finally:
             RegistryClass.declare_component_db = original
 

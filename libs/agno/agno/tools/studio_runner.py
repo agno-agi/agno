@@ -108,6 +108,8 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 
 if TYPE_CHECKING:
+    from weakref import ReferenceType
+
     from agno.agent.agent import Agent
     from agno.db.base import BaseDb, ComponentType
     from agno.registry.registry import Registry
@@ -270,6 +272,10 @@ class StudioRunnerTools(Toolkit):
         # Declared before super().__init__ so a deep copy of the toolkit carries
         # the field rather than resolving as if it had never been bound.
         self._os_db: Optional["BaseDb"] = None
+        # Which AgentOS set _os_db, held weakly - see the twin on StudioTools.
+        # The same OS binding again replaces its own binding silently; a
+        # different OS naming a different db keeps the first one and warns.
+        self._os_binding: Optional["ReferenceType[Any]"] = None
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows

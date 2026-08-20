@@ -85,6 +85,8 @@ from agno.utils.log import log_debug, logger
 from agno.utils.string import generate_component_id_from_name, validate_component_id
 
 if TYPE_CHECKING:
+    from weakref import ReferenceType
+
     from agno.agent.agent import Agent
     from agno.db.base import BaseDb
     from agno.models.base import Model
@@ -259,6 +261,12 @@ class StudioTools(Toolkit):
         # Declared before super().__init__ so a deep copy of the toolkit carries
         # the field rather than resolving as if it had never been bound.
         self._os_db: Optional["BaseDb"] = None
+        # Which AgentOS set _os_db, held weakly. Identity is what makes a rebind
+        # decidable: the same OS binding again -- a resync, or its db swapped in
+        # place -- replaces its own binding silently, while a different OS
+        # naming a different db keeps the first binding and warns. A strong
+        # reference would keep a whole served application graph alive.
+        self._os_binding: Optional["ReferenceType[Any]"] = None
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
