@@ -140,18 +140,61 @@ class TestTheVersionIsWhateverJsonCarried:
         )
         assert r.status_code == 201, (version, r.status_code, r.text)
 
-    @pytest.mark.parametrize("version", [True, None, "not-a-number"])
-    def test_a_version_that_names_no_draft_never_reaches_one(self, db, bob_team, alice_agent, version):
-        """Spellings that cannot name alice's draft are the adapter's problem,
-        not the guard's -- what matters is that none of them stores a pin at
-        the unpublished version."""
-        _client(db, "bob").post(
+    @pytest.mark.parametrize(
+        "version",
+        [
+            True,  # bool is an int subclass; the column stores it as version 1
+            False,
+            1.5,  # non-integral: int() truncates to 1, Postgres rounds to 2
+            2.6,
+            2.4,
+            "2.0",  # int() raises on this string, so a skipping guard drops the link
+            "2e0",
+            "not-a-number",
+            0,  # no version 0 exists; a stored pin at it dangles forever
+            -1,
+            10**12,  # outside the INTEGER column, so the guard's own read raises
+        ],
+    )
+    def test_a_version_that_names_no_version_is_refused_outright(self, db, bob_team, alice_agent, version):
+        """A guard on a caller-supplied field must refuse what it cannot read.
+
+        Skipping is how such a guard gets walked around: every spelling here
+        used to slip past the stage check and still reach the INTEGER column,
+        which coerced it into a real version -- ``true`` into 1 and ``2.6``
+        into 3 -- so quoting or misspelling the number pinned a version the
+        caller was refused when it asked plainly.
+        """
+        r = _client(db, "bob").post(
             f"/components/{bob_team}/configs",
             json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, version)},
         )
+        assert r.status_code == 400, (version, r.status_code, r.text)
         for parent_version in (1, 2):
-            for link in db.get_links(bob_team, version=parent_version) or []:
-                assert link.get("child_version") != 2, (version, link)
+            assert db.get_links(bob_team, version=parent_version) == [], (version, parent_version)
+
+    def test_the_patch_route_refuses_them_too(self, db, bob_team, alice_agent):
+        """The guard has two entry points and both take caller-supplied links."""
+        r = _client(db, "bob").patch(
+            f"/components/{bob_team}/configs/1",
+            json={"config": {"name": "bob-team"}, "links": _pin(alice_agent, True)},
+        )
+        assert r.status_code == 400, (r.status_code, r.text)
+        assert db.get_links(bob_team, version=1) == []
+
+    def test_a_legitimate_spelling_is_stored_as_the_canonical_int(self, db, bob_team, alice_agent):
+        """What the guard checked must be what the adapter stores.
+
+        The two used to convert independently, which is the whole defect; the
+        coerced value is written back so there is only one conversion.
+        """
+        r = _client(db, "bob").post(
+            f"/components/{bob_team}/configs",
+            json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, " 1 ")},
+        )
+        assert r.status_code == 201, r.text
+        links = db.get_links(bob_team, version=r.json()["version"])
+        assert [link["child_version"] for link in links] == [1]
 
 
 class TestTheLegitimateCompositionsStillWork:
