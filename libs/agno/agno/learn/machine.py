@@ -29,6 +29,7 @@ from agno.learn.curate import Curator
 from agno.learn.stores.protocol import LearningStore
 from agno.utils.log import (
     log_debug,
+    log_info,
     log_warning,
     set_log_level_to_debug,
     set_log_level_to_info,
@@ -131,7 +132,7 @@ class LearningMachine:
     # the blocks would render twice - warn once.
     _placed_by_hand: bool = field(default=False, init=False)
     _double_render_warned: bool = field(default=False, init=False)
-    _missing_user_id_warned: bool = field(default=False, init=False)
+    _missing_user_id_logged: bool = field(default=False, init=False)
     _missing_model_warned: bool = field(default=False, init=False)
     # Strong refs to fire-and-forget capture tasks (acapture_hook), so the event
     # loop cannot garbage-collect them mid-flight.
@@ -535,16 +536,17 @@ class LearningMachine:
         return self._instructions_text()
 
     def _warn_if_user_id_missing(self, user_id: Optional[str]) -> None:
-        """Per-user stores degrade without a user_id (an unauthenticated /mcp run
-        is the common way to get here). Make the degradation visible, once per
-        machine.
+        """Per-user stores are inactive without a user_id (an unauthenticated /mcp
+        run is the common way to get here). A run without one is a supported
+        configuration, so this states what is inactive, once per machine, and
+        leaves it there.
 
         The shapes of degradation differ and the warning names each one:
         user_profile and user_memory return no tools at all; entity memory under
         namespace="user" injects no entity context, and when its agent tools are
         enabled it also keeps them exposed and answers each call with a refusal.
         """
-        if user_id or self._missing_user_id_warned:
+        if user_id or self._missing_user_id_logged:
             return
         toolless = [name for name in ("user_profile", "user_memory") if self.stores.get(name) is not None]
         entity_store = self.stores.get("entity_memory")
@@ -554,7 +556,7 @@ class LearningMachine:
         if not toolless and not entity_user_scoped:
             return
 
-        self._missing_user_id_warned = True
+        self._missing_user_id_logged = True
         consequences: List[str] = []
         if toolless:
             consequences.append(f"the tools and capture of {', '.join(toolless)} are disabled for this run")
@@ -568,11 +570,7 @@ class LearningMachine:
                     else ""
                 )
             )
-        log_warning(
-            "This run has no user_id, but per-user learning stores are configured: "
-            + "; ".join(consequences)
-            + ". Pin Agent(user_id=...) or authenticate the request so a user id reaches the stores."
-        )
+        log_info("This run has no user_id, so per-user learning stores are inactive: " + "; ".join(consequences))
 
     def _warn_if_model_missing(self) -> None:
         """Capture is a model call, and the manual door injects nothing.

@@ -36,7 +36,7 @@ def test_enable_user_memories_is_quiet(caplog, tmp_path) -> None:
     from agno.agent import Agent
     from agno.db.sqlite import SqliteDb
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         agent = Agent(db=SqliteDb(db_file=str(tmp_path / "a.db")), update_memory_on_run=True)
         agent.deep_copy()
     assert agent.update_memory_on_run is True
@@ -47,7 +47,7 @@ def test_hitl_mode_warns_unsupported_without_deprecating(caplog) -> None:
     from agno.learn.config import LearningMode, UserMemoryConfig
     from agno.learn.stores.user_memory import UserMemoryStore
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         UserMemoryStore(config=UserMemoryConfig(db=RecordingLearningDb(), mode=LearningMode.HITL))  # type: ignore[arg-type]
     messages = [r.getMessage() for r in caplog.records]
     assert any("does not support HITL mode" in m for m in messages)
@@ -63,23 +63,23 @@ def test_agentic_memory_collision_is_quiet(caplog, tmp_path) -> None:
 
     db = SqliteDb(db_file=str(tmp_path / "b.db"))
     agent = Agent(db=db, learning=True, enable_agentic_memory=True)
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         set_learning_machine(agent)
         set_learning_machine(agent)
     assert not any("silently dropped" in r.getMessage() for r in caplog.records)
 
 
-def test_missing_user_id_with_per_user_stores_warns_once(caplog) -> None:
+def test_missing_user_id_with_per_user_stores_is_logged_once(caplog) -> None:
     machine = LearningMachine(db=RecordingLearningDb(), user_memory=True, user_profile=True)  # type: ignore[arg-type]
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         machine.get_tools(user_id=None)
         machine.get_tools(user_id=None)
-    warnings = [r for r in caplog.records if "no user_id" in r.getMessage()]
-    assert len(warnings) == 1
-    assert "user_profile" in warnings[0].getMessage() and "user_memory" in warnings[0].getMessage()
+    records = [r for r in caplog.records if "no user_id" in r.getMessage()]
+    assert len(records) == 1
+    assert "user_profile" in records[0].getMessage() and "user_memory" in records[0].getMessage()
 
 
-def test_missing_user_id_warning_separates_disabled_tools_from_refusals(caplog) -> None:
+def test_missing_user_id_message_separates_disabled_tools_from_refusals(caplog) -> None:
     """The two per-user stores degrade differently and one warning says both.
 
     user_profile/user_memory return no tools without a user_id; entity memory
@@ -95,13 +95,13 @@ def test_missing_user_id_warning_separates_disabled_tools_from_refusals(caplog) 
         user_profile=True,
         entity_memory=EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user")),  # type: ignore[arg-type]
     )
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         tools = machine.get_tools(user_id=None)
         machine.get_tools(user_id=None)
 
-    warnings = [r.getMessage() for r in caplog.records if "no user_id" in r.getMessage()]
-    assert len(warnings) == 1, warnings
-    message = warnings[0]
+    records = [r for r in caplog.records if "no user_id" in r.getMessage()]
+    assert len(records) == 1, records
+    message = records[0].getMessage()
     assert "the tools and capture of user_profile are disabled" in message
     assert 'entity_memory (namespace="user") injects no entity context' in message
     assert "keeps its tools exposed while refusing every call" in message
@@ -116,12 +116,12 @@ def test_missing_user_id_warning_separates_disabled_tools_from_refusals(caplog) 
 
 def test_no_missing_user_id_warning_when_user_present_or_no_per_user_stores(caplog) -> None:
     machine = LearningMachine(db=RecordingLearningDb(), user_memory=True)  # type: ignore[arg-type]
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         machine.get_tools(user_id="u1")
     assert not any("no user_id" in r.getMessage() for r in caplog.records)
 
     entity_only = LearningMachine(db=RecordingLearningDb(), entity_memory=True)  # type: ignore[arg-type]
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         entity_only.get_tools(user_id=None)
     assert not any("no user_id" in r.getMessage() for r in caplog.records)
 
@@ -150,7 +150,7 @@ def test_backend_without_search_warns_once_on_the_write_path(caplog, tmp_path) -
                 entity=f"Thing {i}", entity_type="company", aliases=[f"T{i}"], namespace="global"
             )
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         asyncio.run(write_three())
 
     warnings = [r.getMessage() for r in caplog.records if "no search_learnings implementation" in r.getMessage()]
@@ -181,7 +181,7 @@ def test_manual_door_without_a_model_says_capture_is_off(caplog, tmp_path) -> No
         user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
         entity_memory=True,
     )
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         machine.get_tools(user_id="composer@example.com")
         machine.get_tools(user_id="composer@example.com")
 
@@ -197,7 +197,7 @@ def test_the_automatic_door_is_quiet_because_the_agent_injects_its_model(caplog,
 
     machine = LearningMachine(user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC), entity_memory=True)
     agent = Agent(model="openai:gpt-5.5", db=SqliteDb(db_file=str(tmp_path / "b.db")), learning=machine)
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         agent.initialize_agent()
         machine.get_tools(user_id="composer@example.com")
 
@@ -280,7 +280,7 @@ def test_a_configured_capture_policy_survives_the_execute_contract(tmp_path) -> 
     assert "Carry out that" in instructed
 
 
-def test_missing_user_id_warning_drops_the_tool_claim_when_tools_are_off(caplog) -> None:
+def test_missing_user_id_message_drops_the_tool_claim_when_tools_are_off(caplog) -> None:
     """With agent tools off there are no entity tools to refuse, so a message
     that says they stay exposed is false. The context claim holds either way."""
     from agno.learn.config import EntityMemoryConfig
@@ -293,12 +293,12 @@ def test_missing_user_id_warning_drops_the_tool_claim_when_tools_are_off(caplog)
             config=EntityMemoryConfig(db=db, namespace="user", enable_agent_tools=False)  # type: ignore[arg-type]
         ),
     )
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         tools = machine.get_tools(user_id=None)
 
-    warnings = [r.getMessage() for r in caplog.records if "no user_id" in r.getMessage()]
-    assert len(warnings) == 1, warnings
-    message = warnings[0]
+    records = [r for r in caplog.records if "no user_id" in r.getMessage()]
+    assert len(records) == 1, records
+    message = records[0].getMessage()
     assert 'entity_memory (namespace="user") injects no entity context' in message
     assert "keeps its tools exposed" not in message
 

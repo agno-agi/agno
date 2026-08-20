@@ -20,7 +20,6 @@ from agno.learn.config import (
     UserProfileConfig,
 )
 from agno.learn.machine import LearningMachine
-from agno.learn.migrations import arekey_user_entity_learnings, rekey_user_entity_learnings
 from agno.learn.schemas import (
     DecisionLog,
     EntityMemory,
@@ -65,7 +64,4 @@ __all__ = [
     "LearnedKnowledgeStore",
     "EntityMemoryStore",
     "DecisionLogStore",
-    # Migrations
-    "rekey_user_entity_learnings",
-    "arekey_user_entity_learnings",
 ]

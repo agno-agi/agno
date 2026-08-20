@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, Dict, Optional, Union, cast
+from typing import Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Path, Query, Request
@@ -13,7 +13,6 @@ from agno.learn.utils import (
     DEFAULT_LEARNING_NAMESPACE,
     IDENTITY_KEYED_LEARNING_TYPES,
     build_learning_id,
-    legacy_entity_learning_id,
     same_user,
 )
 from agno.os.auth import get_authentication_dependency
@@ -49,22 +48,6 @@ def _duplicate_identity_detail(learning_type: str, learning_id: str) -> str:
         f"A '{learning_type}' learning already exists for this identity "
         f"(id '{learning_id}'). Use PATCH /learnings/{learning_id} to update it."
     )
-
-
-def _legacy_entity_row_detail(legacy_id: str) -> str:
-    return (
-        "This user already owns a legacy-keyed entity_memory record for this entity (id "
-        f"'{legacy_id}'), written before the 'user' namespace key embedded the user. Creating the "
-        "user-scoped record would leave the user holding two rows for the same entity. Re-key the "
-        "existing rows with agno.learn.migrations.rekey_user_entity_learnings, then retry."
-    )
-
-
-def _row_belongs_to(row: Optional[Dict[str, Any]], user_id: Optional[str]) -> bool:
-    """Whether a stored learning row is owned by the given user."""
-    if row is None or user_id is None:
-        return False
-    return same_user(row.get("user_id"), user_id)
 
 
 def get_learnings_router(
@@ -280,17 +263,6 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         if body.learning_type == "entity_memory" and not namespace:
             namespace = DEFAULT_LEARNING_NAMESPACE
 
-        # Rows written before the "user"-namespace key embedded the user carry the user-less id.
-        # The store's write path retires such a row only once its content is carried over, so
-        # creating the user-scoped row here would leave this user holding both.
-        legacy_id: Optional[str] = None
-        if body.learning_type == "entity_memory" and namespace == "user" and deterministic_id is not None:
-            legacy_id = legacy_entity_learning_id(
-                entity_id=cast(str, body.entity_id),
-                entity_type=cast(str, body.entity_type),
-                namespace="user",
-            )
-
         try:
             if isinstance(db, AsyncBaseDb):
                 # Identity-keyed record already exists -> don't silently overwrite agent-curated
@@ -300,8 +272,6 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                         status_code=409,
                         detail=_duplicate_identity_detail(body.learning_type, learning_id),
                     )
-                if legacy_id is not None and _row_belongs_to(await db.get_learning_by_id(legacy_id), body.user_id):
-                    raise HTTPException(status_code=409, detail=_legacy_entity_row_detail(legacy_id))
                 await db.upsert_learning(
                     id=learning_id,
                     learning_type=body.learning_type,
@@ -323,8 +293,6 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                         status_code=409,
                         detail=_duplicate_identity_detail(body.learning_type, learning_id),
                     )
-                if legacy_id is not None and _row_belongs_to(sync_db.get_learning_by_id(legacy_id), body.user_id):
-                    raise HTTPException(status_code=409, detail=_legacy_entity_row_detail(legacy_id))
                 sync_db.upsert_learning(
                     id=learning_id,
                     learning_type=body.learning_type,
