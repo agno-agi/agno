@@ -6,6 +6,8 @@ get_request_params without the parameter raises TypeError on every run - it does
 not "inherit it inert", because it does not inherit it at all.
 """
 
+import importlib
+import pkgutil
 from inspect import signature
 
 import pytest
@@ -29,8 +31,34 @@ def test_get_request_params_accepts_run_response(provider):
     assert isinstance(params, dict)
 
 
+def _import_every_model_module() -> None:
+    """__subclasses__() only sees classes that have been IMPORTED.
+
+    Listing providers by hand is what let two of these through already: a
+    subclass nobody remembered to add to the list is exactly the one that
+    breaks. Walk the package instead, so a provider added tomorrow is covered
+    without anyone editing this file. Providers whose optional dependency is
+    missing raise on import and are skipped - they cannot be running either.
+    """
+    import agno.models
+
+    for module in pkgutil.walk_packages(agno.models.__path__, prefix="agno.models."):
+        try:
+            importlib.import_module(module.name)
+        except Exception:  # noqa: BLE001 - a provider we cannot import cannot run
+            continue
+
+
+def _descendants(cls):
+    for sub in cls.__subclasses__():
+        yield sub
+        yield from _descendants(sub)
+
+
 def test_no_responses_subclass_narrows_the_signature():
     """Any override must keep run_response, or the base's invoke legs break it."""
+    _import_every_model_module()
+
     offenders = []
     for subclass in [OpenAIResponses, *_descendants(OpenAIResponses)]:
         own = subclass.__dict__.get("get_request_params")
@@ -38,9 +66,3 @@ def test_no_responses_subclass_narrows_the_signature():
             offenders.append(subclass.__name__)
 
     assert offenders == []
-
-
-def _descendants(cls):
-    for sub in cls.__subclasses__():
-        yield sub
-        yield from _descendants(sub)

@@ -983,3 +983,128 @@ def test_the_deployment_callable_swallows_a_transport_failure(sqlite_db, fake_cl
     model = xAIResponses(token_manager=manager)
 
     assert model._sync_token_callable()() == "supergrok-placeholder-not-signed-in"
+
+
+# ---------------------------------------------------------------------------
+# The retry refreshes the slot that SERVED the request (spec amendment D)
+# ---------------------------------------------------------------------------
+
+
+def test_a_401_on_a_deployment_served_request_refreshes_the_deployment(sqlite_db, fake_clock, token_endpoint):
+    """An identified user with no row rides the deployment token; its 401 must recover.
+
+    Passing the run's uid unconditionally sends the refresh to a slot the request
+    never used, so the one-shot leg cannot fire and the user is told to sign in.
+    """
+    import httpx
+
+    from agno.models.xai.oauth import XAITokenManager
+
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+    )
+    manager._save(
+        {"access_token": "deployment", "refresh_token": "deployment-refresh", "expires_at": fake_clock() + 21600},
+        user_id="",
+    )
+    parent = MagicMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
+
+    with patch.object(OpenAIResponses, "invoke", parent):
+        model = xAIResponses(token_manager=manager)
+        model.client = _fake_client()
+        model.invoke(messages=_messages(), assistant_message=_assistant(), run_response=_run("bob"))
+
+    assert [f["refresh_token"] for f in token_endpoint.refresh_requests] == ["deployment-refresh"]
+    assert parent.call_count == 2
+
+
+def test_a_401_on_an_api_key_served_request_does_not_trigger_an_oauth_refresh(
+    sqlite_db, fake_clock, token_endpoint, monkeypatch
+):
+    """The env key served it; a 401 means the key is wrong, and no refresh can fix that."""
+    import httpx
+
+    from agno.models.xai.oauth import XAITokenManager
+
+    monkeypatch.setenv("XAI_API_KEY", "env-key")
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+    )
+    parent = MagicMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
+
+    with patch.object(OpenAIResponses, "invoke", parent):
+        model = xAIResponses(token_manager=manager)
+        model.client = _fake_client()
+        with pytest.raises(ModelProviderError):
+            model.invoke(messages=_messages(), assistant_message=_assistant(), run_response=_run())
+
+    assert token_endpoint.refresh_requests == []
+
+
+# ---------------------------------------------------------------------------
+# Absence vs failure, on the async path and in the guarantee message
+# ---------------------------------------------------------------------------
+
+
+def test_an_async_failed_personal_refresh_does_not_spend_the_deployment_credential(fake_clock):
+    """The async twin of the sync rule: a failed refresh is not an absent row."""
+    import httpx
+
+    from agno.models.xai import oauth as oauth_module
+    from agno.models.xai.oauth import XAITokenManager
+
+    def five_hundred(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "server_error"})
+
+    db = _AsyncOnlyDb()
+    writer = XAITokenManager(db=db, encrypt_tokens=False, now_fn=fake_clock)
+    asyncio.run(writer._asave({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, "u1"))
+    asyncio.run(writer._asave({"access_token": "deployment", "expires_at": fake_clock() + 21600}, ""))
+
+    oauth_module._reset_cache_for_tests()
+    reader = XAITokenManager(
+        db=db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(five_hundred)),
+        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(five_hundred)),
+    )
+    model = xAIResponses(token_manager=reader)
+
+    async def go():
+        await model._awarm_credential(_run("u1"))
+        return model.get_request_params(messages=_messages(), run_response=_run("u1"))
+
+    with pytest.raises(ModelAuthenticationError):
+        asyncio.run(go())
+
+
+def test_a_refresh_failure_is_not_reported_as_a_missing_sign_in(sqlite_db, fake_clock):
+    """require_user_token fails closed either way, but must say which one happened."""
+    import httpx
+
+    from agno.models.xai.oauth import XAITokenManager
+
+    def five_hundred(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "server_error"})
+
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(five_hundred)),
+    )
+    manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="u1")
+    model = xAIResponses(token_manager=manager, require_user_token=True)
+
+    with pytest.raises(ModelAuthenticationError) as exc_info:
+        model.get_request_params(messages=_messages(), run_response=_run("u1"))
+
+    # u1 IS signed in; the refresh failed. Telling them to sign in again is wrong.
+    assert "No SuperGrok sign-in found" not in exc_info.value.message
