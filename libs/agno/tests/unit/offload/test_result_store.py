@@ -165,9 +165,10 @@ def test_text_output_gets_the_text_content_type(store):
 
 
 def test_result_id_is_deterministic_and_short():
-    first = result_id_for("run-1", "call-1")
-    assert first == result_id_for("run-1", "call-1")
-    assert first != result_id_for("run-1", "call-2")
+    first = result_id_for("S1", "run-1", "call-1")
+    assert first == result_id_for("S1", "run-1", "call-1")
+    assert first != result_id_for("S1", "run-1", "call-2")
+    assert first != result_id_for("S2", "run-1", "call-1")
     assert first.startswith("res_")
     assert len(first) == 14
 
@@ -408,3 +409,38 @@ def test_read_of_unknown_id_raises_key_error(store):
 def test_search_of_unknown_id_raises_key_error(store):
     with pytest.raises(KeyError):
         store.search("res_deadbeef00", "x")
+
+
+# ------------------------------------------------------------------
+# Namespace per session
+# ------------------------------------------------------------------
+def test_two_session_ids_that_normalise_alike_stay_separate(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "ns.db"))
+    store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db, threshold=10)
+    upper = store.offload(
+        session_id="Alpha", run_id="R1", tool_call_id="c1", tool_name="fetch", tool_args={}, output="A" * 200
+    )
+    lower = store.offload(
+        session_id="alpha", run_id="R1", tool_call_id="c1", tool_name="fetch", tool_args={}, output="b" * 200
+    )
+    assert upper.result_id != lower.result_id
+    assert store.get_row(upper.result_id)["namespace"] != store.get_row(lower.result_id)["namespace"]
+
+    # Deleting one session's payloads must leave the other's readable.
+    store.delete_for_sessions(["alpha"])
+    assert store.read(upper.result_id).text.startswith("A")
+    assert store.get_row(lower.result_id) is None
+
+
+def test_two_sessions_that_reuse_a_run_id_keep_separate_results(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "runid.db"))
+    store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db, threshold=10)
+    first = store.offload(
+        session_id="S1", run_id="shared-run", tool_call_id="c1", tool_name="fetch", tool_args={}, output="one" * 100
+    )
+    second = store.offload(
+        session_id="S2", run_id="shared-run", tool_call_id="c1", tool_name="fetch", tool_args={}, output="two" * 100
+    )
+    assert first.result_id != second.result_id
+    assert store.read(first.result_id).text.startswith("one")
+    assert store.read(second.result_id).text.startswith("two")

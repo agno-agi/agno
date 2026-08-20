@@ -46,9 +46,14 @@ SEARCH_LINE_CLIP = 500
 _TAIL_LINES = 5
 
 
-def result_id_for(run_id: str, tool_call_id: str) -> str:
-    """Deterministic, re-derivable from the run without a lookup."""
-    return "res_" + hash_string_sha256(f"{run_id}:{tool_call_id}")[:10]
+def result_id_for(session_id: str, run_id: str, tool_call_id: str) -> str:
+    """Deterministic, re-derivable from the run without a lookup.
+
+    The session id is part of the key because the id is the primary key of one
+    shared index table. Two sessions that reuse a run id would otherwise write
+    one row, and the second write would take the first session's result away.
+    """
+    return "res_" + hash_string_sha256(f"{session_id}:{run_id}:{tool_call_id}")[:10]
 
 
 def _format_size(size: float) -> str:
@@ -122,6 +127,17 @@ def _safe_segment(value: str) -> str:
     return cleaned[:120]
 
 
+def namespace_for(session_id: str) -> str:
+    """The AgentFS namespace holding one session's payloads.
+
+    The readable part is sanitised and AgentFS lowercases every namespace, so
+    two session ids can reduce to the same text. The hash suffix keeps them
+    apart: without it, deleting one session would delete the other's payloads
+    and leave its index rows pointing at nothing.
+    """
+    return f"tool-results/{_safe_segment(session_id)}-{hash_string_sha256(session_id)[:8]}"
+
+
 class ResultStore:
     """Stores oversized tool results as AgentFS files with a small index table.
 
@@ -177,7 +193,7 @@ class ResultStore:
     def _session_fs(self, session_id: str) -> FileSystem:
         return FileSystem(
             backend=self.fs.backend,
-            namespace=f"tool-results/{_safe_segment(session_id)}",
+            namespace=namespace_for(session_id),
             max_file_bytes=MAX_RESULT_BYTES,
             max_namespace_bytes=MAX_SESSION_NAMESPACE_BYTES,
         )
@@ -206,7 +222,7 @@ class ResultStore:
     ) -> Dict[str, Any]:
         created_at = int(time.time())
         return {
-            "result_id": result_id_for(run_id, tool_call_id),
+            "result_id": result_id_for(session_id, run_id, tool_call_id),
             "namespace": namespace,
             "path": path,
             "session_id": session_id,

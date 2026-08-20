@@ -1060,6 +1060,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Context compression settings ---
     if agent.compress_tool_results:
         config["compress_tool_results"] = agent.compress_tool_results
+
+    # --- Result offloading settings ---
+    if agent.offload_tool_results:
+        config["offload_tool_results"] = agent.offload_tool_results
+    if agent.result_ttl_seconds is not None:
+        config["result_ttl_seconds"] = agent.result_ttl_seconds
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
@@ -1365,6 +1371,9 @@ def from_dict(
         metadata=strip_reserved_run_metadata(config.get("metadata")),
         # --- Compression settings ---
         compress_tool_results=config.get("compress_tool_results", False),
+        # --- Result offloading settings ---
+        offload_tool_results=config.get("offload_tool_results", False),
+        result_ttl_seconds=config.get("result_ttl_seconds"),
         # compression_manager=config.get("compression_manager"),  # TODO
         # --- Debug and telemetry settings ---
         debug_mode=config.get("debug_mode", False),

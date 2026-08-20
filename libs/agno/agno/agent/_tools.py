@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from typing import (
     TYPE_CHECKING,
+    Any,
     AsyncIterator,
     Callable,
     Dict,
@@ -18,6 +19,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.offload.store import ResultStore
 
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
@@ -48,6 +50,17 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.log import log_debug, log_warning
+
+
+def _active_result_store(owner: Any) -> Optional["ResultStore"]:
+    """The owner's ResultStore when result offloading is on, else None.
+
+    The continue-run executors serve Teams as well as Agents, and a Team has
+    no offloading settings, so the attributes are read with a default.
+    """
+    if getattr(owner, "offload_tool_results", False):
+        return getattr(owner, "_result_store", None)
+    return None
 
 
 def raise_if_async_tools(agent: Agent) -> None:
@@ -578,7 +591,12 @@ def determine_tools_for_model(
 # ---------------------------------------------------------------------------
 
 
-def handle_external_execution_update(agent: Agent, run_messages: RunMessages, tool: ToolExecution):
+def handle_external_execution_update(
+    agent: Agent,
+    run_messages: RunMessages,
+    tool: ToolExecution,
+    run_response: Optional[RunOutput] = None,
+):
     agent.model = cast(Model, agent.model)
 
     if tool.result is not None:
@@ -587,6 +605,31 @@ def handle_external_execution_update(agent: Agent, run_messages: RunMessages, to
             if msg.tool_call_id == tool.tool_call_id:
                 break
         else:
+            # An externally executed result is a tool result like any other:
+            # an oversized one is stored and the message holds the envelope.
+            # The ToolExecution carries the envelope too, so the persisted
+            # session row stays small.
+            result_store = _active_result_store(agent)
+            if (
+                result_store is not None
+                and run_response is not None
+                and run_response.session_id is not None
+                and run_response.run_id is not None
+                and isinstance(tool.result, str)
+                and not tool.tool_call_error
+                and not tool.stop_after_tool_call
+                and result_store.should_offload(tool.tool_name, tool.result)
+            ):
+                tool.result = result_store.offload_for_model(
+                    session_id=run_response.session_id,
+                    run_id=run_response.run_id,
+                    tool_call_id=tool.tool_call_id or tool.tool_name or "external",
+                    tool_name=tool.tool_name or "external",
+                    tool_args=tool.tool_args,
+                    output=tool.result,
+                    user_id=run_response.user_id,
+                    shared=getattr(agent, "members", None) is not None,
+                )
             run_messages.messages.append(
                 Message(
                     role=agent.model.tool_message_role,
@@ -717,6 +760,7 @@ def run_tool(
     for call_result in agent.model.run_function_call(
         function_call=function_call,
         function_call_results=function_call_results,
+        result_store=_active_result_store(agent),
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
@@ -832,6 +876,7 @@ async def arun_tool(
         function_calls=[function_call],
         function_call_results=function_call_results,
         skip_pause_check=True,
+        result_store=_active_result_store(agent),
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
@@ -927,7 +972,7 @@ def handle_tool_call_updates(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
         # Case 3a: Agentic user input required
@@ -980,7 +1025,7 @@ def handle_tool_call_updates_stream(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
         # Case 3a: Agentic user input required
@@ -1031,7 +1076,7 @@ async def ahandle_tool_call_updates(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
@@ -1084,7 +1129,7 @@ async def ahandle_tool_call_updates_stream(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:

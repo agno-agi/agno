@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from agno.agent import Agent
+from agno.db.base import SessionType
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.models.base import Model
@@ -389,3 +390,219 @@ def test_delete_sessions_cascades_for_every_session(db):
     store = agent._result_store
     db.delete_sessions(session_ids=sessions)
     assert all(store.get_row(result_id) is None for result_id in ids)
+
+
+def test_delete_sessions_for_another_user_leaves_payloads_intact(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True, user_id="bob")
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id, user_id="bob")
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    store = agent._result_store
+
+    # A delete scoped to a different user must not touch bob's session or its payloads.
+    db.delete_sessions(session_ids=[session_id], user_id="alice")
+    assert db.get_session(session_id=session_id, session_type=SessionType.AGENT) is not None
+    row = store.get_row(result_id)
+    assert row is not None
+    assert store.read(result_id).text.startswith("row 1:")
+
+    db.delete_sessions(session_ids=[session_id], user_id="bob")
+    assert db.get_session(session_id=session_id, session_type=SessionType.AGENT) is None
+    assert store.get_row(result_id) is None
+
+
+def test_the_index_table_is_created_with_the_rest_of_the_schema(db):
+    db._create_all_tables()
+    assert db._get_table(table_type="tool_results") is not None
+
+
+# ------------------------------------------------------------------
+# Continue-run paths: confirmation and external execution
+# ------------------------------------------------------------------
+def test_a_tool_resumed_after_confirmation_is_offloaded(db):
+    from agno.tools.decorator import tool
+
+    @tool(requires_confirmation=True)
+    def fetch_gated_page() -> str:
+        """Fetch a large page behind a confirmation.
+
+        Returns:
+            str: the page body.
+        """
+        return BIG
+
+    agent = Agent(
+        model=ScriptedToolModel(tool_name="fetch_gated_page"),
+        db=db,
+        tools=[fetch_gated_page],
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    paused = agent.run("go", session_id=session_id)
+    assert paused.is_paused
+    paused.tools[0].confirmed = True
+
+    output = agent.continue_run(paused, session_id=session_id)
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+    assert BIG not in (output.tools[0].result or "")
+
+
+async def test_a_tool_resumed_after_confirmation_is_offloaded_async(db):
+    from agno.tools.decorator import tool
+
+    @tool(requires_confirmation=True)
+    def fetch_gated_page_async() -> str:
+        """Fetch a large page behind a confirmation.
+
+        Returns:
+            str: the page body.
+        """
+        return BIG
+
+    agent = Agent(
+        model=ScriptedToolModel(tool_name="fetch_gated_page_async"),
+        db=db,
+        tools=[fetch_gated_page_async],
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    paused = await agent.arun("go", session_id=session_id)
+    assert paused.is_paused
+    paused.tools[0].confirmed = True
+
+    output = await agent.acontinue_run(paused, session_id=session_id)
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+
+
+def test_an_externally_executed_result_is_offloaded(db):
+    from agno.tools.decorator import tool
+
+    @tool(external_execution=True)
+    def fetch_on_client() -> str:
+        """Fetch a large page on the client side.
+
+        Returns:
+            str: the page body.
+        """
+        return "never runs here"
+
+    agent = Agent(
+        model=ScriptedToolModel(tool_name="fetch_on_client"),
+        db=db,
+        tools=[fetch_on_client],
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    paused = agent.run("go", session_id=session_id)
+    assert paused.is_paused
+    assert paused.tools[0].external_execution_required
+    paused.tools[0].result = BIG
+
+    output = agent.continue_run(paused, session_id=session_id)
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+    assert BIG not in (output.tools[0].result or "")
+
+    # The payload is recoverable through the read-back tool.
+    result_id = tool_message.content.split('id="')[1].split('"')[0]
+    assert agent._result_store.read(result_id).text.startswith("row 1:")
+
+
+async def test_an_externally_executed_result_is_offloaded_async(db):
+    from agno.tools.decorator import tool
+
+    @tool(external_execution=True)
+    def fetch_on_client_async() -> str:
+        """Fetch a large page on the client side.
+
+        Returns:
+            str: the page body.
+        """
+        return "never runs here"
+
+    agent = Agent(
+        model=ScriptedToolModel(tool_name="fetch_on_client_async"),
+        db=db,
+        tools=[fetch_on_client_async],
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    paused = await agent.arun("go", session_id=session_id)
+    assert paused.is_paused
+    paused.tools[0].result = BIG
+
+    output = await agent.acontinue_run(paused, session_id=session_id)
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+
+
+def test_a_small_externally_executed_result_stays_inline(db):
+    from agno.tools.decorator import tool
+
+    @tool(external_execution=True)
+    def fetch_small_on_client() -> str:
+        """Fetch a small value on the client side.
+
+        Returns:
+            str: the value.
+        """
+        return "never runs here"
+
+    agent = Agent(
+        model=ScriptedToolModel(tool_name="fetch_small_on_client"),
+        db=db,
+        tools=[fetch_small_on_client],
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    paused = agent.run("go", session_id=session_id)
+    paused.tools[0].result = "tiny"
+
+    output = agent.continue_run(paused, session_id=session_id)
+    assert _tool_messages(output)[0].content == "tiny"
+
+
+# ------------------------------------------------------------------
+# Configuration
+# ------------------------------------------------------------------
+def test_offload_settings_survive_the_config_round_trip(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, offload_tool_results=12000, result_ttl_seconds=3600)
+    config = agent.to_dict()
+    assert config["offload_tool_results"] == 12000
+    assert config["result_ttl_seconds"] == 3600
+
+    config.pop("model", None)
+    restored = Agent.from_dict(config)
+    assert restored.offload_tool_results == 12000
+    assert restored.result_ttl_seconds == 3600
+
+    plain = Agent(model=ScriptedToolModel(), db=db).to_dict()
+    assert "offload_tool_results" not in plain
+    assert "result_ttl_seconds" not in plain
+
+
+def test_async_db_degrades_to_off_with_a_warning(tmp_path, monkeypatch):
+    from agno.agent import _init
+    from agno.db.sqlite import AsyncSqliteDb
+
+    warnings: List[str] = []
+    monkeypatch.setattr(_init, "log_warning", warnings.append)
+    agent = Agent(
+        model=ScriptedToolModel(),
+        db=AsyncSqliteDb(db_file=str(tmp_path / "async.db")),
+        tools=[fetch_page],
+        offload_tool_results=True,
+    )
+    agent.initialize_agent()
+    assert agent._result_store is None
+    assert agent.offload_tool_results is False
+    # The warning names the backend and the ones that work, not an internal filesystem error.
+    assert len(warnings) == 1
+    assert warnings[0].startswith("Result offloading is not available on AsyncSqliteDb")
+    assert "SqliteDb or PostgresDb" in warnings[0]

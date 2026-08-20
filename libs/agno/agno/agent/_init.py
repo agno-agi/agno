@@ -193,11 +193,11 @@ def set_compression_manager(agent: Agent) -> None:
 
 DEFAULT_OFFLOAD_THRESHOLD = 4000
 
-# Result offloading needs the agno_tool_results index table. PostgreSQL and
-# SQLite implement it. On any other backend the flag is treated as off, with
-# one warning: a run must never believe its payloads are recoverable when
-# they are not.
-_OFFLOAD_SUPPORTED_DBS = ("SqliteDb", "AsyncSqliteDb", "PostgresDb", "AsyncPostgresDb")
+# Result offloading needs the agno_tool_results index table and a database
+# that can back the payload filesystem, which is sync. SqliteDb and PostgresDb
+# qualify. On any other backend the flag is treated as off, with one warning:
+# a run must never believe its payloads are recoverable when they are not.
+_OFFLOAD_SUPPORTED_DBS = ("SqliteDb", "PostgresDb")
 
 
 def set_result_store(agent: Agent) -> None:
@@ -211,8 +211,8 @@ def set_result_store(agent: Agent) -> None:
     backend_name = type(agent.db).__name__
     if backend_name not in _OFFLOAD_SUPPORTED_DBS:
         log_warning(
-            f"Result offloading is not implemented for {backend_name}; offloading is off for this agent. "
-            "PostgreSQL and SQLite support it in 3.0."
+            f"Result offloading is not available on {backend_name}; offloading is off for this agent. "
+            "It needs SqliteDb or PostgresDb, because stored payloads go through the sync filesystem backend."
         )
         agent.offload_tool_results = False
         return

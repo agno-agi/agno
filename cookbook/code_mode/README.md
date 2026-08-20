@@ -42,4 +42,4 @@ One consequence deserves its own sentence: **restore is also code execution.** A
 
 ## Backends
 
-Result offloading adds the `agno_tool_results` index table, which PostgreSQL and SQLite ship in 3.0. On any other backend `offload_tool_results=True` is honoured as **off** with one warning naming the backend — a run that believes its payloads are recoverable when they are not is worse than no offloading at all.
+Result offloading adds the `agno_tool_results` index table and needs `SqliteDb` or `PostgresDb` (stored payloads go through the sync filesystem backend). On any other database, including the async adapters, `offload_tool_results=True` is honoured as **off** with one warning naming the backend. A run must never believe its payloads are recoverable when they are not.

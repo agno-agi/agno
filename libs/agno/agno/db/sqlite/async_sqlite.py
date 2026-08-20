@@ -227,6 +227,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
             (self.service_accounts_table_name, "service_accounts"),
+            (self.tool_results_table_name, "tool_results"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -1065,22 +1066,27 @@ class AsyncSqliteDb(AsyncBaseDb):
             runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                # The ids a user_id-scoped delete is allowed to touch. The
+                # cascade below removes stored payloads, which no filter on the
+                # sessions table would stop it from doing for another user's
+                # session id.
+                select_stmt = select(table.c.session_id).where(table.c.session_id.in_(session_ids))
                 if user_id is not None:
-                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                    select_stmt = select_stmt.where(table.c.user_id == user_id)
+                deletable_ids = [row[0] for row in await sess.execute(select_stmt)]
+
+                delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = await sess.execute(delete_stmt)
 
                 # Also delete the runs belonging to the sessions
                 if runs_table is not None:
-                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(session_ids))
-                    if user_id is not None:
-                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
+                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(deletable_ids))
                     await sess.execute(runs_delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
             # Cascade offloaded tool results after the session delete commits.
-            await self._cascade_tool_results(session_ids)
+            await self._cascade_tool_results(deletable_ids)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
