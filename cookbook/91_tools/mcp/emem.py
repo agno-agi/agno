@@ -21,7 +21,6 @@ Run: `uv pip install agno mcp openai` to install the dependencies
 import asyncio
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
