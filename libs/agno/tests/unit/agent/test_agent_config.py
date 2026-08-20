@@ -823,7 +823,9 @@ class TestAgentDelete:
         basic_agent.db = mock_db
         result = basic_agent.delete()
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-agent", hard_delete=False)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-agent", hard_delete=False, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_hard_delete(self, basic_agent, mock_db):
@@ -833,7 +835,9 @@ class TestAgentDelete:
         basic_agent.db = mock_db
         result = basic_agent.delete(hard_delete=True)
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-agent", hard_delete=True)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-agent", hard_delete=True, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_explicit_db(self, basic_agent, mock_db):

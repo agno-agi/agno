@@ -1375,6 +1375,7 @@ class Workflow:
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
         """
         Delete the workflow component.
@@ -1394,7 +1395,9 @@ class Workflow:
         if self.id is None:
             raise ValueError("Cannot delete workflow without an id")
 
-        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
+        return db_.delete_component(
+            component_id=self.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+        )
 
     async def aget_run_output(
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None

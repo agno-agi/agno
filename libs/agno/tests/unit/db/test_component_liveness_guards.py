@@ -862,3 +862,30 @@ class TestCreatingAPublishedParentReAssertsItsPins:
             links=[_member("live-child")],
         )
         assert component["current_version"] == 1
+
+
+class TestTheSdkDeleteHasAnOptOut:
+    """delete_component gained require_no_dependents=True in this release, so
+    an SDK delete that used to return True now raises. The three SDK entry
+    points passed nothing, which left callers with a new failure and no way
+    to ask for the old behaviour -- while REST and StudioTools both catch the
+    error and map it.
+    """
+
+    def test_the_default_still_refuses(self, db):
+        from agno.agent import Agent
+
+        _agent(db, "sdk-child")
+        _team(db, "sdk-parent", stage="draft", links=[_member("sdk-child")])
+
+        with pytest.raises(ComponentDependencyError):
+            Agent(id="sdk-child", name="sdk-child").delete(db=db)
+
+    def test_the_opt_out_deletes_anyway(self, db):
+        from agno.agent import Agent
+
+        _agent(db, "sdk-child-2")
+        _team(db, "sdk-parent-2", stage="draft", links=[_member("sdk-child-2")])
+
+        assert Agent(id="sdk-child-2", name="sdk-child-2").delete(db=db, require_no_dependents=False) is True
+        assert db.get_component("sdk-child-2") is None

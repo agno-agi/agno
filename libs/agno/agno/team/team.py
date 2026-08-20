@@ -1583,8 +1583,9 @@ class Team:
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
-        return _storage.delete(self, db=db, hard_delete=hard_delete)
+        return _storage.delete(self, db=db, hard_delete=hard_delete, require_no_dependents=require_no_dependents)
 
     # -*- Public convenience functions
     def get_run_output(

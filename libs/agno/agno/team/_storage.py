@@ -1585,6 +1585,7 @@ def delete(
     *,
     db: Optional["BaseDb"] = None,
     hard_delete: bool = False,
+    require_no_dependents: bool = True,
 ) -> bool:
     """
     Delete the team component.
@@ -1592,9 +1593,17 @@ def delete(
     Args:
         db: The database to delete the component from.
         hard_delete: Whether to hard delete the component.
+        require_no_dependents: Refuse when another component pins this one.
+            The default protects a composition from losing a member it cannot
+            rebuild; pass False to delete anyway and leave those parents
+            pointing at nothing.
 
     Returns:
-        True if the component was deleted, False otherwise.
+        True if the component was deleted, False if there was nothing to delete.
+
+    Raises:
+        ComponentDependencyError: If another component pins this one and
+            require_no_dependents is True.
     """
     db_ = db or team.db
     if not db_:
@@ -1604,7 +1613,9 @@ def delete(
     if team.id is None:
         raise ValueError("Cannot delete team without an id")
 
-    return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
+    return db_.delete_component(
+        component_id=team.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+    )
 
 
 def get_session_metrics(team: "Team", session_id: Optional[str] = None):

@@ -488,7 +488,9 @@ class TestWorkflowDelete:
         basic_workflow.db = mock_db
         result = basic_workflow.delete()
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-workflow", hard_delete=False)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-workflow", hard_delete=False, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_hard_delete(self, basic_workflow, mock_db):
@@ -498,7 +500,9 @@ class TestWorkflowDelete:
         basic_workflow.db = mock_db
         result = basic_workflow.delete(hard_delete=True)
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-workflow", hard_delete=True)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-workflow", hard_delete=True, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_explicit_db(self, basic_workflow, mock_db):

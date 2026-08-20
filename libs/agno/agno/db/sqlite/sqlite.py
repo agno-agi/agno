@@ -4134,11 +4134,22 @@ class SqliteDb(BaseDb):
                 # the guard is decided before any row goes, and a concurrent
                 # writer pinning this component serializes here.
                 row = sess.execute(
-                    select(components_table.c.current_version, components_table.c.component_type)
+                    select(
+                        components_table.c.current_version,
+                        components_table.c.component_type,
+                        components_table.c.user_id,
+                    )
                     .where(components_table.c.component_id == component_id)
                     .with_for_update()
                 ).fetchone()
                 if row is None:
+                    return False
+                # The scope above is the friendly early exit, read on its own
+                # connection; this is the one that cannot be overtaken. Ids are
+                # caller-chosen and reusable, so a component freed and
+                # re-claimed by another owner in the gap must not be deleted
+                # under the first caller's authority.
+                if user_id is not None and row.user_id != user_id:
                     return False
                 component_type = str(row.component_type)
                 if expected_current_version is not None and row.current_version != expected_current_version:
@@ -4284,11 +4295,15 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 # Locked read (a row lock on Postgres, a no-op on SQLite).
                 row = sess.execute(
-                    select(components_table.c.current_version)
+                    select(components_table.c.current_version, components_table.c.user_id)
                     .where(components_table.c.component_id == component_id)
                     .with_for_update()
                 ).fetchone()
                 if row is None:
+                    return False
+                # Same reason as delete: the scope read above ran on its own
+                # connection, so it re-rides the locked row here.
+                if user_id is not None and row.user_id != user_id:
                     return False
 
                 result = sess.execute(

@@ -1083,7 +1083,9 @@ class TestTeamDelete:
         basic_team.db = mock_db
         result = basic_team.delete()
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-team", hard_delete=False)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=False, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_hard_delete(self, basic_team, mock_db):
@@ -1093,7 +1095,9 @@ class TestTeamDelete:
         basic_team.db = mock_db
         result = basic_team.delete(hard_delete=True)
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-team", hard_delete=True)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=True, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_explicit_db(self, basic_team, mock_db):
