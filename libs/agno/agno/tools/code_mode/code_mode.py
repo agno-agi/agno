@@ -19,7 +19,7 @@ import base64
 import concurrent.futures
 import functools
 import weakref
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Set, Union
 
 from agno.fs import FileSystem
 from agno.run import RunContext
@@ -243,6 +243,9 @@ class CodeMode(Toolkit):
 
         self._runner = LoopRunner()
         self._sessions: Dict[str, KernelSession] = {}
+        # Ids of sessions evicted for idleness, so a later cell for one of them
+        # is told its namespace was reset. Ids only; the sessions are gone.
+        self._evicted: Set[str] = set()
         self._background_flush: Optional["concurrent.futures.Future[Any]"] = None
         self._bridge: Optional[ToolBridge] = (
             ToolBridge(self.injected_tools, max_result_bytes=max_result_bytes) if self.injected_tools else None
@@ -493,6 +496,7 @@ class CodeMode(Toolkit):
         """Drop an evicted session, unless the id already maps to a newer one."""
         if self._sessions.get(session.session_id) is session:
             del self._sessions[session.session_id]
+            self._evicted.add(session.session_id)
             log_debug(f"CodeMode forgot evicted session {session.session_id}")
 
     def _run_on_loop_sync(self, coro: Coroutine[Any, Any, Any]) -> Any:
@@ -517,7 +521,9 @@ class CodeMode(Toolkit):
                 flush_hook=self._snapshots.flush_locked if self._snapshots is not None else None,
                 setup_hook=self._asetup_session,
                 on_evict=self._forget_session,
+                served_before=session_id in self._evicted,
             )
+            self._evicted.discard(session_id)
             if self._bridge is not None:
                 self._bridge.attach(session)
             self._sessions[session_id] = session

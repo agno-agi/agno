@@ -163,6 +163,7 @@ class KernelSession:
         flush_hook: Optional[Callable[["KernelSession"], Coroutine[Any, Any, None]]] = None,
         setup_hook: Optional[Callable[["KernelSession"], Coroutine[Any, Any, Optional[str]]]] = None,
         on_evict: Optional[Callable[["KernelSession"], None]] = None,
+        served_before: bool = False,
     ) -> None:
         self.session_id = session_id
         self.python = python or sys.executable
@@ -199,7 +200,10 @@ class KernelSession:
         # ids restart at 1, so a reply from an older generation would otherwise
         # resolve to a live call of the new one.
         self.generation = 0
-        self._ever_started = False
+        # True when this process served the session id before: the first cell
+        # of the new kernel then carries the reset notice unless a snapshot
+        # restores the namespace.
+        self._ever_started: bool = served_before
         self._evict_task: Optional[asyncio.Task] = None
         self._cell_idle_seen = False
         # Bridge wiring (set by ToolBridge.attach): comm messages seen on iopub

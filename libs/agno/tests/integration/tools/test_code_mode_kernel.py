@@ -302,9 +302,11 @@ def test_idle_ttl_evicts_and_next_execute_resets(make_code_mode):
     cm.execute(_ctx(sid), "ephemeral = 1")
     session = cm._sessions[sid]
     deadline = time.monotonic() + 10
-    while session.running and time.monotonic() < deadline:
+    while (session.running or cm._sessions.get(sid) is session) and time.monotonic() < deadline:
         time.sleep(0.2)
     assert not session.running, "kernel should have been evicted after idle_ttl"
+    assert cm._sessions.get(sid) is None, "an evicted session is dropped from the registry"
+    # The next cell starts a fresh kernel and is told the namespace was reset.
     revived = cm.execute(_ctx(sid), "'revived'")
     assert "<code_mode_reset>" in revived.content
     assert "revived" in revived.content

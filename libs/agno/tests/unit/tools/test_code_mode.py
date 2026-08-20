@@ -578,6 +578,8 @@ def test_snapshot_manager_is_quiet_when_the_store_fits_the_caps(tmp_path, monkey
     assert manager.max_variable_bytes == 2_000_000
     assert manager.max_snapshot_bytes == 64_000_000
     assert warnings == []
+
+
 # Parameter names: Python-safe, required first
 # ------------------------------------------------------------------
 
