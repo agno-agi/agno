@@ -247,6 +247,11 @@ class AsyncPostgresDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-verify against the live database (one existence check each), so
+            # this call still recreates tables dropped externally - including
+            # tables registered only as an FK side effect of another reflection
+            if not await self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             await self._get_or_create_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
             )
@@ -262,15 +267,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
-        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
-        if table_type == "runs":
-            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
-            if fq_sessions not in self.metadata.tables:
-                await self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
-                    create_table_if_not_found=True,
-                )
         try:
             # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
@@ -280,6 +276,23 @@ class AsyncPostgresDb(AsyncBaseDb):
                 schedules_table_name=self.schedules_table_name,
                 session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        await self._resolve_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -531,7 +544,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(
+    async def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
     ) -> Optional[Table]:
         """
@@ -553,7 +566,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            return await self._create_table(table_name=table_name, table_type=table_type)
+            table = await self._create_table(table_name=table_name, table_type=table_type)
+            self._store_resolved_table(table_type, table_name, table)
+            return table
 
         if not await ais_valid_table(
             db_engine=self.db_engine,
@@ -571,6 +586,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 table = await conn.run_sync(create_table)
 
+                self._store_resolved_table(table_type, table_name, table)
                 return table
 
         except Exception as e:
@@ -661,7 +677,9 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             log_info(f"Dropping legacy runs column from {self.session_table_name}")
             await sess.execute(text(f'ALTER TABLE {self.db_schema}."{self.session_table_name}" DROP COLUMN runs'))
-            return True
+
+        self._invalidate_table_cache(self.session_table_name)
+        return True
 
     # -- Run methods --
     async def _get_session_runs_data(

@@ -216,6 +216,11 @@ class SingleStoreDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-verify against the live database (one existence check each), so
+            # this call still recreates tables dropped externally - including
+            # tables registered only as an FK side effect of another reflection
+            if not self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -229,16 +234,6 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
-        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
-        # (SingleStore parses but does not enforce FKs.)
-        if table_type == "runs":
-            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
-            if fq_sessions not in self.metadata.tables:
-                self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
-                    create_table_if_not_found=True,
-                )
         table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
         try:
             # Pass traces_table_name and db_schema for spans table foreign key resolution
@@ -248,6 +243,25 @@ class SingleStoreDb(BaseDb):
                 db_schema=self.db_schema or "agno",
                 session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        # Under _resolve_lock: resolve directly so the parent is
+                        # re-registered even if a stale cache entry exists
+                        self._resolve_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -461,7 +475,7 @@ class SingleStoreDb(BaseDb):
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def _get_or_create_table(
+    def _resolve_table(
         self,
         table_name: str,
         table_type: str,
@@ -477,7 +491,6 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
-
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
@@ -490,7 +503,9 @@ class SingleStoreDb(BaseDb):
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            return self._create_table(table_name=table_name, table_type=table_type)
+            table = self._create_table(table_name=table_name, table_type=table_type)
+            self._store_resolved_table(table_type, table_name, table)
+            return table
 
         if not is_valid_table(
             db_engine=self.db_engine,
@@ -502,7 +517,9 @@ class SingleStoreDb(BaseDb):
             raise table_schema_mismatch_error(table_ref, table_type=table_type)
 
         try:
-            return self._create_table_structure_only(table_name=table_name, table_type=table_type)
+            table = self._create_table_structure_only(table_name=table_name, table_type=table_type)
+            self._store_resolved_table(table_type, table_name, table)
+            return table
 
         except Exception as e:
             table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
@@ -581,7 +598,9 @@ class SingleStoreDb(BaseDb):
 
             log_info(f"Dropping legacy runs column from {self.session_table_name}")
             sess.execute(text(f"ALTER TABLE `{schema}`.`{self.session_table_name}` DROP COLUMN `runs`"))
-            return True
+
+        self._invalidate_table_cache(self.session_table_name)
+        return True
 
     # -- Run methods --
     def _get_session_runs_data(
