@@ -18,7 +18,7 @@ import pytest
 
 from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
-from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
+from agno.workflow.workflow import _COMPONENT_LIST_PAGE, Workflow, get_workflow_by_id, get_workflows
 
 # =============================================================================
 # Fixtures
@@ -647,7 +647,7 @@ class TestGetWorkflows:
                 {"component_id": "workflow-1"},
                 {"component_id": "workflow-2"},
             ],
-            None,
+            2,
         )
         mock_db.get_config.side_effect = [
             {"config": {"id": "workflow-1", "name": "Workflow 1"}},
@@ -666,7 +666,9 @@ class TestGetWorkflows:
 
         get_workflows(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.WORKFLOW, user_id=None)
+        mock_db.list_components.assert_called_once_with(
+            component_type=ComponentType.WORKFLOW, user_id=None, limit=_COMPONENT_LIST_PAGE, offset=0
+        )
 
     def test_get_workflows_returns_empty_list_on_error(self, mock_db):
         """Test get_workflows returns empty list on error."""
@@ -683,7 +685,7 @@ class TestGetWorkflows:
                 {"component_id": "valid-workflow"},
                 {"component_id": "invalid-workflow"},
             ],
-            None,
+            2,
         )
         mock_db.get_config.side_effect = [
             {"config": {"id": "valid-workflow", "name": "Valid"}},
@@ -701,7 +703,7 @@ class TestGetWorkflows:
         mock_db.id = "test-db"
         mock_db.list_components.return_value = (
             [{"component_id": "workflow-1"}],
-            None,
+            1,
         )
         mock_db.get_config.return_value = {
             "config": {
@@ -1252,3 +1254,76 @@ class TestBranchQualifiedPins:
 
         with pytest.raises(ComponentRehydrationError, match="multiple versions"):
             get_workflow_by_id(db=db, id="am-wf", strict=True)
+
+
+# =============================================================================
+# get_workflows() Pagination Tests
+# =============================================================================
+
+
+class TestGetWorkflowsPagination:
+    """get_workflows must page past the DB's default list_components limit.
+
+    Published components from other users share the catalog, so without
+    paging they crowd a user's own workflows out of the first page.
+    """
+
+    @pytest.fixture
+    def sqlite_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        return SqliteDb(db_file=str(tmp_path / "workflows_pagination.db"))
+
+    def _create(self, db, component_id, user_id):
+        db.create_component_with_config(
+            component_id=component_id,
+            component_type=ComponentType.WORKFLOW,
+            name=component_id,
+            config={"name": component_id, "steps": []},
+            stage="published",
+            user_id=user_id,
+        )
+
+    def test_returns_all_own_workflows_beyond_default_page(self, sqlite_db):
+        for i in range(25):
+            self._create(sqlite_db, f"own-wf-{i:02d}", "owner")
+
+        workflows = get_workflows(db=sqlite_db, user_id="owner")
+
+        assert {w.id for w in workflows} == {f"own-wf-{i:02d}" for i in range(25)}
+
+    def test_own_workflows_not_crowded_out_by_foreign_published(self, sqlite_db):
+        # Own rows first (older), foreign rows second (newer): the listing
+        # orders created_at DESC with component_id ASC ties, so the foreign
+        # rows fill the first page either way.
+        for i in range(5):
+            self._create(sqlite_db, f"z-own-wf-{i}", "owner")
+        for i in range(25):
+            self._create(sqlite_db, f"a-pub-wf-{i:02d}", "someone-else")
+
+        workflows = get_workflows(db=sqlite_db, user_id="owner")
+
+        ids = {w.id for w in workflows}
+        assert {f"z-own-wf-{i}" for i in range(5)} <= ids
+        assert len(workflows) == 30
+
+    def test_cap_truncates_with_single_warning(self, mock_db, monkeypatch):
+        import agno.workflow.workflow as workflow_module
+
+        monkeypatch.setattr(workflow_module, "_COMPONENT_LIST_PAGE", 5)
+        monkeypatch.setattr(workflow_module, "_COMPONENT_LIST_CAP", 10)
+        mock_warn = MagicMock()
+        monkeypatch.setattr(workflow_module, "log_warning", mock_warn)
+
+        def fake_list_components(**kwargs):
+            rows = [{"component_id": f"wf-{kwargs['offset'] + i:03d}"} for i in range(kwargs["limit"])]
+            return rows, 50
+
+        mock_db.list_components.side_effect = fake_list_components
+        mock_db.get_config.side_effect = lambda component_id: {"config": {"name": component_id, "steps": []}}
+
+        workflows = get_workflows(db=mock_db, user_id="owner")
+
+        assert len(workflows) == 10
+        mock_warn.assert_called_once()
+        assert "10 of 50" in mock_warn.call_args[0][0]

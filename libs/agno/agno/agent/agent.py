@@ -1769,6 +1769,16 @@ def get_agent_by_id(
         return None
 
 
+# Rows fetched per list_components call while collecting the full catalog.
+_COMPONENT_LIST_PAGE = 100
+
+# Ceiling on rows collected per listing. Every listed row costs a get_config
+# read plus a full rehydration, and other users' published components share
+# the catalog, so an unbounded scan could turn one listing into thousands of
+# DB reads.
+_COMPONENT_LIST_CAP = 1000
+
+
 def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
@@ -1790,9 +1800,24 @@ def get_agents(
 
     agents: List[Agent] = []
     try:
-        components, _ = db.list_components(
-            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids, user_id=user_id
-        )
+        # The DB default page is one small page and the catalog can exceed it
+        # (other users' published components compete for the same slots), so
+        # page until the filtered total is exhausted or the cap is hit.
+        components: List[Dict[str, Any]] = []
+        while True:
+            page, total = db.list_components(
+                component_type=ComponentType.AGENT,
+                exclude_component_ids=exclude_component_ids,
+                user_id=user_id,
+                limit=_COMPONENT_LIST_PAGE,
+                offset=len(components),
+            )
+            components.extend(page)
+            if not page or len(components) >= total:
+                break
+            if len(components) >= _COMPONENT_LIST_CAP:
+                log_warning(f"Agent listing truncated by safety cap: returning {len(components)} of {total} components")
+                break
         for component in components:
             try:
                 config = db.get_config(component_id=component["component_id"])
