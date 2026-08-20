@@ -569,12 +569,15 @@ def _project_live_version(
     config = row.get("config") if isinstance(row, dict) else None
     if not isinstance(config, dict):
         return {}
-    projection: Dict[str, Any] = {}
-    for field in ("name", "description", "metadata"):
-        value = config.get(field)
-        if value is not None:
-            projection[field] = value
-    return projection
+    # An absent field is a CLEARED field, and the adapters read None as "leave
+    # this column alone" - so the empty value is projected explicitly, exactly
+    # as the publish projection does it. Skipping None instead would leave the
+    # row describing the version that used to be live.
+    return {
+        "name": config.get("name") or component.get("name"),
+        "description": config.get("description") or "",
+        "metadata": config.get("metadata") or {},
+    }
 
 
 def get_components_router(
@@ -865,7 +868,10 @@ def attach_routes(
         except HTTPException:
             raise
         except _CONFLICT_ERRORS as e:
-            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
+            raise HTTPException(
+                status_code=409,
+                detail=_conflict_detail(db, component_id, scoped_user_id, e, version=body.current_version),
+            )
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
