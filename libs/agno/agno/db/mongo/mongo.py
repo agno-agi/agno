@@ -19,12 +19,9 @@ from agno.db.mongo.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
-    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -35,8 +32,10 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -70,7 +69,6 @@ class MongoDb(BaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
-        culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
         schedules_collection: Optional[str] = None,
@@ -91,7 +89,6 @@ class MongoDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
-            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
             schedules_collection (Optional[str]): Name of the collection to store schedules.
@@ -116,7 +113,6 @@ class MongoDb(BaseDb):
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
-            culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
             schedules_table=schedules_collection,
@@ -177,7 +173,6 @@ class MongoDb(BaseDb):
             ("metrics", self.metrics_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
-            ("culture", self.culture_table_name),
             ("schedules", self.schedules_table_name),
             ("schedule_runs", self.schedule_runs_table_name),
         ]
@@ -263,17 +258,6 @@ class MongoDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
-
-        if table_type == "culture":
-            if not hasattr(self, "culture_collection"):
-                if self.culture_table_name is None:
-                    raise ValueError("Culture collection was not provided on initialization")
-                self.culture_collection = self._get_or_create_collection(
-                    collection_name=self.culture_table_name,
-                    collection_type="culture",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
-            return self.culture_collection
 
         if table_type == "traces":
             if not hasattr(self, "traces_collection"):
@@ -366,17 +350,23 @@ class MongoDb(BaseDb):
             raise
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; MongoDB is schemaless so it is ignored.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        doc = self.database[self.versions_table_name].find_one({"table_name": table_name})
+        if doc is None:
+            return "2.0.0"
+        return doc.get("version") or "2.0.0"
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table."""
+        self.database[self.versions_table_name].update_one(
+            {"table_name": table_name},
+            {"$set": {"table_name": table_name, "version": version, "updated_at": int(time.time())}},
+            upsert=True,
+        )
 
     def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
         """Unset the legacy ``runs`` field from session documents.
@@ -1672,211 +1662,6 @@ class MongoDb(BaseDb):
             log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection = self._get_collection(table_type="culture")
-            if collection is None:
-                return
-
-            collection.delete_many({})
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection = self._get_collection(table_type="culture")
-            if collection is None:
-                return
-
-            collection.delete_one({"id": id})
-            log_debug(f"Deleted cultural knowledge with ID: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection = self._get_collection(table_type="culture")
-            if collection is None:
-                return None
-
-            result = collection.find_one({"id": id})
-            if result is None:
-                return None
-
-            # Remove MongoDB's _id field
-            result_filtered = {k: v for k, v in result.items() if k != "_id"}
-
-            if not deserialize:
-                return result_filtered
-
-            return deserialize_cultural_knowledge_from_db(result_filtered)
-
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection = self._get_collection(table_type="culture")
-            if collection is None:
-                if not deserialize:
-                    return [], 0
-                return []
-
-            # Build query
-            query: Dict[str, Any] = {}
-            if agent_id is not None:
-                query["agent_id"] = agent_id
-            if team_id is not None:
-                query["team_id"] = team_id
-            if name is not None:
-                query["name"] = {"$regex": name, "$options": "i"}
-
-            # Get total count for pagination
-            total_count = collection.count_documents(query)
-
-            # Apply sorting
-            sort_criteria = apply_sorting({}, sort_by, sort_order)
-
-            # Apply pagination
-            query_args = apply_pagination({}, limit, page)
-
-            cursor = collection.find(query)
-            if sort_criteria:
-                cursor = cursor.sort(sort_criteria)
-            if query_args.get("skip"):
-                cursor = cursor.skip(query_args["skip"])
-            if query_args.get("limit"):
-                cursor = cursor.limit(query_args["limit"])
-
-            # Remove MongoDB's _id field from all results
-            results_filtered = [{k: v for k, v in item.items() if k != "_id"} for item in cursor]
-
-            if not deserialize:
-                return results_filtered, total_count
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
-
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in MongoDB.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            collection = self._get_collection(table_type="culture", create_collection_if_not_found=True)
-            if collection is None:
-                return None
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the document with serialized content
-            update_doc = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            result = collection.replace_one({"id": cultural_knowledge.id}, update_doc, upsert=True)
-
-            if result.upserted_id:
-                update_doc["_id"] = result.upserted_id
-
-            # Remove MongoDB's _id field
-            doc_filtered = {k: v for k, v in update_doc.items() if k != "_id"}
-
-            if not deserialize:
-                return doc_filtered
-
-            return deserialize_cultural_knowledge_from_db(doc_filtered)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
-
     # -- Metrics methods --
 
     def _get_all_sessions_for_metrics_calculation(
@@ -1937,14 +1722,25 @@ class MongoDb(BaseDb):
     def _get_metrics_calculation_starting_date(self, collection: Collection) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
         try:
-            result = collection.find_one({}, sort=[("date", -1)], limit=1)
+            # resume at the earliest incomplete day after the latest completed one, otherwise the day after
+            # that one (:func:`metrics_starting_date_from_days`): the dates are ISO strings, so both queries order
+            # lexicographically and the collection is never loaded whole
+            completed_record = collection.find_one({"completed": True}, sort=[("date", -1)])
+            latest_completed = completed_record["date"] if completed_record else None
 
-            if result is not None:
-                result_date = datetime.strptime(result["date"], "%Y-%m-%d").date()
-                if result.get("completed"):
-                    return result_date + timedelta(days=1)
-                else:
-                    return result_date
+            incomplete_filter: Dict[str, Any] = {"completed": {"$ne": True}}
+            if latest_completed is not None:
+                incomplete_filter["date"] = {"$gt": latest_completed}
+            earliest_incomplete = collection.find_one(incomplete_filter, sort=[("date", 1)])
+
+            starting_date = metrics_starting_date_from_days(
+                datetime.strptime(latest_completed, "%Y-%m-%d").date() if latest_completed is not None else None,
+                datetime.strptime(earliest_incomplete["date"], "%Y-%m-%d").date()
+                if earliest_incomplete is not None
+                else None,
+            )
+            if starting_date is not None:
+                return starting_date
 
             # No metrics records. Return the date of the first recorded session.
             first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -2006,8 +1802,8 @@ class MongoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 results = bulk_upsert_metrics(collection, metrics_records)
@@ -2022,14 +1818,21 @@ class MongoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): Return only this user's bucket. ``None`` returns every bucket.
+        """
         try:
             collection = self._get_collection(table_type="metrics")
             if collection is None:
                 return [], None
 
-            query = {}
+            query: Dict[str, Any] = {}
             if starting_date:
                 query["date"] = {"$gte": starting_date.isoformat()}
             if ending_date:
@@ -2037,15 +1840,29 @@ class MongoDb(BaseDb):
                     query["date"]["$lte"] = ending_date.isoformat()
                 else:
                     query["date"] = {"$lte": ending_date.isoformat()}
+            if user_id is not None:
+                query["user_id"] = user_id
 
             records = list(collection.find(query))
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                records = drop_legacy_metrics(records)
             if not records:
                 return [], None
 
             # Get the latest updated_at
             latest_updated_at = max(record.get("updated_at", 0) for record in records)
 
-            return records, latest_updated_at
+            # Map the empty-string user_id sentinel back to None, and drop MongoDB's _id field
+            cleaned: List[dict] = []
+            for record in records:
+                row = dict(record)
+                row.pop("_id", None)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
@@ -2053,11 +1870,19 @@ class MongoDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    # Matches rows the user owns plus unowned ones. ``$exists`` covers documents predating the field,
+    # which Mongo omits rather than storing as null.
+    def _knowledge_user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if user_id is None:
+            return None
+        return {"$or": [{"user_id": user_id}, {"user_id": None}, {"user_id": {"$exists": False}}]}
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only deletes rows owned by this user. Unowned rows are shared.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2067,7 +1892,10 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            collection.delete_one({"id": id})
+            query: Dict[str, Any] = {"id": id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            collection.delete_one(query)
 
             log_debug(f"Deleted knowledge content with id '{id}'")
 
@@ -2075,11 +1903,12 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, restrict to this user's rows plus unowned ones.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2092,7 +1921,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            result = collection.find_one({"id": id})
+            query: Dict[str, Any] = {"id": id}
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]}
+            result = collection.find_one(query)
             if result is None:
                 return None
 
@@ -2109,6 +1942,7 @@ class MongoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2118,6 +1952,7 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, restrict to this user's rows plus unowned ones.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2135,6 +1970,11 @@ class MongoDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 query["linked_to"] = linked_to
+
+            # Apply owner scoping if provided
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]} if query else scope
 
             # Get total count
             total_count = collection.count_documents(query)
@@ -2178,6 +2018,12 @@ class MongoDb(BaseDb):
             collection = self._get_collection(table_type="knowledge", create_collection_if_not_found=True)
             if collection is None:
                 return None
+
+            # A scoped write must not overwrite a doc it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = collection.find_one({"id": knowledge_row.id}, {"user_id": 1})
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
 
             update_doc = knowledge_row.model_dump()
             collection.replace_one({"id": knowledge_row.id}, update_doc, upsert=True)
@@ -3105,13 +2951,17 @@ class MongoDb(BaseDb):
             return []
 
     # -- Scheduler methods --
-    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # ``claim_due_schedule`` / ``release_schedule`` stay unscoped so the poller can fire every user's schedules.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = collection.find_one({"id": schedule_id})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = collection.find_one(query)
             if result is None:
                 return None
 
@@ -3121,13 +2971,16 @@ class MongoDb(BaseDb):
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = collection.find_one({"name": name})
+            # Names are unique per owner: ``None`` addresses the unowned bucket
+            # ({"user_id": None} matches null and missing), never another owner's schedule.
+            query: Dict[str, Any] = {"name": name, "user_id": user_id}
+            result = collection.find_one(query)
             if result is None:
                 return None
 
@@ -3142,6 +2995,7 @@ class MongoDb(BaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = self._get_collection(table_type="schedules")
@@ -3151,6 +3005,8 @@ class MongoDb(BaseDb):
             query: Dict[str, Any] = {}
             if enabled is not None:
                 query["enabled"] = enabled
+            if user_id is not None:
+                query["user_id"] = user_id
 
             total_count = collection.count_documents(query)
 
@@ -3177,22 +3033,40 @@ class MongoDb(BaseDb):
             log_error(f"Error creating schedule: {e}")
             raise e
 
-    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        if kwargs.get("enabled") is True:
+            # A system-set disabled_reason describes why the row was off;
+            # turning it on retires the explanation.
+            kwargs.setdefault("disabled_reason", None)
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
             kwargs["updated_at"] = int(time.time())
-            result = collection.update_one({"id": schedule_id}, {"$set": kwargs})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = collection.update_one(query, {"$set": kwargs})
             if result.matched_count == 0:
                 return None
-            return self.get_schedule(schedule_id)
+            return self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    def delete_schedule(self, schedule_id: str) -> bool:
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             schedules_collection = self._get_collection(table_type="schedules")
             if schedules_collection is None:
@@ -3200,13 +3074,90 @@ class MongoDb(BaseDb):
 
             runs_collection = self._get_collection(table_type="schedule_runs")
             if runs_collection is not None:
-                runs_collection.delete_many({"schedule_id": schedule_id})
+                # Mirror the owner guard on the cascade so a shared schedule_id can't drop another user's runs
+                runs_query: Dict[str, Any] = {"schedule_id": schedule_id}
+                if user_id is not None:
+                    runs_query["user_id"] = user_id
+                runs_collection.delete_many(runs_query)
 
-            result = schedules_collection.delete_one({"id": schedule_id})
+            delete_query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                delete_query["user_id"] = user_id
+            result = schedules_collection.delete_one(delete_query)
             return result.deleted_count > 0
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
+
+    def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Same contract as the SQL adapters: matches provenance-tagged rows
+        (target_type/target_id) AND generic rows whose endpoint is that
+        component's run endpoint, across owners, recording the system reason in
+        disabled_reason.
+        """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return 0
+            endpoint = build_run_endpoint(target_type, target_id)
+            # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+            # "/agents/x/runs/" is a valid run endpoint that plain equality would
+            # miss - matching both spellings keeps the cascade from leaking rows.
+            result = collection.update_many(
+                {
+                    "enabled": True,
+                    "$or": [
+                        {"target_type": target_type, "target_id": target_id},
+                        {"endpoint": {"$in": [endpoint, endpoint + "/"]}},
+                    ],
+                },
+                {"$set": {"enabled": False, "disabled_reason": reason, "updated_at": int(time.time())}},
+            )
+            return int(result.modified_count or 0)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses.
+
+        The trusted path for control planes: managed_by, target_type,
+        target_id, created_by_*/updated_by_*. Never touches ownership or the
+        mutable surface.
+        """
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return False
+            result = collection.update_one(
+                {"id": schedule_id},
+                {"$set": {"updated_at": int(time.time()), **provenance}},
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:
@@ -3282,12 +3233,15 @@ class MongoDb(BaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = self._get_collection(table_type="schedule_runs")
             if collection is None:
                 return None
-            result = collection.find_one({"id": run_id})
+            query: Dict[str, Any] = {"id": run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = collection.find_one(query)
             if result is None:
                 return None
 
@@ -3302,13 +3256,16 @@ class MongoDb(BaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = self._get_collection(table_type="schedule_runs")
             if collection is None:
                 return [], 0
 
-            query = {"schedule_id": schedule_id}
+            query: Dict[str, Any] = {"schedule_id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
             total_count = collection.count_documents(query)
 
             offset = (page - 1) * limit

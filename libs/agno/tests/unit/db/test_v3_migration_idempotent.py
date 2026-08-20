@@ -39,7 +39,7 @@ def partially_migrated_json_db():
     }
     with open(os.path.join(tmp, "agno_sessions.json"), "w") as f:
         json.dump([session_row], f)
-    _migrate_jsondb(db, "agno_sessions")
+    _migrate_jsondb(db, "sessions", "agno_sessions")
     return db
 
 
@@ -65,7 +65,7 @@ class TestJsonDbMigrationIdempotent:
         assert _content(db, "r0") == "FRESH-0"
 
         # Rerun the migration
-        _migrate_jsondb(db, "agno_sessions")
+        _migrate_jsondb(db, "sessions", "agno_sessions")
 
         assert _content(db, "r0") == "FRESH-0", (
             "post-migration writes must not be reverted by a migration rerun — "
@@ -95,7 +95,7 @@ class TestJsonDbMigrationIdempotent:
             json.dump(sessions, f)
 
         # Rerun migration
-        _migrate_jsondb(db, "agno_sessions")
+        _migrate_jsondb(db, "sessions", "agno_sessions")
 
         # r2 should now be in the runs table
         assert _content(db, "r2") == "NEW-from-legacy"
@@ -112,7 +112,7 @@ class TestJsonDbMigrationIdempotent:
         with open(runs_file) as f:
             before = json.load(f)
 
-        _migrate_jsondb(db, "agno_sessions")
+        _migrate_jsondb(db, "sessions", "agno_sessions")
 
         with open(runs_file) as f:
             after = json.load(f)
@@ -130,5 +130,5 @@ class TestJsonDbMigrationIdempotent:
             user_id="u1",
             run_index=1,
         )
-        _migrate_jsondb(db, "agno_sessions")
+        _migrate_jsondb(db, "sessions", "agno_sessions")
         assert _content(db, "r1") == "FRESH-1"

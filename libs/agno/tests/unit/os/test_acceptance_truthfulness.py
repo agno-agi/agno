@@ -109,12 +109,18 @@ class TestTicketPollFallback:
         body = resp.json()
         assert body["status"] == "ERROR" and body["content"] == "worker lost"
 
-    def test_tenant_mismatch_stays_404(self, harness):
-        """A guessable run_id must not leak another tenant's run existence:
-        a ticket owned by a user is invisible to an unscoped caller."""
+    def test_unscoped_poll_sees_user_owned_ticket(self, harness):
+        """No user-scope middleware means get_scoped_user_id is None: NO
+        filtering, exactly like the session read. A user-owned ticket must
+        answer the poll - treating the None as an anonymous owner value
+        404ed accepted user-owned runs for every admin/unscoped poll inside
+        the ticket-before-run-row window. (Tenant isolation between SCOPED
+        principals is pinned at the helper level: a scoped caller with a
+        different user_id stays 404.)"""
         seed_ticket(harness.store, "r-poll-3", user_id="alice")
         resp = harness.client.get("/agents/qa-agent/runs/r-poll-3", params={"session_id": "s-tkt"})
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "PENDING"
 
     def test_session_mismatch_stays_404(self, harness):
         seed_ticket(harness.store, "r-poll-4")
@@ -130,6 +136,97 @@ class TestTicketPollFallback:
         harness.app.state.queue_worker = None
         resp = harness.client.get("/agents/qa-agent/runs/r-nope", params={"session_id": "s-tkt"})
         assert resp.status_code == 404
+
+
+class TestDurabilityBypassIsLoud:
+    """A worker is present, the client gets its 202/stream - but the run is
+    executing on the accepting replica, not the durable queue. EVERY bypass
+    reason must warn: the payload/media reasons always did, while
+    factory-backed / off-registry / version-pinned submissions dropped to
+    the non-durable path with no log line at all."""
+
+    @pytest.fixture()
+    def factory_harness(self, tmp_path):
+        from agno.agent.factory import AgentFactory
+
+        db = SqliteDb(db_file=str(tmp_path / "f.db"))
+        produced = Agent(id="fx-agent", name="Produced Agent", db=db)
+        factory = AgentFactory(id="fx-agent", db=db, factory=lambda ctx: produced)
+        app = AgentOS(agents=[factory], telemetry=False).get_app()
+        store = InMemoryQueueStore()
+        app.state.queue_worker = SimpleNamespace(store=store, config=QueueConfig(durable=True))
+        client = TestClient(app, raise_server_exceptions=False)
+        return SimpleNamespace(app=app, store=store, client=client)
+
+    def test_factory_backed_submission_warns(self, factory_harness, caplog):
+        with caplog.at_level("WARNING"):
+            factory_harness.client.post(
+                "/agents/fx-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
+            )
+        assert any("bypasses the durable queue" in r.message for r in caplog.records), (
+            "a factory-backed background submission silently lost durability - it must warn"
+        )
+        assert len(factory_harness.store._jobs) == 0, "the bypass must not have enqueued anything"
+
+    def test_durable_path_does_not_warn(self, harness, monkeypatch):
+        """No false alarms: a queueable registry submission rides the queue
+        and must NOT log the bypass warning."""
+
+        async def ok_prepare(component, component_type, run_id, session_id, user_id, input):
+            return None
+
+        monkeypatch.setattr("agno.os.job_queue.aprepare_queued_run", ok_prepare)
+        import logging
+
+        records = []
+        handler = logging.Handler()
+        handler.emit = lambda record: records.append(record)  # type: ignore[method-assign]
+        logging.getLogger().addHandler(handler)
+        try:
+            resp = harness.client.post(
+                "/agents/qa-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
+            )
+        finally:
+            logging.getLogger().removeHandler(handler)
+        assert resp.status_code == 202
+        assert not any("bypasses the durable queue" in str(r.getMessage()) for r in records)
+
+
+class TestDuplicate202Vocabulary:
+    """The duplicate-202 body speaks the SAME status vocabulary as the run
+    poll: no invented "FAILED" (the API's error value is "ERROR"), and a
+    currently-RUNNING original answers RUNNING, not PENDING - a client
+    switch on status must never see a value the run endpoints cannot also
+    produce."""
+
+    def _duplicate(self, harness):
+        return harness.client.post(
+            "/agents/qa-agent/runs",
+            data={"message": "hi", "stream": "false", "background": "true"},
+            headers={"Idempotency-Key": "dup-key"},
+        )
+
+    def test_failed_original_answers_error_not_failed(self, harness):
+        seed_ticket(harness.store, "r-dup-1", status="failed", idempotency_key="dup-key")
+        resp = self._duplicate(harness)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "ERROR", (
+            f"poll vocabulary is ERROR; got {resp.json()['status']!r} (FAILED exists nowhere else in the API)"
+        )
+
+    def test_running_original_answers_running_not_pending(self, harness):
+        seed_ticket(harness.store, "r-dup-2", status="running", idempotency_key="dup-key")
+        resp = self._duplicate(harness)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "RUNNING", (
+            "a poll of the same run says RUNNING; the duplicate must not flatten it to PENDING"
+        )
+
+    def test_queued_original_still_answers_pending(self, harness):
+        seed_ticket(harness.store, "r-dup-3", status="queued", idempotency_key="dup-key")
+        resp = self._duplicate(harness)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "PENDING"
 
 
 class TestHelperUnits:
@@ -162,7 +259,7 @@ class TestHelperUnits:
         ).to_dict()
         store._jobs["r1"] = job
         worker = SimpleNamespace(store=store)
-        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None)
+        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
         assert view is not None and view["status"] == expected
 
     @pytest.mark.asyncio
@@ -174,8 +271,25 @@ class TestHelperUnits:
             id="r1", component_type="agent", component_id="a1", session_id="s1", payload={}, user_id="alice"
         ).to_dict()
         worker = SimpleNamespace(store=store)
-        assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "alice") is not None
-        assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "bob") is None
+        assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "alice", user_scoped=True) is not None
+        assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "bob", user_scoped=True) is None
+
+    @pytest.mark.asyncio
+    async def test_unscoped_mode_sees_user_owned_ticket(self):
+        """get_scoped_user_id returns None for admins and unscoped
+        deployments - NO filtering, exactly like the session read this
+        fallback mirrors. Treating that None as an anonymous owner value
+        404ed accepted user-owned runs for every admin poll inside the
+        ticket-before-run-row window."""
+        from agno.os.job_queue import aticket_poll_fallback
+
+        store = InMemoryQueueStore()
+        store._jobs["r1"] = QueuedJob(
+            id="r1", component_type="agent", component_id="a1", session_id="s1", payload={}, user_id="alice"
+        ).to_dict()
+        worker = SimpleNamespace(store=store)
+        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
+        assert view is not None and view["status"] == "PENDING"
 
 
 class TestBackgroundContinueCompatFallthrough:
@@ -316,3 +430,38 @@ class TestSubmitBackgroundBodyParity:
             f"{path}: the non-durable 202 body must match the durable seam's shape exactly, got {body}"
         )
         assert body["status"] in ("PENDING", "RUNNING")
+
+
+class TestServerErrorsDoNotEchoInternals:
+    """N17: seam store failures and unhandled server errors surfaced as raw
+    500s whose detail embedded str(exc) - store/driver text carries
+    connection strings, SQL fragments, and hostnames. The wire gets the
+    exception type; the full detail stays in the server log."""
+
+    SECRET = "postgresql://ai:supersecret@db.internal:5532/ai"
+
+    def test_prepare_failure_500_names_the_type_not_the_driver_text(self, harness, monkeypatch):
+        async def broken_prepare(component, component_type, run_id, session_id, user_id, input):
+            raise RuntimeError(f"connection refused at {TestServerErrorsDoNotEchoInternals.SECRET}")
+
+        monkeypatch.setattr("agno.os.job_queue.aprepare_queued_run", broken_prepare)
+        resp = harness.client.post(
+            "/agents/qa-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
+        )
+        assert resp.status_code == 500
+        assert self.SECRET not in resp.text, "the 500 detail must not echo driver internals"
+        assert "RuntimeError" in resp.json()["detail"], "the type name is the client-safe breadcrumb"
+
+    def test_unhandled_exception_500_names_the_type_not_the_message(self, harness, monkeypatch):
+        from agno.agent import Agent
+
+        async def broken_arun(self, **kwargs):
+            raise RuntimeError(f"cannot reach {TestServerErrorsDoNotEchoInternals.SECRET}")
+
+        monkeypatch.setattr(Agent, "arun", broken_arun)
+        resp = harness.client.post(
+            "/agents/qa-agent/runs", data={"message": "hi", "stream": "false", "background": "false"}
+        )
+        assert resp.status_code == 500
+        assert self.SECRET not in resp.text, "the app-level handler must not echo str(exc) on 5xx"
+        assert "RuntimeError" in resp.json()["detail"]

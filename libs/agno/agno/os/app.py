@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import warnings
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
@@ -278,9 +277,6 @@ class AgentOS:
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
-        # Deprecated aliases for mcp_server
-        enable_mcp_server: Optional[bool] = None,
-        mcp_config: Optional[MCPServerConfig] = None,
     ):
         """Initialize AgentOS.
 
@@ -291,8 +287,8 @@ class AgentOS:
             version: Version of the AgentOS instance
             db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
             checkpoint: Default checkpoint level for agents in this AgentOS. Agents without their own
-                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools" (see
-                specs/agno/features/checkpointing/). None means no OS-level default; each agent falls
+                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools".
+                None means no OS-level default; each agent falls
                 back to "runs" at first-run time.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
@@ -349,11 +345,6 @@ class AgentOS:
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
-            enable_mcp_server: Deprecated alias for ``mcp_server``. Used when
-                ``mcp_server`` is left at its default.
-            mcp_config: Deprecated. Pass the ``MCPServerConfig`` as ``mcp_server``
-                instead. Configures the MCP server but does not enable it.
-
         """
         if not agents and not workflows and not teams and not knowledge and not db:
             raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
@@ -394,36 +385,7 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
-        if enable_mcp_server is not None:
-            if mcp_server is False:
-                warnings.warn(
-                    "AgentOS(enable_mcp_server=...) is deprecated, use mcp_server instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                mcp_server = enable_mcp_server
-            else:
-                warnings.warn(
-                    "Both mcp_server and enable_mcp_server are provided. "
-                    "enable_mcp_server is deprecated; mcp_server will be used.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        if mcp_config is not None:
-            if isinstance(mcp_server, MCPServerConfig):
-                warnings.warn(
-                    "Both mcp_server and mcp_config carry an MCPServerConfig. "
-                    "mcp_config is deprecated; the mcp_server value will be used.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            else:
-                warnings.warn(
-                    "AgentOS(mcp_config=...) is deprecated, pass the MCPServerConfig as mcp_server instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        self.mcp_config: Optional[MCPServerConfig] = mcp_config
+        self.mcp_config: Optional[MCPServerConfig] = None
         self.mcp_server = mcp_server
         self.mcp_auth: Optional["AuthProvider"] = mcp_auth
         # Resolved lazily (and once): the MultiAuth-wrapped provider handed to FastMCP.
@@ -435,6 +397,14 @@ class AgentOS:
         self.lifespan = lifespan
 
         self.registry = registry
+        # Knowledge mirrored into the registry by a sync (component-owned
+        # instances collected for name resolution) is not a knowledge-route
+        # source; anything else on the registry list the user put there -- at
+        # construction or later via add_knowledge -- and feeds the routes on
+        # every (re)sync. Provenance lives on the Registry itself (marked at
+        # mirror time, never snapshotted), because a registry can be shared
+        # between AgentOS instances: another OS's mirror must not look
+        # user-registered here.
 
         # RBAC
         self.authorization = authorization
@@ -448,14 +418,16 @@ class AgentOS:
 
         # Queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap, in-memory transports).
-        # queue.redis wires the cross-container transports; the explicit
-        # event_stream parameter below is applied after and wins by ordering.
+        # queue.redis wires the cross-container transports over the process
+        # defaults only; the explicit event_stream parameter is applied first
+        # and survives the wiring regardless of its type.
         self.queue = queue
 
-        # Event stream FIRST: the coordination wiring below only fills in-memory
-        # defaults and warns on asymmetric transports - it must see the user's
-        # explicit stream, or the one split-Redis config it exists to catch
-        # (custom stream on Redis A, wired cancellation on Redis B) never warns.
+        # Event stream FIRST: the coordination wiring below only replaces the
+        # never-explicitly-set defaults and warns on asymmetric transports - it
+        # must see the user's explicit stream, or the one split-Redis config it
+        # exists to catch (custom stream on Redis A, wired cancellation on
+        # Redis B) never warns.
         if event_stream is not None:
             set_event_stream(event_stream)
 
@@ -503,7 +475,7 @@ class AgentOS:
 
         # Track MCP tools declared on the registry so they connect in the same
         # lifespan as agent/team/workflow MCP tools (e.g. for components created
-        # from registry tools via StudioTool)
+        # from registry tools via StudioTools)
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
 
         # Check for duplicate IDs
@@ -530,15 +502,6 @@ class AgentOS:
             self.mcp_config = value
         else:
             self._mcp_enabled = bool(value)
-
-    @property
-    def enable_mcp_server(self) -> bool:
-        """Deprecated alias for ``mcp_server``."""
-        return self._mcp_enabled
-
-    @enable_mcp_server.setter
-    def enable_mcp_server(self, value: bool) -> None:
-        self._mcp_enabled = bool(value)
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -639,7 +602,15 @@ class AgentOS:
                 updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 updated_routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
-            updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            updated_routers.append(
+                get_schedule_router(
+                    os_db=self.db,
+                    settings=self.settings,
+                    include_agents=self.agents,
+                    include_teams=self.teams,
+                    include_workflows=self.workflows,
+                )
+            )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
@@ -791,10 +762,10 @@ class AgentOS:
             # Track all MCP tools to later handle their connection
             if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
-                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    # Checking if the tool is an instance of MCPTools or a subclass of it
                     if hasattr(type(tool), "__mro__"):
                         mro_names = {cls.__name__ for cls in type(tool).__mro__}
-                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                        if "MCPTools" in mro_names:
                             if tool not in self.mcp_tools:
                                 self.mcp_tools.append(tool)
 
@@ -901,36 +872,22 @@ class AgentOS:
                 existing_teams[team_id] = team
 
     def _populate_registry_knowledge(self) -> None:
-        """Add discovered knowledge instances to the registry.
+        """Add knowledge instances to the registry so stored components resolve them by name.
 
-        Sources are the knowledge instances collected by
-        ``_auto_discover_knowledge_instances`` (agents, teams, the AgentOS
-        ``knowledge`` param, and ``registry.knowledge``). That discovery only
-        keeps instances backed by a ``contents_db``, so a ``contents_db`` is
-        required for a knowledge base to be resolvable from a Studio/Builder
-        component config (vector-search-only knowledge is not registered).
+        Sources are the contents_db-backed instances collected by
+        ``_auto_discover_knowledge_instances`` (which also feed the knowledge
+        routes) plus every named instance handed to the AgentOS ``knowledge``
+        param: registry resolution is by name and needs no ``contents_db``.
+        Agent- and team-attached knowledge is added by the component walk in
+        ``_populate_registry_components``.
         """
         if self.registry is None:
             self.registry = Registry()
 
-        if self.knowledge_instances:
-            existing_knowledge = {
-                name: k for k in self.registry.knowledge if (name := getattr(k, "name", None)) is not None
-            }
-            for kb in self.knowledge_instances:
-                kb_name = getattr(kb, "name", None)
-                if kb_name is None:
-                    continue
-                existing = existing_knowledge.get(kb_name)
-                if existing is not None:
-                    if existing is not kb:
-                        log_warning(
-                            f"Registry: multiple distinct knowledge instances share name '{kb_name}'; "
-                            "keeping the first. Give them distinct names to avoid one shadowing the other."
-                        )
-                    continue
-                self.registry.knowledge.append(kb)
-                existing_knowledge[kb_name] = kb
+        for kb in self.knowledge_instances or []:
+            self.registry.add_knowledge(kb, mirrored=True)
+        for kb in self.knowledge or []:
+            self.registry.add_knowledge(kb, mirrored=True)
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.
@@ -1192,7 +1149,15 @@ class AgentOS:
                 routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
-            routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            routers.append(
+                get_schedule_router(
+                    os_db=self.db,
+                    settings=self.settings,
+                    include_agents=self.agents,
+                    include_teams=self.teams,
+                    include_workflows=self.workflows,
+                )
+            )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
@@ -1256,9 +1221,17 @@ class AgentOS:
 
                 log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
 
+                status_code = getattr(exc, "status_code", 500)
+                # 4xx exceptions that carry their own status wrote their
+                # message for the client; 5xx details must never echo
+                # str(exc) - unhandled server errors are routinely store or
+                # driver failures whose text carries connection strings, SQL
+                # fragments, and hostnames. The full traceback is in the
+                # server log above; the wire gets the exception type only.
+                detail = str(exc) if status_code < 500 else f"Internal server error ({type(exc).__name__})"
                 return JSONResponse(
-                    status_code=getattr(exc, "status_code", 500),
-                    content={"detail": str(exc)},
+                    status_code=status_code,
+                    content={"detail": detail},
                 )
 
         # Update CORS middleware
@@ -1768,7 +1741,6 @@ class AgentOS:
         """Get the table names for a database"""
         table_names = {
             "session_table_name": db.session_table_name,
-            "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
             "learnings_table_name": db.learnings_table_name,
             "metrics_table_name": db.metrics_table_name,
@@ -1820,6 +1792,16 @@ class AgentOS:
 
         if self.registry is not None:
             for knowledge_base in self.registry.knowledge or []:
+                # Only user-declared registry knowledge feeds the routes.
+                # Syncs mirror member- and step-owned knowledge into the
+                # registry for name resolution; that is not a grant of
+                # route-level exposure -- and the registry, not this OS, keeps
+                # the provenance, so a mirror by another AgentOS sharing the
+                # registry is excluded here too. Everything not mirrored the
+                # user registered, whether at construction or after (resync
+                # picks it up).
+                if self.registry.knowledge_is_mirrored(knowledge_base):
+                    continue
                 _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances

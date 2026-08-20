@@ -19,9 +19,9 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
@@ -186,9 +186,6 @@ def get_tools(
         )
         agent_tools.extend(learning_tools)
 
-    if agent.enable_agentic_culture:
-        agent_tools.append(_default_tools.get_update_cultural_knowledge_function(agent, async_mode=False))
-
     if agent.enable_agentic_state:
         agent_tools.append(
             Function(
@@ -213,7 +210,7 @@ def get_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -260,10 +257,8 @@ async def aget_tools(
     # Add provided tools
     if resolved_tools is not None:
         for tool in resolved_tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            )
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            is_mcp_tool = hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
 
             if is_mcp_tool:
                 if tool.refresh_connection:  # type: ignore
@@ -324,9 +319,6 @@ async def aget_tools(
         )
         agent_tools.extend(learning_tools)
 
-    if agent.enable_agentic_culture:
-        agent_tools.append(_default_tools.get_update_cultural_knowledge_function(agent, async_mode=True))
-
     if agent.enable_agentic_state:
         agent_tools.append(
             Function(
@@ -351,7 +343,7 @@ async def aget_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:

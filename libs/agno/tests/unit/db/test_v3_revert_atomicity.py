@@ -55,7 +55,7 @@ class TestRevertDynamoPreservesRunsOnFailure:
         client.update_item.side_effect = update_item
         db = self._make_db(client)
 
-        assert _revert_dynamodb(db, "agno_sessions") is True
+        assert _revert_dynamodb(db, "sessions", "agno_sessions") is True
 
         deleted = {c.kwargs["Key"]["run_id"]["S"] for c in client.delete_item.call_args_list}
         assert "r1" in deleted, "successfully-reverted session's runs should be deleted"
@@ -67,7 +67,7 @@ class TestRevertDynamoPreservesRunsOnFailure:
         client.update_item.return_value = {}
         db = self._make_db(client)
 
-        assert _revert_dynamodb(db, "agno_sessions") is True
+        assert _revert_dynamodb(db, "sessions", "agno_sessions") is True
 
         deleted = {c.kwargs["Key"]["run_id"]["S"] for c in client.delete_item.call_args_list}
         assert deleted == {"r1", "r2"}

@@ -3,7 +3,7 @@
 Implements the same contract as the Postgres queue methods (enqueue_job,
 claim_job, heartbeat_jobs, complete_job, retry_or_fail_job,
 cancel_job, continue_job, sweep_exhausted_jobs, acquire_sweep,
-fail_swept_job, get_job, count_queued_jobs) against process memory.
+settle_swept_job, get_job, count_queued_jobs) against process memory.
 
 This is the contract-test fixture and the single-process dev fallback - it is
 NOT durable (a restart loses the queue) and is never a substitute for the
@@ -12,7 +12,7 @@ DB-backed store in production. One instance per process.
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 class InMemoryQueueStore:
@@ -41,6 +41,13 @@ class InMemoryQueueStore:
                 queued = sum(1 for j in self._jobs.values() if j["status"] == "queued")
                 if queued >= max_depth:
                     return {"accepted": False, "reason": "queue_full", "job": None}
+            # Mirror Postgres, where id is the primary key: a collision is a
+            # programming error (ids are server-minted uuid4), never a client
+            # dedup. Silently overwriting would reset a live ticket to
+            # queued/attempt-0 - two executors, the first one's completion
+            # fenced out.
+            if job["id"] in self._jobs:
+                raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
             self._jobs[job["id"]] = dict(job)
             return {"accepted": True, "reason": None, "job": dict(job)}
 
@@ -182,7 +189,7 @@ class InMemoryQueueStore:
         """Take ownership of a stale, budget-exhausted running job BEFORE any
         run-row write. The sweep must never touch a run row whose ticket it
         does not own: the old order wrote the row first and only then
-        discovered - via fail_swept_job's staleness recheck - that a live
+        discovered - via the swept-settle's staleness recheck - that a live
         heartbeat owned the ticket, after already defacing a healthy run's
         row. Refreshing locked_at here also doubles as the retry backoff for
         a failing terminalization: the job becomes re-sweepable once the
@@ -202,20 +209,31 @@ class InMemoryQueueStore:
             job.update(locked_by=worker_id, locked_at=now, updated_at=now)
             return True
 
-    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Replaces the old staleness
-        recheck - after acquire_sweep refreshed locked_at, staleness can no
-        longer serve as the fence."""
+    async def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the SWEEPER: only the holder of the
+        sweep lock (via acquire_sweep) may write. The target status matches
+        what the run row actually says instead of always "failed" - the
+        sweep RECONCILES, it does not deface: a falsely-swept leg may have
+        completed, cancelled, or paused before the sweeper looked, and its
+        ticket must record that, not contradict it."""
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
         async with self._lock:
             now = int(time.time())
             job = self._jobs.get(job_id)
             if job is None or job["status"] != "running" or job.get("locked_by") != worker_id:
                 return False
-            job.update(status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+            job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
             return True
 
-    async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    async def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket. With strict=True, store failures PROPAGATE
+        instead of reading as None - None means exactly "no such ticket".
+        Fail-closed consumers (the continue-ownership gate) need the
+        distinction: during a store outage, "no ticket" must not be
+        inferred from "could not look" - that inference reopens the
+        cross-door double-execution race the gate exists to close.
+        In-memory cannot fail, so both modes behave identically."""
         async with self._lock:
             job = self._jobs.get(job_id)
             return dict(job) if job is not None else None
@@ -226,11 +244,38 @@ class InMemoryQueueStore:
 
     # -- Operations surface (DLQ, requeue, stats, retention) ---------------
 
-    async def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    async def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Paginated job listing: (page of jobs, total matching count).
+
+        status accepts one value or a list (match any). An unknown sort_by is
+        silently ignored (the list-API convention); None-valued sort fields
+        group together rather than erroring. Sorting by updated_at falls back
+        to created_at when updated_at is None, matching the DB adapters."""
+        statuses = [status] if isinstance(status, str) else status
         async with self._lock:
-            jobs = [dict(j) for j in self._jobs.values() if status is None or j["status"] == status]
-            jobs.sort(key=lambda j: j["created_at"], reverse=True)
-            return jobs[:limit]
+            jobs = [dict(j) for j in self._jobs.values() if statuses is None or j["status"] in statuses]
+        total_count = len(jobs)
+        if sort_by and jobs and sort_by in jobs[0]:
+
+            def sort_value(job: Dict[str, Any]) -> Any:
+                value = job.get(sort_by)
+                if value is None and sort_by == "updated_at":
+                    value = job.get("created_at")
+                return value
+
+            jobs.sort(
+                key=lambda j: (sort_value(j) is None, sort_value(j)),
+                reverse=(sort_order != "asc"),
+            )
+        start = max(page - 1, 0) * limit
+        return jobs[start : start + limit], total_count
 
     async def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants

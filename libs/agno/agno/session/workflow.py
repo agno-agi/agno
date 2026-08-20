@@ -92,6 +92,11 @@ class WorkflowSession:
                     # Already a WorkflowRunOutput object (from deserialize_session_json_fields)
                     runs.append(run_item)
                 elif isinstance(run_item, dict):
+                    # A step's agent/team run shares this session id; the workflow run carries it.
+                    from agno.db.utils import get_run_type  # circular at module level
+
+                    if get_run_type(run_item) != "workflow":
+                        continue
                     # Still a dictionary, needs to be converted
                     runs.append(WorkflowRunOutput.from_dict(run_item))
                 else:

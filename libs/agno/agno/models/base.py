@@ -193,19 +193,11 @@ class Model(ABC):
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
 
-    @staticmethod
-    def classify_error(error: ModelProviderError) -> ModelProviderError:
-        """Re-classify a generic ModelProviderError into a specific subclass.
-
-        Delegates to ModelProviderError.classify(). Kept for backwards compatibility.
-        """
-        return ModelProviderError.classify(error)
-
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
         """Determine if an error is worth retrying.
 
         Non-retryable errors include:
-        - ContextWindowExceededError (fast path after classify_error)
+        - ContextWindowExceededError (fast path after ModelProviderError.classify)
         - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
         - Context window/token limit patterns in error message (defense-in-depth)
 
@@ -214,7 +206,7 @@ class Model(ABC):
         - Server errors (500, 502, 503, 504)
         - Anything else not explicitly non-retryable
         """
-        # Fast path: already classified by classify_error()
+        # Fast path: already classified by ModelProviderError.classify()
         if isinstance(error, ContextWindowExceededError):
             return False
 
@@ -243,7 +235,7 @@ class Model(ABC):
             try:
                 return self.invoke(**kwargs)
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -291,7 +283,7 @@ class Model(ABC):
             try:
                 return await self.ainvoke(**kwargs)
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -341,7 +333,7 @@ class Model(ABC):
                 yield from self.invoke_stream(**kwargs)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -394,7 +386,7 @@ class Model(ABC):
                     yield response
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")

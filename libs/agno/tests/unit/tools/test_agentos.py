@@ -463,6 +463,24 @@ class TestGetToolActivity:
 
 
 class TestGetPlatformMetrics:
+    def test_a_day_with_two_owners_is_one_entry(self, db, toolkit):
+        """Metrics are stored one row per owner, and this reports days, not users."""
+        from agno.session.agent import AgentSession
+
+        now = int(time.time())
+        for owner in ("user-1", "user-2"):
+            db.upsert_session(
+                AgentSession(
+                    session_id=str(uuid.uuid4()), agent_id="agent-1", user_id=owner, created_at=now, updated_at=now
+                )
+            )
+
+        out = _loads(toolkit.get_platform_metrics(days=7))
+
+        assert len(out["daily"]) == 1
+        assert out["daily"][0]["distinct_users"] == 2
+        assert out["totals"]["agent_sessions"] == 2
+
     def test_calculates_and_reports(self, db, toolkit):
         from agno.session.agent import AgentSession
 
@@ -519,10 +537,11 @@ class TestLazyMetricsRefresh:
         rows, _ = db.get_metrics()
         assert rows[0]["agent_sessions_count"] == 1
 
-        # Expiring the throttle picks the new session up
+        # Expiring the throttle picks the new session up, one row per (user, date)
         db._metrics_refreshed_at = 0.0
         rows, _ = db.get_metrics()
-        assert rows[0]["agent_sessions_count"] == 2
+        assert len(rows) == 2
+        assert sum(row["agent_sessions_count"] for row in rows) == 2
 
     def test_explicit_calculate_stamps_the_throttle(self, db):
         self._seed_session(db)

@@ -172,7 +172,7 @@ class TestRetryAndSweep:
 
         store._jobs["r1"]["locked_at"] -= 1000
         assert await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
-        assert await store.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert await store.settle_swept_job("r1", "sweeper", "failed", "worker lost")
         job = await store.get_job("r1")
         assert job["status"] == "failed"
         assert job["error"] == "worker lost"
@@ -195,14 +195,16 @@ class TestRetryAndSweep:
         await store.claim_job("w1")
         store._jobs["r1"]["locked_at"] -= 1000
         assert await store.acquire_sweep("r1", "sweeper-a", lock_grace_seconds=60)
-        assert not await store.fail_swept_job("r1", "sweeper-b"), "foreign sweeper must not fail an owned job"
+        assert not await store.settle_swept_job("r1", "sweeper-b", "failed"), (
+            "foreign sweeper must not fail an owned job"
+        )
         # Freshly acquired: not re-sweepable until the sweep lock goes stale
         assert await store.sweep_exhausted_jobs(lock_grace_seconds=60) == []
         store._jobs["r1"]["locked_at"] -= 1000  # sweeper-a crashed mid-protocol
         swept = await store.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"], "interrupted sweep must be resumable"
         assert await store.acquire_sweep("r1", "sweeper-b", lock_grace_seconds=60)
-        assert await store.fail_swept_job("r1", "sweeper-b")
+        assert await store.settle_swept_job("r1", "sweeper-b", "failed")
 
 
 class TestCancelAndCounts:
@@ -231,10 +233,47 @@ class TestOpsSurface:
         await store.enqueue_job(make_job("r2"))
         await store.claim_job("w1")
 
-        assert len(await store.list_jobs(status="queued")) == 1
+        queued_jobs, queued_total = await store.list_jobs(status="queued")
+        assert len(queued_jobs) == 1
+        assert queued_total == 1
+        both, both_total = await store.list_jobs(status=["queued", "running"])
+        assert both_total == 2 and len(both) == 2
         stats = await store.queue_stats()
         assert stats["counts"] == {"queued": 1, "running": 1}
         assert stats["oldest_queued_age_seconds"] is not None
+
+    @pytest.mark.asyncio
+    async def test_list_pagination_and_sorting(self, store):
+        for i in range(5):
+            await store.enqueue_job(make_job(f"r{i}", created_at=1000 + i))
+
+        page1, total = await store.list_jobs(limit=2, page=1)
+        assert total == 5
+        assert [j["id"] for j in page1] == ["r4", "r3"]
+        page3, _ = await store.list_jobs(limit=2, page=3)
+        assert [j["id"] for j in page3] == ["r0"]
+
+        asc, _ = await store.list_jobs(limit=5, page=1, sort_by="created_at", sort_order="asc")
+        assert [j["id"] for j in asc] == ["r0", "r1", "r2", "r3", "r4"]
+
+        # Unknown sort fields are silently ignored (the list-API convention)
+        jobs, total = await store.list_jobs(limit=5, page=1, sort_by="not_a_field")
+        assert total == 5
+        assert len(jobs) == 5
+
+    @pytest.mark.asyncio
+    async def test_sort_updated_at_falls_back_to_created_at(self, store):
+        # Jobs with a NULL updated_at must sort by created_at instead of
+        # grouping together, matching the DB adapters' COALESCE behaviour.
+        store._jobs["a"] = make_job("a", created_at=100)  # updated_at None -> effective 100
+        store._jobs["b"] = make_job("b", created_at=200, updated_at=150)
+        store._jobs["c"] = make_job("c", created_at=50, updated_at=300)
+
+        desc, _ = await store.list_jobs(limit=5, page=1, sort_by="updated_at", sort_order="desc")
+        assert [j["id"] for j in desc] == ["c", "b", "a"]
+
+        asc, _ = await store.list_jobs(limit=5, page=1, sort_by="updated_at", sort_order="asc")
+        assert [j["id"] for j in asc] == ["a", "b", "c"]
 
     @pytest.mark.asyncio
     async def test_requeue_grants_one_more_attempt(self, store):
@@ -364,7 +403,7 @@ class TestContinueJob:
         swept = await store.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
         assert await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
-        assert await store.fail_swept_job("r1", "sweeper")
+        assert await store.settle_swept_job("r1", "sweeper", "failed")
         assert await store.requeue_job("r1")
         redriven = await store.claim_job("w2")
         assert redriven["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"

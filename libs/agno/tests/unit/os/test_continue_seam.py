@@ -197,6 +197,65 @@ class TestInlineDoorGate:
             await araise_if_ticket_owns_continue(worker, "r1")
         assert exc.value.status_code == 503, "cannot verify ownership -> must not execute"
 
+    @pytest.mark.asyncio
+    async def test_swallowing_store_fails_closed_via_strict(self):
+        """The production-adapter shape (the external reviewer's repro):
+        plain get_job swallows store failures into None, which the gate used
+        to read as "no ticket - allow the inline door" - fail-OPEN during
+        exactly the outages the gate exists for. The strict variant
+        propagates, and the gate must prefer it."""
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        class SwallowingStore:
+            async def get_job(self, job_id, strict=False):
+                if strict:
+                    raise RuntimeError("store down")
+                return None  # the outage is hidden, exactly like the lenient default
+
+        worker = SimpleNamespace(store=SwallowingStore())
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 503, (
+            "a swallowed store failure allowed an inline continuation - the double-execution race is open"
+        )
+
+    @pytest.mark.asyncio
+    async def test_real_postgres_adapter_outage_fails_closed(self, monkeypatch):
+        """Composition against the REAL production adapter: its lenient
+        get_job hid outages from the gate; the strict flag must not."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from fastapi import HTTPException
+
+        from agno.db.postgres import AsyncPostgresDb
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        db = AsyncPostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:59999/ai", job_table="never_created")
+        monkeypatch.setattr(db, "_get_table", AsyncMock(side_effect=RuntimeError("db down")))
+        worker = SimpleNamespace(store=db)
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_store_without_strict_keeps_best_effort(self):
+        """Third-party stores whose get_job lacks the strict flag keep the
+        best-effort behavior: a None lookup allows the inline door."""
+        from types import SimpleNamespace
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        class LegacyStore:
+            async def get_job(self, job_id):
+                return None
+
+        await araise_if_ticket_owns_continue(SimpleNamespace(store=LegacyStore()), "r1")  # must not raise
+
 
 class TestSideEntranceGate:
     """Round-9 review: MCP (via the shared run service), AG-UI, and Slack
@@ -800,6 +859,33 @@ class TestInlineContinueReopensStream:
         )
 
 
+class TestDeclinedReopenLeavesStreamAlone:
+    """reopen_run's contract: False means the status already moved past
+    PAUSED and the caller must NOT overwrite that newer state. The helper
+    used to ignore the result and stamp RUNNING anyway - resurrecting a
+    settled stream until the streamer's finally healed it."""
+
+    @pytest.mark.asyncio
+    async def test_completed_stream_is_not_stamped_running(self, monkeypatch):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+        # A racing writer already finished the leg: PAUSED -> COMPLETED
+        await stream.register_run("r1", RunStatus.running)
+        await stream.complete_run("r1", RunStatus.completed)
+
+        await amark_continue_stream_running("r1")
+
+        assert await stream.get_run_status("r1") == RunStatus.completed, (
+            "a declined reopen must leave the settled stream alone, not stamp RUNNING over it"
+        )
+
+
 class TestInlineContinueSeedsExpiredCounter:
     """Inline door: an inline continue of a paused run whose
     stream state expired (deploy/restart) must seed the counter from the run
@@ -862,3 +948,36 @@ class TestInlineContinueSeedsExpiredCounter:
         assert reads == [], "a live counter must not cost a session read"
         idx = await stream.add_event("r1", RunContentEvent(content="b", run_id="r1"))
         assert idx == 1
+
+
+class TestPausedGate409CarriesEscapeHatch:
+    @pytest.mark.asyncio
+    async def test_paused_ticket_409_names_the_row_missing_escape(self):
+        """When the run ROW is lost while its paused ticket survives,
+        background=true fails not-found and falls through to this gate:
+        without the escape-hatch sentence, the 409 told the caller to do
+        exactly what it just did (a self-referential dead end)."""
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        store._jobs["r-lostrow"] = QueuedJob(
+            id="r-lostrow",
+            component_type="agent",
+            component_id="a1",
+            session_id="s1",
+            payload={},
+            status="paused",
+        ).to_dict()
+        worker = SimpleNamespace(store=store)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await araise_if_ticket_owns_continue(worker, "r-lostrow", component_type="agent", component_id="a1")
+
+        assert excinfo.value.status_code == 409
+        assert "requeue the ticket" in excinfo.value.detail, (
+            "the 409 must carry the cancel+requeue escape hatch for the lost-row corner"
+        )
