@@ -18,6 +18,7 @@ from agno.vectordb.base import VectorDb
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.team import Team
+    from agno.workflow import Workflow
 
 # A flat function name, or a (toolkit name, function name) qualified pair.
 EntrypointKey = Union[str, Tuple[str, str]]
@@ -74,7 +75,7 @@ def _tool_resource_name(tool: Any) -> Optional[str]:
 class Registry:
     """
     Registry is used to manage non serializable objects like tools, models, databases, vector databases,
-    agents, and teams.
+    agents, teams, and workflows.
     """
 
     name: Optional[str] = None
@@ -105,9 +106,10 @@ class Registry:
     _mirrored_knowledge: List[Any] = field(default_factory=list, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
-    # Code-defined agents and teams (for workflow rehydration)
+    # Code-defined agents, teams, and workflows (for rehydration)
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
+    workflows: List[Workflow] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
@@ -710,6 +712,12 @@ class Registry:
             return next((t for t in self.teams if getattr(t, "id", None) == team_id), None)
         return None
 
+    def get_workflow(self, workflow_id: str) -> Optional[Workflow]:
+        """Get a workflow by id from the registry."""
+        if self.workflows:
+            return next((w for w in self.workflows if getattr(w, "id", None) == workflow_id), None)
+        return None
+
     def get_agent_ids(self) -> Set[str]:
         """Get the set of all agent IDs in this registry."""
         if self.agents:
@@ -720,6 +728,12 @@ class Registry:
         """Get the set of all team IDs in this registry."""
         if self.teams:
             return {tid for t in self.teams if (tid := getattr(t, "id", None)) is not None}
+        return set()
+
+    def get_workflow_ids(self) -> Set[str]:
+        """Get the set of all workflow IDs in this registry."""
+        if self.workflows:
+            return {wid for w in self.workflows if (wid := getattr(w, "id", None)) is not None}
         return set()
 
     def get_knowledge_names(self) -> Set[str]:
@@ -790,5 +804,9 @@ class Registry:
         return set()
 
     def get_all_component_ids(self) -> Set[str]:
-        """Get the set of all agent and team IDs in this registry."""
-        return self.get_agent_ids() | self.get_team_ids()
+        """Get the set of all agent, team, and workflow IDs in this registry.
+
+        The union is untyped: a consumer excluding "registry-owned" ids from a
+        listing excludes them across component types. Per-type consumers should
+        use the typed getters instead."""
+        return self.get_agent_ids() | self.get_team_ids() | self.get_workflow_ids()

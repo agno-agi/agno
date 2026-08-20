@@ -238,6 +238,7 @@ class StudioTools(Toolkit):
         for source, bucket, source_name in (
             (include_agents, registry.agents, "include_agents"),
             (include_teams, registry.teams, "include_teams"),
+            (include_workflows, registry.workflows, "include_workflows"),
         ):
             for component in source or []:
                 component_id = getattr(component, "id", None)
@@ -3823,7 +3824,16 @@ class StudioTools(Toolkit):
                     target_type,
                     component_id,
                     user_id=actor,
-                    is_code_defined=code_defined_probe(self.include_agents, self.include_teams, self.include_workflows),
+                    # The probe must see the same code-defined set the run
+                    # tools resolve from - lists when given, registry
+                    # otherwise - or a registry-only component would read as
+                    # catalog-defined here while its run path treats it as
+                    # code.
+                    is_code_defined=code_defined_probe(
+                        self._runner_tools._iter_agents(),
+                        self._runner_tools._iter_teams(),
+                        self._runner_tools._iter_workflows(),
+                    ),
                 )
                 is not None
             ):

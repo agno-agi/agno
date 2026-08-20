@@ -14,6 +14,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Set,
     Tuple,
     Type,
     Union,
@@ -11470,6 +11471,7 @@ _COMPONENT_LIST_CAP = 1000
 def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
     user_id: Optional[str] = None,
 ) -> List["Workflow"]:
     """
@@ -11480,6 +11482,7 @@ def get_workflows(
     Args:
         db: Database to load workflows from
         registry: Optional registry for rehydrating tools
+        exclude_component_ids: Component IDs to exclude from results.
         user_id: If set, only load workflows owned by this user, unowned (shared), or published.
     """
     workflows: List[Workflow] = []
@@ -11493,6 +11496,7 @@ def get_workflows(
         while True:
             page, total = db.list_components(
                 component_type=ComponentType.WORKFLOW,
+                exclude_component_ids=exclude_component_ids,
                 user_id=user_id,
                 limit=_COMPONENT_LIST_PAGE,
                 offset=len(components),

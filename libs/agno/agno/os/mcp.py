@@ -810,7 +810,13 @@ def build_mcp_server(
                     teams_out.append(TeamSummaryResponse.from_team(t).model_dump())
                 except Exception:
                     logger.exception("Error summarizing DB team for get_agentos_config")
-            for w in _accessible(get_workflows(db=os.db, registry=registry, user_id=scoped_user_id), "workflows"):
+            workflow_exclude = (registry.get_workflow_ids() if registry else None) or None
+            for w in _accessible(
+                get_workflows(
+                    db=os.db, registry=registry, exclude_component_ids=workflow_exclude, user_id=scoped_user_id
+                ),
+                "workflows",
+            ):
                 try:
                     workflows_out.append(WorkflowSummaryResponse.from_workflow(w, is_component=True).model_dump())
                 except Exception:

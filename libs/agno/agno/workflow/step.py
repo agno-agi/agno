@@ -571,36 +571,65 @@ class Step:
                 executor = _unresolvable_ref_placeholder(config, "team", team_id)
 
         # --- Handle Workflow reconstruction ---
-        # TODO: Add workflow support to Registry (get_workflow method) for full reconstruction.
-        # Currently, nested workflow steps cannot be fully reconstructed from serialized form
-        # because the Registry does not track workflows. This only affects resumption of
-        # paused workflows that contain nested workflow steps.
+        # Nested workflows resolve from the registry only: they have no
+        # db-load tier yet, because loading a stored workflow from inside a
+        # step would recurse through from_dict and needs its own cycle guard
+        # before it can be safe.
         if "workflow_id" in config and config["workflow_id"]:
             workflow_id = config.get("workflow_id")
-            if strict:
-                raise ComponentRehydrationError(
-                    f"Step '{config.get('name')}' references nested workflow '{workflow_id}', which "
-                    "cannot be reconstructed yet (the registry does not track workflows). Pass "
-                    "strict=False to load it with a non-executable placeholder."
-                )
-            log_warning(
-                f"Cannot reconstruct nested workflow '{workflow_id}' for step '{config.get('name')}' "
-                f"(workflow registry support not yet implemented). "
-                f"Using placeholder executor."
-            )
+            if registry and workflow_id:
+                registry_workflow = registry.get_workflow(workflow_id)
+                if registry_workflow is not None:
+                    try:
+                        # Deep copy to isolate mutable state between concurrent requests
+                        workflow = registry_workflow.deep_copy()
+                        if strict and workflow is registry_workflow:
+                            raise ComponentRehydrationError(
+                                f"Registry workflow '{workflow_id}' deep_copy returned the shared "
+                                "instance; a strict load requires an isolated copy."
+                            )
+                        # No copy_divergence check here, unlike the agent/team
+                        # tiers: Workflow.deep_copy regenerates step ids, so a
+                        # serialization diff fires for every workflow and the
+                        # check would refuse all strict loads.
+                    except ComponentRehydrationError:
+                        raise
+                    except Exception as e:
+                        if strict:
+                            raise ComponentRehydrationError(
+                                f"Registry workflow '{workflow_id}' could not be copied (deep_copy "
+                                f"failed: {e}); a strict load refuses the shared registry instance."
+                            ) from e
+                        log_warning(
+                            f"deep_copy() failed for registry workflow '{workflow_id}', using shared instance: {e}",
+                        )
 
-            # Create a placeholder executor so validation doesn't crash.
-            # The step won't be re-executable until Registry supports workflows.
-            def _placeholder(step_input: StepInput) -> StepOutput:
-                raise UnresolvableCallableError(
-                    f"Nested workflow '{workflow_id}' cannot be re-executed (not yet "
-                    "reconstructable). Load the parent strictly for a typed refusal instead."
+                        workflow = registry_workflow
+
+            if workflow is None:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references nested workflow '{workflow_id}', which "
+                        "was not found in the registry (nested workflows do not load from the db). "
+                        "Register the workflow, or pass strict=False to load it with a "
+                        "non-executable placeholder."
+                    )
+                log_warning(
+                    f"Could not resolve nested workflow '{workflow_id}' from the registry for step "
+                    f"'{config.get('name')}'. Using placeholder executor."
                 )
 
-            _placeholder.__name__ = str(workflow_id)
-            _placeholder.__qualname__ = str(workflow_id)
-            _placeholder.__agno_unresolved__ = {"workflow_id": workflow_id}  # type: ignore[attr-defined]
-            executor = _placeholder
+                # Create a placeholder executor so validation doesn't crash.
+                def _placeholder(step_input: StepInput) -> StepOutput:
+                    raise UnresolvableCallableError(
+                        f"Nested workflow '{workflow_id}' is not registered, so it cannot be "
+                        "re-executed. Load the parent strictly for a typed refusal instead."
+                    )
+
+                _placeholder.__name__ = str(workflow_id)
+                _placeholder.__qualname__ = str(workflow_id)
+                _placeholder.__agno_unresolved__ = {"workflow_id": workflow_id}  # type: ignore[attr-defined]
+                executor = _placeholder
 
         # --- Handle Executor reconstruction ---
         if "executor_ref" in config and config["executor_ref"]:

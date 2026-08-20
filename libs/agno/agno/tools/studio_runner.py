@@ -345,8 +345,12 @@ class StudioRunnerTools(Toolkit):
         return list(self.registry.teams) if self.registry is not None else []
 
     def _iter_workflows(self, for_dispatch: bool = False) -> List["Workflow"]:
-        """Code-defined workflows. Always an explicit list, so never gated."""
-        return list(self.include_workflows) if self.include_workflows is not None else []
+        """Code-defined workflows: passed-in list, else registry (see _iter_agents)."""
+        if self.include_workflows is not None:
+            return list(self.include_workflows)
+        if for_dispatch and not self.include_all_components:
+            return []
+        return list(self.registry.workflows) if self.registry is not None else []
 
     def _find_agent(self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None) -> Optional["Agent"]:
         """Lookup order: code-defined exact id, DB exact id, code-defined display
@@ -1743,7 +1747,7 @@ class StudioRunnerTools(Toolkit):
         """The shared singletons a rebuild can hand back instead of a copy."""
         if self.registry is None:
             return []
-        return list(self.registry.agents or []) + list(self.registry.teams or [])
+        return list(self.registry.agents or []) + list(self.registry.teams or []) + list(self.registry.workflows or [])
 
     @staticmethod
     def _shared_registry_instance(node: Any, shared: List[Any], depth: int = 0) -> Optional[Any]:

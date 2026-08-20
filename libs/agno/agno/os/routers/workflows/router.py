@@ -1504,7 +1504,16 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            db_workflows = get_workflows(db=os.db, registry=os.registry, user_id=get_scoped_user_id(request))
+            # Exclude workflows whose IDs are owned by the registry: the code
+            # objects above already represent them, so a stored row sharing the
+            # id would list the same workflow twice.
+            exclude_ids = os.registry.get_workflow_ids() if os.registry else None
+            db_workflows = get_workflows(
+                db=os.db,
+                registry=os.registry,
+                exclude_component_ids=exclude_ids or None,
+                user_id=get_scoped_user_id(request),
+            )
             if db_workflows:
                 # Apply the same RBAC filtering to DB-loaded workflows:
                 # without it, a caller whose scope excludes a workflow

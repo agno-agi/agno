@@ -829,10 +829,12 @@ class AgentOS:
             workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def _populate_registry(self) -> None:
-        """Populate the registry with code-defined agents and teams.
+        """Populate the registry with code-defined agents, teams, and workflows.
 
-        This ensures that workflows loaded from DB can rehydrate their steps
-        using code-defined agents/teams via the registry.
+        This ensures that components loaded from DB can rehydrate their
+        references using code-defined components via the registry, and that
+        Studio surfaces holding this registry can see everything the OS
+        serves.
         """
         if self.registry is None:
             self.registry = Registry()
@@ -870,6 +872,25 @@ class AgentOS:
                     continue
                 self.registry.teams.append(team)
                 existing_teams[team_id] = team
+
+        if self._workflows:
+            existing_workflows = {
+                wid: w for w in self.registry.workflows if (wid := getattr(w, "id", None)) is not None
+            }
+            for workflow in self._workflows:
+                workflow_id = getattr(workflow, "id", None)
+                if workflow_id is None:
+                    continue
+                existing_workflow = existing_workflows.get(workflow_id)
+                if existing_workflow is not None:
+                    if existing_workflow is not workflow:
+                        log_warning(
+                            f"Registry: multiple distinct workflows share id '{workflow_id}'; keeping the "
+                            "first. Give them distinct ids to avoid one shadowing the other."
+                        )
+                    continue
+                self.registry.workflows.append(workflow)
+                existing_workflows[workflow_id] = workflow
 
     def _populate_registry_knowledge(self) -> None:
         """Add knowledge instances to the registry so stored components resolve them by name.
