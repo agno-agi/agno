@@ -190,3 +190,55 @@ def test_team_run_schema_lineage_defaults_to_none_when_absent():
     assert schema.forked_from_session_id is None
     assert schema.regenerated_from is None
     assert schema.last_checkpoint_at_message_index is None
+
+
+def test_team_session_detail_chat_history_includes_member_messages():
+    """GET /sessions/{session_id} must return the complete chat history for team
+    sessions, including member-agent messages — matching what GET /sessions/{id}/runs
+    already exposes. The SDK helper get_chat_history() keeps skipping member
+    messages, since it builds model context rather than the REST payload."""
+    from agno.models.message import Message
+    from agno.os.schema import TeamSessionDetailSchema
+    from agno.run.agent import RunOutput, RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.session.team import TeamSession
+
+    team_run = TeamRunOutput(
+        run_id="team-run-1",
+        team_id="t1",
+        parent_run_id=None,
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="What is the weather in Tokyo?"),
+            Message(role="assistant", content="Delegating to the weather agent."),
+        ],
+    )
+    member_run = RunOutput(
+        run_id="member-run-1",
+        agent_id="weather-agent",
+        parent_run_id="team-run-1",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Get the weather in Tokyo."),
+            Message(role="assistant", content="It is sunny in Tokyo."),
+        ],
+    )
+    session = TeamSession(
+        session_id="team-session-1",
+        team_id="t1",
+        session_data={"session_name": "Weather session"},
+        runs=[team_run, member_run],
+        created_at=1719859200,
+        updated_at=1719859200,
+    )
+
+    schema = TeamSessionDetailSchema.from_session(session)
+
+    contents = [message["content"] for message in schema.chat_history or []]
+    assert "Delegating to the weather agent." in contents
+    assert "It is sunny in Tokyo." in contents
+
+    # The SDK helper is for model context and must keep excluding member messages
+    sdk_contents = [message.content for message in session.get_chat_history()]
+    assert "Delegating to the weather agent." in sdk_contents
+    assert "It is sunny in Tokyo." not in sdk_contents
