@@ -879,3 +879,24 @@ async def test_the_async_device_start_timeout_is_reported_as_json_not_raised(fla
     payload = json.loads(await auth.asign_in_with_supergrok(run_context=_ctx("u1")))
 
     assert payload == {"error": TRANSPORT_FAILED}
+
+
+def test_a_failed_device_start_leaves_the_existing_session_intact(tmp_path, encryption_key):
+    """force=True must not wipe a working session before the new login exists."""
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("device endpoint unreachable")
+
+    path = tmp_path / "token.json"
+    manager = XAITokenManager(
+        encrypt_tokens=False,
+        token_path=str(path),
+        http_client=httpx.Client(transport=httpx.MockTransport(unreachable)),
+    )
+    manager._save({"access_token": "deployment-token", "expires_at": 9_999_999_999}, user_id="")
+    auth = XAIAuth(token_manager=manager)
+
+    payload = json.loads(auth.sign_in_with_supergrok(force=True))
+
+    assert "error" in payload
+    assert path.exists()

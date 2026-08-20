@@ -752,3 +752,215 @@ def test_the_baked_callable_never_raises_for_an_absent_deployment_row(sqlite_db,
     token = model._sync_token_callable()()
 
     assert isinstance(token, str) and token
+
+
+# ---------------------------------------------------------------------------
+# The 401 leg refreshes the RUN's slot (spec v3 §1.3)
+# ---------------------------------------------------------------------------
+
+
+def test_the_401_retry_refreshes_the_runs_own_user():
+    manager = MagicMock()
+    parent = MagicMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
+
+    with patch.object(OpenAIResponses, "invoke", parent):
+        model = xAIResponses(token_manager=manager)
+        model.client = _fake_client()
+        model.invoke(messages=_messages(), assistant_message=_assistant(), run_response=_run("u1"))
+
+    manager.force_refresh.assert_called_once_with(user_id="u1")
+
+
+def test_the_async_401_retry_refreshes_the_runs_own_user():
+    manager = MagicMock()
+    manager.aforce_refresh = AsyncMock()
+    parent = AsyncMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
+
+    async def go():
+        with patch.object(OpenAIResponses, "ainvoke", parent):
+            model = xAIResponses(token_manager=manager)
+            model.async_client = _fake_client()
+            await model.ainvoke(messages=_messages(), assistant_message=_assistant(), run_response=_run("u1"))
+
+    asyncio.run(go())
+
+    manager.aforce_refresh.assert_awaited_once_with(user_id="u1")
+
+
+def test_one_users_401_never_rotates_the_deployment_refresh_token(sqlite_db, fake_clock, token_endpoint):
+    """A per-user 401 must not burn the credential every other user is sharing."""
+    import httpx
+
+    from agno.models.xai.oauth import XAITokenManager
+
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+    )
+    for user_id, token in (("u1", "user-one"), ("", "deployment")):
+        manager._save(
+            {"access_token": token, "refresh_token": f"{token}-refresh", "expires_at": fake_clock() + 21600},
+            user_id=user_id,
+        )
+    parent = MagicMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
+
+    with patch.object(OpenAIResponses, "invoke", parent):
+        model = xAIResponses(token_manager=manager)
+        model.client = _fake_client()
+        model.invoke(messages=_messages(), assistant_message=_assistant(), run_response=_run("u1"))
+
+    assert [fields["refresh_token"] for fields in token_endpoint.refresh_requests] == ["user-one-refresh"]
+
+
+# ---------------------------------------------------------------------------
+# The async resolution seam (spec v3 §1.2d)
+# ---------------------------------------------------------------------------
+
+
+class _AsyncOnlyDb:
+    """An adapter whose auth-token methods are coroutines, as async adapters ship."""
+
+    def __init__(self):
+        self.rows = {}
+
+    async def get_auth_token(self, provider, user_id, service):
+        return self.rows.get((provider, user_id, service))
+
+    async def upsert_auth_token(self, token):
+        self.rows[(token["provider"], token["user_id"], token["service"])] = token
+        return token
+
+    async def delete_auth_token(self, provider, user_id, service):
+        return self.rows.pop((provider, user_id, service), None) is not None
+
+
+def test_a_fresh_replica_spends_the_row_an_async_backend_holds(fake_clock):
+    """The row the async toolkit persisted must reach the wire on the async leg.
+
+    Wire-level on purpose: the sync resolution path refuses coroutine db methods,
+    so a header assertion is the only thing that proves the async seam works.
+    """
+    import httpx
+    from openai import AsyncOpenAI
+
+    from agno.models.xai import oauth as oauth_module
+    from agno.models.xai.oauth import XAITokenManager
+
+    db = _AsyncOnlyDb()
+    writer = XAITokenManager(db=db, encrypt_tokens=False, now_fn=fake_clock)
+    asyncio.run(writer._asave({"access_token": "user-one", "expires_at": fake_clock() + 21600}, user_id="u1"))
+
+    # A different replica: nothing in this process has seen u1 before
+    oauth_module._reset_cache_for_tests()
+    reader = XAITokenManager(db=db, encrypt_tokens=False, now_fn=fake_clock)
+    sent = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers.get("authorization"))
+        return httpx.Response(200, json={"id": "r", "object": "response", "status": "completed", "output": []})
+
+    async def go():
+        model = xAIResponses(token_manager=reader)
+        model.async_client = AsyncOpenAI(
+            api_key=model._async_token_callable(),
+            base_url="https://api.x.ai/v1",
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(capture)),
+        )
+        await model.ainvoke(messages=_messages(), assistant_message=_assistant(), run_response=_run("u1"))
+
+    asyncio.run(go())
+
+    assert sent == ["Bearer user-one"]
+
+
+# ---------------------------------------------------------------------------
+# Credential-source precedence and the guarantee (spec v3 §1.2c)
+# ---------------------------------------------------------------------------
+
+
+def test_an_explicit_provider_wins_over_the_manager_on_the_wire(sqlite_db, fake_clock):
+    """A1: the caller naming a provider is the most specific instruction."""
+    manager = _stored_manager(sqlite_db, fake_clock, u1="user-one-token")
+    model = xAIResponses(token_manager=manager, token_provider=lambda: "explicit-token")
+
+    params = model.get_request_params(messages=_messages(), run_response=_run("u1"))
+
+    assert _auth_header(params) is None
+
+
+def test_an_empty_manager_does_not_veto_a_working_provider(sqlite_db, fake_clock):
+    """A2: failing to resolve is not an error when a provider can serve the request."""
+    manager = _stored_manager(sqlite_db, fake_clock)
+    model = xAIResponses(token_manager=manager, token_provider=lambda: "explicit-token")
+
+    params = model.get_request_params(messages=_messages(), run_response=_run())
+
+    assert _auth_header(params) is None
+
+
+def test_require_user_token_fails_closed_without_a_token_manager():
+    """A3: the guarantee holds even where per-user resolution is impossible."""
+    model = xAIResponses(token_provider=lambda: "shared-token", require_user_token=True)
+
+    with pytest.raises(ModelAuthenticationError) as exc_info:
+        model.get_request_params(messages=_messages(), run_response=_run("u1"))
+
+    assert "no token_manager is configured" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# The resolution chain: absence falls through, failure does not (§1.2 steps 2-3)
+# ---------------------------------------------------------------------------
+
+
+def test_a_failed_personal_refresh_does_not_spend_the_deployment_credential(sqlite_db, fake_clock, token_endpoint):
+    """Only an ABSENT per-user row may fall through to the shared slot."""
+    import httpx
+
+    from agno.models.xai.oauth import XAITokenManager
+
+    token_endpoint.refresh_status = 500
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+    )
+    manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="u1")
+    manager._save({"access_token": "deployment", "expires_at": fake_clock() + 21600}, user_id="")
+    model = xAIResponses(token_manager=manager)
+
+    with pytest.raises(ModelAuthenticationError):
+        model.get_request_params(messages=_messages(), run_response=_run("u1"))
+
+
+def test_nothing_stored_anywhere_falls_through_to_the_environment_key(sqlite_db, fake_clock, monkeypatch):
+    """Step 3: the chain continues to XAI_API_KEY before it gives up."""
+    monkeypatch.setenv("XAI_API_KEY", "env-key")
+    manager = _stored_manager(sqlite_db, fake_clock)
+    model = xAIResponses(token_manager=manager)
+
+    assert model._get_client_params().get("api_key") == "env-key"
+
+
+def test_the_deployment_callable_swallows_a_transport_failure(sqlite_db, fake_clock):
+    """The SDK calls this on every request; an outage must not kill a valid one."""
+    import httpx
+
+    from agno.models.xai.oauth import XAITokenManager
+
+    def unreachable(request):
+        raise httpx.ConnectError("token endpoint unreachable")
+
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(unreachable)),
+    )
+    manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="")
+    model = xAIResponses(token_manager=manager)
+
+    assert model._sync_token_callable()() == "supergrok-placeholder-not-signed-in"
