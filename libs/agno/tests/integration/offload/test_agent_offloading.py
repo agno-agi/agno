@@ -1034,16 +1034,18 @@ def test_two_postgres_schemas_do_not_share_or_delete_each_others_payloads(db):
         ids = {}
         for key, tenant_db in (("a", db_a), ("b", db_b)):
             agent = Agent(model=ScriptedToolModel(), db=tenant_db, tools=[fetch_page], offload_tool_results=True)
-            # The same run and call ids in both schemas, the worst case for a shared payload table.
-            agent.model.calls = 0
-            output = agent.run("go", session_id=session_id)
+            # The same session, run and call ids in both schemas: the worst
+            # case for a payload table every schema shares.
+            output = agent.run("go", session_id=session_id, run_id="shared-run-id")
             ids[key] = (agent, _tool_messages(output)[0].content.split('id="')[1].split('"')[0])
         agent_a, rid_a = ids["a"]
         agent_b, rid_b = ids["b"]
         assert agent_a.result_store.read(rid_a).text.startswith("row 1:")
         assert agent_b.result_store.read(rid_b).text.startswith("row 1:")
 
-        db_a.delete_session(session_id=session_id)
+        # A fresh db object, as a new process would have: no store registered,
+        # so the cascade falls back to the default payload table.
+        PostgresDb(db_url=PG_URL, db_schema=schema_a).delete_session(session_id=session_id)
         # Tenant B's payload and index row survive tenant A's delete.
         assert agent_b.result_store.get_row(rid_b) is not None
         assert agent_b.result_store.read(rid_b).text.startswith("row 1:")
