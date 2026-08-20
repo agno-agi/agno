@@ -590,6 +590,25 @@ def test_convert_schema_enum_with_title():
     assert result.enum == ["active", "inactive", "pending"]
 
 
+def test_convert_schema_enum_with_integer_values():
+    """Integer enums (an IntEnum or Literal[1, 2, 3] parameter) must not raise.
+
+    Gemini's Schema.enum is typed List[str], so the non-string members are
+    stringified rather than crashing with a pydantic ValidationError.
+    """
+    schema_dict = {
+        "type": "integer",
+        "enum": [1, 2, 3],
+        "description": "Priority level",
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "STRING"
+    assert result.enum == ["1", "2", "3"]
+
+
 def test_convert_schema_array_with_title():
     """Test converting an array schema with title"""
     schema_dict = {
