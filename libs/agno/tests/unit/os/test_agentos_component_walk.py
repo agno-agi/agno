@@ -137,6 +137,21 @@ class TestNestedStepContainersAreWalked:
 
         assert any("bound to a different Registry" in r.message for r in caplog.records)
 
+    def test_a_top_level_steps_container_is_traversed(self, caplog):
+        """WorkflowSteps accepts a bare Steps at the top level, not only a list."""
+        from agno.workflow.steps import Steps
+
+        workflow = Workflow(
+            id="wf",
+            name="WF",
+            steps=Steps(name="box", steps=[Step(name="inner", agent=_foreign_studio_agent("boxed"))]),
+        )
+
+        with caplog.at_level("WARNING"):
+            AgentOS(workflows=[workflow])
+
+        assert any("bound to a different Registry" in r.message for r in caplog.records)
+
     def test_a_container_holding_a_callable_members_team_constructs(self):
         team = Team(id="deep-team", name="Deep", members=_member_factory, model=_model())
         container = Step(name="container", executor=lambda step_input: None)

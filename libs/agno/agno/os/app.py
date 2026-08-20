@@ -976,8 +976,14 @@ class AgentOS:
                 yield from visit(top)
 
             def visit_steps(steps: Any):
+                # steps may be a Steps container rather than a plain list --
+                # WorkflowSteps accepts one at the top level, and a bare
+                # container here would otherwise skip the whole subtree.
                 if not isinstance(steps, list):
-                    return
+                    inner = getattr(steps, "steps", None)
+                    if steps is None or not isinstance(inner, list):
+                        return
+                    steps = inner
                 for step in steps:
                     # Containers can reference each other; without this the
                     # walk recurses until the stack dies, taking the whole
@@ -1023,7 +1029,11 @@ class AgentOS:
                 # the alternative to refusing is adopting a component-private
                 # db and writing a catalog no OS surface serves, and a silent
                 # success is the worse of the two failures.
-                if getattr(tool, "_db", None) is None and self.registry.resolve_component_db() is None:
+                if (
+                    getattr(tool, "_db", None) is None
+                    and self.registry is not None
+                    and self.registry.resolve_component_db() is None
+                ):
                     log_warning(
                         f"Component '{component_label}' carries {type(tool).__name__} but this AgentOS has no "
                         "database that can back the component catalog, so every Studio write will answer "

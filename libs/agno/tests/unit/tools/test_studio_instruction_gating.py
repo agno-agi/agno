@@ -120,3 +120,46 @@ class TestEveryNamedToolIsRegistered:
         instructions, registered = _build(tmp_path, **flags)
         named = {name for name in ALL_TOOL_NAMES if name in instructions}
         assert named <= registered, f"instructions name unregistered tools: {sorted(named - registered)}"
+
+
+class TestProseNamesOnlyBuildableTypes:
+    """The lifecycle sentence must not advertise a type this palette cannot build."""
+
+    def _prose(self, tmp_path, **flags):
+        instructions, registered = _build(tmp_path, **flags)
+        text = instructions if isinstance(instructions, str) else "\n".join(str(line) for line in instructions)
+        compose = next((line for line in text.splitlines() if "Compose" in line), "")
+        return compose, registered
+
+    def test_a_workflows_only_palette_does_not_advertise_agents_or_teams(self, tmp_path):
+        compose, registered = self._prose(tmp_path, create_agents=False, create_teams=False, create_workflows=True)
+
+        assert "create_workflow" in registered
+        assert "create_agent" not in registered and "create_team" not in registered
+        assert "Compose workflows from" in compose
+        assert "agents" not in compose and "teams" not in compose
+
+    def test_an_agents_only_palette_names_only_agents(self, tmp_path):
+        compose, registered = self._prose(tmp_path, create_agents=True, create_teams=False, create_workflows=False)
+
+        assert "create_agent" in registered
+        assert "Compose agents from" in compose
+        assert "teams" not in compose and "workflows" not in compose
+
+    def test_a_two_type_palette_reads_naturally(self, tmp_path):
+        compose, _ = self._prose(tmp_path, create_agents=True, create_teams=True, create_workflows=False)
+
+        assert "Compose agents and teams from" in compose
+
+    def test_the_full_palette_still_names_all_three(self, tmp_path):
+        compose, _ = self._prose(tmp_path)
+
+        assert "Compose agents, teams, and workflows from" in compose
+
+    def test_the_flat_lifecycle_variant_is_gated_the_same_way(self, tmp_path):
+        compose, _ = self._prose(
+            tmp_path, create_agents=False, create_teams=False, create_workflows=True, versions=False
+        )
+
+        assert "Compose workflows from" in compose
+        assert "agents" not in compose and "teams" not in compose

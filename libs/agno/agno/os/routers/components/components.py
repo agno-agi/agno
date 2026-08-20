@@ -734,8 +734,14 @@ def attach_routes(
             elif component_type == ComponentType.WORKFLOW:
                 exclude_ids = registry.get_workflow_ids()
             else:
-                # No type filter: one id can only be matched against the union,
-                # so a cross-type collision still shadows here.
+                # No type filter, so the exclusion is one flat set of ids and
+                # cannot tell same-type shadowing (intended: the code object
+                # is what /agents|/teams|/workflows renders, so the stored row
+                # is dead weight) from cross-type collision (not intended: a
+                # code workflow hiding a stored AGENT row that the typed
+                # listing above returns). Both are in this set. Narrowing it
+                # needs type-aware exclusion pushed through list_components,
+                # which is a change to the adapters, not to this route.
                 exclude_ids = registry.get_all_component_ids()
 
             components, total_count = db.list_components(

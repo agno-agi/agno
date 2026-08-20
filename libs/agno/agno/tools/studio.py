@@ -448,10 +448,31 @@ class StudioTools(Toolkit):
         # publish ladder, the enable_* trio for create/edit/run prose, the
         # scheduler for the schedules line.
         authoring = self.enable_agents or self.enable_teams or self.enable_workflows
+        # Name only the types this configuration can actually build. The flags
+        # are independently settable, so a workflows-only palette that advertises
+        # composing agents and teams sends the model after create_agent, which
+        # was never registered.
+        buildable = [
+            noun
+            for noun, enabled in (
+                ("agents", self.enable_agents),
+                ("teams", self.enable_teams),
+                ("workflows", self.enable_workflows),
+            )
+            if enabled
+        ]
+        if len(buildable) > 2:
+            # Keep the serial comma the full palette has always used, so the
+            # default configuration's prompt is unchanged by this gating.
+            composable = f"{', '.join(buildable[:-1])}, and {buildable[-1]}"
+        elif len(buildable) == 2:
+            composable = f"{buildable[0]} and {buildable[1]}"
+        else:
+            composable = buildable[0] if buildable else ""
         instruction_lines: List[str] = []
         if authoring and self.enable_versions:
             instruction_lines.append(
-                "Compose agents, teams, and workflows from registry primitives. The lifecycle: create "
+                f"Compose {composable} from registry primitives. The lifecycle: create "
                 "(a draft, unless publish=true) -> validate_component -> publish_component. Only the "
                 "published version serves runs and schedules. Drafts are private to you; publishing "
                 "puts the component on the platform, where every user can find and run it (but only "
@@ -459,7 +480,7 @@ class StudioTools(Toolkit):
             )
         elif authoring:
             instruction_lines.append(
-                "Compose agents, teams, and workflows from registry primitives. The lifecycle: create "
+                f"Compose {composable} from registry primitives. The lifecycle: create "
                 "-> validate_component. There is no draft stage and no publish step here: every create "
                 "and edit is published immediately as the new current version, on the platform where "
                 "every user can find and run it (but only you can edit it)."
