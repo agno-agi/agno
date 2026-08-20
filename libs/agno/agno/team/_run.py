@@ -4215,33 +4215,13 @@ def arun_dispatch(  # type: ignore
     """Run the Team asynchronously and return the response."""
 
     # Set the id for the run and register it immediately for cancellation tracking
-    from agno.team._init import _initialize_session
+    from agno.team._init import _has_async_db, _initialize_session
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options
 
     run_id = run_id or str(uuid4())
 
-    # Initialize Team
-    team.initialize_team(debug_mode=debug_mode)
-
-    # Resolve run options centrally. No session pre-read happens here: the session
-    # is read inside _arun/_arun_stream AFTER options are resolved, so session-stored
-    # metadata does not reach this run's resolved options (matches the agent async-DB path).
-    opts = resolve_run_options(
-        team,
-        stream=stream,
-        stream_events=stream_events,
-        yield_run_output=yield_run_output,
-        add_history_to_context=add_history_to_context,
-        add_dependencies_to_context=add_dependencies_to_context,
-        add_session_state_to_context=add_session_state_to_context,
-        dependencies=dependencies,
-        knowledge_filters=knowledge_filters,
-        metadata=metadata,
-        output_schema=output_schema,
-    )
-
-    if (opts.add_history_to_context) and not team.db and not team.parent_team_id:
+    if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
         log_warning(
             "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
         )
@@ -4263,7 +4243,45 @@ def arun_dispatch(  # type: ignore
             team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
         team._hooks_normalised = True
 
+    # Initialize session BEFORE resolve_run_options so session_id is known
     session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
+
+    # Initialize Team
+    team.initialize_team(debug_mode=debug_mode)
+
+    # Read the existing session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata.
+    # Note: arun_dispatch is NOT async, so we can only pre-read with a sync DB.
+    # For async DB, _arun/_arun_stream read the session AFTER options are resolved,
+    # so session metadata does not reach this run's resolved options there.
+    from copy import deepcopy
+
+    from agno.team._storage import _read_or_create_session, _update_metadata
+
+    _pre_session: Optional[TeamSession] = None
+    _session_metadata: Optional[Dict[str, Any]] = None
+    if not _has_async_db(team):
+        _pre_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
+        # so the session layer keeps the session's own values (team < session < call-site).
+        _session_metadata = deepcopy(_pre_session.metadata)
+        _update_metadata(team, session=_pre_session)
+
+    # Resolve run options with session-stored metadata as the middle layer
+    opts = resolve_run_options(
+        team,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        session_metadata=_session_metadata,
+        output_schema=output_schema,
+    )
 
     image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
         images=images, videos=videos, audios=audio, files=files

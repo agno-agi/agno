@@ -696,15 +696,68 @@ class TestTeamRunSessionMetadataPrecedence:
         assert cont.metadata["env"] == "test"
 
     @pytest.mark.asyncio
-    async def test_arun_sync_db_matches_async_db_path(self):
-        # Unlike agent.arun, team.arun does NOT pre-read the session even with a
-        # sync DB (arun_dispatch resolves options before the session id is known),
-        # so session metadata does not reach the resolved options. Pinned so a
-        # future change to either side is a conscious decision, not a silent drift.
+    async def test_arun_sync_db_matches_agent_behavior(self):
+        # Team.arun with sync DB reads the session before resolve_run_options,
+        # so session metadata participates in the merge (team < session < call-site).
+        # This matches Agent.arun behavior.
         db = InMemoryDb()
         _seed_team_session(db, "s1", "team-1", {"shared": "session_value"})
         team = self._make_run_team(db, metadata={"shared": "team_value"})
         out = await team.arun(input="hi", session_id="s1", metadata={"run_only": "r"})
-        assert out.metadata["shared"] == "team_value"
+        assert out.metadata["shared"] == "session_value"
         assert out.metadata["run_only"] == "r"
-        assert "session_value" not in out.metadata.values()
+
+    @pytest.mark.asyncio
+    async def test_arun_callsite_beats_session_and_team(self):
+        # Full three-layer merge for arun: team < session < call-site
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"shared": "session_value", "session_only": "s"})
+        team = self._make_run_team(db, metadata={"shared": "team_value", "team_only": "t"})
+        out = await team.arun(input="hi", session_id="s1", metadata={"shared": "call_value", "run_only": "r"})
+        assert out.metadata["shared"] == "call_value"
+        assert out.metadata["team_only"] == "t"
+        assert out.metadata["session_only"] == "s"
+        assert out.metadata["run_only"] == "r"
+
+    @pytest.mark.asyncio
+    async def test_arun_session_beats_team_stays_stable_across_runs(self):
+        # Stability: session value persists across multiple arun calls
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"tier": "gold"})
+        team = self._make_run_team(db, metadata={"tier": "standard"})
+        first = (await team.arun(input="hi", session_id="s1")).metadata["tier"]
+        record = db.get_session(session_id="s1").metadata["tier"]
+        second = (await team.arun(input="hi", session_id="s1")).metadata["tier"]
+        assert (first, record, second) == ("gold", "gold", "gold")
+
+    @pytest.mark.asyncio
+    async def test_arun_does_not_mutate_team_metadata(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"leak": "from_session"})
+        team = self._make_run_team(db, metadata={"env": "test"})
+        out = await team.arun(input="hi", session_id="s1")
+        assert out.metadata["leak"] == "from_session"
+        assert team.metadata == {"env": "test"}
+
+    @pytest.mark.asyncio
+    async def test_arun_new_session_uses_team_metadata(self):
+        # When no existing session, arun should use team metadata as baseline
+        db = InMemoryDb()
+        team = self._make_run_team(db, metadata={"env": "test", "tier": "standard"})
+        out = await team.arun(input="hi", session_id="new-session")
+        assert out.metadata["env"] == "test"
+        assert out.metadata["tier"] == "standard"
+        # Verify session was created with team metadata
+        session = db.get_session(session_id="new-session")
+        assert session.metadata["env"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_acontinue_run_sync_db_sees_session_metadata(self):
+        # Async continue_run should also see session metadata
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"policy": "capture-only"})
+        team = self._make_run_team(db, metadata={"env": "test"})
+        run_out = await team.arun(input="hi", session_id="s1")
+        cont = await team.acontinue_run(run_id=run_out.run_id, session_id="s1", requirements=[])
+        assert cont.metadata["policy"] == "capture-only"
+        assert cont.metadata["env"] == "test"
