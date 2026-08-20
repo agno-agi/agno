@@ -215,9 +215,7 @@ table):
 asyncio.run(MigrationManager(db).down(target_version="2.5.6"))
 ```
 
-**The entity memory re-key is not reversed by this.** The pre-3.0 entity key carries
-no user, so it is shared across users; moving those rows back onto it would collide
-them again, which is the bug the re-key exists to undo. `down()` refuses that step,
+**The entity memory re-key is not reversed by this.** `down()` refuses that step,
 logs why, and reverts everything else. A database rolled back to v2.5.6 keeps its
 entity memory rows on their v3.0 per-user keys, where a v2.x application will not
 find them. Restore from a backup if you need those rows readable by v2.x.
@@ -238,21 +236,24 @@ after    entity_user_{sha256(user_id)[:16]}_{entity_type}_{entity_id}
 ```
 
 Only deployments that set `namespace="user"` on entity memory are affected, on the
-backends that store learnings (`PostgresDb`, `SqliteDb`, `MongoDb`, `ValkeyDb` and
-their async twins). The default `namespace="global"` shares entities on purpose and
-its keys do not change.
+backends that store learnings (`PostgresDb`, `SqliteDb` and `MongoDb` with their
+async twins, and `ValkeyDb`). The default `namespace="global"` shares entities on
+purpose and its keys do not change.
 
-### This step is required
+MongoDB is the exception to the quarantine below: its writes overwrite the owner
+column, so a row two users wrote reads as self-consistent and is re-keyed onto the
+last writer. A `quarantined` count of zero there means the evidence is unavailable,
+not that no collision happened.
 
-Entity memory does **not** self-migrate. Until the re-key runs, the store writes to
-the new per-user key while reads still match the old row, so an entity that existed
-before the upgrade is split across two rows: reads return the old one, listings show
-the entity twice, and a delete removes the row that reads are not returning.
+**This step is required.** Entity memory does not self-migrate. Until the re-key
+runs, the store writes to the new per-user key while reads still match the old row,
+so an entity that existed before the upgrade is split across two rows: reads return
+the old one, listings show the entity twice, and a delete removes the row that reads
+are not returning.
 
-Run it before the application serves traffic. Nothing does that for you:
-`MigrationManager` is reachable from AgentOS only through
-`POST /databases/all/migrate`, which by definition runs with the app already up. Call
-it from your deploy step instead:
+Run it from your deploy step, before the application serves traffic. Nothing does
+that for you: inside AgentOS the manager is reachable only through the
+`POST /databases/.../migrate` routes, which run with the app already up.
 
 ```python
 import asyncio
@@ -262,9 +263,8 @@ from agno.db.migrations.manager import MigrationManager
 asyncio.run(MigrationManager(db).up())
 ```
 
-If a write does land first, the re-key folds the two rows back into one — the newer
-row wins every conflict and the older only fills gaps — so the split is temporary
-rather than permanent. Closing the window is still better than relying on that.
+If a write does land first, the re-key folds the two rows back into one: the newer
+row wins every conflict and the older only fills gaps.
 
 ### Rows that cannot be moved cleanly
 
@@ -273,18 +273,12 @@ users' data before the fix, and the two are not separable. The migration moves t
 under the `quarantined_user` namespace rather than deleting them: the content is
 preserved and the entity store no longer reads it.
 
-```
-entity_user_company_acme            ->  entity_quarantined_user_company_acme
-namespace = "user"                      namespace = "quarantined_user"
-```
-
 The learnings REST API filters on the owner column rather than the namespace, so a
 quarantined row is still listed and mutable through `/learnings` by whichever user
-the owner column names. "Quarantined" here means out of the entity store's reads,
-not out of every surface.
+the owner column names.
 
-To delete them instead of quarantining them, and let entity memory re-capture from
-conversation:
+To delete them instead, and let entity memory re-capture from conversation. This
+also deletes every row that has no owner:
 
 ```python
 from agno.learn.migrations import rekey_user_entity_learnings
@@ -302,6 +296,9 @@ schema version, so it works after the table has been stamped.
 `quarantined` moved out of the store's reads. `keyed` was already correct.
 `contaminated_keyed`, `unowned` and `malformed` are reported and left alone.
 `conflicts` and `failed` need an operator: re-run the helper after resolving them.
+
+`contaminated` lists the same rows as `quarantined`, or as `purged` when you passed
+`purge_unrecoverable`, so do not add the two together.
 
 ## Eval runs: per-user isolation
 
@@ -666,4 +663,3 @@ sessions you didn't touch.
 | v2.x → v3.0, migration run, column not cleaned up | Reads go through the runs table, merged with the preserved legacy blob (deduped by `run_id`). Legacy column kept as a backup. |
 | v2.x → v3.0, migration + `cleanup_legacy_runs_column()` | Final v3.0 state. Smallest sessions table. |
 | Half-finished migration / hand-imported runs | Reads merge by `run_id`. No history is silently lost. |
-| Entity memory re-key re-run after a rolling deploy | `rekey_user_entity_learnings(db, dry_run=False)` ignores the schema stamp, so it can be re-run to convergence. Rows already on their per-user key are reported under `keyed` and skipped. |

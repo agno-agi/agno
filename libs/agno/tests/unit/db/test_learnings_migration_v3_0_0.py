@@ -260,3 +260,55 @@ class TestTheRekeyRunsOnAnAsyncDb:
         await v3_0_0.async_up(async_db, "memories", async_db.memory_table_name)
 
         assert await async_db.get_learning_by_id(legacy_id) is not None
+
+
+class TestTheStepReportsWhetherItWrote:
+    """MigrationManager prints "Successfully applied" or "Skipping application"
+    from what the step returns. A row that was folded into an existing row, or
+    moved to the quarantine namespace, is a write."""
+
+    def _up(self, db: SqliteDb) -> bool:
+        from agno.db.migrations.versions import v3_0_0
+
+        return v3_0_0.up(db, "learnings", db.learnings_table_name)
+
+    async def test_a_plain_move_reports_a_write(self, db: SqliteDb) -> None:
+        _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")
+
+        assert self._up(db) is True
+
+    async def test_a_fold_into_an_existing_row_reports_a_write(self, db: SqliteDb) -> None:
+        _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")
+        db.upsert_learning(
+            id=build_learning_id(
+                "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id=ALICE
+            ),
+            learning_type="entity_memory",
+            namespace="user",
+            user_id=ALICE,
+            entity_id="acme",
+            entity_type="company",
+            content=_content("acme", ALICE, "written after the upgrade"),
+        )
+
+        assert self._up(db) is True
+
+    async def test_a_quarantine_reports_a_write(self, db: SqliteDb) -> None:
+        _seed_legacy(db, "globex", ALICE, BOB, "BOB PRIVATE: they churned")
+
+        assert self._up(db) is True
+
+    async def test_a_table_with_nothing_to_move_reports_no_write(self, db: SqliteDb) -> None:
+        db.upsert_learning(
+            id=build_learning_id(
+                "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id=ALICE
+            ),
+            learning_type="entity_memory",
+            namespace="user",
+            user_id=ALICE,
+            entity_id="acme",
+            entity_type="company",
+            content=_content("acme", ALICE, "already on the right key"),
+        )
+
+        assert self._up(db) is False
