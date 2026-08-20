@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -70,12 +70,15 @@ class OpenRouter(OpenAILike):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "OpenRouter":
-        """Rebuild from a `to_dict` payload, restoring the routing candidates it carried.
+        """Rebuild from a `to_dict` payload, restoring the config it carried (tuning + routing).
 
-        Only an explicit allowlist reaches the constructor, so an unexpected key (or a stray
-        credential) in the payload cannot.
+        Mirrors what `to_dict` emits: the dataclass fields the user may have set (temperature,
+        max_tokens, the `models` fallback list, ...). Filtered to the class's own fields, minus
+        the API key, so an unrecognized key -- e.g. one written by a different agno version -- is
+        dropped rather than raising, and a stray credential in the payload never reaches the
+        constructor.
         """
-        allowed = {"id", "name", "provider", "models"}
+        allowed = {field.name for field in fields(cls)} - {"api_key"}
         return cls(**{key: value for key, value in data.items() if key in allowed})
 
     def _routing_models(self) -> Optional[List[str]]:

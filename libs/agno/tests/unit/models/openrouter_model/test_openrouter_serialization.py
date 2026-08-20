@@ -54,3 +54,20 @@ def test_from_dict_ignores_unknown_and_sensitive_keys(_label, _name, cls):
 
     assert rebuilt.models == ["x/y"]
     assert rebuilt.api_key is None
+
+
+def test_openrouter_chat_round_trips_tuning_config():
+    """OpenRouter (chat) serializes tuning config, so from_dict must restore it, not just routing.
+
+    OpenRouterResponses is Responses-based and serializes identity only, so this is chat-specific.
+    """
+    model = OpenRouter(api_key="test-key", temperature=0.5, top_p=0.9, max_tokens=321, models=["a/b"])
+
+    rebuilt = get_model_from_dict(model.to_dict())
+
+    assert isinstance(rebuilt, OpenRouter)
+    assert rebuilt.temperature == 0.5
+    assert rebuilt.top_p == 0.9
+    assert rebuilt.max_tokens == 321
+    assert rebuilt.models == ["a/b"]
+    assert rebuilt.api_key is None
