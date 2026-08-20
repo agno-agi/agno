@@ -1,6 +1,6 @@
 import importlib
 from collections import Counter
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Type, Union
 
 from agno.models.base import Model
 
@@ -140,7 +140,7 @@ def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[st
     return provider_key
 
 
-def _get_model_class(model_id: str, model_provider: str) -> Model:
+def _import_model_class(model_provider: str) -> Type[Model]:
     entry = MODEL_PROVIDER_CLASSES.get(model_provider)
     if entry is None:
         # Allow alias forms (e.g. "azure", "inceptionlabs") to resolve too.
@@ -151,8 +151,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
     module_path, class_name = entry
     module = importlib.import_module(module_path)
-    model_class = getattr(module, class_name)
-    return model_class(id=model_id)
+    return getattr(module, class_name)
+
+
+def _get_model_class(model_id: str, model_provider: str) -> Model:
+    return _import_model_class(model_provider)(id=model_id)
 
 
 def _parse_model_string(model_string: str) -> Model:
@@ -207,17 +210,26 @@ def get_model_from_dict(model_data: Dict[str, Any]) -> Optional[Model]:
         raise ValueError(f"Model data is missing an 'id': {model_data}")
 
     provider_key = _resolve_provider_key(model_data.get("provider"), model_data.get("name"))
-    return _get_model_class(model_id, provider_key)
+    model_class = _import_model_class(provider_key)
+
+    # A class that defines its own `from_dict` opts into restoring the config its `to_dict`
+    # serialized (e.g. RampRouter's routing candidates). Everything else rebuilds from `id` alone,
+    # matching the identity-only round-trip the base `to_dict` has always provided.
+    if "from_dict" in model_class.__dict__:
+        return model_class.from_dict(model_data)  # type: ignore[attr-defined]
+    return model_class(id=model_id)
 
 
 def resolve_model(model_data: Any, registry: Optional["Registry"] = None) -> Any:
     """Reconstruct a model from its serialized config, preferring a registered live instance.
 
-    Rebuilding from a serialized dict only round-trips ``id``/``name``/``provider`` (see
-    ``Model.to_dict``), so connection params like ``azure_endpoint``/``base_url`` and any
-    credentials are lost. When the model is present in the registry, its live, fully-configured
-    instance is reused; otherwise we fall back to rebuilding from the dict (or a ``provider:id``
-    string). Values that are neither a model dict nor a string are returned unchanged.
+    Rebuilding from a serialized dict round-trips only what ``to_dict`` emits: ``id``/``name``/
+    ``provider`` for most providers, plus any non-secret config a provider opts to serialize via
+    its own ``from_dict`` (e.g. RampRouter's routing candidates). Connection params like
+    ``azure_endpoint``/``base_url`` and any credentials are still lost. When the model is present
+    in the registry, its live, fully-configured instance is reused; otherwise we fall back to
+    rebuilding from the dict (or a ``provider:id`` string). Values that are neither a model dict
+    nor a string are returned unchanged.
 
     Shared by Agent and Team reconstruction so both resolve models identically.
     """
