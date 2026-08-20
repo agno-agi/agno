@@ -949,12 +949,19 @@ def test_a_failed_personal_refresh_does_not_spend_the_deployment_credential(sqli
 
 
 def test_nothing_stored_anywhere_falls_through_to_the_environment_key(sqlite_db, fake_clock, monkeypatch):
-    """Step 3: the chain continues to XAI_API_KEY before it gives up."""
+    """Step 3: the chain continues to XAI_API_KEY before it gives up.
+
+    Asserted on the request, not on client params: setting api_key on the model
+    would flip _using_oauth() to False and disable per-user resolution entirely,
+    so the env key has to enter as this request's bearer.
+    """
     monkeypatch.setenv("XAI_API_KEY", "env-key")
     manager = _stored_manager(sqlite_db, fake_clock)
     model = xAIResponses(token_manager=manager)
 
-    assert model._get_client_params().get("api_key") == "env-key"
+    params = model.get_request_params(messages=_messages(), run_response=_run())
+
+    assert _auth_header(params) == "Bearer env-key"
 
 
 def test_the_deployment_callable_swallows_a_transport_failure(sqlite_db, fake_clock):

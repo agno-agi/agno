@@ -9,7 +9,7 @@ from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
 from agno.models.response import ModelResponse
-from agno.models.xai.oauth import XAITokenManager
+from agno.models.xai.oauth import _NO_TOKEN_MESSAGE, XAITokenManager
 from agno.run.agent import RunOutput
 
 try:
@@ -196,7 +196,7 @@ class xAIResponses(OpenResponses):
             def _deployment_token() -> str:
                 try:
                     return manager.get_access_token(user_id="")
-                except ModelAuthenticationError:
+                except (ModelAuthenticationError, httpx.HTTPError):
                     return _NOT_SIGNED_IN_SENTINEL
 
             return _deployment_token
@@ -219,7 +219,7 @@ class xAIResponses(OpenResponses):
             async def _adeployment_token() -> str:
                 try:
                     return await manager.aget_access_token(user_id="")
-                except ModelAuthenticationError:
+                except (ModelAuthenticationError, httpx.HTTPError):
                     return _NOT_SIGNED_IN_SENTINEL
 
             return _adeployment_token
@@ -320,6 +320,11 @@ class xAIResponses(OpenResponses):
             try:
                 return manager.get_access_token(user_id=user_id)
             except ModelAuthenticationError as e:
+                # Only an ABSENT row falls through (§1.2 step 2). A refresh that
+                # failed is not absence: the user has a credential, and quietly
+                # spending the shared one would bill the wrong subscription.
+                if e.message != _NO_TOKEN_MESSAGE and not self.require_user_token:
+                    raise
                 if self.require_user_token:
                     raise ModelAuthenticationError(
                         message=(
@@ -331,7 +336,14 @@ class xAIResponses(OpenResponses):
                     ) from e
         # The deployment slot serves this run; resolving it here raises the
         # no-credential error that the sentinel callable deliberately swallows.
-        manager.get_access_token(user_id="")
+        try:
+            manager.get_access_token(user_id="")
+        except ModelAuthenticationError:
+            # §1.2 step 3: the chain continues to the environment before giving up
+            env_key = getenv("XAI_API_KEY")
+            if not env_key:
+                raise
+            return env_key
         return None
 
     def get_client(self) -> OpenAI:
