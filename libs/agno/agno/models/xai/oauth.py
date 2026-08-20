@@ -678,6 +678,11 @@ class XAITokenManager:
                 except Exception as e:
                     log_debug(f"Could not delete token from DB: {e}")
                     return
+        if user_id:
+            # The file store holds ONE session - the deployment's. Reads and writes
+            # already refuse an identified user; deleting must too, or one user
+            # signing out takes the shared session with them.
+            return
         try:
             self._token_file().unlink(missing_ok=True)
         except OSError as e:
@@ -694,6 +699,11 @@ class XAITokenManager:
             except Exception as e:
                 log_debug(f"Could not delete token from DB: {e}")
                 return
+        if user_id:
+            # The file store holds ONE session - the deployment's. Reads and writes
+            # already refuse an identified user; deleting must too, or one user
+            # signing out takes the shared session with them.
+            return
         try:
             self._token_file().unlink(missing_ok=True)
         except OSError as e:

@@ -117,9 +117,7 @@ class XAIAuth(Toolkit):
             JSON string containing the approval message and URL, or an error message.
         """
         user_id = _requester(run_context)
-        if force:
-            self.token_manager.sign_out(user_id=user_id)
-        elif self._is_signed_in(user_id):
+        if not force and self._is_signed_in(user_id):
             return json.dumps({"message": _ALREADY_SIGNED_IN})
 
         try:
@@ -128,6 +126,11 @@ class XAIAuth(Toolkit):
             return json.dumps({"error": str(e)})
         except httpx.HTTPError:
             return json.dumps({"error": _TRANSPORT_FAILED})
+
+        if force:
+            # Only now: a device grant exists to replace what this discards, so a
+            # failed start leaves the user signed in rather than stranded.
+            self.token_manager.sign_out(user_id=user_id)
 
         self._stash(
             user_id,
@@ -195,9 +198,7 @@ class XAIAuth(Toolkit):
             JSON string containing the approval message and URL, or an error message.
         """
         user_id = _requester(run_context)
-        if force:
-            await self.token_manager.asign_out(user_id=user_id)
-        elif await self._ais_signed_in(user_id):
+        if not force and await self._ais_signed_in(user_id):
             return json.dumps({"message": _ALREADY_SIGNED_IN})
 
         try:
@@ -206,6 +207,11 @@ class XAIAuth(Toolkit):
             return json.dumps({"error": str(e)})
         except httpx.HTTPError:
             return json.dumps({"error": _TRANSPORT_FAILED})
+
+        if force:
+            # Only now: a device grant exists to replace what this discards, so a
+            # failed start leaves the user signed in rather than stranded.
+            await self.token_manager.asign_out(user_id=user_id)
 
         await self._astash(
             user_id,
