@@ -1108,3 +1108,52 @@ def test_a_refresh_failure_is_not_reported_as_a_missing_sign_in(sqlite_db, fake_
 
     # u1 IS signed in; the refresh failed. Telling them to sign in again is wrong.
     assert "No SuperGrok sign-in found" not in exc_info.value.message
+
+
+def test_a_stream_401_on_an_api_key_served_request_propagates_the_original_error(sqlite_db, fake_clock, monkeypatch):
+    """The stream legs refresh OUTSIDE their except block, so the error must be carried."""
+    from agno.models.xai.oauth import XAITokenManager
+
+    monkeypatch.setenv("XAI_API_KEY", "env-key")
+    manager = XAITokenManager(db=sqlite_db, encrypt_tokens=False, now_fn=fake_clock)
+    error = ModelProviderError("unauthorized", status_code=401)
+
+    def parent(self, **kwargs):
+        raise error
+        yield  # pragma: no cover - generator marker
+
+    with patch.object(OpenAIResponses, "invoke_stream", parent):
+        model = xAIResponses(token_manager=manager)
+        model.client = _fake_client()
+        with pytest.raises(ModelProviderError) as exc_info:
+            list(model.invoke_stream(messages=_messages(), assistant_message=_assistant(), run_response=_run()))
+
+    assert exc_info.value is error
+
+
+def test_an_async_stream_401_on_an_api_key_served_request_propagates_the_original_error(
+    sqlite_db, fake_clock, monkeypatch
+):
+    """Async twin: same carry, same reason."""
+    from agno.models.xai.oauth import XAITokenManager
+
+    monkeypatch.setenv("XAI_API_KEY", "env-key")
+    manager = XAITokenManager(db=sqlite_db, encrypt_tokens=False, now_fn=fake_clock)
+    error = ModelProviderError("unauthorized", status_code=401)
+
+    async def parent(self, **kwargs):
+        raise error
+        yield  # pragma: no cover - generator marker
+
+    async def go():
+        with patch.object(OpenAIResponses, "ainvoke_stream", parent):
+            model = xAIResponses(token_manager=manager)
+            model.async_client = _fake_client()
+            with pytest.raises(ModelProviderError) as exc_info:
+                async for _ in model.ainvoke_stream(
+                    messages=_messages(), assistant_message=_assistant(), run_response=_run()
+                ):
+                    pass
+            assert exc_info.value is error
+
+    asyncio.run(go())

@@ -272,6 +272,54 @@ class xAIResponses(OpenResponses):
             }
         return request_params
 
+    def _refresh_slot(self, run_response: Optional[RunOutput]) -> Optional[str]:
+        """The slot that served this request, so the retry refreshes that one (§1.3a).
+
+        None when the XAI_API_KEY fallback served it: a 401 then means the key is
+        wrong, and no OAuth refresh can fix that. Re-derived rather than stashed
+        between request and retry, so nothing shared is written (§1.3a D3); the
+        credential was just resolved, so this is a cache hit.
+        """
+        manager = self.token_manager
+        if manager is None:
+            return None
+        user_id = self._uid(run_response)
+        if user_id:
+            try:
+                manager.get_access_token(user_id=user_id)
+                return user_id
+            except ModelAuthenticationError:
+                pass
+        try:
+            manager.get_access_token(user_id="")
+            return ""
+        except ModelAuthenticationError:
+            return None
+
+    async def _arefresh_slot(self, run_response: Optional[RunOutput]) -> Optional[str]:
+        """The slot that served this request, so the retry refreshes that one (§1.3a).
+
+        None when the XAI_API_KEY fallback served it: a 401 then means the key is
+        wrong, and no OAuth refresh can fix that. Re-derived rather than stashed
+        between request and retry, so nothing shared is written (§1.3a D3); the
+        credential was just resolved, so this is a cache hit.
+        """
+        manager = self.token_manager
+        if manager is None:
+            return None
+        user_id = self._uid(run_response)
+        if user_id:
+            try:
+                await manager.aget_access_token(user_id=user_id)
+                return user_id
+            except ModelAuthenticationError:
+                pass
+        try:
+            await manager.aget_access_token(user_id="")
+            return ""
+        except ModelAuthenticationError:
+            return None
+
     async def _awarm_credential(self, run_response: Optional[RunOutput]) -> None:
         """Resolve this run's credential on the async path, so assembly is a cache read.
 
@@ -461,7 +509,10 @@ class xAIResponses(OpenResponses):
             if not self._should_retry_401(exc, self.token_provider):
                 raise
             # One-shot 401 recovery: refresh, rebuild the client, retry exactly once
-            self.token_manager.force_refresh(user_id=self._uid(run_response))  # type: ignore[union-attr]
+            slot = self._refresh_slot(run_response)
+            if slot is None:
+                raise  # the env key served this request; no OAuth refresh helps (§1.3a D2)
+            self.token_manager.force_refresh(user_id=slot)  # type: ignore[union-attr]
             self.client = None  # the rebuild re-inserts the token callable
             try:
                 return super().invoke(**call_kwargs)
@@ -501,7 +552,10 @@ class xAIResponses(OpenResponses):
             if not self._should_retry_401(exc, self.async_token_provider):
                 raise
             # One-shot 401 recovery: refresh, rebuild the client, retry exactly once
-            await self.token_manager.aforce_refresh(user_id=self._uid(run_response))  # type: ignore[union-attr]
+            slot = await self._arefresh_slot(run_response)
+            if slot is None:
+                raise  # the env key served this request; no OAuth refresh helps (§1.3a D2)
+            await self.token_manager.aforce_refresh(user_id=slot)  # type: ignore[union-attr]
             self.async_client = None  # the rebuild re-inserts the token callable
             try:
                 return await super().ainvoke(**call_kwargs)
@@ -544,7 +598,14 @@ class xAIResponses(OpenResponses):
             # Retry only if nothing was yielded yet: deltas must not replay
             if yielded_anything or not self._should_retry_401(exc, self.token_provider):
                 raise
-        self.token_manager.force_refresh(user_id=self._uid(run_response))  # type: ignore[union-attr]
+            auth_error = exc
+        slot = self._refresh_slot(run_response)
+        if slot is None:
+            # The env key served this request; no OAuth refresh helps (§1.3a D2).
+            # Named, not a bare raise: out here the except block has already
+            # unbound exc, and a bare raise would be a RuntimeError.
+            raise auth_error
+        self.token_manager.force_refresh(user_id=slot)  # type: ignore[union-attr]
         self.client = None  # the rebuild re-inserts the token callable
         try:
             yield from super().invoke_stream(**call_kwargs)
@@ -588,7 +649,14 @@ class xAIResponses(OpenResponses):
             # Retry only if nothing was yielded yet: deltas must not replay
             if yielded_anything or not self._should_retry_401(exc, self.async_token_provider):
                 raise
-        await self.token_manager.aforce_refresh(user_id=self._uid(run_response))  # type: ignore[union-attr]
+            auth_error = exc
+        slot = await self._arefresh_slot(run_response)
+        if slot is None:
+            # The env key served this request; no OAuth refresh helps (§1.3a D2).
+            # Named, not a bare raise: out here the except block has already
+            # unbound exc, and a bare raise would be a RuntimeError.
+            raise auth_error
+        await self.token_manager.aforce_refresh(user_id=slot)  # type: ignore[union-attr]
         self.async_client = None  # the rebuild re-inserts the token callable
         try:
             async for chunk in super().ainvoke_stream(**call_kwargs):
