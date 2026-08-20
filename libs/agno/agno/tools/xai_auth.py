@@ -382,7 +382,11 @@ class XAIAuth(Toolkit):
         payload = self._encrypt(pending) if db is not None else None
         if db is not None and payload is not None:
             try:
-                db.upsert_auth_token(
+                # Adapters swallow their own errors and signal failure by returning
+                # None. Fall through to memory when that happens: the user is about
+                # to approve a link this process would otherwise not be able to
+                # finish, and the device grant is single-use.
+                stored = db.upsert_auth_token(
                     {
                         "provider": "xai",
                         "user_id": user_id,
@@ -391,7 +395,9 @@ class XAIAuth(Toolkit):
                         "granted_scopes": [],
                     }
                 )
-                return
+                if stored is not None:
+                    return
+                log_warning("Could not persist the pending SuperGrok login; keeping it in memory for this process")
             except NotImplementedError:
                 log_warning("Database does not support auth token storage")
             except Exception as e:
@@ -403,7 +409,11 @@ class XAIAuth(Toolkit):
         payload = self._encrypt(pending) if db is not None else None
         if db is not None and payload is not None:
             try:
-                await self._await_db(
+                # Adapters swallow their own errors and signal failure by returning
+                # None. Fall through to memory when that happens: the user is about
+                # to approve a link this process would otherwise not be able to
+                # finish, and the device grant is single-use.
+                stored = await self._await_db(
                     db.upsert_auth_token(
                         {
                             "provider": "xai",
@@ -414,7 +424,9 @@ class XAIAuth(Toolkit):
                         }
                     )
                 )
-                return
+                if stored is not None:
+                    return
+                log_warning("Could not persist the pending SuperGrok login; keeping it in memory for this process")
             except NotImplementedError:
                 log_warning("Database does not support auth token storage")
             except Exception as e:

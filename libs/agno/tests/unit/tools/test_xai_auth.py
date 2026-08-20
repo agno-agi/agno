@@ -922,8 +922,12 @@ class _FailingUpsertDb:
     def get_auth_token(self, provider: str, user_id: str, service: str) -> Any:
         return self._inner.get_auth_token(provider, user_id, service)
 
-    def upsert_auth_token(self, token: Dict[str, Any]) -> None:
-        return None
+    def upsert_auth_token(self, token: Dict[str, Any]) -> Any:
+        # Only the pending write fails; the token row still stores, so the reply
+        # is the plain success message and the assertion stays contract-exact.
+        if token["service"] == PENDING_SERVICE:
+            return None
+        return self._inner.upsert_auth_token(token)
 
     def delete_auth_token(self, provider: str, user_id: str, service: str) -> Any:
         return self._inner.delete_auth_token(provider, user_id, service)
@@ -936,7 +940,7 @@ def test_a_failed_pending_write_keeps_the_login_recoverable(endpoint, sqlite_db,
     auth.sign_in_with_supergrok(run_context=_ctx("u1"))
     payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
 
-    assert payload == {"message": SIGNED_IN}
+    assert payload == {"message": SIGNED_IN_PER_USER}
 
 
 @pytest.mark.asyncio
@@ -947,4 +951,4 @@ async def test_a_failed_async_pending_write_keeps_the_login_recoverable(endpoint
     await auth.asign_in_with_supergrok(run_context=_ctx("u1"))
     payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
 
-    assert payload == {"message": SIGNED_IN}
+    assert payload == {"message": SIGNED_IN_PER_USER}
