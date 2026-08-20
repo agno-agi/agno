@@ -138,13 +138,22 @@ class OpenRouterResponses(OpenResponses):
         allowed = {"id", "name", "provider", "models"}
         return cls(**{key: value for key, value in data.items() if key in allowed})
 
+    def _routing_models(self) -> Optional[List[str]]:
+        """The dynamic-routing fallback candidates, or None when there are none.
+
+        Single source of truth so the request body and the cache key stay in sync: both add
+        `models` exactly when there are candidates. An empty list counts as none.
+        """
+        return self.models or None
+
     def _get_cache_identity_fields(self) -> Dict[str, Any]:
         """Keep differing fallback lists in separate cache entries.
 
         `id` names only the primary model, so two instances that fail over to different candidates
         would otherwise share a cache key.
         """
-        return {"models": self.models} if self.models else {}
+        models = self._routing_models()
+        return {"models": models} if models is not None else {}
 
     def get_request_params(
         self,
@@ -168,12 +177,13 @@ class OpenRouterResponses(OpenResponses):
         )
 
         # Add fallback models to extra_body if specified
-        if self.models:
+        models = self._routing_models()
+        if models is not None:
             # Get existing extra_body or create new dict
             extra_body = request_params.get("extra_body") or {}
 
             # Merge fallback models into extra_body
-            extra_body["models"] = self.models
+            extra_body["models"] = models
 
             # Update request params
             request_params["extra_body"] = extra_body

@@ -172,23 +172,32 @@ class RampRouter(OpenResponses):
         allowed = {"id", "name", "provider", *ROUTING_FIELDS}
         return cls(**{key: value for key, value in data.items() if key in allowed})
 
+    def _routing_models(self) -> Optional[List[str]]:
+        """The candidate list to route over, or None to route on `id`.
+
+        Single source of truth for the `model` vs `models` switch. The request selector omits
+        `model`, `get_request_params` sends `models`, and the cache key adds `models` -- all keyed
+        off this one predicate so they cannot drift and let differently-routed requests share a
+        cache entry. An empty list counts as no candidates (route on `id`).
+        """
+        return self.models or None
+
     def _get_cache_identity_fields(self) -> Dict[str, Any]:
         """Keep routed requests out of each other's cache entries.
 
-        When `models` is set the request carries no `model`, so `id` stays at its default and two
-        routers over different candidate lists would otherwise share a cache key: a request routed
-        to one provider could be served a response cached for another.
+        When routing, the request carries no `model`, so `id` stays at its default and two routers
+        over different candidate lists would otherwise share a cache key: a request routed to one
+        provider could be served a response cached for another.
         """
-        return {"models": self.models} if self.models else {}
+        models = self._routing_models()
+        return {"models": models} if models is not None else {}
 
     def _get_model_request_kwargs(self) -> Dict[str, Any]:
         """Select a single model, or hand Router the candidate list to choose from.
 
         `model` and `models` are mutually exclusive; sending both is rejected.
         """
-        if self.models:
-            return {}
-        return {"model": self.id}
+        return {} if self._routing_models() is not None else {"model": self.id}
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Only send a `reasoning` block when the caller asked for one.
@@ -237,10 +246,11 @@ class RampRouter(OpenResponses):
             "timeout_before_headers": self.timeout_before_headers,
         }
         router_params = {k: v for k, v in router_params.items() if v is not None}
-        # Gated the same way _get_model_request_kwargs gates it, so an empty candidate list means
-        # the same thing in both places. Sending `models: []` alongside `model` is rejected.
-        if self.models:
-            router_params["models"] = self.models
+        # Sending `models: []` alongside `model` is rejected, so an empty candidate list must not
+        # reach the body; _routing_models() collapses it to None.
+        models = self._routing_models()
+        if models is not None:
+            router_params["models"] = models
         if router_params:
             # Copy: the extra_body already in request_params is self.extra_body itself, and
             # mutating it would accumulate across calls.
