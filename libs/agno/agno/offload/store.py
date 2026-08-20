@@ -22,6 +22,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.fs import FileSystem
+from agno.fs._paths import MAX_SEGMENT_CHARS
 from agno.fs.errors import QuotaExceededError
 from agno.offload.types import ResultMatch, ResultPage, ResultRef
 from agno.utils.log import log_debug, log_warning
@@ -127,15 +128,23 @@ def _safe_segment(value: str) -> str:
     return cleaned[:120]
 
 
+_NAMESPACE_UNSAFE = re.compile(r"[^a-z0-9._@+-]")
+_NAMESPACE_HASH_CHARS = 8
+
+
 def namespace_for(session_id: str) -> str:
     """The AgentFS namespace holding one session's payloads.
 
-    The readable part is sanitised and AgentFS lowercases every namespace, so
-    two session ids can reduce to the same text. The hash suffix keeps them
-    apart: without it, deleting one session would delete the other's payloads
-    and leave its index rows pointing at nothing.
+    The readable part is lowercased and reduced to the characters AgentFS keeps
+    as they are, so the namespace written on an index row is the one AgentFS
+    resolves on read and delete. Two session ids can reduce to the same text;
+    the hash suffix keeps them apart. Without it, deleting one session would
+    delete the other's payloads and leave its index rows pointing at nothing.
+    The segment stays within the AgentFS segment limit with the suffix added.
     """
-    return f"tool-results/{_safe_segment(session_id)}-{hash_string_sha256(session_id)[:8]}"
+    limit = MAX_SEGMENT_CHARS - _NAMESPACE_HASH_CHARS - 1
+    readable = _NAMESPACE_UNSAFE.sub("_", session_id.lower())[:limit] or "_"
+    return f"tool-results/{readable}-{hash_string_sha256(session_id)[:_NAMESPACE_HASH_CHARS]}"
 
 
 class ResultStore:

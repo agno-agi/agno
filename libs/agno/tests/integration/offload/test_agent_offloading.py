@@ -600,9 +600,78 @@ def test_async_db_degrades_to_off_with_a_warning(tmp_path, monkeypatch):
         offload_tool_results=True,
     )
     agent.initialize_agent()
+    agent.initialize_agent()
     assert agent._result_store is None
-    assert agent.offload_tool_results is False
-    # The warning names the backend and the ones that work, not an internal filesystem error.
+    # The declared setting is kept; only the runtime store is off.
+    assert agent.offload_tool_results is True
+    # The warning names the backend and the ones that work, not an internal filesystem error, once.
     assert len(warnings) == 1
     assert warnings[0].startswith("Result offloading is not available on AsyncSqliteDb")
     assert "SqliteDb or PostgresDb" in warnings[0]
+
+    # A per-request copy of the same agent stays quiet.
+    agent.deep_copy().initialize_agent()
+    assert len(warnings) == 1
+
+
+def test_a_degraded_agent_still_saves_its_declared_settings(tmp_path, monkeypatch):
+    from agno.agent import _init
+
+    monkeypatch.setattr(_init, "log_warning", lambda *_: None)
+    agent = Agent(model=ScriptedToolModel(), tools=[fetch_page], offload_tool_results=12000, result_ttl_seconds=3600)
+    output = agent.run("go", session_id=_sid())
+    # No db: the payload stays inline and the run completes.
+    assert BIG in _tool_messages(output)[0].content
+    config = agent.to_dict()
+    assert config["offload_tool_results"] == 12000
+    assert config["result_ttl_seconds"] == 3600
+
+
+def test_an_agent_that_gains_a_db_starts_offloading(tmp_path, monkeypatch, db):
+    from agno.agent import _init
+
+    monkeypatch.setattr(_init, "log_warning", lambda *_: None)
+    agent = Agent(model=ScriptedToolModel(), tools=[fetch_page], offload_tool_results=True)
+    assert BIG in _tool_messages(agent.run("go", session_id=_sid()))[0].content
+    agent.db = db
+    agent.model = ScriptedToolModel()
+    assert _tool_messages(agent.run("go", session_id=_sid()))[0].content.startswith('<result id="res_')
+
+
+def test_long_and_unusual_session_ids_offload_and_clean_up(db):
+    ids = ["s" * 119, "s" * 120, "x" * 200, "my session", "sesi\u00f3n-\u00fc {braces}", "MiXeD/Case:Id"]
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    for session_id in ids:
+        agent.model = ScriptedToolModel()
+        output = agent.run("go", session_id=session_id)
+        content = _tool_messages(output)[0].content
+        assert content.startswith('<result id="res_'), session_id
+        result_id = content.split('id="')[1].split('"')[0]
+        store = agent._result_store
+        row = store.get_row(result_id)
+        assert store.read(result_id).text.startswith("row 1:"), session_id
+        db.delete_sessions(session_ids=[session_id])
+        assert store.get_row(result_id) is None, session_id
+        # The payload bytes are gone too, not just the index row.
+        assert store._fs_for_namespace(row["namespace"]).read(row["path"]) is None, session_id
+
+
+def test_unscoped_delete_cleans_up_after_a_missing_session_row(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id)
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    store = agent._result_store
+
+    # Remove only the session row, as a partial earlier cleanup would.
+    sessions_table = db._get_table(table_type="sessions")
+    with db.Session() as sess, sess.begin():
+        sess.execute(sessions_table.delete().where(sessions_table.c.session_id == session_id))
+
+    db.delete_sessions(session_ids=[session_id])
+    assert store.get_row(result_id) is None
+    runs_table = db._get_table(table_type="runs")
+    with db.Session() as sess:
+        from sqlalchemy import select as sa_select
+
+        assert sess.execute(sa_select(runs_table).where(runs_table.c.session_id == session_id)).first() is None

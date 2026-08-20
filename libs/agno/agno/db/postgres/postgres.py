@@ -1286,19 +1286,22 @@ class PostgresDb(BaseDb):
                 if user_id is not None:
                     select_stmt = select_stmt.where(table.c.user_id == user_id)
                 deletable_ids = [row[0] for row in sess.execute(select_stmt)]
+                # An unscoped delete has no other user to protect, so it also
+                # cleans up after a session whose row is already gone.
+                cleanup_ids = session_ids if user_id is None else deletable_ids
 
                 delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = sess.execute(delete_stmt)
 
                 # Also delete the runs belonging to the sessions
                 if runs_table is not None:
-                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(deletable_ids))
+                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(cleanup_ids))
                     sess.execute(runs_delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
             # Cascade offloaded tool results after the session delete commits.
-            self._cascade_tool_results(deletable_ids)
+            self._cascade_tool_results(cleanup_ids)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")

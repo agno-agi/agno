@@ -444,3 +444,15 @@ def test_two_sessions_that_reuse_a_run_id_keep_separate_results(tmp_path):
     assert first.result_id != second.result_id
     assert store.read(first.result_id).text.startswith("one")
     assert store.read(second.result_id).text.startswith("two")
+
+
+def test_namespace_for_is_canonical_and_within_the_segment_limit():
+    from agno.fs._paths import MAX_SEGMENT_CHARS, normalize_namespace
+    from agno.offload.store import namespace_for
+
+    for session_id in ["plain", "my session", "sesi\u00f3n-\u00fc", "MiXeD:Case/Id", "{tenant}", "s" * 500, ""]:
+        namespace = namespace_for(session_id)
+        assert normalize_namespace(namespace) == namespace, session_id
+        assert all(len(segment) <= MAX_SEGMENT_CHARS for segment in namespace.split("/")), session_id
+    assert namespace_for("Alpha") != namespace_for("alpha")
+    assert namespace_for("a b") != namespace_for("a-b")
