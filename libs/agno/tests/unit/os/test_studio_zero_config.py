@@ -520,9 +520,9 @@ class TestASharedRegistryBindsPerOS:
             AgentOS(agents=[builder], registry=registry)
 
         assert studio.db is db_a
-        assert not any("component catalog" in r.message or "more than one" in r.message for r in caplog.records), [
-            r.message for r in caplog.records
-        ]
+        assert not any(
+            "component catalog" in r.message or "already bound to a different" in r.message for r in caplog.records
+        ), [r.message for r in caplog.records]
 
     def test_two_os_pulling_one_toolkit_apart_warn(self, tmp_path, caplog):
         """When the same toolkit is served by two OS with different dbs there
@@ -537,7 +537,7 @@ class TestASharedRegistryBindsPerOS:
             AgentOS(agents=[builder], registry=registry, db=db_b)
 
         assert studio.db is db_a
-        assert any("served by more than one" in r.message for r in caplog.records)
+        assert any("already bound to a different database" in r.message for r in caplog.records)
 
     def test_the_warning_reads_when_the_two_dbs_share_an_id(self, tmp_path, caplog):
         """Nothing forces db ids to be unique, and quoting the same id twice
@@ -549,7 +549,7 @@ class TestASharedRegistryBindsPerOS:
         with caplog.at_level("WARNING"):
             AgentOS(agents=[builder], registry=registry, db=SqliteDb(id="same", db_file=str(tmp_path / "b.db")))
 
-        split = [r.message for r in caplog.records if "served by more than one" in r.message]
+        split = [r.message for r in caplog.records if "already bound to a different database" in r.message]
         assert split, [r.message for r in caplog.records]
         assert all("two distinct db instances sharing the id 'same'" in message for message in split)
         assert not any("bound 'same', this OS 'same'" in message for message in split)
@@ -574,12 +574,35 @@ class TestASharedRegistryBindsPerOS:
 
         assert studio.db is second
         assert studio._runner_tools.db is second
-        assert not any("served by more than one" in r.message for r in caplog.records), [
+        assert not any("already bound to a different database" in r.message for r in caplog.records), [
             r.message for r in caplog.records
         ]
         assert _loads(studio.create_agent(name="Made", instructions="i", publish=True))["ok"] is True
         assert [row["component_id"] for row in second.list_components()[0]] == ["made"]
         assert first.list_components()[0] == []
+
+    def test_a_swap_moves_the_registry_declaration_with_the_toolkit(self, tmp_path):
+        """The rebound toolkit and the registry declaration have to name the
+        same db. A toolkit that resolves through the registry instead - one no
+        OS serves, or one added after the swap - would otherwise read and write
+        the db this OS no longer serves."""
+        registry = Registry(name="R", models=[_model()])
+        studio, builder = self._studio_agent(registry)
+        first = SqliteDb(id="db-first", db_file=str(tmp_path / "first.db"))
+        second = SqliteDb(id="db-second", db_file=str(tmp_path / "second.db"))
+
+        agent_os = AgentOS(agents=[builder], registry=registry, db=first)
+        app = agent_os.get_app()
+        assert registry.component_db is first
+
+        agent_os.db = second
+        agent_os.resync(app)
+
+        assert studio.db is second
+        assert registry.component_db is second
+        assert registry.resolve_component_db() is second
+        # A toolkit no AgentOS serves resolves through the declaration alone.
+        assert StudioTools(registry=registry).db is second
 
     def test_a_resync_does_not_take_back_a_toolkit_another_os_serves(self, tmp_path, caplog):
         """The rebind above is keyed to the OS that made the binding, not to
@@ -633,9 +656,9 @@ class TestASharedRegistryBindsPerOS:
         seen_at_declaration = []
         original = RegistryClass.declare_component_db
 
-        def _record(self, db):
+        def _record(self, db, **kwargs):
             seen_at_declaration.append([getattr(entry, "id", None) for entry in self.dbs])
-            return original(self, db)
+            return original(self, db, **kwargs)
 
         RegistryClass.declare_component_db = _record
         try:

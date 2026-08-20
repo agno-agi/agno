@@ -859,6 +859,8 @@ class AgentOS:
         # this OS actually serves are bound to it directly and outrank this
         # declaration; what is left here is the answer for toolkits no OS
         # serves.
+        declared_by = self.registry.component_db_declared_by
+        declaring_os = declared_by() if declared_by is not None else None
         if not self.registry.component_db_declared:
             # With no db of its own, declare what the USER put on the registry
             # rather than a flat None. This runs before component discovery, so
@@ -866,11 +868,17 @@ class AgentOS:
             # point, never an agent-private one collected from the served tree
             # - and re-running it later must not reach for that list either.
             declared = self.db if self.db is not None else (self.registry.dbs[0] if self.registry.dbs else None)
-            self.registry.declare_component_db(declared)
+            self.registry.declare_component_db(declared, declared_by=self)
         elif self.db is not None:
-            if self.registry.component_db is None:
-                # A declared None is a refusal that a later db-bearing OS lifts.
-                self.registry.declare_component_db(self.db)
+            if self.registry.component_db is None or declaring_os is self:
+                # A declared None is a refusal that a later db-bearing OS lifts,
+                # and the OS that made a declaration can move it - a resync, or
+                # its db swapped in place - so the catalog declaration follows
+                # the same rebinding rule as the toolkit bindings. Without that,
+                # a swapped db would move the toolkits this OS serves while
+                # leaving the declaration on the old db, and a toolkit resolving
+                # through the registry instead would disagree with them.
+                self.registry.declare_component_db(self.db, declared_by=self)
             elif self.db is not self.registry.component_db:
                 # Not a warning: a legitimate sibling OS with its own db is
                 # normal wiring, and the toolkits it serves are bound to it
@@ -1035,10 +1043,14 @@ class AgentOS:
                             if bound_id == this_id
                             else f"bound '{bound_id}', this OS '{this_id}'"
                         )
+                        # Says what is true in every case this can fire. A
+                        # count of AgentOS instances is not: replacing the OS
+                        # object over the same toolkit reaches here with
+                        # exactly one AgentOS in the user's code.
                         log_warning(
-                            f"Component '{label}' carries {type(tool).__name__} served by more than one "
-                            f"AgentOS with different databases ({which}); keeping the first. Pass the "
-                            "toolkit its own db (StudioTools(db=...)) to make the choice explicit."
+                            f"Component '{label}' carries {type(tool).__name__} already bound to a different "
+                            f"database ({which}); keeping the first binding. Pass the toolkit its own db "
+                            "(StudioTools(db=...)) to make the choice explicit."
                         )
                 else:
                     # StudioTools delegates its component lookups to an embedded
