@@ -260,6 +260,11 @@ class xAIResponses(OpenResponses):
             }
         return request_params
 
+    @staticmethod
+    def _uid(run_response: Optional[RunOutput]) -> str:
+        """The run's user, or the empty deployment slot for script and unidentified runs."""
+        return (run_response.user_id if run_response is not None else None) or ""
+
     def _per_request_bearer(self, run_response: Optional[RunOutput]) -> Optional[str]:
         """This run's own SuperGrok token, or None when the deployment slot serves it.
 
@@ -273,7 +278,7 @@ class xAIResponses(OpenResponses):
         manager = self.token_manager
         if manager is None:
             return None
-        user_id = (run_response.user_id if run_response is not None else None) or ""
+        user_id = self._uid(run_response)
         if user_id:
             try:
                 return manager.get_access_token(user_id=user_id)
@@ -401,7 +406,7 @@ class xAIResponses(OpenResponses):
             if not self._should_retry_401(exc, self.token_provider):
                 raise
             # One-shot 401 recovery: refresh, rebuild the client, retry exactly once
-            self.token_manager.force_refresh()  # type: ignore[union-attr]
+            self.token_manager.force_refresh(user_id=self._uid(run_response))  # type: ignore[union-attr]
             self.client = None  # the rebuild re-inserts the token callable
             try:
                 return super().invoke(**call_kwargs)
@@ -440,7 +445,7 @@ class xAIResponses(OpenResponses):
             if not self._should_retry_401(exc, self.async_token_provider):
                 raise
             # One-shot 401 recovery: refresh, rebuild the client, retry exactly once
-            await self.token_manager.aforce_refresh()  # type: ignore[union-attr]
+            await self.token_manager.aforce_refresh(user_id=self._uid(run_response))  # type: ignore[union-attr]
             self.async_client = None  # the rebuild re-inserts the token callable
             try:
                 return await super().ainvoke(**call_kwargs)
@@ -483,7 +488,7 @@ class xAIResponses(OpenResponses):
             # Retry only if nothing was yielded yet: deltas must not replay
             if yielded_anything or not self._should_retry_401(exc, self.token_provider):
                 raise
-        self.token_manager.force_refresh()  # type: ignore[union-attr]
+        self.token_manager.force_refresh(user_id=self._uid(run_response))  # type: ignore[union-attr]
         self.client = None  # the rebuild re-inserts the token callable
         try:
             yield from super().invoke_stream(**call_kwargs)
@@ -526,7 +531,7 @@ class xAIResponses(OpenResponses):
             # Retry only if nothing was yielded yet: deltas must not replay
             if yielded_anything or not self._should_retry_401(exc, self.async_token_provider):
                 raise
-        await self.token_manager.aforce_refresh()  # type: ignore[union-attr]
+        await self.token_manager.aforce_refresh(user_id=self._uid(run_response))  # type: ignore[union-attr]
         self.async_client = None  # the rebuild re-inserts the token callable
         try:
             async for chunk in super().ainvoke_stream(**call_kwargs):
