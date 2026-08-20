@@ -1833,6 +1833,18 @@ class StudioRunnerTools(Toolkit):
 
         seen: Set[int] = set()
 
+        def child_steps(value: Any) -> List[Any]:
+            """A step list, however it is spelled.
+
+            A steps= value may be a plain list or a single container object
+            (Steps, Loop, Parallel, Condition, Router) holding one. Reading
+            only the list spelling would walk past a whole subtree, which is
+            the same leak this check exists to refuse."""
+            if isinstance(value, (list, tuple)):
+                return list(value)
+            inner = getattr(value, "steps", None) if value is not None else None
+            return list(inner) if isinstance(inner, (list, tuple)) else []
+
         def walk(item: Any) -> None:
             if id(item) in seen:
                 return
@@ -1853,25 +1865,20 @@ class StudioRunnerTools(Toolkit):
                         "class a deep_copy that rebuilds it, or store the component in the database."
                     )
             for child_attr in ("steps", "else_steps", "choices"):
-                children = getattr(item, child_attr, None)
-                if isinstance(children, (list, tuple)):
-                    for child in children:
-                        walk(child)
-            # A nested workflow's own steps are one level further down and
-            # carry their own executors. Without this the check stops at the
-            # nested workflow itself: its copy is fresh, so nothing is
-            # reported, while the agents inside it can still be the registry
-            # singletons the whole check exists to refuse.
-            nested = getattr(item, "workflow", None)
-            nested_steps = getattr(nested, "steps", None) if nested is not None else None
-            if isinstance(nested_steps, (list, tuple)):
-                for child in nested_steps:
+                for child in child_steps(getattr(item, child_attr, None)):
                     walk(child)
+            # A nested workflow is walked as a node, not just as a step list:
+            # its own executors are one level further down, and a Workflow also
+            # carries a workflow-level agent. Without this the check stops at
+            # the nested workflow itself -- its copy is fresh, so nothing is
+            # reported, while the components inside it can still be the
+            # registry singletons the whole check exists to refuse.
+            nested = getattr(item, "workflow", None)
+            if nested is not None:
+                walk(nested)
 
-        steps = getattr(wf, "steps", None)
-        if isinstance(steps, (list, tuple)):
-            for step in steps:
-                walk(step)
+        for step in child_steps(getattr(wf, "steps", None)):
+            walk(step)
 
     def _load_agent_from_db(
         self, agent_id: str, version: Optional[int] = None, for_dispatch: bool = False, actor: Optional[str] = None

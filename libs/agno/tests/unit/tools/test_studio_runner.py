@@ -3269,3 +3269,65 @@ class TestNestedWorkflowIsolation:
         runner = StudioRunnerTools(registry=registry, include_all_components=True)
 
         runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+
+
+class TestNestedWorkflowIsolationSpellings:
+    """A steps= value may be a list or a single container, and the check has to
+    reach the leak either way -- reading only the list spelling walks past a
+    whole subtree, which is the leak this refusal exists for."""
+
+    def _leaks(self, nested_steps, workflow_agent=None):
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        sticky = StickyAgent(id="a_shared", name="A")
+        nested = Workflow(id="nested_wf", name="N", steps=nested_steps(Step(name="inner", agent=sticky)))
+        registry = Registry(name="R")
+        registry.agents.append(sticky)
+        registry.workflows.append(nested)
+        if workflow_agent is not None:
+            nested.agent = workflow_agent
+            registry.agents.append(workflow_agent)
+        parent = Workflow(id="p", name="P", steps=[Step(name="call", workflow=nested)])
+        rebuilt = Workflow.from_dict(parent.to_dict(), registry=registry, strict=True)
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        try:
+            runner._require_isolated_steps(rebuilt, "p")
+            return False
+        except DispatchCopyError:
+            return True
+
+    def test_a_steps_container_as_the_steps_value_is_reached(self):
+        from agno.workflow.steps import Steps
+
+        assert self._leaks(lambda step: Steps(name="grp", steps=[step]))
+
+    def test_a_loop_container_as_the_steps_value_is_reached(self):
+        from agno.workflow.loop import Loop
+
+        assert self._leaks(lambda step: Loop(name="lp", steps=[step], max_iterations=1))
+
+    def test_a_container_inside_the_list_is_still_reached(self):
+        from agno.workflow.steps import Steps
+
+        assert self._leaks(lambda step: [Steps(name="grp", steps=[step])])
+
+    def test_the_nested_workflows_own_agent_is_checked(self):
+        from agno.agent import Agent
+        from agno.workflow.step import Step
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        assert self._leaks(
+            lambda step: [Step(name="x", executor=lambda step_input: None)],
+            workflow_agent=StickyAgent(id="wf_agent", name="WA"),
+        )
