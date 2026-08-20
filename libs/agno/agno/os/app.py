@@ -951,8 +951,13 @@ class AgentOS:
                     return
                 seen.add(id(component))
                 yield component
-                for member in getattr(component, "members", None) or []:
-                    yield from visit(member)
+                # members may be a callable factory, which is truthy but not
+                # iterable; only a materialized list can be walked, and a
+                # factory cannot be called safely at construction time.
+                members = getattr(component, "members", None)
+                if isinstance(members, list):
+                    for member in members:
+                        yield from visit(member)
 
             for top in [*self._agents, *self._teams]:
                 yield from visit(top)
@@ -961,9 +966,23 @@ class AgentOS:
                 if not isinstance(steps, list):
                     return
                 for step in steps:
+                    # Containers can reference each other; without this the
+                    # walk recurses until the stack dies, taking the whole
+                    # application down at construction time.
+                    if id(step) in seen:
+                        continue
+                    seen.add(id(step))
                     for attr in ("agent", "team"):
                         yield from visit(getattr(step, attr, None))
-                    yield from visit_steps(getattr(step, "steps", None))
+                    # Every container a step can be: Loop, Parallel and
+                    # Condition hold steps, Condition also else_steps, Router
+                    # holds choices, and a nested Workflow its own step list.
+                    for attr in ("steps", "else_steps", "choices"):
+                        yield from visit_steps(getattr(step, attr, None))
+                    nested = getattr(step, "workflow", None)
+                    if nested is not None and id(nested) not in seen:
+                        seen.add(id(nested))
+                        yield from visit_steps(getattr(nested, "steps", None))
 
             for workflow in self._workflows:
                 yield from visit_steps(getattr(workflow, "steps", None))
