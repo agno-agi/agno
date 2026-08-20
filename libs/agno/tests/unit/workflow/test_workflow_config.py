@@ -667,7 +667,11 @@ class TestGetWorkflows:
         get_workflows(db=mock_db)
 
         mock_db.list_components.assert_called_once_with(
-            component_type=ComponentType.WORKFLOW, user_id=None, limit=_COMPONENT_LIST_PAGE, offset=0
+            component_type=ComponentType.WORKFLOW,
+            exclude_component_ids=None,
+            user_id=None,
+            limit=_COMPONENT_LIST_PAGE,
+            offset=0,
         )
 
     def test_get_workflows_returns_empty_list_on_error(self, mock_db):
