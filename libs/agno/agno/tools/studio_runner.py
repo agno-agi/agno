@@ -1837,8 +1837,10 @@ class StudioRunnerTools(Toolkit):
 
         Step.from_dict keeps the shared registry agent/team when its deep_copy
         raises; dispatching that instance would let per-run mutation cross
-        callers. Reads and edits load the same workflow without this check, so
-        the offending step stays inspectable and editable."""
+        callers. Each step node is judged both as an executor holder and as an
+        executor itself, because a step list accepts a bare component. Reads and
+        edits load the same workflow without this check, so the offending step
+        stays inspectable and editable."""
         shared = self._registry_instances()
         if not shared:
             return
@@ -1860,10 +1862,24 @@ class StudioRunnerTools(Toolkit):
             inner = getattr(value, "steps", None) if value is not None else None
             return list(inner) if isinstance(inner, (list, tuple)) else []
 
-        def walk(item: Any) -> None:
+        def walk(item: Any, judge_item: bool = True) -> None:
             if id(item) in seen:
                 return
             seen.add(id(item))
+            # A step list may hold a bare agent, team or workflow instead of a
+            # Step wrapper. Then the node IS the executor, and reading only
+            # .agent/.team/.workflow finds nothing to judge. A node reached as
+            # another node's executor is skipped here because the loop below
+            # already judged it, so one leak is not reported twice.
+            leaked_item = shared_within(item) if judge_item else None
+            if leaked_item is not None:
+                label = getattr(leaked_item, "id", None) or getattr(leaked_item, "name", None)
+                where = f"'{label}'" if leaked_item is item else f"'{label}' below it"
+                raise DispatchCopyError(
+                    f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
+                    f"registry instance of {where}; the runner dispatches only isolated copies. Give the "
+                    "class a deep_copy that rebuilds it, or store the component in the database."
+                )
             for attr in ("agent", "team", "workflow"):
                 executor = getattr(item, attr, None)
                 leaked = shared_within(executor)
@@ -1890,7 +1906,7 @@ class StudioRunnerTools(Toolkit):
             # registry singletons the whole check exists to refuse.
             nested = getattr(item, "workflow", None)
             if nested is not None:
-                walk(nested)
+                walk(nested, judge_item=False)
 
         for step in child_steps(getattr(wf, "steps", None)):
             walk(step)

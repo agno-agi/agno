@@ -3270,6 +3270,58 @@ class TestNestedWorkflowIsolation:
 
         runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
 
+    def _nested_with_bare_agent_step(self, agent):
+        """A nested registry workflow whose step IS the agent, with no Step
+        wrapper around it."""
+        from agno.registry import Registry
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        nested = Workflow(id="nested_wf", name="N", steps=[agent])
+        registry = Registry(name="R")
+        registry.agents.append(agent)
+        registry.workflows.append(nested)
+        parent = Workflow(id="p3", name="P3", steps=[Step(name="call", workflow=nested)])
+        return registry, parent, nested
+
+    def test_a_bare_agent_step_inside_a_nested_workflow_is_refused(self):
+        """A step list accepts a bare component, and then the node IS the
+        executor. Reading only .agent/.team/.workflow finds nothing to judge and
+        the singleton reaches dispatch."""
+        from agno.agent import Agent
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        sticky = StickyAgent(id="a_shared", name="A")
+        registry, parent, nested = self._nested_with_bare_agent_step(sticky)
+        rebuilt = nested.deep_copy()
+        parent.steps[0].workflow = rebuilt
+
+        # The copy of the nested workflow really does hand back the singleton.
+        assert rebuilt.steps[0] is sticky
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError, match="a_shared"):
+            runner._require_isolated_steps(parent, "p3")
+
+    def test_a_copyable_bare_agent_step_in_the_same_shape_still_dispatches(self):
+        """The identical shape with an agent that copies normally must not be
+        refused: a false refusal here breaks dispatch for working workflows."""
+        from agno.agent import Agent
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        clean = Agent(id="a_clean", name="A")
+        registry, parent, nested = self._nested_with_bare_agent_step(clean)
+        rebuilt = nested.deep_copy()
+        parent.steps[0].workflow = rebuilt
+
+        assert rebuilt.steps[0] is not clean
+
+        StudioRunnerTools(registry=registry, include_all_components=True)._require_isolated_steps(parent, "p3")
+
 
 class TestNestedWorkflowIsolationSpellings:
     """A steps= value may be a list or a single container, and the check has to
