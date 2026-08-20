@@ -1805,7 +1805,7 @@ def get_team_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
-        user_id: If set, only resolve the team when owned by this user or shared.
+        user_id: If set, only resolve the team when owned by this user, unowned (shared), or published.
         strict: If True, unresolvable members and registry references
             raise ComponentRehydrationError; None strictly means the team was not found.
 
@@ -1820,7 +1820,7 @@ def get_team_by_id(
     try:
         from agno.utils.component_scope import component_owner_scope
 
-        # Only resolve the team if owned by this user or shared.
+        # Only resolve the team if owned by this user, unowned (shared), or published.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 
@@ -1899,7 +1899,7 @@ def get_teams(
         db: Database to load teams from
         registry: Optional registry for rehydrating tools
         exclude_component_ids: Component IDs to exclude from results.
-        user_id: If set, only load teams owned by this user or shared.
+        user_id: If set, only load teams owned by this user, unowned (shared), or published.
 
     Returns:
         List of Team instances loaded from the database

@@ -847,7 +847,7 @@ class BaseDb(ABC):
         Args:
             component_id: The component ID.
             component_type: Optional filter by type (agent|team|workflow).
-            user_id: If set, only return the component if owned by this user or shared.
+            user_id: If set, only return the component if owned by this user, unowned (shared), or published.
             include_deleted: Also return an archived (soft-deleted) row. Archived
                 ids are reserved, so an existence check must pass True.
 
@@ -964,7 +964,7 @@ class BaseDb(ABC):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
-            user_id: If set, only list components owned by this user or shared.
+            user_id: If set, only list components owned by this user, unowned (shared), or published.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 

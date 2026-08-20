@@ -43,8 +43,11 @@ Lifecycle:
 
 Identity and ownership:
     * The framework injects the caller's RunContext; components and schedules
-      created through Studio are owned by that user, other owners' rows answer
-      not-found, and shared (unowned) rows refuse mutation for scoped actors.
+      created through Studio are owned by that user. A draft-only component
+      and every schedule answer not-found to other owners; publishing puts a
+      component on the platform, readable and runnable by every user, while
+      mutation stays owner-scoped (not_owner). Shared (unowned) rows refuse
+      mutation for scoped actors.
 
 Palette policy:
     * Declared registry tools are buildable. Tools that arrived via the
