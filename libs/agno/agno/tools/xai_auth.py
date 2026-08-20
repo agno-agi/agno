@@ -312,8 +312,7 @@ class XAIAuth(Toolkit):
     @staticmethod
     async def _await_db(result: Any) -> Any:
         """Await an async adapter's result; pass a sync adapter's straight through."""
-        # Deferred, and centralized here: a toolkit import must not pull in the
-        # OpenAI SDK that agno.models.xai drags along.
+        # Deferred for the same reason as the import in __init__.
         from agno.models.xai.oauth import _maybe_await
 
         return await _maybe_await(result)
@@ -324,9 +323,8 @@ class XAIAuth(Toolkit):
         if db is None:
             return ""
         if iscoroutinefunction(db.get_auth_token):
-            # An async backend cannot be read from these sync tools - and the
-            # manager's own sync path fell through to the file store for exactly
-            # that reason, so the note is the accurate answer here.
+            # An async backend cannot be read from these sync tools, and the
+            # manager's sync path fell through to the file store for that reason.
             return self._degrade_target(user_id)
         try:
             # The manager owns the deployment slot; read it rather than restate it

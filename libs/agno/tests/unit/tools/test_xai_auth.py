@@ -544,7 +544,7 @@ def test_a_db_without_token_storage_keeps_a_users_token_in_memory_and_says_so(en
 
 
 def test_an_async_db_degrades_to_a_file_and_says_so(endpoint, tmp_path, encryption_key):
-    """These tools are sync: an async backend cannot be read here, so the manager wrote a file."""
+    """The SYNC tools cannot await an async backend, so the manager wrote a file instead."""
 
     class AsyncOnlyDb:
         async def get_auth_token(self, provider, user_id, service):  # pragma: no cover - never awaited

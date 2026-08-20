@@ -164,9 +164,9 @@ class XAITokenManager:
     timeout: float = 30.0
     now_fn: Callable[[], float] = time.time
 
-    # Keyed by user_id, like the row and the cache: this is the last-resort store
-    # and a shared manager serves every user through it, so a single slot would
-    # hand whoever saved last to everyone who has no row of their own.
+    # Keyed by user_id like the row and the cache: a shared manager serves every
+    # user through this last-resort store, so one slot would hand whoever saved
+    # last to everyone without a row.
     _memory_rows: Dict[str, Dict[str, Any]] = field(default_factory=dict, repr=False)
 
     # The empty string is the deployment slot - the single-user default and the
@@ -677,9 +677,8 @@ class XAITokenManager:
                     log_debug(f"Could not delete token from DB: {e}")
                     return
         if user_id:
-            # The file store holds ONE session - the deployment's. Reads and writes
-            # already refuse an identified user; deleting must too, or one user
-            # signing out takes the shared session with them.
+            # The file store holds ONE session, the deployment's - reads and writes
+            # already refuse an identified user, so deleting must too.
             return
         try:
             self._token_file().unlink(missing_ok=True)
@@ -698,9 +697,8 @@ class XAITokenManager:
                 log_debug(f"Could not delete token from DB: {e}")
                 return
         if user_id:
-            # The file store holds ONE session - the deployment's. Reads and writes
-            # already refuse an identified user; deleting must too, or one user
-            # signing out takes the shared session with them.
+            # The file store holds ONE session, the deployment's - reads and writes
+            # already refuse an identified user, so deleting must too.
             return
         try:
             self._token_file().unlink(missing_ok=True)

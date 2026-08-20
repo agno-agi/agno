@@ -32,11 +32,9 @@ def _check_openai_version() -> None:
         )
 
 
-# The SDK invokes the baked api_key callable on every bearer-authed request -
-# including requests that already carry a per-user Authorization header, which
-# only wins the header merge afterwards. So the callable must never raise for a
-# merely absent deployment row; it yields this instead, and get_request_params
-# does the raising with the run's context in hand.
+# The SDK invokes the baked callable on every request, even ones already carrying
+# a per-user header, so it must never raise for a merely absent deployment row.
+# get_request_params raises instead, with the run's context in hand.
 _NOT_SIGNED_IN_SENTINEL = "supergrok-placeholder-not-signed-in"
 _NO_MANAGER_FOR_GUARANTEE = (
     "require_user_token=True but no token_manager is configured, so per-user SuperGrok tokens "
@@ -83,9 +81,8 @@ class xAIResponses(OpenResponses):
     async_token_provider: Optional[Callable[[], Awaitable[str]]] = None
     token_manager: Optional[XAITokenManager] = None
 
-    # Per-user resolution reads run_response.user_id and spends that user's own
-    # SuperGrok session. A user with no session of their own falls back to the
-    # deployment slot; set this to refuse that fallback instead.
+    # A user with no session of their own falls back to the deployment slot;
+    # set this to refuse that fallback instead.
     require_user_token: bool = False
 
     # No role_map override: system messages go to the wire as role "developer",
@@ -267,9 +264,8 @@ class xAIResponses(OpenResponses):
 
         token = self._per_request_bearer(run_response)
         if token is not None:
-            # Per-request override of the client's baked deployment credential.
-            # The SDK merges extra_headers last, over its own auth header, so no
-            # client is copied and no shared state is written.
+            # The SDK merges extra_headers last, over its own auth header, so this
+            # overrides the baked credential without copying a client.
             request_params["extra_headers"] = {
                 **(request_params.get("extra_headers") or {}),
                 "Authorization": f"Bearer {token}",
@@ -414,9 +410,11 @@ class xAIResponses(OpenResponses):
     def _should_retry_401(self, exc: ModelProviderError, explicit_provider: Optional[Callable]) -> bool:
         """The 401 one-shot leg applies when the manager actually feeds the failing client [A2].
 
-        An explicit provider wins over the manager in the callable resolution, so
-        refreshing the manager would not change the bearer the retry sends - the
-        caller passes the provider field its client type resolves first.
+        An explicit provider wins over the manager in both the callable and request
+        assembly (§1.2c A1), so refreshing the manager would not change the bearer
+        the retry sends - the caller passes the provider field its client type
+        resolves first. The one exception is a require_user_token run, where the
+        guarantee outranks precedence and a per-user 401 is meant to surface.
         """
         return (
             self._using_oauth()
