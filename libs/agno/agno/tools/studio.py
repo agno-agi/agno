@@ -402,24 +402,69 @@ class StudioTools(Toolkit):
                 ]
             )
 
-        instruction_lines = [
-            "Compose agents, teams, and workflows from registry primitives. The lifecycle: create "
-            "(a draft, unless publish=true) -> validate_component -> publish_component. Only the "
-            "published version serves runs and schedules. Drafts are private to you; publishing "
-            "puts the component on the platform, where every user can find and run it (but only "
-            "you can edit it).",
+        # Instructions may only name tools this configuration registers:
+        # naming an unregistered tool tells the model to hallucinate a call.
+        # The gates mirror the registration blocks above - versions for the
+        # publish ladder, the enable_* trio for create/edit/run prose, the
+        # scheduler for the schedules line.
+        authoring = self.enable_agents or self.enable_teams or self.enable_workflows
+        instruction_lines: List[str] = []
+        if authoring and self.enable_versions:
+            instruction_lines.append(
+                "Compose agents, teams, and workflows from registry primitives. The lifecycle: create "
+                "(a draft, unless publish=true) -> validate_component -> publish_component. Only the "
+                "published version serves runs and schedules. Drafts are private to you; publishing "
+                "puts the component on the platform, where every user can find and run it (but only "
+                "you can edit it)."
+            )
+        elif authoring:
+            instruction_lines.append(
+                "Compose agents, teams, and workflows from registry primitives. The lifecycle: create "
+                "-> validate_component. There is no draft stage and no publish step here: every create "
+                "and edit is published immediately as the new current version, on the platform where "
+                "every user can find and run it (but only you can edit it)."
+            )
+        instruction_lines.append(
             "Discovery first: list_tools/list_functions/list_models names are exact and "
-            "case-sensitive; only buildable tools may be wired. Never guess a name.",
-            "get_component reads the LATEST version (the one you just edited); call it before "
-            "every edit and pass only the fields that change. Renaming is edit with name=; the id "
-            "never changes. Omit = keep, empty string = clear text, empty list = clear tools.",
-            "Version history is immutable: edits append, publish promotes, set_current_version "
-            "re-points between published versions, archive_component retires (restore_component "
-            "reverses it). Nothing is ever deleted except unpublished drafts.",
-            "Run tools execute as the current user; pass version= to preview a draft before "
-            "publishing. A PAUSED result waits on human approval: relay its requirements and keep "
-            "the run_id and session_id for the resume.",
-        ]
+            "case-sensitive; only buildable tools may be wired. Never guess a name."
+        )
+        if authoring:
+            instruction_lines.append(
+                "get_component reads the LATEST version (the one you just edited); call it before "
+                "every edit and pass only the fields that change. Renaming is edit with name=; the id "
+                "never changes. Omit = keep, empty string = clear text, empty list = clear tools."
+            )
+        if self.enable_versions:
+            instruction_lines.append(
+                "Version history is immutable: edits append, publish promotes, set_current_version "
+                "re-points between published versions, archive_component retires (restore_component "
+                "reverses it). Nothing is ever deleted except unpublished drafts."
+            )
+        else:
+            instruction_lines.append(
+                "Version history is immutable: every edit appends the next version and makes it "
+                "current at once. archive_component retires a component (restore_component reverses "
+                "it); nothing is ever deleted."
+            )
+        if authoring and self.enable_versions:
+            instruction_lines.append(
+                "Run tools execute as the current user; pass version= to preview a draft before "
+                "publishing. A PAUSED result waits on human approval: relay its requirements and keep "
+                "the run_id and session_id for the resume."
+            )
+        elif authoring:
+            instruction_lines.append(
+                "Run tools execute as the current user; pass version= to pin an earlier published "
+                "version. A PAUSED result waits on human approval: relay its requirements and keep "
+                "the run_id and session_id for the resume."
+            )
+        if self._scheduler_tools is not None:
+            instruction_lines.append(
+                "Schedules: create_schedule targets an existing component by target_type "
+                "('agent'/'team'/'workflow') + target_id (ids from list_components) and requires a "
+                "message. Cron is 5-field; timezone is an IANA name. trigger_schedule queues an "
+                "enabled schedule to run now via the platform poller."
+            )
 
         # Deletion-shaped operations pause for a human by default; a consumer
         # may replace this list (including with []) but is never forced.
