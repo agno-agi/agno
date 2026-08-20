@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -91,6 +91,15 @@ class RampRouter(OpenResponses):
     provider_timeout: Optional[float] = None
     timeout_before_headers: Optional[float] = None
 
+    # Routing config must survive to_dict/get_model_from_dict: `models` decides what actually
+    # runs, so dropping it on rehydration would silently route on the default id.
+    _extra_serialized_fields: ClassVar[Tuple[str, ...]] = (
+        "models",
+        "allow_flex_tier",
+        "provider_timeout",
+        "timeout_before_headers",
+    )
+
     # `_using_reasoning_model()` is deliberately inherited from OpenResponses, which returns False.
     # Router's catalog is full of ids that OpenAIResponses' prefix match would classify as reasoning
     # models, and that branch chains turns with `previous_response_id`. Chaining silently no-ops on
@@ -104,14 +113,6 @@ class RampRouter(OpenResponses):
             # Router queues and bills the generation, then has nowhere to serve it from: there is
             # no GET /v1/responses/{id}. The base class would poll a 404 until background_max_wait.
             raise ValueError("Router does not support background mode. Set background=False on RampRouter.")
-
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = super().to_dict()
-        for field_name in ("models", "allow_flex_tier", "provider_timeout", "timeout_before_headers"):
-            value = getattr(self, field_name)
-            if value is not None:
-                _dict[field_name] = value
-        return _dict
 
     def _get_client_params(self) -> Dict[str, Any]:
         """

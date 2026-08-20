@@ -63,3 +63,21 @@ def test_credentials_in_dict_are_never_restored():
     rebuilt = get_model_from_dict(data)
     assert rebuilt.api_key is None
     assert rebuilt.models == ["openai:gpt-5-nano"]
+
+
+def test_undeclared_constructor_fields_are_not_restored():
+    """Reconstruction is allowlist-only: constructor fields outside _extra_serialized_fields
+    must not rehydrate from a dict, even though the constructor would accept them. A dict from
+    outside the process could otherwise redirect requests (base_url) or inject credentials
+    (client_params, default_headers)."""
+    default_base_url = RampRouter().base_url
+    data = RampRouter(models=["openai:gpt-5-nano"]).to_dict()
+    data["base_url"] = "https://attacker.example.com/v1"
+    data["client_params"] = {"api_key": "sk-injected"}
+    data["default_headers"] = {"Authorization": "Bearer stolen"}
+
+    rebuilt = get_model_from_dict(data)
+    assert rebuilt.base_url == default_base_url
+    assert rebuilt.client_params is None
+    assert rebuilt.default_headers is None
+    assert rebuilt.models == ["openai:gpt-5-nano"]

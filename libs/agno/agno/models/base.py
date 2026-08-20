@@ -13,6 +13,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    ClassVar,
     Dict,
     Iterator,
     List,
@@ -137,6 +138,13 @@ class Model(ABC):
     # Functional role of this model (e.g., MODEL, OUTPUT_MODEL, PARSER_MODEL).
     # Set by the agent during initialization; defaults to MODEL.
     model_type: ModelType = ModelType.MODEL
+
+    # Config fields (beyond id/name/provider) that both to_dict serializes and
+    # get_model_from_dict restores. Reconstruction restores nothing outside this
+    # allowlist, so never declare credentials or connection settings (api_key,
+    # base_url, headers) here — a rehydrated dict must not be able to redirect
+    # requests or inject credentials.
+    _extra_serialized_fields: ClassVar[Tuple[str, ...]] = ()
 
     # -*- Do not set the following attributes directly -*-
     # -*- Set them on the Agent instead -*-
@@ -424,7 +432,7 @@ class Model(ABC):
         raise last_exception  # type: ignore
 
     def to_dict(self) -> Dict[str, Any]:
-        fields = {"name", "id", "provider"}
+        fields = {"name", "id", "provider", *self._extra_serialized_fields}
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
 
