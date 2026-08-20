@@ -34,7 +34,6 @@ server_url = "https://emem.dev/mcp"
 async def run_agent(message: str) -> None:
     async with MCPTools(transport="streamable-http", url=server_url) as mcp_tools:
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
             tools=[mcp_tools],
             markdown=True,
         )
