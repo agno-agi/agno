@@ -99,7 +99,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.run import RunContext
@@ -1831,8 +1831,13 @@ class StudioRunnerTools(Toolkit):
         def shared_within(node: Any, depth: int = 0) -> Optional[Any]:
             return StudioRunnerTools._shared_registry_instance(node, shared, depth)
 
+        seen: Set[int] = set()
+
         def walk(item: Any) -> None:
-            for attr in ("agent", "team"):
+            if id(item) in seen:
+                return
+            seen.add(id(item))
+            for attr in ("agent", "team", "workflow"):
                 executor = getattr(item, attr, None)
                 leaked = shared_within(executor)
                 if leaked is not None:
@@ -1852,6 +1857,16 @@ class StudioRunnerTools(Toolkit):
                 if isinstance(children, (list, tuple)):
                     for child in children:
                         walk(child)
+            # A nested workflow's own steps are one level further down and
+            # carry their own executors. Without this the check stops at the
+            # nested workflow itself: its copy is fresh, so nothing is
+            # reported, while the agents inside it can still be the registry
+            # singletons the whole check exists to refuse.
+            nested = getattr(item, "workflow", None)
+            nested_steps = getattr(nested, "steps", None) if nested is not None else None
+            if isinstance(nested_steps, (list, tuple)):
+                for child in nested_steps:
+                    walk(child)
 
         steps = getattr(wf, "steps", None)
         if isinstance(steps, (list, tuple)):

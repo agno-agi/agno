@@ -3198,3 +3198,74 @@ def test_dispatch_never_mixes_config_and_links_from_different_versions(tmp_path)
 
     assert team_obj is not None
     assert team_obj.members[0].description == "v1"
+
+
+class TestNestedWorkflowIsolation:
+    """The isolation check must descend into a nested workflow's own steps.
+
+    Step.from_dict keeps the shared registry agent when its deep_copy raises
+    or returns itself. The nested workflow above it copies fine, so nothing
+    looks wrong at that level -- the singleton is one level further down,
+    exactly where the walk used to stop.
+    """
+
+    def _registry_with_sticky_nested(self):
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        sticky = StickyAgent(id="a_shared", name="A")
+        nested = Workflow(id="nested_wf", name="N", steps=[Step(name="inner", agent=sticky)])
+        registry = Registry(name="R")
+        registry.agents.append(sticky)
+        registry.workflows.append(nested)
+        return registry, sticky, nested
+
+    def test_a_singleton_inside_a_nested_workflow_is_refused(self):
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        registry, sticky, nested = self._registry_with_sticky_nested()
+        parent = Workflow(id="p1", name="P", steps=[Step(name="callnested", workflow=nested)])
+        rebuilt = Workflow.from_dict(parent.to_dict(), registry=registry, strict=True)
+
+        # The rebuild really does hand back the singleton one level down.
+        assert rebuilt.steps[0].workflow.steps[0].agent is sticky
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError, match="a_shared"):
+            runner._require_isolated_steps(rebuilt, "p1")
+
+    def test_an_isolated_nested_workflow_still_dispatches(self):
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.studio_runner import StudioRunnerTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        clean = Agent(id="clean", name="C")
+        nested = Workflow(id="clean_wf", name="CN", steps=[Step(name="i", agent=clean)])
+        registry = Registry(name="R2")
+        registry.agents.append(clean)
+        registry.workflows.append(nested)
+        parent = Workflow(id="p2", name="P2", steps=[Step(name="c", workflow=nested)])
+        rebuilt = Workflow.from_dict(parent.to_dict(), registry=registry, strict=True)
+
+        StudioRunnerTools(registry=registry, include_all_components=True)._require_isolated_steps(rebuilt, "p2")
+
+    def test_a_self_referencing_nested_workflow_terminates(self):
+        from agno.tools.studio_runner import StudioRunnerTools
+        from agno.workflow.step import Step
+
+        registry, _sticky, _nested = self._registry_with_sticky_nested()
+        step = Step(name="loop", executor=lambda step_input: None)
+        step.workflow = type("W", (), {"steps": [step]})()  # type: ignore[assignment]
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+
+        runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
