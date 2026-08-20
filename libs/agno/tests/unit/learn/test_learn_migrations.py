@@ -211,6 +211,8 @@ class TestUnconfirmedDelete:
         assert report["contaminated"] == [dirty]
         assert report["purged"] == []
         assert report["failed"] == [dirty]
+        # purge_unrecoverable deletes instead of quarantining, and this delete
+        # cannot be confirmed, so the row stays where it is.
         assert dirty in db.rows
 
     @MODES
@@ -611,7 +613,11 @@ class TestSourceRowIsReReadBeforeCopy:
         assert report["scanned"] == 4
         assert clean not in db.rows
         assert db.rows[_user_key("acme", "company", ALICE)]["content"] == _clean_content("acme", ALICE)
-        assert dirty in db.rows
+        # A contaminated row is not separable, so it moves under the quarantine
+        # namespace: out of every user-filtered read, content preserved.
+        quarantined = legacy_entity_learning_id("initech", "company", "quarantined_user")
+        assert dirty not in db.rows
+        assert quarantined in db.rows
         assert conflicted in db.rows
 
     @MODES

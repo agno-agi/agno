@@ -14,6 +14,17 @@ from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.stores.entity_memory import EntityMemoryStore
 
 
+def _owner_matches(row_user_id: Any, filter_user_id: Any) -> bool:
+    """Whether a row's owner column matches a user filter.
+
+    user_id is a string column, and the backends compare a non-string filter
+    against its stored string form.
+    """
+    if filter_user_id is None:
+        return True
+    return row_user_id is not None and str(row_user_id) == str(filter_user_id)
+
+
 class RecordingLearningDb:
     """In-memory fake of the learnings table, keyed by learning_id."""
 
@@ -34,7 +45,7 @@ class RecordingLearningDb:
                 and row.get("entity_type") == entity_type
                 and row.get("namespace") == namespace
                 # None means unfiltered, like the real adapters' conditional WHERE.
-                and (user_id is None or row.get("user_id") == user_id)
+                and _owner_matches(row.get("user_id"), user_id)
             ):
                 return row
         return None
@@ -64,7 +75,7 @@ class RecordingLearningDb:
             and (entity_id is None or row.get("entity_id") == entity_id)
             and (entity_type is None or row.get("entity_type") == entity_type)
             and (namespace is None or row.get("namespace") == namespace)
-            and (user_id is None or row.get("user_id") == user_id)
+            and _owner_matches(row.get("user_id"), user_id)
         ]
         rows.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
         if limit is not None:

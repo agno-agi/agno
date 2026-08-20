@@ -40,6 +40,10 @@ from agno.learn.utils import _parse_json, build_learning_id, legacy_entity_learn
 from agno.utils.log import log_info, log_warning
 
 _ENTITY_LEARNING_TYPE = "entity_memory"
+# Contaminated rows keep namespace="user" and an owner column, so a user-filtered
+# read still reaches them. They move under this namespace instead, which no store
+# reads, and their content is preserved for the operator.
+_QUARANTINE_NAMESPACE = "quarantined_user"
 _PAGE_SIZE = 500
 
 # Buckets the migration only reports on, and the subset purge_unrecoverable deletes.
@@ -139,6 +143,53 @@ async def _adelete_confirmed(db: AsyncBaseDb, learning_id: str) -> bool:
     return await db.get_learning_by_id(learning_id) is None
 
 
+def _quarantine_row(db: BaseDb, row: Dict[str, Any], old_id: str) -> bool:
+    """Move a contaminated row under the quarantine namespace.
+
+    The row holds one user's facts under another's ownership. It is not
+    separable, and leaving it under namespace="user" keeps it inside the owner's
+    reads, so it is copied to a key no store reads and the source is removed.
+    """
+    new_id = legacy_entity_learning_id(row.get("entity_id", ""), row.get("entity_type", ""), _QUARANTINE_NAMESPACE)
+    db.upsert_learning(
+        id=new_id,
+        learning_type=_ENTITY_LEARNING_TYPE,
+        content=_parse_json(row.get("content")) or {},
+        user_id=row.get("user_id"),
+        agent_id=row.get("agent_id"),
+        team_id=row.get("team_id"),
+        session_id=row.get("session_id"),
+        namespace=_QUARANTINE_NAMESPACE,
+        entity_id=row.get("entity_id"),
+        entity_type=row.get("entity_type"),
+        metadata=_parse_json(row.get("metadata")),
+    )
+    if db.get_learning_by_id(new_id) is None:
+        return False
+    return _delete_confirmed(db, old_id)
+
+
+async def _aquarantine_row(db: AsyncBaseDb, row: Dict[str, Any], old_id: str) -> bool:
+    """Async version of _quarantine_row."""
+    new_id = legacy_entity_learning_id(row.get("entity_id", ""), row.get("entity_type", ""), _QUARANTINE_NAMESPACE)
+    await db.upsert_learning(
+        id=new_id,
+        learning_type=_ENTITY_LEARNING_TYPE,
+        content=_parse_json(row.get("content")) or {},
+        user_id=row.get("user_id"),
+        agent_id=row.get("agent_id"),
+        team_id=row.get("team_id"),
+        session_id=row.get("session_id"),
+        namespace=_QUARANTINE_NAMESPACE,
+        entity_id=row.get("entity_id"),
+        entity_type=row.get("entity_type"),
+        metadata=_parse_json(row.get("metadata")),
+    )
+    if await db.get_learning_by_id(new_id) is None:
+        return False
+    return await _adelete_confirmed(db, old_id)
+
+
 def _report(buckets: Dict[str, List[str]], scanned: int, keyed: int, dry_run: bool) -> Dict[str, Any]:
     report: Dict[str, Any] = {"scanned": scanned, "keyed": keyed, "dry_run": dry_run, **buckets}
     counts = " ".join(f"{name}={len(ids)}" for name, ids in buckets.items())
@@ -149,6 +200,7 @@ def _report(buckets: Dict[str, List[str]], scanned: int, keyed: int, dry_run: bo
 def _new_buckets() -> Dict[str, List[str]]:
     return {
         "rekeyed": [],
+        "quarantined": [],
         "contaminated": [],
         "contaminated_keyed": [],
         "unowned": [],
@@ -250,6 +302,12 @@ def rekey_user_entity_learnings(
                     else:
                         log_warning(f"rekey_user_entity_learnings: could not purge {old_id}; the row is still there")
                         buckets["failed"].append(old_id)
+                elif bucket == "contaminated":
+                    if dry_run or _quarantine_row(db, row, old_id):
+                        buckets["quarantined"].append(old_id)
+                    else:
+                        log_warning(f"rekey_user_entity_learnings: could not quarantine {old_id}")
+                        buckets["failed"].append(old_id)
                 continue
 
             new_id = _new_id_for(row)
@@ -334,6 +392,12 @@ async def arekey_user_entity_learnings(
                         buckets["purged"].append(old_id)
                     else:
                         log_warning(f"rekey_user_entity_learnings: could not purge {old_id}; the row is still there")
+                        buckets["failed"].append(old_id)
+                elif bucket == "contaminated":
+                    if dry_run or await _aquarantine_row(db, row, old_id):
+                        buckets["quarantined"].append(old_id)
+                    else:
+                        log_warning(f"rekey_user_entity_learnings: could not quarantine {old_id}")
                         buckets["failed"].append(old_id)
                 continue
 
