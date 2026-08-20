@@ -1263,11 +1263,11 @@ class TestStudioEmbedding:
             wf = Workflow(id="w", name="W", steps=[nested])
             assert StudioRunnerTools._unresolved_below(wf) is not None, depth
 
-    def test_nested_workflow_step_is_refused_rather_than_reported_complete(self, db, registry):
-        """A nested workflow serializes as workflow_id alone and Step.from_dict
-        installs a placeholder that returns an unsuccessful StepOutput. A failed
-        step does not fail its workflow, so dispatching would report COMPLETED
-        while the child never ran."""
+    def test_nested_workflow_step_is_refused_with_an_actionable_message(self, db, registry):
+        """A nested workflow serializes as workflow_id alone, so an id the
+        registry cannot supply has nothing to rebuild from. The strict load
+        refuses it either way; what this pins is that the caller is told which
+        workflow they dispatched and which one is missing."""
         for component_id, config in (
             ("child", {"id": "child", "name": "Child", "steps": [{"name": "c", "agent_id": "worker"}]}),
             ("parent", {"id": "parent", "name": "Parent", "steps": [{"name": "call", "workflow_id": "child"}]}),
@@ -1282,7 +1282,7 @@ class TestStudioEmbedding:
     def test_a_saved_nested_workflow_dispatches_when_the_child_is_registered(self, db, registry):
         """A registered child rebuilds and runs for real, so the parent is
         dispatchable. Asserting the child's own content is what separates a real
-        run from a placeholder that no-ops without failing the parent."""
+        run from a parent that merely loads without raising."""
         registry.functions = [_nested_child_step]
         registry.workflows = [_nested_child_workflow()]
         _save_nested_parent(db)
@@ -1306,8 +1306,8 @@ class TestStudioEmbedding:
         assert "CHILD RAN" in result["content"]
 
     def test_an_unregistered_nested_workflow_is_still_refused(self, db, registry):
-        """The child is nowhere the runner can reach it, so the placeholder is
-        what would run. The refusal has to name the remedy that applies."""
+        """The registry cannot supply the child, so there is nothing to rebuild
+        the step from. The refusal has to name the remedy that applies."""
         registry.functions = [_nested_child_step]
         _save_nested_parent(db)
 
@@ -3399,6 +3399,50 @@ class TestNestedWorkflowIsolation:
         assert rebuilt.steps[0] is not clean
 
         StudioRunnerTools(registry=registry, include_all_components=True)._require_isolated_steps(parent, "p3")
+
+    def test_a_bare_step_with_no_deep_copy_is_judged_without_the_proxy_exemption(self):
+        """A bare component step is judged at depth 0, where "no deep_copy means
+        shared by design" does not apply. That exemption exists for members a
+        rebuilt parent holds -- a remote proxy carries no per-run state. The step
+        itself is not a member: nothing above it was rebuilt, so the singleton
+        reaches dispatch exactly as the registry holds it."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.workflow import Workflow
+
+        class ProxyAgent(Agent):
+            deep_copy = None  # type: ignore[assignment]
+
+        proxy = ProxyAgent(id="a_proxy", name="A")
+        registry = Registry(name="R")
+        registry.agents.append(proxy)
+        wf = Workflow(id="p4", name="P4", steps=[proxy])
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError, match="a_proxy"):
+            runner._require_isolated_steps(wf, "p4")
+
+    def test_an_unnamed_shared_step_reads_as_unknown_not_as_none(self):
+        """Neither id nor name is required, and "instance of 'None'" reads like
+        the check found a null rather than a component it cannot name. The
+        sibling member guard spells the same gap '?'."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.workflow import Workflow
+
+        class AnonymousAgent(Agent):
+            deep_copy = None  # type: ignore[assignment]
+
+        anonymous = AnonymousAgent(id=None, name=None)
+        registry = Registry(name="R")
+        registry.agents.append(anonymous)
+        wf = Workflow(id="p5", name="P5", steps=[anonymous])
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError, match=r"instance of '\?'"):
+            runner._require_isolated_steps(wf, "p5")
 
 
 class TestNestedWorkflowIsolationSpellings:

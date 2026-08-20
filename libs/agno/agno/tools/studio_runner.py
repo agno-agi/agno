@@ -1719,10 +1719,13 @@ class StudioRunnerTools(Toolkit):
         the registry only: there is no db-load tier, because loading a stored
         workflow from inside a step would recurse through from_dict and needs its
         own cycle guard before it can be safe. An id the registry cannot supply
-        leaves a placeholder that returns an unsuccessful StepOutput, and a failed
-        step does not fail its workflow, so the parent run would report COMPLETED
-        while the child never executed. Reads and edits load the same workflow
-        without this check, so the step stays inspectable."""
+        has nothing to rebuild from, so the strict load a dispatch performs
+        refuses it anyway. This guard answers that case first, and answers it
+        about the workflow the caller actually dispatched, with the remedy that
+        applies; the rebuild error it pre-empts names only the step that failed
+        and offers a strict=False flag no caller of this toolkit can set. Reads
+        and edits load the same workflow without this check, so the step stays
+        inspectable."""
         nested: List[str] = []
 
         def walk(value: Any) -> None:
@@ -1751,11 +1754,10 @@ class StudioRunnerTools(Toolkit):
         if nested:
             raise ComponentNotDispatchableError(
                 f"Workflow '{workflow_id}' has a step targeting workflow '{', '.join(sorted(set(nested)))}', "
-                "which is not in this runner's registry, so it cannot be reconstructed; it would report "
-                "success without running that step. Add that workflow to the registry "
-                "(Registry(workflows=[...])) -- storing it in the database is not enough, a nested step "
-                "resolves from the registry only -- or inline its steps into this one and dispatch it "
-                "separately."
+                "which is not in this runner's registry, so the step cannot be reconstructed and the "
+                "dispatch load refuses it. Add that workflow to the registry (Registry(workflows=[...])) "
+                "-- storing it in the database is not enough, a nested step resolves from the registry "
+                "only -- or inline its steps into this one and dispatch it separately."
             )
 
     @staticmethod
@@ -1873,18 +1875,19 @@ class StudioRunnerTools(Toolkit):
             inner = getattr(value, "steps", None) if value is not None else None
             return list(inner) if isinstance(inner, (list, tuple)) else []
 
-        def walk(item: Any, judge_item: bool = True) -> None:
+        def walk(item: Any) -> None:
             if id(item) in seen:
                 return
             seen.add(id(item))
             # A step list may hold a bare agent, team or workflow instead of a
             # Step wrapper. Then the node IS the executor, and reading only
-            # .agent/.team/.workflow finds nothing to judge. A node reached as
-            # another node's executor is skipped here because the loop below
-            # already judged it, so one leak is not reported twice.
-            leaked_item = shared_within(item) if judge_item else None
+            # .agent/.team/.workflow finds nothing to judge. Judging at depth 0
+            # is what makes this bite: the "no deep_copy means shared by design"
+            # exemption applies to members found below a node, not to the node
+            # the search starts from.
+            leaked_item = shared_within(item)
             if leaked_item is not None:
-                label = getattr(leaked_item, "id", None) or getattr(leaked_item, "name", None)
+                label = getattr(leaked_item, "id", None) or getattr(leaked_item, "name", None) or "?"
                 where = f"'{label}'" if leaked_item is item else f"'{label}' below it"
                 raise DispatchCopyError(
                     f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
@@ -1917,7 +1920,7 @@ class StudioRunnerTools(Toolkit):
             # registry singletons the whole check exists to refuse.
             nested = getattr(item, "workflow", None)
             if nested is not None:
-                walk(nested, judge_item=False)
+                walk(nested)
 
         for step in child_steps(getattr(wf, "steps", None)):
             walk(step)
