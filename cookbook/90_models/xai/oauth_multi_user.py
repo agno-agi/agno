@@ -12,6 +12,11 @@ session - the shared slot a script or an operator signs in to - which is what a
 single-subscription deployment wants. Pass require_user_token=True to the model
 to refuse that fallback and require every identified user to sign in first.
 
+This script starts from an empty store, so there is no deployment session to
+fall back to and the second user is asked to sign in instead. Sign in once
+without a user_id, through oauth_device_login.py, to watch the fallback serve
+somebody who never signed in.
+
 user_id is passed directly here so the recipe runs without a server. In
 production it arrives the same way from AgentOS, off the authenticated request.
 

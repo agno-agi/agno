@@ -56,9 +56,11 @@ signed in, received their own row, and their question ran on their own token.
 require_user_token was exercised separately against a seeded deployment slot,
 both ways: an unknown user succeeded through the fallback with the flag off, and
 with the flag on was refused at request assembly - no bearer on the wire - with
-the drafted message. A signed-in user was unaffected by the flag, and a caller
-passing no user_id was still served by the deployment slot, since an
-unidentified caller has requested no per-user guarantee.
+the drafted message. A user with a row of their own still succeeded with the
+flag on, and a caller passing no user_id was still served by the deployment
+slot, since an unidentified caller has requested no per-user guarantee. The
+deployment slot was seeded from an existing row for that check, so the flag was
+the only variable between the two outcomes.
 
 **Result:** PASS for token selection and refusal policy. Billing isolation
 between two SuperGrok subscriptions is NOT proven and cannot be from this

@@ -160,9 +160,7 @@ class XAITokenManager:
     http_client: Optional[httpx.Client] = None
     async_http_client: Optional[httpx.AsyncClient] = None
     # httpx defaults to 5s, which is too short for a device-code poll against a
-    # live IdP - a sign-in that had already been approved failed on it. Fixed
-    # here rather than in its own PR because the tools that reach this code, and
-    # so the only way to hit it, arrive in the same change.
+    # live IdP: a sign-in that had already been approved timed out on it.
     timeout: float = 30.0
     now_fn: Callable[[], float] = time.time
 
