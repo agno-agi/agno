@@ -741,7 +741,7 @@ class ClickhouseDb(BaseDb):
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
     def get_eval_run(self, *args, **kwargs):  # type: ignore[override]
@@ -773,6 +773,7 @@ class ClickhouseDb(BaseDb):
         component_id: str,
         component_type: Optional[ComponentType] = None,
         user_id: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         return None
 

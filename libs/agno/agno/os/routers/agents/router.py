@@ -71,8 +71,10 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     afinalize_continue_stream,
+    allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
+    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
@@ -86,6 +88,8 @@ from agno.os.utils import (
     replayed_payload_to_sse,
     resolve_agent,
     sse_error_frame,
+    stamp_component_version,
+    stamped_component_version,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
@@ -723,6 +727,11 @@ def get_agent_router(
             factory_input=factory_input,
         )
 
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the lifecycle routes can reload
+        # the SAME version later instead of whatever is current by then.
+        stamp_component_version(kwargs, version)
+
         if session_id is None or session_id == "":
             log_debug("Creating new session")
             session_id = str(uuid4())
@@ -1181,6 +1190,7 @@ def get_agent_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
                 strict=False,
+                published_only=False,
             )  # type: ignore[assignment]
         except HTTPException:
             raise
@@ -1225,8 +1235,7 @@ def get_agent_router(
         summary="Continue Agent Run",
         description=(
             "Advance a persisted agent run from its current state. Dispatches on the body "
-            "shape and the persisted run state (see ADR-003 in "
-            "specs/agno/features/checkpointing/decisions.md).\n\n"
+            "shape and the persisted run state.\n\n"
             "**Variants:**\n"
             "- PAUSED + tools provided → apply HITL tool results, resume\n"
             "- PAUSED + resolved admin approval (empty tools) → apply resolution, resume\n"
@@ -1359,6 +1368,7 @@ def get_agent_router(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -1369,6 +1379,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    published_only=False,
                 )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1403,6 +1414,42 @@ def get_agent_router(
                 component_type="agents",
                 component_id=agent_id,
             )
+
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now. No stamp
+        # (legacy or unpinned runs) keeps today's resolution. Factories build
+        # per-request and remote agents resolve remotely, so both are exempt.
+        if not factory and not isinstance(agent, RemoteAgent):
+            stamped_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            stamped_version = stamped_component_version(stamped_run)
+            if stamped_version is not None:
+                # Re-run the run-start preview gate before trusting the stamp:
+                # a stamp naming a draft version this caller may not preview
+                # must not resolve (defense against a forged/leaked stamp).
+                # Same 404 the run-start route raises, so a denial is
+                # indistinguishable from the component being absent.
+                if not allow_draft_preview(os.db, agent_id, stamped_version, *draft_preview_identity(request)):
+                    raise HTTPException(status_code=404, detail="Agent not found")
+                try:
+                    stamped_agent = get_agent_by_id(
+                        agent_id=agent_id,
+                        agents=os.agents,
+                        db=os.db,
+                        registry=os.registry,
+                        version=stamped_version,
+                        create_fresh=True,
+                        user_id=scoped_user_id,
+                        published_only=False,
+                    )
+                except ComponentRehydrationError as rehydration_error:
+                    raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+                if stamped_agent is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agent version {stamped_version} recorded on run {run_id} is no longer available",
+                    )
+                agent = stamped_agent
 
         # No router-level status gate, deliberately: the continue dispatch
         # handles EVERY run state itself - COMPLETED forks as a follow-up,
@@ -1698,6 +1745,7 @@ def get_agent_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
                 strict=False,
+                published_only=False,
             )
         except HTTPException:
             raise
@@ -1885,6 +1933,7 @@ def get_agent_router(
                 registry=os.registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
+                published_only=False,
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1938,6 +1987,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -1949,6 +1999,7 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2040,6 +2091,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2051,6 +2103,7 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2109,6 +2162,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2120,6 +2174,7 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2222,6 +2277,7 @@ def get_agent_router(
             create_fresh=True,
             user_id=get_scoped_user_id(request),
             strict=False,
+            published_only=False,
         )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -2275,6 +2331,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
@@ -2286,6 +2343,7 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise

@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, Sequence
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -34,20 +34,36 @@ _SchedulerDbMethod = Literal[
 ]
 
 
-def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
+def get_schedule_router(
+    os_db: Any,
+    settings: Any,
+    include_agents: Optional[Sequence[Any]] = None,
+    include_teams: Optional[Sequence[Any]] = None,
+    include_workflows: Optional[Sequence[Any]] = None,
+) -> APIRouter:
     """Factory that creates and returns the schedule router.
 
     Args:
         os_db: The AgentOS-level DB adapter (must support scheduler methods).
         settings: AgnoAPISettings instance.
+        include_agents: The code-defined agents this process serves. The run routes
+            resolve those in process before they consult the component catalog,
+            so a schedule aimed at one is exempt from the draft-only refusal: a
+            catalog row of the same id never decides whether the endpoint
+            answers. Without the list the catalog is the only evidence there is,
+            and a code-defined target that also carries a draft row is refused.
+        include_teams: Same as ``include_agents`` but for teams.
+        include_workflows: Same as ``include_agents`` but for workflows.
 
     Returns:
         An APIRouter with all schedule endpoints attached.
     """
     from agno.os.auth import get_authentication_dependency
+    from agno.tools.scheduler import code_defined_probe
 
     router = APIRouter(tags=["Schedules"])
     auth_dependency = get_authentication_dependency(settings)
+    is_code_defined = code_defined_probe(include_agents, include_teams, include_workflows)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -153,9 +169,38 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             raise HTTPException(status_code=422, detail=f"Invalid timezone: {body.timezone}")
         _require_endpoint_permission(request, body.endpoint, body.method)
 
+        # A schedule aimed at an archived component can only 404 at fire time:
+        # refuse the create instead of accepting an armed dead schedule.
+        # Identical predicate to the Studio tool (SchedulerTools.create_schedule).
+        from agno.tools.scheduler import aarchived_endpoint_refusal, adraft_endpoint_refusal
+
         # Owner the schedule to the caller, falling back to the unscoped JWT sub so
         # admin-created schedules still carry a creator id.
         scoped_user_id = get_scoped_user_id(request)
+
+        # Scoped to the caller: an unscoped probe answers "archived" for another
+        # owner's component and "fine" for an id that does not exist, which tells
+        # the caller the component exists.
+        refusal = await aarchived_endpoint_refusal(os_db, body.endpoint, user_id=scoped_user_id)
+        if refusal is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot create schedule '{body.name}': its target "
+                f"{refusal[0]} '{refusal[1]}' is archived. Restore the component first.",
+            )
+
+        # A schedule fires the live published version, so a draft-only target
+        # would 404 on every tick. StudioTools.create_schedule already refuses
+        # this; the REST surface must refuse it identically.
+        draft_target = await adraft_endpoint_refusal(
+            os_db, body.endpoint, user_id=scoped_user_id, is_code_defined=is_code_defined
+        )
+        if draft_target is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot create schedule '{body.name}': its target "
+                f"{draft_target[0]} '{draft_target[1]}' has no published version. Publish it first.",
+            )
         creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
         # Neither owner is safe for the executor's identity: stamping it misattributes every
         # fired run, leaving it unowned hands the schedule the executor's unscoped reach.
@@ -242,6 +287,28 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
                 updates.get("method", existing.get("method") or "POST"),
             )
 
+        # Repointing at an archived component is refused for the same reason
+        # creating against one is: the schedule could only 404 at fire time.
+        if "endpoint" in updates:
+            from agno.tools.scheduler import aarchived_endpoint_refusal, adraft_endpoint_refusal
+
+            refusal = await aarchived_endpoint_refusal(os_db, updates["endpoint"], user_id=scoped_user_id)
+            if refusal is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot repoint schedule '{existing.get('name') or schedule_id}' at "
+                    f"{refusal[0]} '{refusal[1]}': it is archived. Restore the component first.",
+                )
+            draft_target = await adraft_endpoint_refusal(
+                os_db, updates["endpoint"], user_id=scoped_user_id, is_code_defined=is_code_defined
+            )
+            if draft_target is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot repoint schedule '{existing.get('name') or schedule_id}' at "
+                    f"{draft_target[0]} '{draft_target[1]}': it has no published version. Publish it first.",
+                )
+
         # Validate cron/timezone if changing
         cron_changed = "cron_expr" in updates or "timezone" in updates
         if cron_changed:
@@ -305,6 +372,43 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
 
         # Re-arming puts the endpoint back on the poller, so it needs the same permission as creating it.
         _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
+
+        # A schedule aimed at an archived component can only 404 at fire time;
+        # refuse the re-arm until the component is restored. Identical
+        # predicate to the Studio tool (SchedulerTools.enable_schedule).
+        from agno.db.schemas.scheduler import Schedule
+        from agno.tools.scheduler import aarchived_target_refusal, adraft_target_refusal, endpoint_drift_refusal
+
+        existing_schedule = Schedule.from_dict(existing)
+        refusal = await aarchived_target_refusal(os_db, existing_schedule, user_id=scoped_user_id)
+        if refusal is not None:
+            target_type, target_id = refusal
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot enable schedule '{existing.get('name') or schedule_id}': its target "
+                f"{target_type} '{target_id}' is archived. Restore the component first.",
+            )
+
+        draft_target = await adraft_target_refusal(
+            os_db, existing_schedule, user_id=scoped_user_id, is_code_defined=is_code_defined
+        )
+        if draft_target is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot enable schedule '{existing.get('name') or schedule_id}': its target "
+                f"{draft_target[0]} '{draft_target[1]}' has no published version. Publish it first.",
+            )
+
+        # A drift-disabled row re-arms only once its endpoint matches its
+        # provenance target again; otherwise it just fails on the next tick.
+        drift = endpoint_drift_refusal(existing_schedule)
+        if drift is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot enable schedule '{existing.get('name') or schedule_id}': it was disabled "
+                f"because its endpoint no longer matches its target ({drift}). "
+                "Repoint the endpoint back at the target first.",
+            )
 
         _check_scheduler_deps()
         from agno.scheduler.cron import compute_next_run

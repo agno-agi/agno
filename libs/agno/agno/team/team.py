@@ -1576,16 +1576,27 @@ class Team:
         label: Optional[str] = None,
         version: Optional[int] = None,
         strict: bool = False,
+        published_only: bool = False,
     ) -> Optional["Team"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
+        return _storage.load(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            published_only=published_only,
+        )
 
     def delete(
         self,
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
-        return _storage.delete(self, db=db, hard_delete=hard_delete)
+        return _storage.delete(self, db=db, hard_delete=hard_delete, require_no_dependents=require_no_dependents)
 
     # -*- Public convenience functions
     def get_run_output(
@@ -1788,6 +1799,7 @@ def get_team_by_id(
     registry: Optional["Registry"] = None,
     user_id: Optional[str] = None,
     strict: bool = False,
+    published_only: bool = True,
 ) -> Optional["Team"]:
     """
     Get a Team by id from the database.
@@ -1822,7 +1834,18 @@ def get_team_by_id(
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 
-        row = db.get_config(component_id=id, version=version, label=label)
+        if published_only and version is None and label is None:
+            # Dispatch surfaces resolve only a published version; a draft-only
+            # component is not runnable. Uses the
+            # component row rather than get_current_config so third-party
+            # adapters with only the old surface keep working.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            row = db.get_config(component_id=id, version=current_version)
+        else:
+            row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
 
