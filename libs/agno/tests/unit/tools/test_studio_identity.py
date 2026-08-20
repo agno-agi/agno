@@ -657,7 +657,14 @@ class TestRoundThreeTenancy:
         _data(studio.archive_component("alice-a", _agno_run_context=ALICE))
         out = _loads(studio.delete_version("alice-a", 2, _agno_run_context=BOB))
         assert out["error"]["code"] == "component_not_found"
-        # the owner still may
+        # The owner is refused too, but for the honest reason: an archived
+        # component's history is frozen so restore can bring every version
+        # back. The two refusals differ, which is the point - a foreign caller
+        # still learns nothing about the row.
+        owner = _loads(studio.delete_version("alice-a", 2, _agno_run_context=ALICE))
+        assert owner["error"]["code"] == "component_archived"
+        # ...and restoring first makes it work again.
+        assert _loads(studio.restore_component("alice-a", _agno_run_context=ALICE))["ok"]
         assert _loads(studio.delete_version("alice-a", 2, _agno_run_context=ALICE))["ok"]
 
 

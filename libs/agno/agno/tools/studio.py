@@ -102,6 +102,36 @@ _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 # two -- the actor's own has to be findable among the collisions.
 _NAME_MATCH_LIMIT = 20
 
+_NAME_MATCH_PAGES = 10
+
+
+def _own_row_across_pages(list_components, actor: Optional[str], **query: Any) -> tuple:
+    """(rows, total) for a name query, paged until the actor's own row is seen.
+
+    The window is ordered newest-first and the owner filter is applied after
+    it, so a caller whose own component is older than the first page of
+    same-named rows never sees it -- and share-on-publish makes same-named
+    rows from other owners ordinary. Paging stops as soon as an owned row
+    turns up, and is bounded: past the bound the ambiguous-reference answer
+    is the honest one.
+    """
+    rows, total = list_components(limit=_NAME_MATCH_LIMIT, **query)
+    if actor is None or total <= _NAME_MATCH_LIMIT:
+        return rows, total
+    if any(row.get("user_id") == actor for row in rows):
+        return rows, total
+    for page in range(1, _NAME_MATCH_PAGES):
+        offset = page * _NAME_MATCH_LIMIT
+        if offset >= total:
+            break
+        more, _ = list_components(limit=_NAME_MATCH_LIMIT, offset=offset, **query)
+        if not more:
+            break
+        rows = rows + more
+        if any(row.get("user_id") == actor for row in more):
+            break
+    return rows, total
+
 
 class _UnresolvedFactory:
     """Marker for a tools/members factory the composition guard could not run.
@@ -1076,10 +1106,11 @@ class StudioTools(Toolkit):
             from agno.db.base import ComponentType
 
             try:
-                rows, _ = self.db.list_components(
+                rows, _ = _own_row_across_pages(
+                    self.db.list_components,
+                    actor,
                     component_type=ComponentType(component_type),
                     name=name,
-                    limit=_NAME_MATCH_LIMIT,
                     include_deleted=True,
                     user_id=actor,
                 )
@@ -1132,7 +1163,7 @@ class StudioTools(Toolkit):
 
             # limit spans the collisions: a published name can match several
             # owners now, and the actor's own has to be found among them.
-            rows, total = self.db.list_components(name=identifier, limit=_NAME_MATCH_LIMIT, user_id=actor)
+            rows, total = _own_row_across_pages(self.db.list_components, actor, name=identifier, user_id=actor)
             owned_rows = [r for r in rows if actor is not None and r.get("user_id") == actor]
             if len(owned_rows) == 1:
                 rows, total = owned_rows, 1

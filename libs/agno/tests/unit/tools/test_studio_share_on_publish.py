@@ -359,3 +359,28 @@ class TestTheWriteItselfIsOwnerScoped:
         """The scope refuses a foreign writer, not every writer."""
         out = _loads(ungated.publish_component(radar, _agno_run_context=ALICE))
         assert out.get("ok") is True, out
+
+
+class TestANameLookupFindsTheCallersOwnRow:
+    """Display-name resolution reads a window of newest-first rows and filters
+    for the caller's own afterwards. Share-on-publish makes same-named rows
+    from other owners ordinary, so a caller whose component is older than a
+    window's worth of them stopped being able to reach it by name.
+    """
+
+    def test_an_owned_row_behind_a_page_of_others_still_resolves(self, studio, db):
+        mine = _data(studio.create_agent(name="Radar", instructions="mine", _agno_run_context=ALICE))["id"]
+        for index in range(25):
+            _data(
+                studio.create_agent(
+                    name="Radar",
+                    component_id=f"bob-radar-{index}",
+                    instructions="theirs",
+                    publish=True,
+                    _agno_run_context=BOB,
+                )
+            )
+
+        out = _loads(studio.get_component("Radar", _agno_run_context=ALICE))
+        assert out.get("ok") is True, out
+        assert out["data"]["id"] == mine
