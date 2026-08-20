@@ -91,6 +91,10 @@ class XAIAuth(Toolkit):
         self._pending: Dict[str, Dict[str, Any]] = {}
         self.register(self.sign_in_with_supergrok)
         self.register(self.check_supergrok_login)
+        # Reusing the sync names is deliberate: the model is offered two tools,
+        # not four, and an async run reaches the twins through async_functions.
+        self.register(self.asign_in_with_supergrok, name="sign_in_with_supergrok")
+        self.register(self.acheck_supergrok_login, name="check_supergrok_login")
 
     def sign_in_with_supergrok(self, run_context: Optional[RunContext] = None, force: bool = False) -> str:
         """Start a SuperGrok sign-in and give the user a link to approve it.
@@ -163,6 +167,77 @@ class XAIAuth(Toolkit):
             return json.dumps({"error": _NOT_SAVED})
         return json.dumps({"message": _SIGNED_IN + self._degrade_note()})
 
+    async def asign_in_with_supergrok(self, run_context: Optional[RunContext] = None, force: bool = False) -> str:
+        """Start a SuperGrok sign-in and give the user a link to approve it.
+
+        Args:
+            force: Forget the stored session and start a fresh login. Only set this
+                when the user asks to sign in with a different account.
+
+        Returns:
+            JSON string containing the approval message and URL, or an error message.
+        """
+        if force:
+            await self.token_manager.asign_out()
+        elif await self._ais_signed_in():
+            return json.dumps({"message": _ALREADY_SIGNED_IN})
+
+        try:
+            info = await self.token_manager.astart_device_login()
+        except ModelAuthenticationError as e:
+            return json.dumps({"error": str(e)})
+
+        await self._astash(
+            _requester(run_context),
+            {"device_code": info.device_code, "interval": info.interval, "deadline": time() + info.expires_in},
+        )
+        return json.dumps(
+            {
+                "message": (
+                    "Open this link, check the code matches, and approve the sign-in. "
+                    f"Code: {info.user_code}. Then tell me when you're done."
+                ),
+                "url": info.verification_uri_complete,
+            }
+        )
+
+    async def acheck_supergrok_login(self, run_context: Optional[RunContext] = None) -> str:
+        """Check whether the user approved the SuperGrok sign-in, and store the token.
+
+        Call this after the user says they approved the link. It polls once, so
+        call it again if the sign-in has not been approved yet.
+
+        Returns:
+            JSON string confirming the sign-in, or reporting that it is still
+            pending or has failed.
+        """
+        from agno.models.xai.oauth import DevicePollStatus
+
+        user_id = _requester(run_context)
+        pending = await self._aread_pending(user_id)
+        if pending is None:
+            return json.dumps({"error": _NO_PENDING})
+
+        try:
+            result = await self.token_manager.apoll_once(pending["device_code"], int(pending["interval"]))
+        except ModelAuthenticationError as e:
+            await self._aclear_pending(user_id)
+            return json.dumps({"error": _failed(str(e))})
+
+        if result.status is DevicePollStatus.pending:
+            # Re-stash so the RFC 8628 slow_down back-off reaches the next turn
+            pending["interval"] = result.interval
+            await self._astash(user_id, pending)
+            return json.dumps({"message": _NOT_APPROVED})
+
+        await self._aclear_pending(user_id)
+        if result.status is not DevicePollStatus.success:
+            return json.dumps({"error": _failed(result.message or "")})
+        # apoll_once already persisted the token through the manager's own save path
+        if self.token_manager.encrypt_tokens and not self.token_manager.encryption_key:
+            return json.dumps({"error": _NOT_SAVED})
+        return json.dumps({"message": _SIGNED_IN + await self._adegrade_note()})
+
     def _is_signed_in(self) -> bool:
         """Whether a usable SuperGrok session already exists, refreshing it if needed.
 
@@ -175,6 +250,28 @@ class XAIAuth(Toolkit):
             return True
         except (ModelAuthenticationError, httpx.HTTPError):
             return False
+
+    async def _ais_signed_in(self) -> bool:
+        """Whether a usable SuperGrok session already exists, refreshing it if needed.
+
+        A refresh here reaches the network, so a transport failure counts as "no
+        usable session": the sign-in that follows surfaces the real error as JSON
+        rather than letting an exception escape a tool that never raises.
+        """
+        try:
+            await self.token_manager.aget_access_token()
+            return True
+        except (ModelAuthenticationError, httpx.HTTPError):
+            return False
+
+    @staticmethod
+    async def _await_db(result: Any) -> Any:
+        """Await an async adapter's result; pass a sync adapter's straight through."""
+        # Deferred, and centralized here: a toolkit import must not pull in the
+        # OpenAI SDK that agno.models.xai drags along.
+        from agno.models.xai.oauth import _maybe_await
+
+        return await _maybe_await(result)
 
     def _degrade_note(self) -> str:
         """The note for a database that could not hold the token, so the manager wrote a file."""
@@ -196,8 +293,33 @@ class XAIAuth(Toolkit):
             log_debug(f"Could not confirm where the SuperGrok token was stored: {e}")
         return _FILE_DEGRADE_NOTE
 
+    async def _adegrade_note(self) -> str:
+        """The note for a database that could not hold the token, so the manager wrote a file.
+
+        Reads the store for real, where the sync twin has to assume a file: this
+        path can await an async adapter.
+        """
+        db = self.token_manager.db
+        if db is None:
+            return ""
+        try:
+            # The manager owns the deployment slot; read it rather than restate it
+            if await self._await_db(db.get_auth_token(*self.token_manager._store_key())) is not None:
+                return ""
+        except NotImplementedError:
+            pass
+        except Exception as e:
+            log_debug(f"Could not confirm where the SuperGrok token was stored: {e}")
+        return _FILE_DEGRADE_NOTE
+
     # ------------------------------------------------------------------
     # The pending login: a db row when the backend can hold one, else memory
+    #
+    # The sync helpers below route through _pending_db(), which refuses an async
+    # backend they cannot await and falls back to process memory. Their async
+    # twins deliberately skip it and use token_manager.db directly: awaiting
+    # either flavor is the whole point, and it is what carries a login to
+    # whichever replica handles the user's next turn.
     # ------------------------------------------------------------------
 
     def _pending_db(self) -> Optional[Any]:
@@ -233,6 +355,29 @@ class XAIAuth(Toolkit):
                 log_debug(f"Could not save the pending SuperGrok login to the DB: {e}")
         self._pending[user_id] = pending
 
+    async def _astash(self, user_id: str, pending: Dict[str, Any]) -> None:
+        db = self.token_manager.db
+        payload = self._encrypt(pending) if db is not None else None
+        if db is not None and payload is not None:
+            try:
+                await self._await_db(
+                    db.upsert_auth_token(
+                        {
+                            "provider": "xai",
+                            "user_id": user_id,
+                            "service": _PENDING_SERVICE,
+                            "token_data": payload,
+                            "granted_scopes": [],
+                        }
+                    )
+                )
+                return
+            except NotImplementedError:
+                log_warning("Database does not support auth token storage")
+            except Exception as e:
+                log_debug(f"Could not save the pending SuperGrok login to the DB: {e}")
+        self._pending[user_id] = pending
+
     def _read_pending(self, user_id: str) -> Optional[Dict[str, Any]]:
         db = self._pending_db()
         if db is not None:
@@ -254,6 +399,33 @@ class XAIAuth(Toolkit):
         if db is not None:
             try:
                 db.delete_auth_token("xai", user_id, _PENDING_SERVICE)
+            except NotImplementedError:
+                log_warning("Database does not support auth token deletion")
+            except Exception as e:
+                log_debug(f"Could not delete the pending SuperGrok login from the DB: {e}")
+        self._pending.pop(user_id, None)
+
+    async def _aread_pending(self, user_id: str) -> Optional[Dict[str, Any]]:
+        db = self.token_manager.db
+        if db is not None:
+            row = None
+            try:
+                row = await self._await_db(db.get_auth_token("xai", user_id, _PENDING_SERVICE))
+            except NotImplementedError:
+                log_warning("Database does not support auth token storage")
+            except Exception as e:
+                log_debug(f"Could not read the pending SuperGrok login from the DB: {e}")
+            if row is not None:
+                stored = self._decrypt(row.get("token_data"))
+                if stored is not None:
+                    return stored
+        return self._pending.get(user_id)
+
+    async def _aclear_pending(self, user_id: str) -> None:
+        db = self.token_manager.db
+        if db is not None:
+            try:
+                await self._await_db(db.delete_auth_token("xai", user_id, _PENDING_SERVICE))
             except NotImplementedError:
                 log_warning("Database does not support auth token deletion")
             except Exception as e:
