@@ -940,6 +940,31 @@ class TestDiscovery:
         assert out == {"agents": [], "count": 0, "total": 0}
 
 
+def _nested_child_step(step_input):
+    from agno.workflow.step import StepOutput
+
+    return StepOutput(content="CHILD RAN", success=True)
+
+
+def _nested_child_workflow():
+    from agno.workflow.step import Step
+    from agno.workflow.workflow import Workflow
+
+    return Workflow(id="child", name="Child", steps=[Step(name="c", executor=_nested_child_step)])
+
+
+def _save_nested_parent(db) -> None:
+    """Store a parent whose only step targets a nested workflow.
+
+    Going through Workflow.save is the point: it is the public API that produces
+    the nested shape, and it cascades the child into the same catalog."""
+    from agno.workflow.step import Step
+    from agno.workflow.workflow import Workflow
+
+    parent = Workflow(id="parent", name="Parent", steps=[Step(name="call", workflow=_nested_child_workflow())])
+    parent.save(db=db, stage="published")
+
+
 # ----------------------------------------------------------------------
 # StudioTools embedding
 # ----------------------------------------------------------------------
@@ -1251,7 +1276,60 @@ class TestStudioEmbedding:
             db.upsert_config(component_id=component_id, config=config, stage="published")
 
         result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
-        assert "cannot reconstruct" in result["error"]
+        assert "cannot be reconstructed" in result["error"]
+        assert "child" in result["error"]
+
+    def test_a_saved_nested_workflow_dispatches_when_the_child_is_registered(self, db, registry):
+        """A registered child rebuilds and runs for real, so the parent is
+        dispatchable. Asserting the child's own content is what separates a real
+        run from a placeholder that no-ops without failing the parent."""
+        registry.functions = [_nested_child_step]
+        registry.workflows = [_nested_child_workflow()]
+        _save_nested_parent(db)
+
+        result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+
+        assert "error" not in result
+        assert result["status"] == "COMPLETED"
+        assert "CHILD RAN" in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_a_saved_nested_workflow_dispatches_on_the_async_path(self, db, registry):
+        registry.functions = [_nested_child_step]
+        registry.workflows = [_nested_child_workflow()]
+        _save_nested_parent(db)
+
+        result = _loads(await StudioRunnerTools(registry=registry, db=db).arun_workflow("parent", "hi"))
+
+        assert "error" not in result
+        assert result["status"] == "COMPLETED"
+        assert "CHILD RAN" in result["content"]
+
+    def test_an_unregistered_nested_workflow_is_still_refused(self, db, registry):
+        """The child is nowhere the runner can reach it, so the placeholder is
+        what would run. The refusal has to name the remedy that applies."""
+        registry.functions = [_nested_child_step]
+        _save_nested_parent(db)
+
+        result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+
+        assert "cannot be reconstructed" in result["error"]
+        assert "Registry(workflows=[...])" in result["error"]
+
+    def test_a_nested_workflow_only_in_the_db_is_still_refused(self, db, registry):
+        """parent.save cascades the child into the same catalog, but a nested
+        step resolves from the registry only -- there is no db-load tier. A
+        stored-but-unregistered child is the boundary the registry tier does not
+        cross, so it stays a refusal."""
+        registry.functions = [_nested_child_step]
+        _save_nested_parent(db)
+
+        child_config = db.get_config(component_id="child")
+        assert child_config is not None
+
+        result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+
+        assert "cannot be reconstructed" in result["error"]
         assert "child" in result["error"]
 
     def test_bare_executor_step_that_copies_to_itself_is_refused(self, db):
@@ -1482,7 +1560,7 @@ class TestStudioEmbedding:
         )
 
         runner = StudioRunnerTools(registry=registry, db=db)
-        assert "cannot reconstruct" not in _loads(runner.run_workflow("fy", "hi")).get("error", "")
+        assert "cannot be reconstructed" not in _loads(runner.run_workflow("fy", "hi")).get("error", "")
 
     def test_a_failed_reference_read_refuses_rather_than_passes(self, db, registry):
         """A db read that fails is not evidence of fidelity. Swallowing it would

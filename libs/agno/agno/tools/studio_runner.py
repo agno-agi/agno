@@ -1711,16 +1711,18 @@ class StudioRunnerTools(Toolkit):
             "declares."
         )
 
-    @staticmethod
-    def _require_reconstructable_steps(config: Dict[str, Any], workflow_id: str) -> None:
-        """Refuse to dispatch a stored workflow whose step targets another workflow.
+    def _require_reconstructable_steps(self, config: Dict[str, Any], workflow_id: str) -> None:
+        """Refuse to dispatch a stored workflow whose step targets a workflow this
+        runner cannot supply.
 
-        A nested workflow serializes as ``workflow_id`` alone, and Step.from_dict
-        cannot rebuild one: it installs a placeholder that returns an unsuccessful
-        StepOutput. A failed step does not fail its workflow, so the parent run
-        would report COMPLETED while the child never executed. Reads and edits
-        load the same workflow without this check, so the step stays
-        inspectable."""
+        A nested workflow serializes as ``workflow_id`` alone and resolves from
+        the registry only: there is no db-load tier, because loading a stored
+        workflow from inside a step would recurse through from_dict and needs its
+        own cycle guard before it can be safe. An id the registry cannot supply
+        leaves a placeholder that returns an unsuccessful StepOutput, and a failed
+        step does not fail its workflow, so the parent run would report COMPLETED
+        while the child never executed. Reads and edits load the same workflow
+        without this check, so the step stays inspectable."""
         nested: List[str] = []
 
         def walk(value: Any) -> None:
@@ -1739,12 +1741,21 @@ class StudioRunnerTools(Toolkit):
                 walk(value.get(branch))
 
         walk(config.get("steps"))
+        # Only the ids the registry cannot supply are a refusal. The check
+        # deliberately asks the registry directly rather than the dispatch
+        # lookup: include_all_components gates DIRECT dispatch by id, not nested
+        # references, and a stored parent already dispatches a registry-only
+        # agent under that flag. Routing this through the dispatch lookup would
+        # split the two apart.
+        nested = [wid for wid in nested if self.registry is None or self.registry.get_workflow(wid) is None]
         if nested:
             raise ComponentNotDispatchableError(
-                f"Workflow '{workflow_id}' has a step targeting workflow "
-                f"'{', '.join(sorted(set(nested)))}', which the runner cannot reconstruct; it would report "
-                "success without running that step. Inline the nested workflow's steps into this one, or "
-                "dispatch it separately."
+                f"Workflow '{workflow_id}' has a step targeting workflow '{', '.join(sorted(set(nested)))}', "
+                "which is not in this runner's registry, so it cannot be reconstructed; it would report "
+                "success without running that step. Add that workflow to the registry "
+                "(Registry(workflows=[...])) -- storing it in the database is not enough, a nested step "
+                "resolves from the registry only -- or inline its steps into this one and dispatch it "
+                "separately."
             )
 
     @staticmethod
