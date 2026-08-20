@@ -1,10 +1,20 @@
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
-from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.base import (
+    AsyncBaseDb,
+    BaseDb,
+    ComponentArchivedError,
+    ComponentCycleError,
+    ComponentDependencyError,
+    ComponentDraftRequiredError,
+    ComponentLastConfigError,
+    ComponentVersionConflictError,
+)
 from agno.db.base import ComponentType as DbComponentType
 from agno.db.utils import DB_TABLE_NAME_KEYS
 from agno.os.auth import get_authentication_dependency
@@ -13,6 +23,7 @@ from agno.os.schema import (
     BadRequestResponse,
     ComponentConfigResponse,
     ComponentCreate,
+    ComponentDeleteRequest,
     ComponentResponse,
     ComponentType,
     ComponentUpdate,
@@ -22,15 +33,126 @@ from agno.os.schema import (
     NotFoundResponse,
     PaginatedResponse,
     PaginationInfo,
+    SetCurrentRequest,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import draft_preview_identity, may_read_draft_configs
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
-from agno.utils.string import generate_id_from_name, hash_string_sha256
+from agno.utils.string import generate_component_id_from_name, hash_string_sha256, validate_component_id
 
 logger = logging.getLogger(__name__)
+
+
+def _related_component_ids(db: BaseDb, component_id: str, version: Optional[int] = None) -> Set[str]:
+    """The ids the graph around a component can name in a conflict message.
+
+    Both directions matter: the parents that pin this component (a delete or
+    an archive names them) and the children its live - or explicitly named -
+    version pins (a restore or a publish names those instead).
+    """
+    related: Set[str] = set()
+    for link in db.get_dependents(component_id) or []:
+        parent_component_id = link.get("parent_component_id")
+        if isinstance(parent_component_id, str):
+            related.add(parent_component_id)
+
+    versions: Set[int] = set()
+    component = db.get_component(component_id, include_deleted=True)
+    current_version = component.get("current_version") if isinstance(component, dict) else None
+    if isinstance(current_version, int):
+        versions.add(current_version)
+    if version is not None:
+        versions.add(version)
+    for pinned_version in versions:
+        try:
+            child_links = db.get_links(component_id, version=pinned_version) or []
+        except NotImplementedError:
+            continue
+        for link in child_links:
+            child_component_id = link.get("child_component_id")
+            if isinstance(child_component_id, str):
+                related.add(child_component_id)
+    return related
+
+
+def _conflict_detail(
+    db: BaseDb,
+    component_id: Optional[str],
+    scoped_user_id: Optional[str],
+    exc: Exception,
+    version: Optional[int] = None,
+) -> str:
+    """409 detail for a conflict, with the ids a scoped caller may not see
+    redacted out of it.
+
+    ``db`` is typed sync on purpose: the routes reject an async database, and
+    this helper reads the graph inline. An async catalog needs its own branch
+    here, not a coroutine handed to ``get_dependents``.
+
+    A ComponentDependencyError embeds component ids in its message and a
+    scoped caller must not learn another owner's ids from one. Only those ids
+    are substituted: the message itself is preserved, because the true cause
+    differs per raise site - a blocking parent, an archived child to restore,
+    a draft child to publish - and each carries the remedy the caller needs.
+    Re-authoring it as a dependents claim asserts something that is false
+    wherever the conflict points at a child.
+    """
+    detail = str(exc)
+    if not isinstance(exc, ComponentDependencyError) or scoped_user_id is None or component_id is None:
+        return detail
+    try:
+        related = _related_component_ids(db, component_id, version)
+        foreign = sorted(
+            (
+                related_id
+                for related_id in related
+                if related_id != component_id
+                and db.get_component(related_id, user_id=scoped_user_id, include_deleted=True) is None
+            ),
+            key=lambda related_id: (-len(related_id), related_id),
+        )
+    except Exception:
+        # Without the graph there is no telling which ids the caller may see,
+        # so none of them can be shown.
+        return f"Cannot modify {component_id}: blocked by a related component."
+    if not foreign:
+        return detail
+    # One pass over the whole alternation: substituting id by id could rewrite
+    # text a previous substitution just inserted. The lookarounds keep an id
+    # that is a prefix of a visible one from matching inside it.
+    pattern = re.compile(r"(?<![\w.-])(" + "|".join(re.escape(related_id) for related_id in foreign) + r")(?![\w.-])")
+    return pattern.sub("another component", detail)
+
+
+def _reject_unsupported_guard(guard: Any, supported: str) -> None:
+    """400 when the request carries a guard half this route does not check.
+
+    Silently ignoring it lets a caller believe the write was protected.
+    ``supported`` is "latest_version" or "current_version"."""
+    if guard is None:
+        return
+    unsupported = "current_version" if supported == "latest_version" else "latest_version"
+    if getattr(guard, unsupported, None) is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This route checks guard.{supported} only; guard.{unsupported} is not honoured here. "
+            "Remove it, or use the route that enforces it.",
+        )
+
+
+# Typed catalog errors that map to 409 Conflict. They are ValueError
+# subclasses, so routes must catch them before any generic ValueError clause
+# or they would surface with the wrong status code.
+_CONFLICT_ERRORS = (
+    ComponentVersionConflictError,
+    ComponentArchivedError,
+    ComponentDependencyError,
+    ComponentCycleError,
+    ComponentLastConfigError,
+)
 
 
 def _resolve_db_in_config(
@@ -158,6 +280,184 @@ def _validate_referenced_component_ownership(
             raise HTTPException(status_code=404, detail=f"Component {referenced_id} not found")
 
 
+_BAD_VERSION = "Link child_version {raw!r} is not an integer version number"
+
+# Versions are stored in an INTEGER column. A value outside its range reaches
+# the database as a query parameter and comes back as a driver error, i.e. a
+# 500 on caller input, so the range is part of the shape check.
+_MAX_VERSION = 2**31 - 1
+
+
+def _require_version_in_range(version: int) -> None:
+    if version < 1 or version > _MAX_VERSION:
+        raise HTTPException(status_code=400, detail=f"Link child_version {version} is out of range")
+
+
+def _normalize_link_versions(links: Optional[List[Dict[str, Any]]]) -> None:
+    """Make every ``child_version`` an int, in place, before anything reads it.
+
+    The links body is ``List[Dict[str, Any]]``, so the version arrives however
+    JSON spelled it. Letting the guard convert it one way and the INTEGER
+    column convert it another is the whole bug: ``int()`` truncates, while
+    Postgres assignment-casts a float by ROUNDING, so a pin sent as ``2.6``
+    was checked at version 2 and stored at version 3. Whatever survives here
+    is what both the guard and the adapter see, so they cannot disagree.
+
+    A spelling that names no version is refused rather than skipped -- skipping
+    is how a guard on a caller-supplied field gets walked around.
+    """
+    if not links:
+        return
+    for link in links:
+        if not isinstance(link, dict) or "child_version" not in link:
+            continue
+        raw = link["child_version"]
+        if raw is None:
+            continue  # The adapter requires it and says so; not this rule's refusal.
+        # bool is an int subclass; True would otherwise be stored as version 1.
+        if isinstance(raw, bool):
+            raise HTTPException(status_code=400, detail=_BAD_VERSION.format(raw=raw))
+        if isinstance(raw, int):
+            _require_version_in_range(raw)
+            continue
+        if isinstance(raw, float):
+            # 2.0 names version 2; 2.6 names no version at all and must not be
+            # rounded into one by the column on the way in.
+            if not raw.is_integer():
+                raise HTTPException(status_code=400, detail=_BAD_VERSION.format(raw=raw))
+            _require_version_in_range(int(raw))
+            link["child_version"] = int(raw)
+            continue
+        if isinstance(raw, str):
+            try:
+                coerced = int(raw.strip())
+            except (TypeError, ValueError):
+                # Without this the string reaches the INTEGER column and the
+                # driver error surfaces as a 500 on caller input.
+                raise HTTPException(status_code=400, detail=_BAD_VERSION.format(raw=raw))
+            _require_version_in_range(coerced)
+            link["child_version"] = coerced
+            continue
+        raise HTTPException(status_code=400, detail=_BAD_VERSION.format(raw=raw))
+
+
+def _validate_pinned_versions_readable(
+    db: BaseDb,
+    links: Optional[List[Dict[str, Any]]],
+    request: Request,
+) -> None:
+    """Reject a caller-supplied pin at a version that caller may not read.
+
+    ``_validate_referenced_component_ownership`` asks whether the referenced
+    COMPONENT is visible; a link also names a VERSION, and visibility is not
+    readable depth. Publishing shares one version, so a pin at an unpublished
+    version of a shared component would let a caller compose another owner's
+    draft into its own component and read it back through the detail routes --
+    the disclosure ``GET /components/{id}/configs/{version}`` refuses.
+
+    The refusal is that route's, verbatim, so the two agree and neither
+    becomes an oracle for the other. A version that does not exist is left
+    alone: the adapter's own pin validation answers that.
+    """
+    if not links:
+        return
+    actor, privileged = draft_preview_identity(request)
+    if privileged or actor is None:
+        return
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        child_id = link.get("child_component_id")
+        if not isinstance(child_id, str):
+            continue
+        child_version = link.get("child_version")
+        if not isinstance(child_version, int):
+            continue
+        try:
+            child_row = db.get_component(child_id)
+            if child_row is None:
+                continue  # Code-defined or absent: not this check's business.
+            child_config = db.get_config(component_id=child_id, version=child_version)
+        except NotImplementedError:
+            return
+        if not isinstance(child_config, dict):
+            continue
+        if child_config.get("stage") != "published" and not may_read_draft_configs(child_row, actor, privileged):
+            raise HTTPException(status_code=404, detail=f"Config {child_id} v{child_version} not found")
+
+
+def _redact_db_connection(value: Any) -> Any:
+    """Strip connection-defining fields from every ``db`` block in a config.
+
+    ``_resolve_db_in_config`` stores the resolved database's full ``to_dict()``
+    so the component rebuilds without the registry. That dict carries whatever
+    the adapter exposes -- ``db_url`` with its credentials on Postgres, a
+    ``db_file`` path on SQLite, a plaintext ``password`` on ClickHouse -- and
+    publishing a component now makes its config readable by every actor.
+
+    The keep-list is positive, not a list of secrets to remove: an adapter that
+    grows a new connection field must not silently start leaking it. What
+    survives is what a reader legitimately needs to understand the component --
+    which database it points at, and which tables it uses.
+    """
+    if isinstance(value, list):
+        return [_redact_db_connection(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    redacted = {key: _redact_db_connection(item) for key, item in value.items()}
+    db_block = redacted.get("db")
+    if isinstance(db_block, dict):
+        redacted["db"] = {
+            key: item for key, item in db_block.items() if key in ("id", "type") or key.endswith("_table")
+        }
+    return redacted
+
+
+def _config_response(
+    config: Dict[str, Any], component_row: Optional[Dict[str, Any]], scoped_user_id: Optional[str]
+) -> ComponentConfigResponse:
+    """A config as this caller may read it.
+
+    Redaction is for configs the caller cannot write back, so it is decided by
+    the write rule itself rather than by a second rule of its own. The only
+    write the API offers is a whole config: hand a caller a redacted body it is
+    allowed to save, and the next save stores the redaction, destroying the
+    connection - permanently for a nested block, since the resolver repairs
+    only the top-level one.
+
+    So the predicate here is exactly the negation of ``_require_write_ownership``:
+    a caller that guard would refuse reads the config without the database's
+    connection details, and a caller it would let through reads it whole. Both
+    rules must read the SAME identity - ``get_scoped_user_id`` - because it is
+    the one that honours ``user_isolation``; deciding reads from a different
+    identity is what let the two disagree.
+    """
+    owner = (component_row or {}).get("user_id")
+    if scoped_user_id is not None and owner != scoped_user_id:
+        blob = config.get("config")
+        if isinstance(blob, dict):
+            config = {**config, "config": _redact_db_connection(blob)}
+    return ComponentConfigResponse(**config)
+
+
+def _require_write_ownership(existing: Dict[str, Any], scoped_user_id: Optional[str], verb: str = "modify") -> None:
+    """Refuse a scoped caller writing to a component it does not own.
+
+    Publishing shares a component for reading, running and composing; mutation
+    stays owner-scoped. The route has already resolved the row through the
+    scoped visibility read, so this refusal is never an existence oracle: a row
+    the caller cannot see answered 404 there, and a row it can see - shared
+    (unowned), or another owner's published one - gets the honest 403 here.
+    """
+    if scoped_user_id is None:
+        return
+    owner = existing.get("user_id")
+    if owner is None:
+        raise HTTPException(status_code=403, detail=f"Cannot {verb} shared component")
+    if owner != scoped_user_id:
+        raise HTTPException(status_code=403, detail=f"Cannot {verb} component owned by another user")
+
+
 def _resolve_member_links(
     config: Dict[str, Any],
     db: BaseDb,
@@ -199,7 +499,9 @@ def _resolve_member_links(
         else:
             continue
 
-        if not child_id:
+        # A member reference is a component id; anything else is caller garbage
+        # that would reach the db layer as a bind parameter and 500 there.
+        if not child_id or not isinstance(child_id, str):
             continue
 
         # Prefer a persisted DB component: create a link so the graph is complete.
@@ -227,6 +529,141 @@ def _resolve_member_links(
             unresolved.append(child_id)
 
     return links, unresolved
+
+
+def _resolve_step_links(
+    config: Dict[str, Any],
+    db: BaseDb,
+    registry: Optional[Registry] = None,
+) -> List[Dict[str, Any]]:
+    """Build ``component_links`` rows for a workflow config's ``steps``.
+
+    The traversal, the link keys and the collision rule are shared with
+    ``Workflow.save`` so a workflow written here pins exactly what the same
+    workflow written through the SDK pins. The archive and publish guards read
+    these rows, and a write that skips them lets a step's agent archive while
+    a published workflow still points at it.
+
+    A step whose child is not a persisted component gets no row: it is a
+    code-defined component, resolved from the registry at load time. A child
+    that exists but has no current version gets none either - a link pins one
+    published version, and pinning a draft would refuse the parent's own
+    publish.
+
+    Raises:
+        WorkflowLinkCollisionError: If two steps share a link key but pin
+            different children. It is a ValueError, so the routes answer 400.
+    """
+    from agno.workflow.workflow import derive_step_links
+
+    def pin_child(link: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        child_component_id = link.get("child_component_id")
+        # A step reference is a component id; anything else is caller garbage
+        # that would reach the db layer as a bind parameter and 500 there.
+        if not child_component_id or not isinstance(child_component_id, str):
+            return None
+        child_component = db.get_component(child_component_id)
+        if child_component is None:
+            return None
+        child_version = child_component.get("current_version")
+        if child_version is None:
+            return None
+        link["child_version"] = child_version
+        return link
+
+    return derive_step_links(
+        config.get("steps"),
+        pin_child=pin_child,
+        workflow_id=config.get("id"),
+    )
+
+
+def _derived_links_for_config(
+    component_id: str,
+    config: Optional[Dict[str, Any]],
+    links: Optional[List[Dict[str, Any]]],
+    db: BaseDb,
+    registry: Optional[Registry] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Link rows for a team or workflow config saved through the config routes.
+
+    ``create_component`` derives these from the config; the config routes only
+    persisted caller-supplied ``links``, so a member or step added by editing a
+    config got no link row. Without one the child is not a dependent: it
+    archives freely and the parent keeps a reference that resolves to nothing,
+    while the same child at create time correctly conflicts.
+
+    Explicit links win - a caller that sent its own link set is authoritative.
+    None means "nothing to derive from", which leaves the version's existing
+    rows alone; a config that derives nothing returns an empty list, which
+    clears them. Collapsing the two would leave a version storing an empty
+    composition next to a live link row, and the ex-child could never be
+    archived.
+    """
+    if links is not None:
+        return links
+    if not isinstance(config, dict):
+        return None
+    existing = db.get_component(component_id)
+    if existing is None:
+        return None
+    component_type = str(existing.get("component_type"))
+    if component_type == ComponentType.TEAM.value:
+        derived, _unresolved = _resolve_member_links(config, db, registry)
+        # Unresolved members are not raised here: unlike create, an edit may
+        # legitimately reference a code-defined member this process cannot see.
+        return derived
+    if component_type == ComponentType.WORKFLOW.value:
+        return _resolve_step_links(config, db, registry)
+    return None
+
+
+def _project_live_version(
+    db: BaseDb,
+    component_id: str,
+    scoped_user_id: Optional[str],
+) -> Dict[str, Any]:
+    """The catalog row fields the component's live config version owns.
+
+    Publishing re-projects name/description/metadata onto the row inside the
+    pointer transaction, so a pointer moved any other way - a rollback - has to
+    do the same or listings keep serving the identity of a version that is no
+    longer live. The live version is read back from the row rather than taken
+    from the version that was asked for: a pointer that moved on since must not
+    be projected over.
+    """
+    component = db.get_component(component_id, user_id=scoped_user_id)
+    if component is None:
+        return {}
+    live_version = component.get("current_version")
+    if live_version is None:
+        return {}
+    row = db.get_config(component_id=component_id, version=live_version)
+    config = row.get("config") if isinstance(row, dict) else None
+    if not isinstance(config, dict):
+        return {}
+    # Present-but-empty is a CLEARED field and must be projected explicitly,
+    # because the adapters read None as "leave this column alone" - otherwise
+    # the row keeps describing the version that used to be live. Absent is
+    # different: description and metadata are also first-class columns set
+    # through POST/PATCH /components and never written into a config, so
+    # projecting an empty value for a key the config does not carry would
+    # destroy row data no version can restore.
+    # The adapter's own publish projection is the contract to mirror: name when
+    # it is not None, description on key PRESENCE, metadata when it is not
+    # None. The one difference is the mechanism - this projection is applied
+    # through upsert_component, which reads None as "leave the column alone",
+    # so a present-but-empty description is projected as "" to actually clear.
+    projection: Dict[str, Any] = {}
+    if config.get("name") is not None:
+        projection["name"] = config["name"]
+    elif component.get("name") is not None:
+        projection["name"] = component["name"]
+    if "description" in config:
+        projection["description"] = config.get("description") or ""
+    if config.get("metadata") is not None:
+        projection["metadata"] = config["metadata"]
+    return projection
 
 
 def get_components_router(
@@ -271,6 +708,9 @@ def attach_routes(
         component_type: Optional[ComponentType] = Query(None, description="Filter by type: agent, team, workflow"),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
+        include_deleted: bool = Query(
+            False, description="Also list archived (soft-deleted) components, marked by a deleted_at timestamp"
+        ),
     ) -> PaginatedResponse[ComponentResponse]:
         try:
             start_time_ms = time.time() * 1000
@@ -281,6 +721,7 @@ def attach_routes(
 
             components, total_count = db.list_components(
                 component_type=DbComponentType(component_type.value) if component_type else None,
+                include_deleted=include_deleted,
                 limit=limit,
                 offset=offset,
                 exclude_component_ids=exclude_ids or None,
@@ -322,10 +763,21 @@ def attach_routes(
             scoped_user_id = get_scoped_user_id(request)
             component_id = body.component_id
             if component_id is None:
-                component_id = generate_id_from_name(body.name)
+                # The strict mint, the one StudioTools uses: it never produces a
+                # value validate_component_id would reject, so a machine-minted
+                # id is always a safe single URL path segment. The loose
+                # generator keeps "/" and "?" from a display name, and an id
+                # carrying "/" is not merely unaddressable - it slips past
+                # RUN_ENDPOINT_RE, so the schedule guards that read a run
+                # endpoint fail open on it.
+                component_id = generate_component_id_from_name(body.name)
                 # Owner-derived suffix so two users creating the same name get distinct component_ids.
                 if scoped_user_id:
                     component_id = f"{component_id}-{hash_string_sha256(scoped_user_id)[:8]}"
+            else:
+                problem = validate_component_id(component_id)
+                if problem is not None:
+                    raise HTTPException(status_code=400, detail=problem)
 
             # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}
@@ -355,6 +807,12 @@ def attach_routes(
                             ),
                         )
                     links = member_links or None
+            elif body.component_type == ComponentType.WORKFLOW:
+                # A workflow's steps pin their children the same way a team's
+                # members do. Unresolved step references are not rejected the
+                # way unresolved members are: a step may name a code-defined
+                # executor this process cannot see.
+                links = _resolve_step_links(config, db, registry) or None
 
             # Falls back to the unscoped JWT sub so admin-created components still carry an owner.
             creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
@@ -380,6 +838,10 @@ def attach_routes(
             return ComponentResponse(**component)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -398,9 +860,14 @@ def attach_routes(
     async def get_component(
         request: Request,
         component_id: str = Path(description="Component ID"),
+        include_deleted: bool = Query(
+            False, description="Also return an archived (soft-deleted) component, marked by a deleted_at timestamp"
+        ),
     ) -> ComponentResponse:
         try:
-            component = db.get_component(component_id, user_id=get_scoped_user_id(request))
+            component = db.get_component(
+                component_id, user_id=get_scoped_user_id(request), include_deleted=include_deleted
+            )
             if component is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             return ComponentResponse(**component)
@@ -429,10 +896,27 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not modify them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id)
 
+            # upsert_component has no CAS parameter; the guard is enforced as a
+            # pre-check against the row that was just read.
+            _reject_unsupported_guard(body.guard, "current_version")
+            if body.guard is not None and body.guard.current_version is not None:
+                actual_current = existing.get("current_version")
+                if actual_current != body.guard.current_version:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Component {component_id} current version is {actual_current}, "
+                            f"expected {body.guard.current_version}"
+                        ),
+                    )
+
+            # ALL body validation precedes the first write: the pointer move
+            # below commits immediately, so a late parse failure (a bogus
+            # component_type ValueError -> 400) must not land AFTER the pointer
+            # already moved - the 400 has to leave the component untouched.
             update_kwargs: Dict[str, Any] = {"component_id": component_id}
             if body.name is not None:
                 update_kwargs["name"] = body.name
@@ -440,15 +924,42 @@ def attach_routes(
                 update_kwargs["description"] = body.description
             if body.metadata is not None:
                 update_kwargs["metadata"] = body.metadata
-            if body.current_version is not None:
-                update_kwargs["current_version"] = body.current_version
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
+
+            # Pointer moves go through set_current_version, never through
+            # upsert_component: it enforces the published-only dispatch
+            # invariant (drafts and tombstones are refused with ValueError ->
+            # 400, conflicts with ComponentVersionConflictError -> 409), while
+            # upsert_component would write the pointer blindly.
+            if body.current_version is not None:
+                moved = db.set_current_version(
+                    component_id,
+                    version=body.current_version,
+                    expected_current_version=body.guard.current_version if body.guard else None,
+                    user_id=scoped_user_id,
+                )
+                if not moved:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Config {component_id} v{body.current_version} not found",
+                    )
+                # The row's identity follows the version that is now live,
+                # except where this request sets those fields itself.
+                for field, value in _project_live_version(db, component_id, scoped_user_id).items():
+                    update_kwargs.setdefault(field, value)
 
             component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
             return ComponentResponse(**component)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(
+                status_code=409,
+                detail=_conflict_detail(db, component_id, scoped_user_id, e, version=body.current_version),
+            )
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -465,22 +976,94 @@ def attach_routes(
     async def delete_component(
         request: Request,
         component_id: str = Path(description="Component ID"),
+        expected_current_version: Optional[int] = Query(
+            None, description="Optional compare-and-set guard on the current version"
+        ),
+        body: Optional[ComponentDeleteRequest] = Body(
+            None, description="Optional compare-and-set guard, matching the other guarded routes"
+        ),
     ) -> None:
         try:
             scoped_user_id = get_scoped_user_id(request)
+            # The other four guarded routes take a ComponentGuard in the body;
+            # this one historically took a bare query param. Accept both so a
+            # caller who follows the body pattern is honoured rather than
+            # silently ignored on the one destructive route, and reject
+            # guard.latest_version, which this route cannot enforce.
+            body_guard = body.guard if body is not None else None
+            _reject_unsupported_guard(body_guard, "current_version")
+            if body_guard is not None and body_guard.current_version is not None:
+                if expected_current_version is not None and expected_current_version != body_guard.current_version:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Conflicting guards: expected_current_version query param and "
+                        "guard.current_version disagree. Send one.",
+                    )
+                expected_current_version = body_guard.current_version
+
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not delete them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot delete shared component")
-            deleted = db.delete_component(component_id, user_id=scoped_user_id)
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id, verb="delete")
+            # The schedule cascade rides the delete inside the adapter, so every
+            # delete surface carries it and a cascade failure rolls the archive
+            # back rather than leaving an archived component with live schedules.
+            deleted = db.delete_component(
+                component_id, user_id=scoped_user_id, expected_current_version=expected_current_version
+            )
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error deleting component: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.post(
+        "/components/{component_id}/restore",
+        response_model=ComponentResponse,
+        response_model_exclude_none=True,
+        status_code=200,
+        operation_id="restore_component",
+        summary="Restore Component",
+        description="Restore an archived (soft-deleted) component by ID.",
+    )
+    async def restore_component(
+        request: Request,
+        component_id: str = Path(description="Component ID"),
+    ) -> ComponentResponse:
+        try:
+            scoped_user_id = get_scoped_user_id(request)
+            restored = db.restore_component(component_id, user_id=scoped_user_id)
+            if not restored:
+                existing = db.get_component(component_id, user_id=scoped_user_id, include_deleted=True)
+                if existing is None:
+                    raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+                if existing.get("deleted_at") is None:
+                    raise HTTPException(status_code=409, detail="Component is not archived")
+                # Archived but not restorable by this caller: the row is shared
+                # (unowned) and the caller is scoped.
+                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+
+            component = db.get_component(component_id, user_id=scoped_user_id)
+            if component is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            return ComponentResponse(**component)
+        except HTTPException:
+            raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            log_error(f"Error restoring component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -498,10 +1081,15 @@ def attach_routes(
         include_config: bool = Query(True, description="Include full config blob"),
     ) -> List[ComponentConfigResponse]:
         try:
-            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+            scoped_user_id = get_scoped_user_id(request)
+            component_row = db.get_component(component_id, user_id=scoped_user_id)
+            if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             configs = db.list_configs(component_id, include_config=include_config)
-            return [ComponentConfigResponse(**c) for c in configs]
+            actor, privileged = draft_preview_identity(request)
+            if not may_read_draft_configs(component_row, actor, privileged):
+                configs = [c for c in configs if c.get("stage") == "published"]
+            return [_config_response(c, component_row, scoped_user_id) for c in configs]
         except HTTPException:
             raise
         except Exception as e:
@@ -527,9 +1115,8 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not modify them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id)
             # Resolve db from config if present
             config_data = body.config or {}
             config_data = _resolve_db_in_config(config_data, db, registry)
@@ -541,7 +1128,13 @@ def attach_routes(
                 scoped_user_id=scoped_user_id,
                 own_component_id=component_id,
             )
+            # A link names a version as well as a component, and visibility is
+            # not readable depth.
+            _normalize_link_versions(body.links)
+            _validate_pinned_versions_readable(db, body.links, request)
 
+            _reject_unsupported_guard(body.guard, "latest_version")
+            links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
             config = db.upsert_config(
                 component_id=component_id,
                 version=None,  # Always create new
@@ -549,11 +1142,17 @@ def attach_routes(
                 label=body.label,
                 stage=body.stage,
                 notes=body.notes,
-                links=body.links,
+                links=links,
+                expected_latest_version=body.guard.latest_version if body.guard else None,
+                user_id=scoped_user_id,
             )
             return ComponentConfigResponse(**config)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -580,9 +1179,8 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not modify them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot modify shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id)
             # Resolve db from config if present
             config_data = body.config
             if config_data is not None:
@@ -595,7 +1193,13 @@ def attach_routes(
                 scoped_user_id=scoped_user_id,
                 own_component_id=component_id,
             )
+            # A link names a version as well as a component, and visibility is
+            # not readable depth.
+            _normalize_link_versions(body.links)
+            _validate_pinned_versions_readable(db, body.links, request)
 
+            _reject_unsupported_guard(body.guard, "latest_version")
+            links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
             config = db.upsert_config(
                 component_id=component_id,
                 version=version,  # Always update existing
@@ -603,11 +1207,19 @@ def attach_routes(
                 label=body.label,
                 stage=body.stage,
                 notes=body.notes,
-                links=body.links,
+                links=links,
+                expected_latest_version=body.guard.latest_version if body.guard else None,
+                user_id=scoped_user_id,
             )
             return ComponentConfigResponse(**config)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(
+                status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e, version=version)
+            )
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -628,12 +1240,14 @@ def attach_routes(
         component_id: str = Path(description="Component ID"),
     ) -> ComponentConfigResponse:
         try:
-            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+            scoped_user_id = get_scoped_user_id(request)
+            component_row = db.get_component(component_id, user_id=scoped_user_id)
+            if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id)
             if config is None:
                 raise HTTPException(status_code=404, detail=f"No current config for {component_id}")
-            return ComponentConfigResponse(**config)
+            return _config_response(config, component_row, scoped_user_id)
         except HTTPException:
             raise
         except Exception as e:
@@ -655,13 +1269,24 @@ def attach_routes(
         version: int = Path(description="Version number"),
     ) -> ComponentConfigResponse:
         try:
-            if db.get_component(component_id, user_id=get_scoped_user_id(request)) is None:
+            scoped_user_id = get_scoped_user_id(request)
+            component_row = db.get_component(component_id, user_id=scoped_user_id)
+            if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id, version=version)
+            actor, privileged = draft_preview_identity(request)
+            if (
+                config is not None
+                and config.get("stage") != "published"
+                and not may_read_draft_configs(component_row, actor, privileged)
+            ):
+                # A draft version answers as if absent, so the 404 cannot be read
+                # as "exists but withheld".
+                config = None
 
             if config is None:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
-            return ComponentConfigResponse(**config)
+            return _config_response(config, component_row, scoped_user_id)
         except HTTPException:
             raise
         except Exception as e:
@@ -685,15 +1310,20 @@ def attach_routes(
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not delete them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot delete shared component")
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id, verb="delete")
             # Resolve version number
-            deleted = db.delete_config(component_id, version=version)
+            deleted = db.delete_config(component_id, version=version, user_id=scoped_user_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(
+                status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e, version=version)
+            )
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -713,20 +1343,36 @@ def attach_routes(
         request: Request,
         component_id: str = Path(description="Component ID"),
         version: int = Path(description="Version number"),
+        body: Optional[SetCurrentRequest] = Body(None, description="Optional guard; an empty POST keeps working"),
     ) -> ComponentResponse:
         try:
             scoped_user_id = get_scoped_user_id(request)
             existing = db.get_component(component_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
-            # Non-admins can read shared (unowned) components but not modify them.
-            if scoped_user_id is not None and existing.get("user_id") is None:
-                raise HTTPException(status_code=403, detail="Cannot modify shared component")
-            success = db.set_current_version(component_id, version=version)
+            # Reads share on publish; writes stay owner-scoped.
+            _require_write_ownership(existing, scoped_user_id)
+            _reject_unsupported_guard(body.guard if body else None, "current_version")
+            success = db.set_current_version(
+                component_id,
+                version=version,
+                expected_current_version=body.guard.current_version if body and body.guard else None,
+                user_id=scoped_user_id,
+            )
             if not success:
                 raise HTTPException(
                     status_code=404, detail=f"Component {component_id} or config version {version} not found"
                 )
+
+            # The pointer moved, so the row's name/description/metadata must
+            # follow it. The rollback itself is committed either way: a failure
+            # here leaves the row stale, which must not fail the request.
+            projection = _project_live_version(db, component_id, scoped_user_id)
+            if projection:
+                try:
+                    db.upsert_component(component_id=component_id, **projection, user_id=scoped_user_id)
+                except Exception as e:
+                    log_warning(f"Rolled back {component_id} to v{version} but could not re-project its row: {e}")
 
             # Fetch and return updated component
             component = db.get_component(component_id, user_id=scoped_user_id)
@@ -736,6 +1382,12 @@ def attach_routes(
             return ComponentResponse(**component)
         except HTTPException:
             raise
+        except _CONFLICT_ERRORS as e:
+            raise HTTPException(
+                status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e, version=version)
+            )
+        except ComponentDraftRequiredError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:

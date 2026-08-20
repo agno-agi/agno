@@ -1,13 +1,18 @@
 """Integration tests for per-user component isolation.
 
 Validates that:
-- Regular users only see their own components, agents, teams, and workflows
-- Admin users (agent_os:admin scope) see all components
-- Users cannot read, update, or delete another user's component by ID
-- Users cannot run another user's DB-backed agent / team / workflow
-- Users cannot reference another user's component as a team member or
-  workflow step, at any nesting depth
-- Routes that resolve a component before checking the session do not leak its existence
+- Isolation is asymmetric by design: writes are owner-scoped always, while
+  reads scope on *stage*. A draft is the owner's alone; publishing puts a
+  component on the platform, so a published row reads, runs and composes
+  across owners, and archiving withdraws it again.
+- Read tests pin both halves -- a foreign draft invisible, a foreign published
+  component visible -- because a gate that refuses everything passes the first
+  half on its own.
+- Refusals split on what the caller can already see, so no refusal is an
+  existence oracle: an invisible component answers the same 404 a missing id
+  answers; a visible one gets an honest 403 naming the obstacle.
+- Users cannot reference another user's draft as a team member or workflow
+  step, at any nesting depth; a published component composes.
 
 Component persistence is implemented by the SQLite and Postgres adapters; these
 tests run against the SqliteDb-backed ``shared_db``.
@@ -21,6 +26,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.db.base import ComponentType
+from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 
@@ -64,17 +70,32 @@ def auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def create_component(client, token: str, name: str, component_type: str, config: dict):
-    """Create a published component over the API as the token's owner."""
+def create_component(client, token: str, name: str, component_type: str, config: dict, stage: str = "published"):
+    """Create a component over the API as the token's owner.
+
+    Defaults to published -- on the platform for everyone. Pass ``stage="draft"``
+    for the owner-private case.
+    """
     return client.post(
         "/components",
-        json={"name": name, "component_type": component_type, "config": config, "stage": "published"},
+        json={"name": name, "component_type": component_type, "config": config, "stage": stage},
         headers=auth_header(token),
     )
 
 
 # The gate tests 404 before a model is reached, so only the owner-can-run tests need a real one.
 RUNNABLE_MODEL = {"name": "OpenAIResponses", "id": "gpt-5.5", "provider": "OpenAI"}
+
+
+@pytest.fixture
+def shared_db(tmp_path):
+    """A SqliteDb of this test's own.
+
+    This suite is the only coverage of the component write routes' 403 layer,
+    so it lives under tests/unit where the PR gate runs it; the fixture it
+    used to inherit from the integration conftest is inlined here.
+    """
+    return SqliteDb(db_file=str(tmp_path / "isolation.db"))
 
 
 @pytest.fixture
@@ -98,9 +119,24 @@ def client(shared_db):
 
 @pytest.fixture
 def alice_agent(client):
-    """An agent component owned by ``user-a``."""
+    """A published agent component owned by ``user-a``: on the platform."""
     resp = create_component(
         client, create_token("user-a"), "Alice Agent", "agent", {"name": "Alice Agent", "instructions": "private"}
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["component_id"]
+
+
+@pytest.fixture
+def alice_draft(client):
+    """A draft-only agent component owned by ``user-a``: owner-private."""
+    resp = create_component(
+        client,
+        create_token("user-a"),
+        "Alice Draft",
+        "agent",
+        {"name": "Alice Draft", "instructions": "private"},
+        stage="draft",
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["component_id"]
@@ -123,23 +159,43 @@ def shared_component(shared_db):
     return "shared_component"
 
 
+def _component_state(client, component_id: str) -> dict:
+    """The owner's full view of a component: row plus config history.
+
+    Captured before and after a refused foreign write, so the refusal is
+    proven to have mutated nothing -- a 4xx alone cannot tell a clean refusal
+    from the check-then-write shape that refuses AFTER the write landed.
+    """
+    token = create_token("user-a")
+    row = client.get(f"/components/{component_id}", headers=auth_header(token))
+    configs = client.get(f"/components/{component_id}/configs", headers=auth_header(token))
+    assert row.status_code == 200
+    assert configs.status_code == 200
+    return {"row": row.json(), "configs": configs.json()}
+
+
 # --- Component isolation ---
 
 
 class TestComponentIsolation:
-    """Verify that component endpoints are scoped to the JWT user_id."""
+    """Verify that component endpoints scope reads by stage and writes by owner."""
 
-    def test_user_sees_only_own_components(self, client, alice_agent):
-        """User A's components are not visible to User B."""
+    def test_list_hides_another_owners_draft(self, client, alice_draft):
         create_component(client, create_token("user-b"), "Bob Agent", "agent", {"name": "Bob Agent"})
 
         resp = client.get("/components", headers=auth_header(create_token("user-b")))
         assert resp.status_code == 200
-        component_ids = [c["component_id"] for c in resp.json()["data"]]
-        assert alice_agent not in component_ids
+        assert alice_draft not in [c["component_id"] for c in resp.json()["data"]]
 
-    def test_admin_sees_all_components(self, client, alice_agent):
-        """Admin should see components from all users."""
+    def test_list_includes_another_owners_published_component(self, client, alice_agent):
+        create_component(client, create_token("user-b"), "Bob Agent", "agent", {"name": "Bob Agent"})
+
+        resp = client.get("/components", headers=auth_header(create_token("user-b")))
+        assert resp.status_code == 200
+        assert alice_agent in [c["component_id"] for c in resp.json()["data"]]
+
+    def test_admin_sees_all_components(self, client, alice_draft):
+        """Admin should see components from all users, drafts included."""
         create_component(client, create_token("user-b"), "Bob Agent", "agent", {"name": "Bob Agent"})
 
         resp = client.get("/components", headers=auth_header(create_admin_token()))
@@ -150,32 +206,61 @@ class TestComponentIsolation:
         resp = client.get(f"/components/{alice_agent}", headers=auth_header(create_token("user-a")))
         assert resp.json()["user_id"] == "user-a"
 
-    def test_user_cannot_get_other_users_component_by_id(self, client, alice_agent):
-        """User B should get 404 when accessing User A's component by ID."""
-        resp = client.get(f"/components/{alice_agent}", headers=auth_header(create_token("user-b")))
+    def test_get_by_id_follows_stage(self, client, alice_agent, alice_draft):
+        """A foreign draft answers 404; a foreign published component reads."""
+        token = create_token("user-b")
+        assert client.get(f"/components/{alice_draft}", headers=auth_header(token)).status_code == 404
+        assert client.get(f"/components/{alice_agent}", headers=auth_header(token)).status_code == 200
+
+        # and the owner reads both
+        owner = create_token("user-a")
+        assert client.get(f"/components/{alice_draft}", headers=auth_header(owner)).status_code == 200
+        assert client.get(f"/components/{alice_agent}", headers=auth_header(owner)).status_code == 200
+
+    def test_user_cannot_update_other_users_component(self, client, alice_agent, alice_draft):
+        """A foreign published component refuses with 403; a foreign draft answers 404. Neither mutates."""
+        token = create_token("user-b")
+        resp = client.patch(f"/components/{alice_agent}", json={"name": "hacked"}, headers=auth_header(token))
+        assert resp.status_code == 403
+        assert "another user" in resp.json()["detail"]
+
+        resp = client.patch(f"/components/{alice_draft}", json={"name": "hacked"}, headers=auth_header(token))
         assert resp.status_code == 404
 
-        # but the owner can read it
-        resp = client.get(f"/components/{alice_agent}", headers=auth_header(create_token("user-a")))
-        assert resp.status_code == 200
+        owner = create_token("user-a")
+        assert client.get(f"/components/{alice_agent}", headers=auth_header(owner)).json()["name"] == "Alice Agent"
+        assert client.get(f"/components/{alice_draft}", headers=auth_header(owner)).json()["name"] == "Alice Draft"
 
-    def test_user_cannot_update_other_users_component(self, client, alice_agent):
-        """User B updating User A's component returns 404; the name is unchanged."""
-        resp = client.patch(
-            f"/components/{alice_agent}", json={"name": "hacked"}, headers=auth_header(create_token("user-b"))
+    def test_user_cannot_delete_other_users_component(self, client, alice_agent, alice_draft):
+        """A foreign published component refuses with 403; a foreign draft answers 404. Both survive."""
+        token = create_token("user-b")
+        assert client.delete(f"/components/{alice_agent}", headers=auth_header(token)).status_code == 403
+        assert client.delete(f"/components/{alice_draft}", headers=auth_header(token)).status_code == 404
+
+        owner = create_token("user-a")
+        assert client.get(f"/components/{alice_agent}", headers=auth_header(owner)).status_code == 200
+        assert client.get(f"/components/{alice_draft}", headers=auth_header(owner)).status_code == 200
+
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("POST", "/components/{cid}/configs"),
+            ("PATCH", "/components/{cid}/configs/1"),
+            ("DELETE", "/components/{cid}/configs/1"),
+            ("POST", "/components/{cid}/configs/1/set-current"),
+        ],
+    )
+    def test_config_writes_on_anothers_published_component_refuse(self, client, alice_agent, method, path):
+        """Every config write route refuses a foreign published component with 403 and mutates nothing."""
+        before = _component_state(client, alice_agent)
+
+        resp = client.request(
+            method, path.format(cid=alice_agent), json={"config": {}}, headers=auth_header(create_token("user-b"))
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
+        assert "another user" in resp.json()["detail"]
 
-        resp = client.get(f"/components/{alice_agent}", headers=auth_header(create_token("user-a")))
-        assert resp.json()["name"] == "Alice Agent"
-
-    def test_user_cannot_delete_other_users_component(self, client, alice_agent):
-        """User B deleting User A's component returns 404; the component survives."""
-        resp = client.delete(f"/components/{alice_agent}", headers=auth_header(create_token("user-b")))
-        assert resp.status_code == 404
-
-        resp = client.get(f"/components/{alice_agent}", headers=auth_header(create_token("user-a")))
-        assert resp.status_code == 200
+        assert _component_state(client, alice_agent) == before
 
     @pytest.mark.parametrize(
         "method,path",
@@ -189,12 +274,60 @@ class TestComponentIsolation:
             ("POST", "/components/{cid}/configs/1/set-current"),
         ],
     )
-    def test_user_cannot_reach_other_users_configs(self, client, alice_agent, method, path):
-        """Every config sub-route is gated on component ownership."""
+    def test_config_routes_on_anothers_draft_component_answer_404(self, client, alice_draft, method, path):
+        """A foreign draft component is invisible: every config route answers 404."""
         resp = client.request(
-            method, path.format(cid=alice_agent), json={"config": {}}, headers=auth_header(create_token("user-b"))
+            method, path.format(cid=alice_draft), json={"config": {}}, headers=auth_header(create_token("user-b"))
         )
         assert resp.status_code == 404
+
+    def test_config_reads_on_anothers_published_component_serve_published_depth(self, client, alice_agent):
+        """A non-owner reads the published stage only: drafts above the live pointer stay the owner's."""
+        owner = create_token("user-a")
+        draft = client.post(
+            f"/components/{alice_agent}/configs",
+            json={"config": {"name": "Alice Agent", "instructions": "wip"}, "stage": "draft"},
+            headers=auth_header(owner),
+        )
+        assert draft.status_code == 201, draft.text
+        draft_version = draft.json()["version"]
+
+        token = create_token("user-b")
+        listing = client.get(f"/components/{alice_agent}/configs", headers=auth_header(token))
+        assert listing.status_code == 200
+        assert {c["stage"] for c in listing.json()} == {"published"}
+
+        assert client.get(f"/components/{alice_agent}/configs/current", headers=auth_header(token)).status_code == 200
+        assert client.get(f"/components/{alice_agent}/configs/1", headers=auth_header(token)).status_code == 200
+        # The draft version answers as if absent, so the 404 cannot be read as "exists but withheld".
+        assert (
+            client.get(f"/components/{alice_agent}/configs/{draft_version}", headers=auth_header(token)).status_code
+            == 404
+        )
+        # while the owner reads it
+        assert (
+            client.get(f"/components/{alice_agent}/configs/{draft_version}", headers=auth_header(owner)).status_code
+            == 200
+        )
+
+    def test_owner_writes_own_configs(self, client, alice_agent):
+        """The owner scope must not block a legitimate write to one's own component."""
+        owner = create_token("user-a")
+        created = client.post(
+            f"/components/{alice_agent}/configs",
+            json={"config": {"name": "Alice Agent", "instructions": "v2"}, "stage": "published"},
+            headers=auth_header(owner),
+        )
+        assert created.status_code == 201, created.text
+        version = created.json()["version"]
+
+        rollback = client.post(f"/components/{alice_agent}/configs/1/set-current", headers=auth_header(owner))
+        assert rollback.status_code == 200, rollback.text
+        assert rollback.json()["current_version"] == 1
+
+        restored = client.post(f"/components/{alice_agent}/configs/{version}/set-current", headers=auth_header(owner))
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["current_version"] == version
 
     def test_component_id_clash_does_not_confirm_other_users_component(self, client, alice_agent):
         """Claiming a taken id must not reveal that another user owns it."""
@@ -275,24 +408,52 @@ class TestSharedComponentWrites:
 
 
 class TestComponentResolutionIsolation:
-    """Verify that routes resolving DB-backed components are owner-scoped."""
+    """Routes resolving DB-backed components follow the same stage-scoped visibility."""
 
-    def test_user_does_not_see_other_users_agents(self, client, alice_agent):
+    def test_agent_listing_follows_stage(self, client, alice_agent, alice_draft):
         resp = client.get("/agents", headers=auth_header(create_token("user-b")))
         assert resp.status_code == 200
-        assert alice_agent not in [a["id"] for a in resp.json()]
+        listed = [a["id"] for a in resp.json()]
+        assert alice_draft not in listed
+        assert alice_agent in listed
 
-    def test_user_cannot_run_other_users_agent(self, client, alice_agent):
+    def test_user_cannot_run_another_owners_draft_agent(self, client, alice_draft):
         resp = client.post(
-            f"/agents/{alice_agent}/runs",
+            f"/agents/{alice_draft}/runs",
             data={"message": "hi", "stream": "false"},
             headers=auth_header(create_token("user-b")),
         )
         assert resp.status_code == 404
 
-    def test_user_cannot_get_other_users_agent(self, client, alice_agent):
-        resp = client.get(f"/agents/{alice_agent}", headers=auth_header(create_token("user-b")))
-        assert resp.status_code == 404
+    def test_running_another_owners_published_agent_passes_the_gate(self, client, alice_agent, monkeypatch):
+        """Publishing shares the run surface: a non-owner's attempt answers exactly as the owner's.
+
+        The API key is stripped so the modelless fixture's default model fails
+        fast, client-side, identically for both callers -- no network and no
+        paid calls on a keyed machine (an unresolvable model is no substitute:
+        it fails rehydration and answers 404 for everyone, hiding the gate).
+        The assertion is that the gate answers the non-owner the same as the
+        owner, never the draft 404 or the write 403.
+        """
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        as_owner = client.post(
+            f"/agents/{alice_agent}/runs",
+            data={"message": "hi", "stream": "false"},
+            headers=auth_header(create_token("user-a")),
+        )
+        as_other = client.post(
+            f"/agents/{alice_agent}/runs",
+            data={"message": "hi", "stream": "false"},
+            headers=auth_header(create_token("user-b")),
+        )
+        assert as_other.status_code == as_owner.status_code
+        assert as_other.status_code not in (403, 404)
+
+    def test_get_agent_follows_stage(self, client, alice_agent, alice_draft):
+        token = create_token("user-b")
+        assert client.get(f"/agents/{alice_draft}", headers=auth_header(token)).status_code == 404
+        assert client.get(f"/agents/{alice_agent}", headers=auth_header(token)).status_code == 200
 
     @pytest.mark.parametrize(
         "path",
@@ -302,12 +463,12 @@ class TestComponentResolutionIsolation:
             "/agents/{cid}/runs/some-run/checkpoints/0?session_id=some-session",
         ],
     )
-    def test_agent_routes_do_not_leak_component_existence(self, client, alice_agent, path):
-        """Another user's component must answer exactly as a missing one -- otherwise it is an existence oracle."""
+    def test_agent_routes_do_not_leak_component_existence(self, client, alice_draft, path):
+        """Another user's draft must answer exactly as a missing one -- otherwise it is an existence oracle."""
         token = create_token("user-b")
         method = "POST" if path.endswith("/fork") else "GET"
 
-        owned = client.request(method, path.format(cid=alice_agent), headers=auth_header(token))
+        owned = client.request(method, path.format(cid=alice_draft), headers=auth_header(token))
         missing = client.request(method, path.format(cid="no-such-component"), headers=auth_header(token))
 
         assert owned.status_code == missing.status_code
@@ -324,7 +485,7 @@ class TestComponentResolutionIsolation:
     def test_team_routes_do_not_leak_component_existence(self, client, path):
         """Team counterpart of the agent existence-oracle check."""
         resp = create_component(
-            client, create_token("user-a"), "Alice Team", "team", {"name": "Alice Team", "members": []}
+            client, create_token("user-a"), "Alice Team", "team", {"name": "Alice Team", "members": []}, stage="draft"
         )
         alice_team = resp.json()["component_id"]
         token = create_token("user-b")
@@ -437,30 +598,50 @@ class TestOwnerCanRunOwnComponents:
 
 
 class TestReferencedComponentOwnership:
-    """A scoped caller must not reference another user's component."""
+    """References follow visibility: a foreign draft cannot be referenced; a published one composes."""
 
-    def test_cannot_use_other_users_agent_as_team_member(self, client, alice_agent):
-        resp = create_component(
+    def test_team_member_reference_follows_stage(self, client, alice_agent, alice_draft):
+        token = create_token("user-b")
+        refused = create_component(
             client,
-            create_token("user-b"),
+            token,
+            "Bob Team Draft Ref",
+            "team",
+            {"name": "Bob Team Draft Ref", "members": [{"type": "agent", "agent_id": alice_draft}]},
+        )
+        assert refused.status_code == 404
+
+        composed = create_component(
+            client,
+            token,
             "Bob Team",
             "team",
             {"name": "Bob Team", "members": [{"type": "agent", "agent_id": alice_agent}]},
         )
-        assert resp.status_code == 404
+        assert composed.status_code == 201, composed.text
 
-    def test_cannot_use_other_users_agent_as_workflow_step(self, client, alice_agent):
-        resp = create_component(
+    def test_workflow_step_reference_follows_stage(self, client, alice_agent, alice_draft):
+        token = create_token("user-b")
+        refused = create_component(
             client,
-            create_token("user-b"),
+            token,
+            "Bob Workflow Draft Ref",
+            "workflow",
+            {"name": "Bob Workflow Draft Ref", "steps": [{"name": "s1", "agent_id": alice_draft}]},
+        )
+        assert refused.status_code == 404
+
+        composed = create_component(
+            client,
+            token,
             "Bob Workflow",
             "workflow",
             {"name": "Bob Workflow", "steps": [{"name": "s1", "agent_id": alice_agent}]},
         )
-        assert resp.status_code == 404
+        assert composed.status_code == 201, composed.text
 
     @pytest.mark.parametrize("container", ["Parallel", "Loop", "Condition", "Steps"])
-    def test_cannot_hide_reference_inside_a_step_container(self, client, alice_agent, container):
+    def test_cannot_hide_draft_reference_inside_a_step_container(self, client, alice_draft, container):
         """The reference walk must reach steps nested in any container type."""
         resp = create_component(
             client,
@@ -469,26 +650,33 @@ class TestReferencedComponentOwnership:
             "workflow",
             {
                 "name": f"Bob {container}",
-                "steps": [{"name": "c", "type": container, "steps": [{"name": "s", "agent_id": alice_agent}]}],
+                "steps": [{"name": "c", "type": container, "steps": [{"name": "s", "agent_id": alice_draft}]}],
             },
         )
         assert resp.status_code == 404
 
-    def test_cannot_smuggle_reference_via_new_config_version(self, client, alice_agent):
+    def test_cannot_smuggle_draft_reference_via_new_config_version(self, client, alice_agent, alice_draft):
         """The check applies to config updates, not just creation."""
         created = create_component(
             client, create_token("user-b"), "Bob Own", "workflow", {"name": "Bob Own", "steps": []}
         )
         bob_workflow = created.json()["component_id"]
 
-        resp = client.post(
+        refused = client.post(
+            f"/components/{bob_workflow}/configs",
+            json={"config": {"name": "Bob Own", "steps": [{"name": "s", "agent_id": alice_draft}]}},
+            headers=auth_header(create_token("user-b")),
+        )
+        assert refused.status_code == 404
+
+        composed = client.post(
             f"/components/{bob_workflow}/configs",
             json={"config": {"name": "Bob Own", "steps": [{"name": "s", "agent_id": alice_agent}]}},
             headers=auth_header(create_token("user-b")),
         )
-        assert resp.status_code == 404
+        assert composed.status_code == 201, composed.text
 
-    def test_cannot_smuggle_reference_via_explicit_link(self, client, alice_agent):
+    def test_cannot_smuggle_draft_reference_via_explicit_link(self, client, alice_draft):
         created = create_component(
             client, create_token("user-b"), "Bob Linked", "workflow", {"name": "Bob Linked", "steps": []}
         )
@@ -502,7 +690,7 @@ class TestReferencedComponentOwnership:
                     {
                         "link_kind": "member",
                         "link_key": "member_0",
-                        "child_component_id": alice_agent,
+                        "child_component_id": alice_draft,
                         "child_version": 1,
                     }
                 ],
@@ -533,8 +721,8 @@ class TestReferencedComponentOwnership:
         )
         assert resp.status_code == 201
 
-    def test_foreign_reference_refused_unresolvable_reference_allowed(self, client, alice_agent):
-        """Another user's component can't be referenced (404). An id that resolves to no DB row
+    def test_draft_reference_refused_unresolvable_reference_allowed(self, client, alice_draft):
+        """Another user's draft can't be referenced (404). An id that resolves to no DB row
         is allowed -- it may be a shared, code-defined component."""
         token = create_token("user-b")
         missing = client.post(
@@ -551,12 +739,12 @@ class TestReferencedComponentOwnership:
             json={
                 "name": "Bob Foreign Ref",
                 "component_type": "workflow",
-                "config": {"name": "Bob Foreign Ref", "steps": [{"name": "s", "agent_id": alice_agent}]},
+                "config": {"name": "Bob Foreign Ref", "steps": [{"name": "s", "agent_id": alice_draft}]},
             },
             headers=auth_header(token),
         )
         assert missing.status_code == 201  # unresolvable id may be code-defined -> allowed
-        assert foreign.status_code == 404  # another user's component -> refused
+        assert foreign.status_code == 404  # another user's draft -> refused
 
 
 # --- Isolation disabled ---

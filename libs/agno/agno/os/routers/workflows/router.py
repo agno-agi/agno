@@ -71,7 +71,9 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     afinalize_continue_stream,
+    allow_draft_preview,
     amark_continue_stream_running,
+    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
@@ -81,6 +83,8 @@ from agno.os.utils import (
     replayed_payload_to_sse,
     resolve_workflow,
     sse_error_frame,
+    stamp_component_version,
+    stamped_component_version,
     stored_event_replay_dicts,
 )
 from agno.run.base import RunStatus
@@ -179,22 +183,28 @@ async def handle_workflow_via_websocket(
         version = message.get("version")
         factory_input = message.get("factory_input")
 
-        # Defense-in-depth: if the caller authenticated via JWT, ensure user_id
-        # matches the JWT sub for non-admin callers. The WS dispatcher in
-        # router.py already forces this, but the handler should not trust a
-        # client-supplied user_id if called from any other code path.
+        # Defense-in-depth: an authenticated caller's identity is the token,
+        # never the client frame. The WS dispatcher in router.py already forces
+        # this, but the handler must not trust a client-supplied user_id if
+        # called from any other code path. Mirrors the HTTP route's rule
+        # (request.state.user_id, i.e. the JWT sub): a non-admin token pins
+        # user_id to its sub EVEN WHEN THE SUB IS ABSENT - a sub-less token
+        # under isolation-off must not keep a client-chosen value, or the
+        # client could claim a draft owner's identity at the preview gate
+        # below (which the HTTP route denies with actor=None).
         if ws_user_context:
             jwt_user_id = ws_user_context.get("user_id")
-            if jwt_user_id:
-                from agno.os.scopes import AgentOSScope
-
-                scopes = ws_user_context.get("scopes", [])
-                admin_scope = AgentOSScope.ADMIN.value
-                is_admin = admin_scope in scopes
-                if is_admin:
-                    user_id = user_id or jwt_user_id
-                else:
-                    user_id = jwt_user_id
+            # The admin decision belongs to the WS dispatcher, which evaluates the
+            # deployment's CONFIGURED admin scope. Re-deriving it here from the
+            # default scope name diverges as soon as a deployment configures a
+            # custom admin scope, and it diverges in the attacker's favour: a
+            # token carrying the literal default scope name as an ordinary scope
+            # would take the admin branch and keep the client frame's user_id.
+            is_admin = bool(ws_auth and ws_auth.is_admin)
+            if is_admin:
+                user_id = user_id or jwt_user_id
+            else:
+                user_id = jwt_user_id
 
         # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
         # Fails closed (403) for an identity-less token under isolation, like the REST routes.
@@ -211,6 +221,17 @@ async def handle_workflow_via_websocket(
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
+            return
+
+        # An explicit draft version is a control-plane preview: owner/admin only.
+        # Published pins were always reachable. Privilege means admin or auth
+        # off; a plain authenticated caller keeps its raw identity even when
+        # isolation is off (scoped_user_id None must not read as admin).
+        preview_privileged = bool(ws_auth and ws_auth.is_admin) or not bool(ws_auth and ws_auth.jwt_enabled)
+        if not allow_draft_preview(
+            os.db, workflow_id, version, user_id if isinstance(user_id, str) else None, privileged=preview_privileged
+        ):
+            await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
 
         # Get workflow from OS — supports both static and factory components
@@ -364,6 +385,12 @@ async def handle_workflow_via_websocket(
                 "workflows are not queueable): bounded and observable, but NOT durable."
             )
 
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the continue paths can reload the
+        # SAME version later instead of whatever is current by then.
+        ws_run_kwargs: Dict[str, Any] = {}
+        stamp_component_version(ws_run_kwargs, version)
+
         # Execute workflow in background with streaming via WebSocket
         await workflow.arun(  # type: ignore
             input=user_message,
@@ -374,6 +401,7 @@ async def handle_workflow_via_websocket(
             background=True,
             websocket=websocket,
             enable_websocket=True,
+            **ws_run_kwargs,
         )
 
         # NOTE: Don't register the original websocket in the manager
@@ -529,6 +557,7 @@ async def handle_workflow_subscription(
                         create_fresh=True,
                         user_id=scoped_user_id,
                         strict=False,
+                        published_only=False,
                     )
                 except FactoryContextRequired:
                     workflow = None
@@ -659,6 +688,7 @@ async def handle_workflow_continue_via_websocket(
     websocket: WebSocket,
     message: dict,
     os: "AgentOS",
+    ws_user_context: Optional[Dict[str, Any]] = None,
     ws_auth: Optional[WebSocketAuthContext] = None,
 ):
     """Handle continuing a paused workflow run via WebSocket"""
@@ -668,6 +698,30 @@ async def handle_workflow_continue_via_websocket(
         session_id = message.get("session_id")
         user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
+
+        # Defense-in-depth: an authenticated caller's identity is the token,
+        # never the client frame. The WS dispatcher in router.py already forces
+        # this, but the handler must not trust a client-supplied user_id if
+        # called from any other code path. Mirrors the HTTP route's rule
+        # (request.state.user_id, i.e. the JWT sub): a non-admin token pins
+        # user_id to its sub EVEN WHEN THE SUB IS ABSENT - a sub-less token
+        # under isolation-off must not keep a client-chosen value, or the
+        # client could claim a draft owner's identity at the stamped-version
+        # preview gate below (which the HTTP route denies with actor=None).
+        if ws_user_context:
+            jwt_user_id = ws_user_context.get("user_id")
+            # The admin decision belongs to the WS dispatcher, which evaluates the
+            # deployment's CONFIGURED admin scope. Re-deriving it here from the
+            # default scope name diverges as soon as a deployment configures a
+            # custom admin scope, and it diverges in the attacker's favour: a
+            # token carrying the literal default scope name as an ordinary scope
+            # would take the admin branch and keep the client frame's user_id.
+            is_admin = bool(ws_auth and ws_auth.is_admin)
+            if is_admin:
+                user_id = user_id or jwt_user_id
+            else:
+                user_id = jwt_user_id
+
         # Owner scope for DB-backed workflow components on continue.
         # Fails closed (403) for an identity-less token under isolation, like the REST routes.
         try:
@@ -720,6 +774,7 @@ async def handle_workflow_continue_via_websocket(
             registry=os.registry,
             create_fresh=True,
             user_id=scoped_user_id,
+            published_only=False,
         )
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
@@ -746,6 +801,48 @@ async def handle_workflow_continue_via_websocket(
                 )
             )
             return
+
+        # Version-stable continuation (see the HTTP continue route): a run
+        # started with an explicitly pinned version (draft preview) recorded
+        # it in its run metadata; continue on THAT version, not whatever is
+        # published/current now. No stamp (legacy or unpinned runs) keeps
+        # today's resolution. Factories build per-request, so they are exempt.
+        stamped_version = stamped_component_version(existing_run)
+        if stamped_version is not None and not find_factory_by_id(workflow_id, os.workflows):
+            # Re-run the run-start preview gate before trusting the stamp: a
+            # stamp naming a draft version this caller may not preview must not
+            # resolve (defense against a forged/leaked stamp). Same not-found
+            # message the WS start path emits, so a denial is indistinguishable
+            # from the component being absent.
+            preview_privileged = bool(ws_auth and ws_auth.is_admin) or not bool(ws_auth and ws_auth.jwt_enabled)
+            preview_actor = user_id if isinstance(user_id, str) else None
+            if not allow_draft_preview(
+                os.db, workflow_id, stamped_version, preview_actor, privileged=preview_privileged
+            ):
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
+                return
+            stamped_workflow = get_workflow_by_id(
+                workflow_id=workflow_id,
+                workflows=os.workflows,
+                db=os.db,
+                registry=os.registry,
+                version=stamped_version,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                published_only=False,
+            )
+            if not stamped_workflow or isinstance(stamped_workflow, RemoteWorkflow):
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": f"Workflow version {stamped_version} recorded on run {run_id} "
+                            "is no longer available",
+                        }
+                    )
+                )
+                return
+            workflow = stamped_workflow
 
         # Apply step requirements if provided
         if step_requirements_data:
@@ -1461,6 +1558,14 @@ def get_workflow_router(
         if factory:
             return WorkflowResponse.from_factory(factory)
 
+        # An explicit version is a control-plane preview, and this is the one
+        # read route that takes one: publishing shares a component for reading,
+        # so without this gate any actor who can see it could pin - and read -
+        # the owner's unpublished drafts. Same 404 the run routes raise, so a
+        # denial is indistinguishable from the component being absent.
+        if not allow_draft_preview(os.db, workflow_id, version, *draft_preview_identity(request)):
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
         try:
             workflow = get_workflow_by_id(
                 workflow_id=workflow_id,
@@ -1470,6 +1575,7 @@ def get_workflow_router(
                 create_fresh=True,
                 version=version,
                 user_id=get_scoped_user_id(request),
+                published_only=False,
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1589,6 +1695,11 @@ def get_workflow_router(
             session_id=session_id,
             factory_input=factory_input,
         )
+
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the lifecycle routes can reload
+        # the SAME version later instead of whatever is current by then.
+        stamp_component_version(kwargs, version)
 
         if session_id:
             logger.debug(f"Continuing session: {session_id}")
@@ -1955,6 +2066,7 @@ def get_workflow_router(
             user_id=user_id,
             session_id=session_id,
             factory_input=factory_input,
+            published_only=False,
         )
 
         if isinstance(workflow, RemoteWorkflow):
@@ -1997,6 +2109,40 @@ def get_workflow_router(
                 f"run is not paused (status={getattr(status, 'value', status)})",
             )
             raise HTTPException(status_code=409, detail=detail)
+
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now. No stamp
+        # (legacy or unpinned runs) keeps today's resolution. Factories build
+        # per-request, so they are exempt.
+        stamped_version = stamped_component_version(existing_run)
+        if stamped_version is not None and not find_factory_by_id(workflow_id, os.workflows):
+            # Re-run the run-start preview gate before trusting the stamp: a
+            # stamp naming a draft version this caller may not preview must not
+            # resolve (defense against a forged/leaked stamp). Same 404 the
+            # run-start route raises, so a denial is indistinguishable from the
+            # component being absent.
+            if not allow_draft_preview(os.db, workflow_id, stamped_version, *draft_preview_identity(request)):
+                raise HTTPException(status_code=404, detail="Workflow not found")
+            try:
+                stamped_workflow = get_workflow_by_id(
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    version=stamped_version,
+                    create_fresh=True,
+                    user_id=scoped_user_id,
+                    published_only=False,
+                )
+            except ComponentRehydrationError as rehydration_error:
+                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+            if stamped_workflow is None or isinstance(stamped_workflow, RemoteWorkflow):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Workflow version {stamped_version} recorded on run {run_id} is no longer available",
+                )
+            workflow = stamped_workflow
 
         # Convert step requirements dicts to StepRequirement objects
         from agno.workflow.types import StepRequirement
@@ -2220,6 +2366,7 @@ def get_workflow_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
                 strict=False,
+                published_only=False,
             )  # type: ignore[assignment]
         except HTTPException:
             raise
@@ -2320,6 +2467,7 @@ def get_workflow_router(
             create_fresh=True,
             user_id=scoped_user_id,
             strict=False,
+            published_only=False,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -2384,6 +2532,7 @@ def get_workflow_router(
                 user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
+                published_only=False,
             )
         else:
             try:
@@ -2395,6 +2544,7 @@ def get_workflow_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                     strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
             except HTTPException:
                 raise
@@ -2501,6 +2651,7 @@ def get_workflow_router(
             session_id=session_id,
             factory_input=factory_input,
             strict=False,
+            published_only=False,
         )
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")

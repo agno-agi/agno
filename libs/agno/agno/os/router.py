@@ -615,7 +615,9 @@ def get_websocket_router(
                         is_admin=is_admin,
                         user_isolation_enabled=ws_user_isolation_enabled,
                     )
-                    await handle_workflow_continue_via_websocket(websocket, message, os, ws_auth=ws_auth)
+                    await handle_workflow_continue_via_websocket(
+                        websocket, message, os, ws_user_context=websocket_user_context, ws_auth=ws_auth
+                    )
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
