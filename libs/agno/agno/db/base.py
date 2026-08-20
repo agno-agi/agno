@@ -67,9 +67,12 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
       field; treating it as owned would overwrite row-only metadata on every
       scoped publish. An explicit empty dict is a deliberate clear and IS
       owned. A metadata value that is not a mapping at all cannot be a stamp,
-      so it is owned as it stands - the column is untyped and callers do store
-      scalars there, and probing a non-mapping for keys would raise and turn a
-      valid write into an error.
+      so it is owned as it stands: probing an arbitrary value for keys would
+      raise, and this projection decides which fields a version owns, not which
+      writes are allowed - it must not reject a config the adapters accepted
+      before it existed. Tolerated is not supported: a non-dict metadata that
+      reaches the column makes the component unreadable through the API, and
+      the place to settle that is the write path that admits it.
     """
     projection: Dict[str, Any] = {}
     if config.get("name") is not None:

@@ -17,6 +17,7 @@ list_components long after it was gone.
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict
 
 import pytest
@@ -409,3 +410,123 @@ class TestScopedFlowsAndTheProvenanceStamp:
 
         metadata = db.get_component(component_id)["metadata"] or {}
         assert "team" not in metadata
+
+
+# ----------------------------------------------------------------------
+# The row sync runs after the move commits, so it cannot fail the move
+# ----------------------------------------------------------------------
+
+
+class TestAProjectionFailureDoesNotFailACommittedMove:
+    """The catalog row is re-projected after the publish or re-point is
+    durable. A projection that blows up leaves the row stale, which the next
+    publish fixes; answering a hard error for a move that actually happened
+    does not -- the caller retries or reports a failure that never was."""
+
+    @staticmethod
+    def _explode_projection(monkeypatch):
+        """Break the projection only once the fixture is in place: the setup
+        publishes too, and it must land normally."""
+        import agno.db.base as db_base
+
+        def boom(config):
+            raise TypeError("projection exploded")
+
+        monkeypatch.setattr(db_base, "project_config_identity", boom)
+
+    @staticmethod
+    def _draft(studio, db, name: str) -> str:
+        component_id = _data(studio.create_agent(name=name, instructions="be", publish=True))["id"]
+        _data(studio.edit_agent(agent_id=component_id, name=f"{name} Two", instructions="be two"))
+        return component_id
+
+    def test_set_current_version_reports_the_move_it_made(self, studio, db, monkeypatch, caplog):
+        component_id = _rollback_fixture(studio, db)
+        self._explode_projection(monkeypatch)
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            out = _loads(studio.set_current_version(component_id, 2))
+
+        assert out["ok"] is True, out
+        assert out["status"] == "set_current"
+        assert db.get_component(component_id)["current_version"] == 2
+        assert any("could not be re-projected" in w for w in out["warnings"]), out
+        assert any("could not be re-projected" in record.message for record in caplog.records)
+
+    def test_publish_component_reports_the_publish_it_made(self, studio, db, monkeypatch, caplog):
+        component_id = self._draft(studio, db, "Publisher")
+        self._explode_projection(monkeypatch)
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            out = _loads(studio.publish_component(component_id))
+
+        assert out["ok"] is True, out
+        assert out["status"] == "published"
+        assert db.get_component(component_id)["current_version"] == out["data"]["version"]
+        assert any("could not be re-projected" in w for w in out["warnings"]), out
+        assert any("could not be re-projected" in record.message for record in caplog.records)
+
+    def test_async_set_current_version_inherits_the_same_answer(self, studio, db, monkeypatch):
+        component_id = _rollback_fixture(studio, db)
+        self._explode_projection(monkeypatch)
+
+        out = _loads(asyncio.run(studio.aset_current_version(component_id, 2)))
+
+        assert out["ok"] is True, out
+        assert db.get_component(component_id)["current_version"] == 2
+
+    def test_async_publish_inherits_the_same_answer(self, studio, db, monkeypatch):
+        component_id = self._draft(studio, db, "Async Publisher")
+        self._explode_projection(monkeypatch)
+
+        out = _loads(asyncio.run(studio.apublish_component(component_id)))
+
+        assert out["ok"] is True, out
+        assert db.get_component(component_id)["current_version"] == out["data"]["version"]
+
+    def test_a_move_that_itself_fails_is_still_an_error(self, studio, db, monkeypatch):
+        """Only the projection is best-effort. The write that moves the pointer
+        is the operation itself, and its failure is still reported."""
+        component_id = _rollback_fixture(studio, db)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("pointer write exploded")
+
+        monkeypatch.setattr(db, "set_current_version", boom)
+        assert _error(studio.set_current_version(component_id, 2))["code"] == "internal_error"
+
+    def test_a_publish_that_itself_fails_is_still_an_error(self, studio, db, monkeypatch):
+        component_id = self._draft(studio, db, "Failing Publisher")
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("config write exploded")
+
+        monkeypatch.setattr(db, "upsert_config", boom)
+        assert _error(studio.publish_component(component_id))["code"] == "internal_error"
+
+    def test_an_inline_publishing_edit_reports_the_version_it_wrote(self, studio, db, monkeypatch, caplog):
+        """The publishing edit projects the row after its own config write
+        commits, so the same rule holds: the version exists and is live, and an
+        error here would have the caller retry and append yet another one."""
+        component_id = _data(studio.create_agent(name="Inline", instructions="be", publish=True))["id"]
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("row write exploded")
+
+        monkeypatch.setattr(db, "upsert_component", boom)
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            out = _loads(studio.edit_agent(agent_id=component_id, name="Inline Two", publish=True))
+
+        assert out["ok"] is True, out
+        assert out["data"]["version"] == 2
+        assert db.get_component(component_id)["current_version"] == 2
+        assert any("could not re-project" in record.message for record in caplog.records)
+
+    def test_the_config_write_of_a_publishing_edit_is_still_an_error(self, studio, db, monkeypatch):
+        component_id = _data(studio.create_agent(name="Inline Failing", instructions="be", publish=True))["id"]
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("config write exploded")
+
+        monkeypatch.setattr(db, "upsert_config", boom)
+        assert _error(studio.edit_agent(agent_id=component_id, name="Nope", publish=True))["code"] == "internal_error"

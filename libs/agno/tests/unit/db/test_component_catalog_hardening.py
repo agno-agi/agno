@@ -428,11 +428,14 @@ class TestPublishProjectionOwnership:
 
 
 class TestPublishProjectionOfNonMappingMetadata:
-    """The metadata column is untyped, so a config can carry a scalar or a list.
+    """Probing an arbitrary metadata value for keys must not turn a write into
+    an error.
 
-    The stamp-only test asks a metadata value for its keys, which only a
-    mapping has. Anything else cannot be a provenance stamp, so it is owned as
-    it stands -- and a publish that carries one must go through, not raise.
+    The stamp-only test asks metadata for its keys, which only a mapping has.
+    Anything else cannot be a provenance stamp, so it is owned as it stands and
+    the publish goes through exactly as it did before this projection existed.
+    Tolerated is not supported: a non-dict metadata on the row makes the
+    component unreadable through the API, which is a separate problem.
     """
 
     def _operator_row(self, db):

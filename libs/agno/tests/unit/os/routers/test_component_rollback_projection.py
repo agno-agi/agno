@@ -150,10 +150,12 @@ class TestRowOnlyFieldsSurviveAPointerMove:
 
 
 class TestANonMappingMetadataStillPublishes:
-    """The metadata column is untyped and the route accepts whatever the config
-    carries, so the projection's stamp-only test must not assume a mapping:
-    asking a scalar for its keys raised, and the route's catch-all turned a
-    valid 201 into a 500.
+    """The projection says which row fields a version owns; it does not get to
+    decide which configs are writable. Asking a scalar for its keys raised, and
+    the route's catch-all turned a publish the adapters used to accept into a
+    500. Tolerated is not supported: a non-dict metadata on the row makes the
+    component unreadable through the API, which is a separate problem and not
+    this route's to settle.
     """
 
     @pytest.fixture
@@ -209,3 +211,43 @@ class TestAProjectionFailureDoesNotFailACommittedPointerMove:
         r = client.patch(f"/components/{two_versions}", json={"current_version": 1, "description": "explicit"})
         assert r.status_code == 200, (r.status_code, r.text)
         assert db.get_component(two_versions)["description"] == "explicit"
+
+
+class TestAFailedProjectionWriteDoesNotFailACommittedPointerMove:
+    """A PATCH body that carries nothing but current_version leaves the trailing
+    upsert holding the projection alone, so that write IS the re-projection --
+    and it must answer like the sibling set-current route does, not 500 for a
+    pointer move that has already committed. A body that also sets fields of
+    its own is a real update, and its failure is still reported."""
+
+    @pytest.fixture
+    def exploding_projection_write(self, db, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("row write exploded")
+
+        monkeypatch.setattr(db, "upsert_component", boom)
+
+    def test_a_bare_pointer_move_still_succeeds(self, client, db, two_versions, exploding_projection_write, caplog):
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            r = client.patch(f"/components/{two_versions}", json={"current_version": 1})
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert r.json()["current_version"] == 1
+        assert db.get_component(two_versions)["current_version"] == 1
+        assert any("could not re-project" in record.message for record in caplog.records)
+
+    def test_a_body_that_sets_a_field_itself_still_reports_the_failure(
+        self, client, db, two_versions, exploding_projection_write
+    ):
+        r = client.patch(f"/components/{two_versions}", json={"current_version": 1, "description": "explicit"})
+        assert r.status_code == 500, (r.status_code, r.text)
+
+    def test_a_plain_field_update_still_reports_the_failure(self, client, db, two_versions, exploding_projection_write):
+        r = client.patch(f"/components/{two_versions}", json={"description": "explicit"})
+        assert r.status_code == 500, (r.status_code, r.text)
+
+    def test_the_pointer_move_itself_is_still_reported(self, client, db, two_versions, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("pointer write exploded")
+
+        monkeypatch.setattr(db, "set_current_version", boom)
+        assert client.patch(f"/components/{two_versions}", json={"current_version": 1}).status_code == 500

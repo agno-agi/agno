@@ -951,6 +951,10 @@ def attach_routes(
                 update_kwargs["metadata"] = body.metadata
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
+            # Whether this request changes anything of its own decides how a
+            # failed write below is reported, so it is read before the
+            # projection adds its fields.
+            sets_own_fields = len(update_kwargs) > 1
 
             # Pointer moves go through set_current_version, never through
             # upsert_component: it enforces the published-only dispatch
@@ -982,7 +986,22 @@ def attach_routes(
                         f"Moved {component_id} to v{body.current_version} but could not re-project its row: {e}"
                     )
 
-            component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
+            # A body that carries nothing but current_version leaves this write
+            # holding the projection alone, so it IS the re-projection of a
+            # pointer move that has already committed and must not fail the
+            # request any more than the set-current route's does. A body that
+            # also sets fields of its own is a real update, and a failure there
+            # is the caller's to hear.
+            try:
+                component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
+            except Exception as e:
+                if sets_own_fields or body.current_version is None:
+                    raise
+                log_warning(f"Moved {component_id} to v{body.current_version} but could not re-project its row: {e}")
+                moved_row = db.get_component(component_id, user_id=scoped_user_id)
+                if moved_row is None:
+                    raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+                component = moved_row
             return ComponentResponse(**component)
         except HTTPException:
             raise

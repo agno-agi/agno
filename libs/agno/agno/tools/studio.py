@@ -2936,8 +2936,8 @@ class StudioTools(Toolkit):
                     return self._denied_error(denied)
                 raise
             published_version = result.get("version", target)
-            self._sync_component_row(component_id, published_version)
-            return ok_result("published", id=component_id, version=published_version)
+            warnings = self._sync_component_row_after_commit(component_id, published_version)
+            return ok_result("published", warnings=warnings, id=component_id, version=published_version)
         except Exception as e:
             return self._error_from_exception(e, "Failed to publish component")
 
@@ -2983,8 +2983,8 @@ class StudioTools(Toolkit):
                 if missing is not None:
                     return missing
                 return error_result("version_not_found", f"Version not found: {component_id} v{version}")
-            self._sync_component_row(component_id, version)
-            return ok_result("set_current", id=component_id, version=version)
+            warnings = self._sync_component_row_after_commit(component_id, version)
+            return ok_result("set_current", warnings=warnings, id=component_id, version=version)
         except Exception as e:
             return self._error_from_exception(e, "Failed to set current version")
 
@@ -4831,6 +4831,24 @@ class StudioTools(Toolkit):
         )
         return result.get("version")
 
+    def _sync_component_row_after_commit(self, component_id: str, version: Optional[int]) -> List[str]:
+        """Re-project the catalog row for a pointer move that already committed.
+
+        The publish or re-point is durable before this runs, so a projection
+        failure leaves the row stale - recoverable by publishing or re-pointing
+        again. Reporting it as an error is not: the caller hears that a move
+        which actually happened did not, and retries or reports a failure that
+        never was. The row sync is therefore best-effort here, and the returned
+        warning tells the caller the row lags the live version.
+        """
+        try:
+            self._sync_component_row(component_id, version)
+        except Exception as e:
+            warning = f"{component_id} is live at v{version} but its catalog row could not be re-projected: {e}"
+            logger.warning(warning)
+            return [warning]
+        return []
+
     def _sync_component_row(self, component_id: str, version: Optional[int]) -> None:
         """Bring the component row's name/description/metadata in line with a
         newly published config version."""
@@ -5001,15 +5019,23 @@ def _persist_only(
         # owns; a key it omits is row-only (set through PATCH /components,
         # never present in a config) and upsert_component's None leaves that
         # column alone.
-        projection = project_config_identity(resolved_config)
-        db.upsert_component(
-            **{
-                **identity,
-                "name": projection.get("name") or identity["name"],
-                "description": projection.get("description"),
-                "metadata": projection.get("metadata"),
-            }
-        )
+        # The config write above is already committed, so the projection is
+        # best-effort from here: a failure leaves the row describing the
+        # previous version, which the next save fixes, while reporting an error
+        # would tell the caller a version it can see was never written - and an
+        # edit retried on that report appends yet another version.
+        try:
+            projection = project_config_identity(resolved_config)
+            db.upsert_component(
+                **{
+                    **identity,
+                    "name": projection.get("name") or identity["name"],
+                    "description": projection.get("description"),
+                    "metadata": projection.get("metadata"),
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Saved {component_id} v{result.get('version')} but could not re-project its row: {e}")
         return result.get("version")
 
     # Create fallback (the atomic path was unavailable): the component does
