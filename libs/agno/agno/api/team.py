@@ -10,4 +10,4 @@ def create_team_run(run: TeamRunCreate) -> None:
 
 async def acreate_team_run(run: TeamRunCreate) -> None:
     """Telemetry recording for async Team runs"""
-    api.post_in_background(ApiRoutes.RUN_CREATE, run.model_dump(exclude_none=True))
+    await api.apost_in_background(ApiRoutes.RUN_CREATE, run.model_dump(exclude_none=True))

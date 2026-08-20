@@ -96,3 +96,20 @@ def test_create_agent_run_dispatches_in_background(monkeypatch):
     route, payload = enqueued[0]
     assert route == ApiRoutes.RUN_CREATE
     assert payload["session_id"] == "session-1" and payload["run_id"] == "run-1"
+
+
+def test_async_variant_is_paired_and_delegates():
+    import asyncio
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    instance, constructed = make_api_with_mock_transport(handler)
+    asyncio.run(instance.apost_in_background(ApiRoutes.RUN_CREATE, {"session_id": "async-1"}))
+    wait_for_drain(instance)
+
+    assert len(requests) == 1 and b"async-1" in requests[0].content
+    assert len(constructed) == 1

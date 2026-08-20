@@ -10,4 +10,4 @@ def create_eval_run_telemetry(eval_run: EvalRunCreate) -> None:
 
 async def async_create_eval_run_telemetry(eval_run: EvalRunCreate) -> None:
     """Telemetry recording for async Eval runs"""
-    api.post_in_background(ApiRoutes.EVAL_RUN_CREATE, eval_run.model_dump(exclude_none=True))
+    await api.apost_in_background(ApiRoutes.EVAL_RUN_CREATE, eval_run.model_dump(exclude_none=True))

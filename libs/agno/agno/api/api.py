@@ -64,6 +64,15 @@ class Api:
         except Exception as e:
             log_debug(f"Could not queue telemetry event for {route}: {e}")
 
+    async def apost_in_background(self, route: str, payload: dict) -> None:
+        """Async pair of ``post_in_background``.
+
+        The enqueue itself is non-blocking (a bounded ``put_nowait``), so this
+        delegates directly; it exists to keep the public sync/async interface
+        paired and safe to await from event-loop code.
+        """
+        self.post_in_background(route, payload)
+
     def _ensure_worker(self) -> None:
         if self._worker is not None and self._worker.is_alive() and self._pid == getpid():
             return
