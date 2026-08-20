@@ -624,10 +624,19 @@ class Step:
                                 f"Registry workflow '{workflow_id}' deep_copy returned a "
                                 f"{type(workflow).__name__}, not a Workflow; a strict load refuses it."
                             )
-                        # No copy_divergence check here, unlike the agent/team
-                        # tiers: Workflow.deep_copy regenerates step ids, so a
-                        # serialization diff fires for every workflow and the
-                        # check would refuse all strict loads.
+                        if strict:
+                            from agno.utils.copies import workflow_copy_divergence
+
+                            # Compared with step ids stripped: deep_copy mints a
+                            # fresh one per step, so the agent/team tiers' plain
+                            # serialization compare would refuse every workflow.
+                            divergence = workflow_copy_divergence(registry_workflow, workflow)
+                            if divergence is not None:
+                                raise ComponentRehydrationError(
+                                    f"Registry workflow '{workflow_id}' deep_copy lost state: {divergence}. "
+                                    "A strict load refuses a copy that does not serialize like its "
+                                    "original; give the subclass a faithful deep_copy."
+                                )
                     except ComponentRehydrationError:
                         raise
                     except Exception as e:

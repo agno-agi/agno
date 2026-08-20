@@ -290,6 +290,87 @@ class TestNestedWorkflowSteps:
         with pytest.raises(ComponentRehydrationError, match="deep_copy returned the shared"):
             Step.from_dict({"name": "outer", "workflow_id": "shared-wf"}, registry=registry, strict=True)
 
+    def test_a_deep_copy_that_drops_the_steps_is_refused_strictly(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        class EmptiedCopyWorkflow(Workflow):
+            def deep_copy(self, *, update=None):
+                return Workflow(id=self.id, name=self.name, steps=[])
+
+        agent = Agent(id="emptied-agent", name="A", model=_model())
+        wf = EmptiedCopyWorkflow(id="emptied-wf", name="Emptied", steps=[Step(name="s1", agent=agent)])
+        registry = Registry(name="R", workflows=[wf])
+
+        with pytest.raises(ComponentRehydrationError, match="deep_copy lost state"):
+            Step.from_dict({"name": "outer", "workflow_id": "emptied-wf"}, registry=registry, strict=True)
+
+        # A lenient load still admits the lossy copy.
+        step = Step.from_dict({"name": "outer", "workflow_id": "emptied-wf"}, registry=registry, strict=False)
+        assert step.workflow is not None
+        assert step.workflow.steps == []
+
+    def test_a_kwargs_swallowing_workflow_subclass_is_refused_strictly(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        class SwallowingWorkflow(Workflow):
+            def __init__(self, tenant="default", **kwargs):
+                self.tenant = tenant
+                super().__init__(**kwargs)
+
+        agent = Agent(id="swallowed-agent", name="A", model=_model())
+        wf = SwallowingWorkflow(tenant="t", id="swallowed-wf", name="Swallowed", steps=[Step(name="s1", agent=agent)])
+        registry = Registry(name="R", workflows=[wf])
+
+        with pytest.raises(ComponentRehydrationError, match="diverges from the original on: id, name, steps"):
+            Step.from_dict({"name": "outer", "workflow_id": "swallowed-wf"}, registry=registry, strict=True)
+
+    def test_a_plain_workflow_holding_a_lossy_agent_is_refused_strictly(self):
+        """The agent tier already refuses this agent by agent_id; nesting must not launder it."""
+        from agno.exceptions import ComponentRehydrationError
+
+        class TopicAgent(Agent):
+            def __init__(self, topic="general", **kwargs):
+                self.topic = topic
+                super().__init__(**kwargs)
+
+        agent = TopicAgent(topic="x", id="topic-agent", name="A", model=_model(), instructions="follow the policy")
+        wf = Workflow(id="lossy-child", name="Child", steps=[Step(name="s1", agent=agent)])
+        registry = Registry(name="R", workflows=[wf])
+
+        with pytest.raises(ComponentRehydrationError, match="deep_copy lost state"):
+            Step.from_dict({"name": "outer", "workflow_id": "lossy-child"}, registry=registry, strict=True)
+
+    def test_a_faithful_workflow_with_declared_steps_still_loads_strictly(self):
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+
+        inner = Step(name="s1", agent=Agent(id="faithful-agent", name="A", model=_model()))
+        wf = Workflow(
+            id="faithful-wf",
+            name="Faithful",
+            steps=[Parallel(Loop(name="lp", steps=[inner], end_condition=lambda outputs, i: True), name="par")],
+        )
+        registry = Registry(name="R", workflows=[wf])
+
+        step = Step.from_dict({"name": "outer", "workflow_id": "faithful-wf"}, registry=registry, strict=True)
+
+        assert step.workflow is not None
+        assert step.workflow is not wf
+
+    def test_a_child_whose_to_dict_raises_is_not_refused(self):
+        class OpaqueWorkflow(Workflow):
+            def to_dict(self):
+                raise RuntimeError("not serializable")
+
+        agent = Agent(id="opaque-agent", name="A", model=_model())
+        wf = OpaqueWorkflow(id="opaque-wf", name="Opaque", steps=[Step(name="s1", agent=agent)])
+        registry = Registry(name="R", workflows=[wf])
+
+        step = Step.from_dict({"name": "outer", "workflow_id": "opaque-wf"}, registry=registry, strict=True)
+
+        assert step.workflow is not None
+        assert step.workflow is not wf
+
 
 @pytest.mark.skipif(find_spec("fastmcp") is None, reason="fastmcp not installed")
 class TestMcpListingDedup:
