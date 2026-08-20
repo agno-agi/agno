@@ -901,3 +901,50 @@ def test_a_failed_device_start_leaves_the_existing_session_intact(tmp_path, encr
 
     assert "error" in payload
     assert path.exists()
+
+
+# ---------------------------------------------------------------------------
+# A pending-login write that FAILS must not look like one that succeeded
+# ---------------------------------------------------------------------------
+
+
+class _FailingUpsertDb:
+    """Storage is reachable, but this write fails.
+
+    agno adapters swallow their own errors and report failure by returning None
+    (SqliteDb.upsert_auth_token does exactly this), which the token manager
+    already checks for.
+    """
+
+    def __init__(self, inner: Any):
+        self._inner = inner
+
+    def get_auth_token(self, provider: str, user_id: str, service: str) -> Any:
+        return self._inner.get_auth_token(provider, user_id, service)
+
+    def upsert_auth_token(self, token: Dict[str, Any]) -> None:
+        return None
+
+    def delete_auth_token(self, provider: str, user_id: str, service: str) -> Any:
+        return self._inner.delete_auth_token(provider, user_id, service)
+
+
+def test_a_failed_pending_write_keeps_the_login_recoverable(endpoint, sqlite_db, encryption_key):
+    """The user approves the link either way; the next turn must still finish it."""
+    auth = _toolkit(endpoint, db=_FailingUpsertDb(sqlite_db), encryption_key=encryption_key)
+
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+    payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"message": SIGNED_IN}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_async_pending_write_keeps_the_login_recoverable(endpoint, sqlite_db, encryption_key):
+    """Async twin: the same write failure, the same recovery."""
+    auth = _async_toolkit(endpoint, db=AsyncDb(_FailingUpsertDb(sqlite_db)), encryption_key=encryption_key)
+
+    await auth.asign_in_with_supergrok(run_context=_ctx("u1"))
+    payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"message": SIGNED_IN}
