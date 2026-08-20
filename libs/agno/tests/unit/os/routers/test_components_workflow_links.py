@@ -593,7 +593,13 @@ class TestScopedConflictDetail:
         assert "v2" in detail
         assert "holder" in detail
 
-    def test_a_foreign_dependent_is_not_named(self, db):
+    def test_a_foreign_dependent_does_not_veto_the_owners_delete(self, db):
+        """Publishing shares a component for composing, so any other tenant can
+        pin it -- from a draft this owner can never see, edit or reach. Letting
+        such a parent block would hand every tenant a permanent veto over
+        another tenant's own component, with the blocking id redacted out of
+        the message and no surface to clear it from.
+        """
         db.create_component_with_config(
             component_id="mine",
             component_type=ComponentType.AGENT,
@@ -622,12 +628,74 @@ class TestScopedConflictDetail:
 
         response = make_client(db, user_id="user-a").delete("/components/mine")
 
+        assert response.status_code == 204, response.text
+        assert db.get_component("mine", user_id="user-a") is None
+
+    def test_the_owners_own_dependent_still_vetoes(self, db):
+        """The scope removes parents the caller cannot act on, not the guard."""
+        db.create_component_with_config(
+            component_id="mine",
+            component_type=ComponentType.AGENT,
+            name="mine",
+            config={"id": "mine"},
+            stage="published",
+            user_id="user-a",
+        )
+        db.create_component_with_config(
+            component_id="my-team",
+            component_type=ComponentType.TEAM,
+            name="my-team",
+            config={"id": "my-team"},
+            stage="draft",
+            links=[
+                {
+                    "link_kind": "member",
+                    "link_key": "member_0",
+                    "child_component_id": "mine",
+                    "child_version": 1,
+                    "position": 0,
+                }
+            ],
+            user_id="user-a",
+        )
+
+        response = make_client(db, user_id="user-a").delete("/components/mine")
+
         assert response.status_code == 409, response.text
-        detail = response.json()["detail"]
-        assert "their-secret-team" not in detail
-        # The id goes, the cause stays: this really is a blocking dependent.
-        assert detail.startswith("Cannot delete mine")
-        assert "another component" in detail
+        # The caller owns the blocker, so it is named: it can go and clear it.
+        assert "my-team" in response.json()["detail"]
+
+    def test_a_shared_dependent_still_vetoes(self, db):
+        """An unowned parent is visible and editable by everyone, so it keeps
+        its veto."""
+        db.create_component_with_config(
+            component_id="mine",
+            component_type=ComponentType.AGENT,
+            name="mine",
+            config={"id": "mine"},
+            stage="published",
+            user_id="user-a",
+        )
+        db.create_component_with_config(
+            component_id="shared-team",
+            component_type=ComponentType.TEAM,
+            name="shared-team",
+            config={"id": "shared-team"},
+            stage="draft",
+            links=[
+                {
+                    "link_kind": "member",
+                    "link_key": "member_0",
+                    "child_component_id": "mine",
+                    "child_version": 1,
+                    "position": 0,
+                }
+            ],
+        )
+
+        response = make_client(db, user_id="user-a").delete("/components/mine")
+
+        assert response.status_code == 409, response.text
 
     def test_an_admin_still_gets_every_id(self, db):
         db.create_component_with_config(

@@ -4109,7 +4109,18 @@ class SqliteDb(BaseDb):
                 # archived parent's history, so it checks every link. This read is
                 # the early, friendly refusal; the one that cannot be overtaken
                 # runs after the write below.
-                dependents = self.get_dependents(component_id, active_parents_only=not hard_delete)
+                # Scoped to parents this caller owns (plus unowned ones).
+                # Publishing shares a component for composing, so any other
+                # tenant can pin it from a draft the owner can never see, edit
+                # or reach - and an unscoped veto would then make the owner's
+                # own component permanently unarchivable, with the blocking id
+                # redacted out of the message. A parent the caller cannot act
+                # on does not get to veto; archiving is exactly the signal that
+                # such a parent must stop resolving. An unscoped caller (an
+                # operator) still sees every parent.
+                dependents = self.get_dependents(
+                    component_id, active_parents_only=not hard_delete, parent_user_id=user_id
+                )
                 if dependents:
                     parents = sorted(
                         {str(d["parent_component_id"]) for d in dependents if d.get("parent_component_id")}
@@ -4143,7 +4154,28 @@ class SqliteDb(BaseDb):
                     # was taken as a locked read above; the predicate on the
                     # final DELETE is the belt over that lock.
                     if links_table is not None:
+                        # This component's OWN outgoing pins go first. They are
+                        # not the evidence the guard below reads, and deleting
+                        # them takes the write lock, which is what makes that
+                        # read see a parent committed since the friendly
+                        # pre-read - the same reason the archive branch
+                        # re-asserts after its UPDATE rather than before it.
                         sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
+                    if require_no_dependents:
+                        # Same check-then-write gap the archive branch closes,
+                        # and it has to run while the incoming links still
+                        # exist: those rows ARE the evidence. Raising here rolls
+                        # the whole delete back.
+                        self._refuse_if_dependents(
+                            sess,
+                            links_table,
+                            components_table,
+                            configs_table,
+                            component_id,
+                            active_parents_only=False,
+                            parent_user_id=user_id,
+                        )
+                    if links_table is not None:
                         sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
                     if configs_table is not None:
                         sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
@@ -4201,6 +4233,7 @@ class SqliteDb(BaseDb):
                             configs_table,
                             component_id,
                             active_parents_only=True,
+                            parent_user_id=user_id,
                         )
 
                 if result.rowcount > 0 and schedules_table is not None:
@@ -5560,6 +5593,7 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         active_parents_only: bool = False,
+        parent_user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
@@ -5568,6 +5602,10 @@ class SqliteDb(BaseDb):
             version: Optional specific version. If None, finds links to any version.
             active_parents_only: Only count links whose parent component is not
                 archived and whose parent version is not tombstoned.
+            parent_user_id: When set, count only parents this user owns, plus
+                unowned (shared) ones. Used where the answer decides an
+                owner-scoped write: a parent the caller can neither see nor
+                edit must not veto that caller's own delete.
 
         Returns:
             List of link dictionaries showing what depends on this component.
@@ -5588,6 +5626,7 @@ class SqliteDb(BaseDb):
                     component_id,
                     version=version,
                     active_parents_only=active_parents_only,
+                    parent_user_id=parent_user_id,
                 )
 
         except Exception as e:
@@ -5603,6 +5642,7 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         active_parents_only: bool = False,
+        parent_user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """The dependents read, run on a session the caller already holds.
 
@@ -5633,6 +5673,24 @@ class SqliteDb(BaseDb):
                     configs_table.c.stage != DELETED_CONFIG_STAGE,
                 )
             )
+            if parent_user_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        components_table.c.user_id == parent_user_id,
+                        components_table.c.user_id.is_(None),
+                    )
+                )
+        elif parent_user_id is not None and components_table is not None:
+            # The scope needs the parent row even when liveness does not.
+            stmt = stmt.join(
+                components_table,
+                components_table.c.component_id == links_table.c.parent_component_id,
+            ).where(
+                or_(
+                    components_table.c.user_id == parent_user_id,
+                    components_table.c.user_id.is_(None),
+                )
+            )
 
         results = sess.execute(stmt).fetchall()
         # The join widens the row; keep only the link columns.
@@ -5646,6 +5704,7 @@ class SqliteDb(BaseDb):
         configs_table,
         component_id: str,
         active_parents_only: bool,
+        parent_user_id: Optional[str] = None,
     ) -> None:
         """Raise ComponentDependencyError when another component pins this one."""
         dependents = self._dependents_in_session(
@@ -5655,6 +5714,7 @@ class SqliteDb(BaseDb):
             configs_table,
             component_id,
             active_parents_only=active_parents_only,
+            parent_user_id=parent_user_id,
         )
         if dependents:
             parents = sorted({str(d["parent_component_id"]) for d in dependents if d.get("parent_component_id")})

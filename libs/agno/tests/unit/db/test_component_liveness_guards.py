@@ -743,3 +743,82 @@ class TestTheEnableGuardCrossesOwnersLikeTheCascadeDoes:
         _arm_schedule(db, "bob-live", "agent", "alice-live")
         schedule = Schedule.from_dict(db.get_schedule("bob-live"))
         assert archived_target_refusal(db, schedule, user_id="bob") is None
+
+
+class TestTheVetoIsScopedToParentsTheCallerCanActOn:
+    """Publishing shares a component for composing, so any other tenant can
+    pin it -- and can do so from a private draft the owner will never see.
+    An unscoped veto turns that into a permanent hold on someone else's
+    component, with the blocking id redacted and no surface to clear it.
+
+    A parent the caller cannot act on does not get to veto. One it can --
+    its own, or an unowned shared one -- still does, and an operator with no
+    scope still sees every parent.
+    """
+
+    def _pinned(self, db, child_owner, parent_owner):
+        db.create_component_with_config(
+            component_id="child",
+            component_type=ComponentType.AGENT,
+            name="child",
+            config={"name": "child"},
+            stage="published",
+            user_id=child_owner,
+        )
+        db.create_component_with_config(
+            component_id="parent",
+            component_type=ComponentType.TEAM,
+            name="parent",
+            config={"name": "parent"},
+            stage="draft",
+            links=[_member("child")],
+            user_id=parent_owner,
+        )
+
+    def test_another_owners_parent_does_not_block(self, db):
+        self._pinned(db, child_owner="alice", parent_owner="bob")
+        assert db.delete_component("child", user_id="alice") is True
+
+    def test_the_callers_own_parent_still_blocks(self, db):
+        self._pinned(db, child_owner="alice", parent_owner="alice")
+        with pytest.raises(ComponentDependencyError):
+            db.delete_component("child", user_id="alice")
+
+    def test_a_shared_parent_still_blocks(self, db):
+        self._pinned(db, child_owner="alice", parent_owner=None)
+        with pytest.raises(ComponentDependencyError):
+            db.delete_component("child", user_id="alice")
+
+    def test_an_unscoped_operator_still_sees_every_parent(self, db):
+        self._pinned(db, child_owner="alice", parent_owner="bob")
+        with pytest.raises(ComponentDependencyError):
+            db.delete_component("child")
+
+    def test_the_hard_delete_is_scoped_the_same_way(self, db):
+        self._pinned(db, child_owner="alice", parent_owner="bob")
+        assert db.delete_component("child", user_id="alice", hard_delete=True) is True
+
+
+class TestTheHardDeleteReAssertsItsGuardToo:
+    """The friendly dependents read runs before the transaction opens, so a
+    parent that pins this component in the gap is invisible to it. The
+    archive branch re-asserts inside the write transaction; the hard-delete
+    branch did not, and silently deleted the link rows that were the
+    evidence.
+    """
+
+    def test_a_dependent_added_in_the_gap_rolls_the_hard_delete_back(self, dbs):
+        first, second = dbs
+        _agent(first, "victim")
+        _team(second, "late-parent", stage="draft")
+
+        outcome = _interleave(
+            first,
+            lambda: first.delete_component("victim", hard_delete=True),
+            lambda: second.upsert_config(
+                "late-parent", config={"name": "late-parent"}, stage="draft", links=[_member("victim")]
+            ),
+        )
+
+        assert isinstance(outcome.get("error"), ComponentDependencyError), outcome
+        assert second.get_component("victim") is not None
