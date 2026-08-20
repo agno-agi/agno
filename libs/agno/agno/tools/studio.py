@@ -227,7 +227,12 @@ class StudioTools(Toolkit):
         **kwargs: Any,
     ):
         self.registry = registry
-        self.db: Optional["BaseDb"] = db if db is not None else (registry.dbs[0] if registry.dbs else None)
+        # The explicit db wins; otherwise the registry's is adopted lazily on
+        # first access (see the db property). Studio is constructed before
+        # AgentOS - it is a tool on an agent the OS serves - and registry.dbs
+        # is filled by AgentOS afterwards, so an __init__ snapshot would leave
+        # every write answering db_not_configured forever.
+        self._db: Optional["BaseDb"] = db
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
@@ -271,7 +276,7 @@ class StudioTools(Toolkit):
         # and a dispatcher resolve and run components one way.
         self._runner_tools = StudioRunnerTools(
             registry=registry,
-            db=self.db,
+            db=db,
             include_agents=include_agents,
             include_teams=include_teams,
             include_workflows=include_workflows,
@@ -298,7 +303,8 @@ class StudioTools(Toolkit):
             # refusals build a probe from nothing, so enable_schedule would
             # refuse a code-defined target that create_schedule just allowed.
             self._scheduler_tools = SchedulerTools(
-                db=self.db,
+                db=self._db,
+                db_resolver=lambda: self.db,
                 include_agents=self.include_agents,
                 include_teams=self.include_teams,
                 include_workflows=self.include_workflows,
@@ -488,6 +494,16 @@ class StudioTools(Toolkit):
             instructions="\n".join(instruction_lines),
             **kwargs,
         )
+
+    @property
+    def db(self) -> Optional["BaseDb"]:
+        if self._db is None and self.registry.dbs:
+            self._db = self.registry.dbs[0]
+        return self._db
+
+    @db.setter
+    def db(self, value: Optional["BaseDb"]) -> None:
+        self._db = value
 
     # ------------------------------------------------------------------
     # Registry lookups

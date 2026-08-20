@@ -260,9 +260,12 @@ class StudioRunnerTools(Toolkit):
         **kwargs: Any,
     ):
         self.registry = registry
-        self.db: Optional["BaseDb"] = (
-            db if db is not None else (registry.dbs[0] if registry is not None and registry.dbs else None)
-        )
+        # The explicit db wins; otherwise the registry's is adopted lazily on
+        # first access (see the db property). An __init__ snapshot would be
+        # wrong for the zero-config wiring: these toolkits are constructed
+        # before AgentOS, and AgentOS fills registry.dbs only afterwards, so
+        # snapshotting leaves every db-backed tool dark forever.
+        self._db: Optional["BaseDb"] = db
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
@@ -318,6 +321,16 @@ class StudioRunnerTools(Toolkit):
     # Component resolution -- StudioTools delegates its lookups here so the
     # builder and the runner resolve components one way.
     # ------------------------------------------------------------------
+
+    @property
+    def db(self) -> Optional["BaseDb"]:
+        if self._db is None and self.registry is not None and self.registry.dbs:
+            self._db = self.registry.dbs[0]
+        return self._db
+
+    @db.setter
+    def db(self, value: Optional["BaseDb"]) -> None:
+        self._db = value
 
     def _iter_agents(self, for_dispatch: bool = False) -> List["Agent"]:
         """Code-defined agents: passed-in list, else registry.

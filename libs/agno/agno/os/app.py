@@ -462,6 +462,7 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
         # Discover knowledge instances and mirror them into the registry so that
@@ -539,6 +540,7 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
         # Check for duplicate IDs
@@ -909,6 +911,34 @@ class AgentOS:
             self.registry.add_knowledge(kb, mirrored=True)
         for kb in self.knowledge or []:
             self.registry.add_knowledge(kb, mirrored=True)
+
+    def _warn_on_foreign_studio_registries(self) -> None:
+        """Warn when a served component carries a Studio toolkit bound to a
+        different Registry than the one this OS populates.
+
+        This is the likeliest zero-wiring mistake: StudioTools(registry=reg)
+        built against one registry while AgentOS mints or holds another.
+        Everything then appears to work - drafts save, publish works - but the
+        OS's code-defined components are invisible to Studio, with no error
+        anywhere. Adopting the tool's registry or rebinding the tool silently
+        would both be surprising, so the split is loud instead.
+        """
+        from agno.tools.studio import StudioTools
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        for component in [*self._agents, *self._teams]:
+            for tool in getattr(component, "tools", None) or []:
+                if not isinstance(tool, (StudioTools, StudioRunnerTools)):
+                    continue
+                tool_registry = getattr(tool, "registry", None)
+                if tool_registry is not None and tool_registry is not self.registry:
+                    component_label = getattr(component, "id", None) or getattr(component, "name", None)
+                    log_warning(
+                        f"Component '{component_label}' carries {type(tool).__name__} bound to a different "
+                        "Registry than this AgentOS populates: the OS's code-defined agents, teams, and "
+                        "workflows will be invisible to it. Pass that registry to AgentOS (registry=...), "
+                        "or construct the toolkit with the OS's registry."
+                    )
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.
