@@ -4325,6 +4325,8 @@ class PostgresDb(BaseDb):
                     if configs_table is not None:
                         sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
                     component_delete = components_table.delete().where(components_table.c.component_id == component_id)
+                    if user_id is not None:
+                        component_delete = component_delete.where(components_table.c.user_id == user_id)
                     if expected_current_version is not None:
                         component_delete = component_delete.where(
                             components_table.c.current_version == expected_current_version
@@ -4348,6 +4350,13 @@ class PostgresDb(BaseDb):
                         )
                         .values(deleted_at=now, updated_at=now)
                     )
+                    if user_id is not None:
+                        # The scope rides the WRITE, not just the reads above:
+                        # the locked read is still check-then-write against an
+                        # id that was hard-deleted and re-claimed by another
+                        # owner in the gap, and this UPDATE would otherwise
+                        # match that new row.
+                        archive_update = archive_update.where(components_table.c.user_id == user_id)
                     if expected_current_version is not None:
                         archive_update = archive_update.where(
                             components_table.c.current_version == expected_current_version
@@ -4440,7 +4449,7 @@ class PostgresDb(BaseDb):
                 if user_id is not None and row.user_id != user_id:
                     return False
 
-                result = sess.execute(
+                restore_update = (
                     components_table.update()
                     .where(
                         components_table.c.component_id == component_id,
@@ -4448,6 +4457,11 @@ class PostgresDb(BaseDb):
                     )
                     .values(deleted_at=None, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    # The scope rides the write here too: the reads above are
+                    # check-then-write against a reusable id.
+                    restore_update = restore_update.where(components_table.c.user_id == user_id)
+                result = sess.execute(restore_update)
                 if result.rowcount == 0:
                     return False
 

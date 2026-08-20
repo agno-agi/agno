@@ -67,15 +67,25 @@ class TestTheAsyncClaimMatchesTheSyncOne:
 
     @pytest.mark.asyncio
     async def test_the_claim_returns_post_claim_state(self, paths):
+        """The returned dict must describe the row, not the snapshot.
+
+        Asserting locked_by alone pins nothing: the code this replaced patched
+        that field onto the pre-claim snapshot by hand. The test has to name a
+        field the snapshot could not have carried, so the row is changed on a
+        second connection after it is armed and before it is claimed.
+        """
         sync_db = SqliteDb(id="claim-sync-2", db_file=paths)
         _arm(sync_db, "sched-2")
         adb = AsyncSqliteDb(id="claim-async-2", db_file=paths)
 
+        # The select the claim runs sees this; a hand-patched snapshot of an
+        # earlier read would not.
+        sync_db.update_schedule("sched-2", description="changed after arming")
+
         claimed = await adb.claim_due_schedule(worker_id="poller-9")
         assert claimed is not None
         assert claimed["locked_by"] == "poller-9"
-        # Read back independently: the returned dict must describe the row as
-        # it now is, not the snapshot the select saw.
+        assert claimed["description"] == "changed after arming"
         assert sync_db.get_schedule("sched-2")["locked_by"] == "poller-9"
 
     @pytest.mark.asyncio

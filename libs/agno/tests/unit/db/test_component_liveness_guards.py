@@ -883,3 +883,55 @@ class TestTheSdkDeleteHasAnOptOut:
 
         assert Agent(id="sdk-child-2", name="sdk-child-2").delete(db=db, require_no_dependents=False) is True
         assert db.get_component("sdk-child-2") is None
+
+
+class TestTheOwnershipScopeRidesTheLockedRow:
+    """The friendly scope read runs on its own connection, before the write
+    transaction opens. Component ids are caller-chosen and reusable, so an id
+    freed and re-claimed by another owner in that gap would be deleted under
+    the first caller's authority unless the scope is re-asserted on the
+    locked row.
+    """
+
+    def test_a_recreated_row_under_a_new_owner_is_not_deleted(self, dbs):
+        first, second = dbs
+        first.create_component_with_config(
+            component_id="reused",
+            component_type=ComponentType.AGENT,
+            name="reused",
+            config={"name": "reused"},
+            stage="published",
+            user_id="alice",
+        )
+
+        def recreate_under_bob():
+            second.delete_component("reused", user_id="alice", hard_delete=True)
+            second.create_component_with_config(
+                component_id="reused",
+                component_type=ComponentType.AGENT,
+                name="reused",
+                config={"name": "reused"},
+                stage="published",
+                user_id="bob",
+            )
+
+        outcome = _interleave(
+            first,
+            lambda: first.delete_component("reused", user_id="alice"),
+            recreate_under_bob,
+        )
+
+        assert outcome.get("result") is False, outcome
+        row = second.get_component("reused")
+        assert row is not None and row["user_id"] == "bob"
+
+    def test_the_owner_still_deletes_their_own(self, db):
+        db.create_component_with_config(
+            component_id="mine-alone",
+            component_type=ComponentType.AGENT,
+            name="mine-alone",
+            config={"name": "mine-alone"},
+            stage="published",
+            user_id="alice",
+        )
+        assert db.delete_component("mine-alone", user_id="alice") is True
