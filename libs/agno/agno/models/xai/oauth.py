@@ -159,6 +159,11 @@ class XAITokenManager:
     encrypt_tokens: bool = True  # Require encryption by default; set False for local dev only
     http_client: Optional[httpx.Client] = None
     async_http_client: Optional[httpx.AsyncClient] = None
+    # httpx defaults to 5s, which is too short for a device-code poll against a
+    # live IdP - a sign-in that had already been approved failed on it. Fixed
+    # here rather than in its own PR because the tools that reach this code, and
+    # so the only way to hit it, arrive in the same change.
+    timeout: float = 30.0
     now_fn: Callable[[], float] = time.time
 
     # Keyed by user_id, like the row and the cache: this is the last-resort store
@@ -703,11 +708,11 @@ class XAITokenManager:
     def _post_form(self, url: str, data: Dict[str, str]) -> httpx.Response:
         if self.http_client is not None:
             return self.http_client.post(url, data=data)
-        with httpx.Client() as client:
+        with httpx.Client(timeout=self.timeout) as client:
             return client.post(url, data=data)
 
     async def _apost_form(self, url: str, data: Dict[str, str]) -> httpx.Response:
         if self.async_http_client is not None:
             return await self.async_http_client.post(url, data=data)
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             return await client.post(url, data=data)

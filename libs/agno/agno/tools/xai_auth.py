@@ -26,6 +26,9 @@ _SIGNED_IN = "Signed in with SuperGrok. The xAI model will now use this subscrip
 _SIGNED_IN_PER_USER = "Signed in with SuperGrok. Requests you make will now use this subscription."
 _NOT_APPROVED = "Not approved yet. Open the link, approve the sign-in, then tell me again when you're done."
 _NO_PENDING = "No sign-in is in progress. Call sign_in_with_supergrok first."
+# A transport failure is not a verdict on the sign-in: the user may already have
+# approved. Saying "not approved yet" here would contradict what they just did.
+_TRANSPORT_FAILED = "Could not reach the sign-in service just now. Your approval is not lost - tell me to check again."
 _NOT_SAVED = (
     "Signed in, but the token was NOT saved: XAI_TOKEN_ENCRYPTION_KEY is not set. "
     "Set it (see the cookbook) and sign in again, or pass encrypt_tokens=False for local dev."
@@ -123,6 +126,8 @@ class XAIAuth(Toolkit):
             info = self.token_manager.start_device_login()
         except ModelAuthenticationError as e:
             return json.dumps({"error": str(e)})
+        except httpx.HTTPError:
+            return json.dumps({"error": _TRANSPORT_FAILED})
 
         self._stash(
             user_id,
@@ -160,6 +165,10 @@ class XAIAuth(Toolkit):
         except ModelAuthenticationError as e:
             self._clear_pending(user_id)
             return json.dumps({"error": _failed(str(e))})
+        except httpx.HTTPError:
+            # The poll never got a verdict, so this login is not over: keep the
+            # pending row and let the user ask again.
+            return json.dumps({"error": _TRANSPORT_FAILED})
 
         if result.status is DevicePollStatus.pending:
             # Re-stash so the RFC 8628 slow_down back-off reaches the next turn
@@ -195,6 +204,8 @@ class XAIAuth(Toolkit):
             info = await self.token_manager.astart_device_login()
         except ModelAuthenticationError as e:
             return json.dumps({"error": str(e)})
+        except httpx.HTTPError:
+            return json.dumps({"error": _TRANSPORT_FAILED})
 
         await self._astash(
             user_id,
@@ -234,6 +245,10 @@ class XAIAuth(Toolkit):
         except ModelAuthenticationError as e:
             await self._aclear_pending(user_id)
             return json.dumps({"error": _failed(str(e))})
+        except httpx.HTTPError:
+            # The poll never got a verdict, so this login is not over: keep the
+            # pending row and let the user ask again.
+            return json.dumps({"error": _TRANSPORT_FAILED})
 
         if result.status is DevicePollStatus.pending:
             # Re-stash so the RFC 8628 slow_down back-off reaches the next turn
