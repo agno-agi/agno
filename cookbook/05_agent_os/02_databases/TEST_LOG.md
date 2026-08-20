@@ -53,7 +53,7 @@ was already owned by another local AgentOS container.
 
 ---
 
-### media_storage.py
+### s3_media_storage.py
 
 **Status:** PASS
 
@@ -71,6 +71,22 @@ prefix (77 and 82 bytes, `ContentType: text/csv`), and
 `GET /sessions/{session_id}/media/{storage_key}` returned 200 with
 `text/csv; charset=utf-8` and byte-identical content; `redirect=true` returned
 a 307 to a freshly-signed URL.
+
+---
+
+### gcs_media_storage.py
+
+**Status:** PASS
+
+**Test mode:** STATIC
+
+**Description:** Loaded the cookbook with a placeholder bucket and inspected the
+constructed AgentOS application without making a Google Cloud request.
+
+**Result:** The agent and AgentOS share the same `AsyncGCSMediaStorage` instance,
+and the application exposes both the agent run route and the session media route.
+Ruff formatting, lint, and Python compilation also passed. Live GCS upload and
+retrieval require configured credentials and a real bucket.
 
 ---
 

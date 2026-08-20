@@ -12,7 +12,8 @@ other supported storage adapters without repeating the same AgentOS example.
 | `basic.py` | Demonstrates default-database inheritance and automatic table provisioning with SQLite. |
 | `postgres.py` | Selects a synchronous or asynchronous Postgres adapter for production persistence. |
 | `surreal.py` | Shows SurrealDB's client, credentials, namespace, and database constructor shape. |
-| `media_storage.py` | Offloads file bytes to S3 so the database keeps only a MediaReference. |
+| `s3_media_storage.py` | Offloads media bytes to S3 so the database keeps only a MediaReference. |
+| `gcs_media_storage.py` | Offloads media bytes to GCS so the database keeps only a MediaReference. |
 | `media_storage_delete.py` | Reads session media back through the media route, and deletes the objects with the session. |
 
 ## Default database and provisioning
@@ -77,7 +78,9 @@ without it media saves cleanly and then fails to load.
 - Install `agno[surrealdb]` and start SurrealDB with
   `./cookbook/scripts/run_surrealdb.sh`.
 - Install `agno[s3]` and set `AGNO_FILE_OUTPUT_S3_BUCKET` plus AWS credentials
-  for `media_storage.py` and `media_storage_delete.py`.
+  for `s3_media_storage.py` and `media_storage_delete.py`.
+- Install `agno[gcs]`, set `AGNO_FILE_OUTPUT_GCS_BUCKET`, and authenticate with
+  Google Cloud Application Default Credentials for `gcs_media_storage.py`.
 
 ## Run
 
@@ -110,7 +113,14 @@ S3 media storage:
 
 ```bash
 AGNO_FILE_OUTPUT_S3_BUCKET=my-bucket \
-  .venvs/demo/bin/python cookbook/05_agent_os/02_databases/media_storage.py
+  .venvs/demo/bin/python cookbook/05_agent_os/02_databases/s3_media_storage.py
+```
+
+GCS media storage:
+
+```bash
+AGNO_FILE_OUTPUT_GCS_BUCKET=my-bucket \
+  .venvs/demo/bin/python cookbook/05_agent_os/02_databases/gcs_media_storage.py
 ```
 
 Reading and deleting session media:
