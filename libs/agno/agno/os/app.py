@@ -841,19 +841,32 @@ class AgentOS:
         if self.registry is None:
             self.registry = Registry()
 
-        # The OS's own db goes FIRST in registry.dbs: it is the db behind the
-        # component catalog routes, and Studio toolkits without an explicit db
-        # adopt registry.dbs[0]. Without this, the component-tree walk can put
-        # an agent's private session db at the head and Studio would silently
-        # write its catalog somewhere no OS surface reads.
-        if (
-            self.db is not None
-            and isinstance(self.db, BaseDb)
-            and all(existing is not self.db for existing in self.registry.dbs)
-        ):
-            os_db_id = getattr(self.db, "id", None)
-            if os_db_id is None or all(getattr(existing, "id", None) != os_db_id for existing in self.registry.dbs):
-                self.registry.dbs.insert(0, self.db)
+        # Name the db behind the component catalog outright. A Studio toolkit
+        # given no db of its own resolves this, rather than guessing at the
+        # head of registry.dbs: that list is whatever the component tree
+        # happened to carry, so guessing can bind Studio to an agent-private
+        # session db and write the catalog where no OS surface reads it. When
+        # this OS has no db that can serve the catalog, the declaration says
+        # so, and Studio refuses instead of adopting the wrong one.
+        if self.db is not None:
+            self.registry.declare_component_db(self.db)
+
+        # The catalog db also goes first in registry.dbs, so rehydration that
+        # walks the list meets it before any component-private db. Ordering is
+        # a convenience here, not the contract - the declaration above is what
+        # Studio resolves - so an id already taken by another db is left to
+        # add_db's own duplicate-id warning rather than warned about twice.
+        if self.db is not None and isinstance(self.db, BaseDb):
+            existing_index = next(
+                (index for index, existing in enumerate(self.registry.dbs) if existing is self.db), None
+            )
+            if existing_index is None:
+                self.registry.add_db(self.db)
+                existing_index = next(
+                    (index for index, existing in enumerate(self.registry.dbs) if existing is self.db), None
+                )
+            if existing_index is not None and existing_index > 0:
+                self.registry.dbs.insert(0, self.registry.dbs.pop(existing_index))
 
         if self._agents:
             existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}

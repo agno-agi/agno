@@ -527,8 +527,11 @@ class StudioTools(Toolkit):
 
     @property
     def db(self) -> Optional["BaseDb"]:
-        if self._db is None and self.registry.dbs:
-            self._db = self.registry.dbs[0]
+        if self._db is None:
+            # The registry states which db backs the catalog; an OS whose own
+            # db cannot serve it says so, and Studio stays unconfigured rather
+            # than adopting a component-private db.
+            self._db = self.registry.resolve_component_db()
         return self._db
 
     @db.setter

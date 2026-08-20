@@ -231,3 +231,65 @@ class TestSplitRegistryIsLoud:
             AgentOS(agents=[builder], registry=registry, db=db)
 
         assert not any("bound to a different Registry" in r.message for r in caplog.records)
+
+
+class TestTheCatalogDbIsNamedNotGuessed:
+    """The registry states which db backs the catalog; Studio does not guess.
+
+    ``registry.dbs`` holds whatever the component tree carried, in whatever
+    order the walk found it, so adopting its head can bind Studio to an
+    agent-private session db and write the catalog where no OS surface reads.
+    """
+
+    def _studio(self, registry):
+        studio = StudioTools(registry=registry)
+        return studio, Agent(id="builder", name="Builder", model=_model(), tools=[studio])
+
+    def test_the_os_db_wins_when_it_is_not_first_in_the_registry(self, tmp_path):
+        registry = Registry(name="R", models=[_model()])
+        private = SqliteDb(id="agent-private", db_file=str(tmp_path / "private.db"))
+        os_db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        # The private db is registered first, as a component-tree walk would.
+        registry.add_db(private)
+        registry.add_db(os_db)
+        studio, builder = self._studio(registry)
+
+        AgentOS(agents=[builder], registry=registry, db=os_db)
+
+        assert studio.db is os_db
+
+    def test_the_os_db_wins_when_another_db_already_holds_its_id(self, tmp_path):
+        registry = Registry(name="R", models=[_model()])
+        impostor = SqliteDb(id="shared-id", db_file=str(tmp_path / "impostor.db"))
+        os_db = SqliteDb(id="shared-id", db_file=str(tmp_path / "os.db"))
+        registry.add_db(impostor)
+        studio, builder = self._studio(registry)
+
+        AgentOS(agents=[builder], registry=registry, db=os_db)
+
+        assert studio.db is os_db
+
+    def test_an_async_os_db_refuses_rather_than_adopting_a_private_db(self, tmp_path):
+        pytest.importorskip("asyncpg")
+        from agno.db.postgres import AsyncPostgresDb
+
+        registry = Registry(name="R", models=[_model()])
+        private = SqliteDb(id="agent-private", db_file=str(tmp_path / "private.db"))
+        registry.add_db(private)
+        studio, builder = self._studio(registry)
+        async_db = AsyncPostgresDb(db_url="postgresql+asyncpg://u:p@localhost/x", id="async-os")
+
+        AgentOS(agents=[builder], registry=registry, db=async_db)
+
+        # An async db cannot serve the catalog, and a component-private db is
+        # not a substitute for it: the write must refuse, as it did before
+        # lazy resolution existed.
+        assert studio.db is None
+        assert _loads(studio.create_agent(name="X", instructions="y"))["error"]["code"] == "db_not_configured"
+
+    def test_a_registry_with_no_os_still_falls_back_to_its_first_db(self, tmp_path):
+        # No AgentOS in the picture: the long-standing dbs[0] fallback stands.
+        db = SqliteDb(id="plain", db_file=str(tmp_path / "plain.db"))
+        registry = Registry(name="R", models=[_model()], dbs=[db])
+
+        assert StudioTools(registry=registry).db is db

@@ -324,8 +324,10 @@ class StudioRunnerTools(Toolkit):
 
     @property
     def db(self) -> Optional["BaseDb"]:
-        if self._db is None and self.registry is not None and self.registry.dbs:
-            self._db = self.registry.dbs[0]
+        if self._db is None and self.registry is not None:
+            # Same resolution as StudioTools: the registry names the catalog
+            # db, and a declared None means this OS has none to give.
+            self._db = self.registry.resolve_component_db()
         return self._db
 
     @db.setter

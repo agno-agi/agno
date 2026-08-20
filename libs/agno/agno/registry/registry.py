@@ -110,6 +110,11 @@ class Registry:
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
     workflows: List[Workflow] = field(default_factory=list)
+    # The db behind the component catalog, named by the AgentOS holding this
+    # registry (see declare_component_db). None once declared means this OS
+    # has no db that can serve the catalog.
+    component_db: Optional[BaseDb] = field(default=None, init=False, repr=False)
+    _component_db_declared: bool = field(default=False, init=False, repr=False)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
@@ -517,6 +522,31 @@ class Registry:
                 # fall back to keeping both, which is the safe direction.
                 continue
         return False
+
+    def declare_component_db(self, db: Any) -> None:
+        """State which database backs the component catalog.
+
+        AgentOS calls this with its own db. A db that is not a synchronous
+        ``BaseDb`` -- async, or remote -- cannot serve the catalog, and is
+        declared as None rather than left undeclared: an undeclared registry
+        falls back to ``dbs[0]``, and that list holds whatever the component
+        tree carried, so the fallback can bind a Studio toolkit to an
+        agent-private session db and write the catalog where no OS surface
+        reads it.
+        """
+        self.component_db = db if isinstance(db, BaseDb) else None
+        self._component_db_declared = True
+
+    def resolve_component_db(self) -> Optional[BaseDb]:
+        """The database a component-catalog toolkit should use when given none.
+
+        A declaration wins outright, including a declared None. Without one --
+        no AgentOS in the picture, a toolkit driven straight from Python --
+        the head of ``dbs`` is the long-standing fallback.
+        """
+        if self._component_db_declared:
+            return self.component_db
+        return self.dbs[0] if self.dbs else None
 
     def add_db(self, db: Any) -> None:
         """Add a database unless one with the same id (or the same instance) is already present.
