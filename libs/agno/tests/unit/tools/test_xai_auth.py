@@ -144,7 +144,8 @@ def test_toolkit_registers_exactly_the_two_sign_in_tools(tmp_path):
 
     assert auth.name == "xai_auth"
     assert list(auth.functions) == ["sign_in_with_supergrok", "check_supergrok_login"]
-    assert auth.async_functions == {}
+    # The async twins register under the SAME names (they are the same two tools)
+    assert list(auth.async_functions) == list(auth.functions)
 
 
 def test_toolkit_builds_a_manager_from_the_constructor_pieces(tmp_path, sqlite_db):
@@ -578,3 +579,138 @@ def test_a_seeded_pending_row_from_another_process_completes_the_login(
 
     assert payload == {"message": SIGNED_IN}
     assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+
+
+# ---------------------------------------------------------------------------
+# U11-U16: the async tool surface
+#
+# The point is the cross-replica handoff (U14), not the keyword: the sync
+# tools cannot await an async backend, so they stash the pending login in
+# process memory - which the next turn's replica cannot see.
+# ---------------------------------------------------------------------------
+
+
+def _async_toolkit(endpoint: AuthEndpoint, **manager_kwargs: Any) -> XAIAuth:
+    """A toolkit whose manager reaches the mock endpoint over the async transport."""
+    manager = XAITokenManager(
+        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(endpoint)), **manager_kwargs
+    )
+    return XAIAuth(token_manager=manager)
+
+
+class AsyncDb:
+    """An async backend: coroutine methods over a real store, as async adapters ship."""
+
+    def __init__(self, inner: Any):
+        self._inner = inner
+
+    async def get_auth_token(self, provider: str, user_id: str, service: str) -> Any:
+        return self._inner.get_auth_token(provider, user_id, service)
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Any:
+        return self._inner.upsert_auth_token(token)
+
+    async def delete_auth_token(self, provider: str, user_id: str, service: str) -> Any:
+        return self._inner.delete_auth_token(provider, user_id, service)
+
+
+def test_no_a_prefixed_twin_name_reaches_the_model(tmp_path):
+    """The a* methods exist on the class; only the two stable names are tools."""
+    auth = XAIAuth(token_path=str(tmp_path / "token.json"), encryption_key="key-1")
+
+    assert callable(auth.asign_in_with_supergrok)
+    assert callable(auth.acheck_supergrok_login)
+    assert set(auth.functions) | set(auth.async_functions) == {
+        "sign_in_with_supergrok",
+        "check_supergrok_login",
+    }
+
+
+def test_async_mode_selects_the_awaitable_entrypoints(tmp_path):
+    """agent/_tools.py picks get_async_functions() in async mode - they must be coroutines."""
+    from inspect import iscoroutinefunction
+
+    auth = XAIAuth(token_path=str(tmp_path / "token.json"), encryption_key="key-1")
+
+    async_functions = auth.get_async_functions()
+    assert set(async_functions) == {"sign_in_with_supergrok", "check_supergrok_login"}
+    assert all(iscoroutinefunction(f.entrypoint) for f in async_functions.values())
+    assert not any(iscoroutinefunction(f.entrypoint) for f in auth.get_functions().values())
+
+
+async def test_the_async_flow_signs_in_and_polls_exactly_once(endpoint, sqlite_db, encryption_key):
+    auth = _async_toolkit(endpoint, db=sqlite_db, encryption_key=encryption_key)
+
+    started = json.loads(await auth.asign_in_with_supergrok(run_context=_ctx("u1")))
+    payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
+
+    assert started == {"message": SIGN_IN_MESSAGE, "url": APPROVAL_URL}
+    assert payload == {"message": SIGNED_IN}
+    assert len(endpoint.poll_requests) == 1
+    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+    assert sqlite_db.get_auth_token("xai", "u1", PENDING_SERVICE) is None
+
+
+async def test_an_async_db_carries_the_pending_login_across_replicas(endpoint, sqlite_db, encryption_key):
+    """THE REGRESSION: turn 1 and turn 2 land on different processes sharing one async db."""
+    db = AsyncDb(sqlite_db)
+    replica_a = _async_toolkit(endpoint, db=db, encryption_key=encryption_key)
+
+    await replica_a.asign_in_with_supergrok(run_context=_ctx("u1"))
+
+    # The pending login belongs to the database, not to this process
+    assert replica_a._pending == {}
+    assert _stash(sqlite_db, "u1", encryption_key)["device_code"] == "device-code-1"
+
+    replica_b = _async_toolkit(endpoint, db=db, encryption_key=encryption_key)
+    payload = json.loads(await replica_b.acheck_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"message": SIGNED_IN}
+    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+
+
+async def test_the_async_check_reports_not_approved_yet_and_re_stashes_the_interval(
+    endpoint, sqlite_db, encryption_key
+):
+    endpoint.queue_poll(400, {"error": "slow_down"})
+    auth = _async_toolkit(endpoint, db=AsyncDb(sqlite_db), encryption_key=encryption_key)
+    await auth.asign_in_with_supergrok(run_context=_ctx("u1"))
+
+    payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"message": NOT_APPROVED}
+    assert _stash(sqlite_db, "u1", encryption_key)["interval"] == 10
+
+
+async def test_the_async_force_signs_out_then_starts_a_fresh_login(endpoint, sqlite_db, encryption_key):
+    auth = _async_toolkit(endpoint, db=AsyncDb(sqlite_db), encryption_key=encryption_key)
+    await auth.asign_in_with_supergrok(run_context=_ctx("u1"))
+    await auth.acheck_supergrok_login(run_context=_ctx("u1"))
+    assert sqlite_db.get_auth_token(*STORE_KEY) is not None
+
+    payload = json.loads(await auth.asign_in_with_supergrok(run_context=_ctx("u1"), force=True))
+
+    assert payload == {"message": SIGN_IN_MESSAGE, "url": APPROVAL_URL}
+    assert len(endpoint.device_requests) == 2
+
+
+async def test_the_async_check_without_a_pending_login_says_so(endpoint, sqlite_db, encryption_key):
+    auth = _async_toolkit(endpoint, db=AsyncDb(sqlite_db), encryption_key=encryption_key)
+
+    payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"error": NO_SIGN_IN}
+    assert endpoint.poll_requests == []
+
+
+async def test_an_async_terminal_poll_reports_the_reason_and_drops_the_pending_login(
+    endpoint, sqlite_db, encryption_key
+):
+    endpoint.queue_poll(400, {"error": "access_denied"})
+    auth = _async_toolkit(endpoint, db=AsyncDb(sqlite_db), encryption_key=encryption_key)
+    await auth.asign_in_with_supergrok(run_context=_ctx("u1"))
+
+    payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload["error"].startswith("Sign-in failed:")
+    assert sqlite_db.get_auth_token("xai", "u1", PENDING_SERVICE) is None
