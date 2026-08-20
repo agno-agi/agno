@@ -395,3 +395,35 @@ class TestTheDeclarationIsBinding:
         )
 
         assert studio._scheduler_tools.manager is pinned
+
+    def test_a_db_less_second_os_does_not_unbind_the_first(self, tmp_path):
+        """Registries are shareable, so declaring must not be last-writer-wins
+        when the later writer has nothing to declare."""
+        registry = Registry(name="R", models=[_model()])
+        studio = StudioTools(registry=registry)
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        AgentOS(
+            agents=[Agent(id="builder", name="Builder", model=_model(), tools=[studio])],
+            registry=registry,
+            db=db_a,
+        )
+        assert studio.db is db_a
+
+        # A second, dispatch-only OS on the same registry, with no db of its own.
+        AgentOS(agents=[Agent(id="dispatch", name="Dispatch", model=_model())], registry=registry)
+
+        assert studio.db is db_a
+        assert _loads(studio.create_agent(name="Z", instructions="i"))["ok"] is True
+
+    def test_a_db_less_runner_only_deployment_is_not_warned_about(self, tmp_path, caplog):
+        """StudioRunnerTools registers no write tools; it lists and dispatches
+        code-defined components with no db at all."""
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        registry = Registry(name="R", models=[_model()])
+        runner = Agent(id="r", name="R", model=_model(), tools=[StudioRunnerTools(registry=registry)])
+
+        with caplog.at_level("WARNING"):
+            AgentOS(agents=[runner], registry=registry)
+
+        assert not any("component catalog" in r.message for r in caplog.records)

@@ -114,7 +114,7 @@ class Registry:
     # registry (see declare_component_db). None once declared means this OS
     # has no db that can serve the catalog.
     component_db: Optional[BaseDb] = field(default=None, init=False, repr=False)
-    _component_db_declared: bool = field(default=False, init=False, repr=False)
+    component_db_declared: bool = field(default=False, init=False, repr=False)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
@@ -535,7 +535,7 @@ class Registry:
         reads it.
         """
         self.component_db = db if isinstance(db, BaseDb) else None
-        self._component_db_declared = True
+        self.component_db_declared = True
 
     def resolve_component_db(self) -> Optional[BaseDb]:
         """The database a component-catalog toolkit should use when given none.
@@ -544,7 +544,7 @@ class Registry:
         no AgentOS in the picture, a toolkit driven straight from Python --
         the head of ``dbs`` is the long-standing fallback.
         """
-        if self._component_db_declared:
+        if self.component_db_declared:
             return self.component_db
         return self.dbs[0] if self.dbs else None
 

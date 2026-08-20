@@ -841,15 +841,21 @@ class AgentOS:
         if self.registry is None:
             self.registry = Registry()
 
-        # Name the db behind the component catalog outright, ALWAYS - including
-        # when there is none. A Studio toolkit given no db of its own resolves
-        # this rather than guessing at the head of registry.dbs: that list is
+        # Name the db behind the component catalog outright, including when
+        # there is none. A Studio toolkit given no db of its own resolves this
+        # rather than guessing at the head of registry.dbs: that list is
         # whatever the component tree happened to carry, so guessing binds
         # Studio to an agent-private session db and writes the catalog where no
         # OS surface reads it. Declaring only when self.db exists would leave
         # exactly that guess in place for an OS with no db, which is the wiring
         # most likely to have one - a builder agent carrying its own.
-        self.registry.declare_component_db(self.db)
+        #
+        # A db-less OS still does not OVERRIDE a catalog another OS already
+        # named: registries are explicitly shareable, so a second, dispatch-only
+        # OS mounted on the same registry would otherwise unbind the first one's
+        # Studio and turn its working writes into db_not_configured.
+        if self.db is not None or not self.registry.component_db_declared:
+            self.registry.declare_component_db(self.db)
 
         # The catalog db also goes first in registry.dbs, so rehydration that
         # walks the list meets it before any component-private db. Ordering is
@@ -1025,15 +1031,19 @@ class AgentOS:
                         "workflows will be invisible to it. Pass that registry to AgentOS (registry=...), "
                         "or construct the toolkit with the OS's registry."
                     )
-                # No catalog db means every Studio write refuses. Say so here:
+                # No catalog db means every Studio WRITE refuses. Say so here:
                 # the alternative to refusing is adopting a component-private
                 # db and writing a catalog no OS surface serves, and a silent
                 # success is the worse of the two failures.
-                if (
-                    getattr(tool, "_db", None) is None
-                    and self.registry is not None
-                    and self.registry.resolve_component_db() is None
-                ):
+                #
+                # Only StudioTools: StudioRunnerTools registers no write tools
+                # and lists and dispatches code-defined components perfectly
+                # well with no db at all. And the question is what the TOOL
+                # will resolve, which is its own registry's answer - the
+                # warning above exists precisely because that can differ from
+                # this OS's.
+                tool_registry_db = tool_registry.resolve_component_db() if tool_registry is not None else None
+                if isinstance(tool, StudioTools) and getattr(tool, "_db", None) is None and tool_registry_db is None:
                     log_warning(
                         f"Component '{component_label}' carries {type(tool).__name__} but this AgentOS has no "
                         "database that can back the component catalog, so every Studio write will answer "
