@@ -34,12 +34,12 @@ def client(db):
 
 @pytest.fixture
 def two_versions(db):
-    """v1 is bare; v2 carries a description and metadata."""
+    """v1 clears both fields explicitly; v2 carries a description and metadata."""
     db.create_component_with_config(
         component_id="roller",
         component_type=ComponentType.AGENT,
         name="roller",
-        config={"name": "roller"},
+        config={"name": "roller", "description": ""},
         stage="published",
     )
     db.upsert_config(
@@ -57,9 +57,11 @@ class TestRollingBackToABarerVersion:
         assert r.status_code == 200, (r.status_code, r.text)
         assert not db.get_component(two_versions).get("description")
 
-    def test_the_metadata_the_new_live_version_lacks_is_cleared(self, client, db, two_versions):
+    def test_the_metadata_the_new_live_version_lacks_is_left_alone(self, client, db, two_versions):
+        """Metadata follows the adapter's publish rule: projected only when the
+        rolled-to version actually carries some."""
         client.patch(f"/components/{two_versions}", json={"current_version": 1})
-        assert not db.get_component(two_versions).get("metadata")
+        assert db.get_component(two_versions)["metadata"] == {"tier": "gold"}
 
     def test_the_name_falls_back_rather_than_emptying(self, client, db, two_versions):
         client.patch(f"/components/{two_versions}", json={"current_version": 1})
@@ -76,3 +78,43 @@ class TestRollingBackToABarerVersion:
         r = client.patch(f"/components/{two_versions}", json={"current_version": 1, "description": "explicit"})
         assert r.status_code == 200, (r.status_code, r.text)
         assert db.get_component(two_versions)["description"] == "explicit"
+
+
+class TestRowOnlyFieldsSurviveAPointerMove:
+    """description and metadata are also first-class columns, set through
+    POST/PATCH /components and never written into any config. A projection
+    that read "absent from the config" as "cleared" destroyed them on the
+    next pointer move, with no version to restore them from.
+    """
+
+    @pytest.fixture
+    def row_only(self, client, db):
+        r = client.post(
+            "/components",
+            json={
+                "name": "Invoices",
+                "component_type": "agent",
+                "description": "Handles invoices",
+                "metadata": {"team": "finance"},
+                "config": {"name": "Invoices"},
+                "stage": "published",
+            },
+        )
+        assert r.status_code == 201, r.text
+        component_id = r.json()["component_id"]
+        db.upsert_config(component_id, config={"name": "Invoices"}, stage="published")
+        return component_id
+
+    def test_the_description_survives_a_pointer_move(self, client, db, row_only):
+        assert client.patch(f"/components/{row_only}", json={"current_version": 1}).status_code == 200
+        assert db.get_component(row_only)["description"] == "Handles invoices"
+
+    def test_the_metadata_survives_a_pointer_move(self, client, db, row_only):
+        client.patch(f"/components/{row_only}", json={"current_version": 1})
+        assert db.get_component(row_only)["metadata"] == {"team": "finance"}
+
+    def test_the_set_current_route_agrees(self, client, db, row_only):
+        assert client.post(f"/components/{row_only}/configs/1/set-current").status_code == 200
+        row = db.get_component(row_only)
+        assert row["description"] == "Handles invoices"
+        assert row["metadata"] == {"team": "finance"}

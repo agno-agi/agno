@@ -4112,6 +4112,19 @@ class PostgresDb(BaseDb):
                     # Update existing
                     updates: Dict[str, Any] = {"updated_at": int(time.time())}
                     if component_type is not None:
+                        # A component's type is part of its identity, not a
+                        # field: it decides the run endpoint every schedule
+                        # stores, which loader rebuilds it, and how every
+                        # stored reference resolves. Rewriting it silently
+                        # invalidates all of them - and the archive cascade,
+                        # which matches on (type, id), would then miss the very
+                        # schedules it exists to disable. Create a new
+                        # component instead.
+                        if str(existing.component_type) != str(component_type.value):
+                            raise ValueError(
+                                f"Cannot change component {component_id} from {existing.component_type} "
+                                f"to {component_type.value}; a component's type is fixed at creation."
+                            )
                         updates["component_type"] = component_type.value
                     if name is not None:
                         updates["name"] = name
@@ -4382,7 +4395,6 @@ class PostgresDb(BaseDb):
                         target_type=component_type,
                         target_id=component_id,
                         reason=f"target_archived:{component_type}:{component_id}",
-                        any_type=True,
                     )
                     if cascade_stats is not None:
                         cascade_stats["schedules_disabled"] = disabled
@@ -6762,7 +6774,6 @@ class PostgresDb(BaseDb):
         target_type: str,
         target_id: str,
         reason: Optional[str] = None,
-        any_type: bool = False,
     ) -> int:
         """The cascade write, run on a session the caller already holds.
 
@@ -6771,32 +6782,24 @@ class PostgresDb(BaseDb):
         """
         from agno.db.schemas.scheduler import build_run_endpoint
 
-        # A component's type is rewritable (upsert_component takes one, and the
-        # storage layer re-upserts it on every save), while component_id is the
-        # primary key and unique across all three types. A cascade keyed on the
-        # CURRENT type therefore matches nothing once the type has changed --
-        # neither the provenance pair nor the endpoint -- and the archive
-        # leaves the schedule armed at a target that is gone. ``any_type``
-        # keys on the id alone, which is what a delete means.
-        types = ("agent", "team", "workflow") if any_type else (target_type,)
-        endpoints: List[str] = []
-        for candidate in types:
-            endpoint = build_run_endpoint(candidate, target_id)
-            # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
-            # "/agents/x/runs/" is a valid run endpoint that plain equality
-            # would miss - matching both spellings keeps the cascade from
-            # leaking rows.
-            endpoints.extend((endpoint, endpoint + "/"))
-        target_match = (
-            table.c.target_id == target_id
-            if any_type
-            else and_(table.c.target_type == target_type, table.c.target_id == target_id)
-        )
+        endpoint = build_run_endpoint(target_type, target_id)
+        # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+        # "/agents/x/runs/" is a valid run endpoint that plain equality would
+        # miss - matching both spellings keeps the cascade from leaking rows.
+        #
+        # The match stays TYPED. Keying on the id alone would look tempting
+        # (the id is unique inside the catalog) but a schedule's target need
+        # not be in the catalog at all: a code-defined component of another
+        # type can hold the same id, and disabling its schedules from an
+        # unrelated tenant's archive is not a cascade, it is collateral. The
+        # type is kept honest at the other end instead - upsert_component
+        # refuses to rewrite it.
+        endpoints = [endpoint, endpoint + "/"]
         result = sess.execute(
             table.update()
             .where(
                 or_(
-                    target_match,
+                    and_(table.c.target_type == target_type, table.c.target_id == target_id),
                     table.c.endpoint.in_(endpoints),
                 ),
                 table.c.enabled.is_(True),

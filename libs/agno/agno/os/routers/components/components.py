@@ -307,8 +307,20 @@ def _validate_pinned_versions_readable(
         if not isinstance(link, dict):
             continue
         child_id = link.get("child_component_id")
-        child_version = link.get("child_version")
-        if not isinstance(child_id, str) or not isinstance(child_version, int):
+        if not isinstance(child_id, str):
+            continue
+        # The version is whatever JSON carried: the links body is
+        # List[Dict[str, Any]], so "2" and 2.0 arrive unconverted and the
+        # adapter's INTEGER column coerces them on the way in. Coerce here the
+        # same way rather than skipping what is not already an int -- skipping
+        # is how a guard on a caller-supplied field gets walked around. bool is
+        # an int subclass and is not a version.
+        raw_version = link.get("child_version")
+        if isinstance(raw_version, bool) or raw_version is None:
+            continue
+        try:
+            child_version = int(raw_version)
+        except (TypeError, ValueError):
             continue
         try:
             child_row = db.get_component(child_id)
@@ -357,10 +369,18 @@ def _config_response(
 
     The owner, an unscoped caller and a privileged one read the config as
     stored; anyone else reads it without the database's connection details.
+
+    An UNOWNED (shared) row is read whole, the same rule may_read_draft_configs
+    uses. That is not a courtesy: a caller who may READ a shared component may
+    also WRITE it, and the only write the API offers is a whole config. Handing
+    such a caller a redacted body and taking it back on the next save would
+    destroy the stored connection - and for a nested block, permanently, since
+    the resolver repairs only the top-level one. Redaction is for configs the
+    caller cannot write back.
     """
     actor, privileged = draft_preview_identity(request)
     owner = (component_row or {}).get("user_id")
-    if not privileged and actor is not None and owner != actor:
+    if not privileged and actor is not None and owner is not None and owner != actor:
         blob = config.get("config")
         if isinstance(blob, dict):
             config = {**config, "config": _redact_db_connection(blob)}
@@ -569,15 +589,28 @@ def _project_live_version(
     config = row.get("config") if isinstance(row, dict) else None
     if not isinstance(config, dict):
         return {}
-    # An absent field is a CLEARED field, and the adapters read None as "leave
-    # this column alone" - so the empty value is projected explicitly, exactly
-    # as the publish projection does it. Skipping None instead would leave the
-    # row describing the version that used to be live.
-    return {
-        "name": config.get("name") or component.get("name"),
-        "description": config.get("description") or "",
-        "metadata": config.get("metadata") or {},
-    }
+    # Present-but-empty is a CLEARED field and must be projected explicitly,
+    # because the adapters read None as "leave this column alone" - otherwise
+    # the row keeps describing the version that used to be live. Absent is
+    # different: description and metadata are also first-class columns set
+    # through POST/PATCH /components and never written into a config, so
+    # projecting an empty value for a key the config does not carry would
+    # destroy row data no version can restore.
+    # The adapter's own publish projection is the contract to mirror: name when
+    # it is not None, description on key PRESENCE, metadata when it is not
+    # None. The one difference is the mechanism - this projection is applied
+    # through upsert_component, which reads None as "leave the column alone",
+    # so a present-but-empty description is projected as "" to actually clear.
+    projection: Dict[str, Any] = {}
+    if config.get("name") is not None:
+        projection["name"] = config["name"]
+    elif component.get("name") is not None:
+        projection["name"] = component["name"]
+    if "description" in config:
+        projection["description"] = config.get("description") or ""
+    if config.get("metadata") is not None:
+        projection["metadata"] = config["metadata"]
+    return projection
 
 
 def get_components_router(

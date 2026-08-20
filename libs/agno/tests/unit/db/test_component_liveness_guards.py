@@ -636,58 +636,52 @@ def test_dependents_read_shares_one_query_with_the_public_reader(db):
     assert in_session == db.get_dependents("leaf", active_parents_only=True)
 
 
-class TestTheCascadeSurvivesATypeChange:
-    """A component's type is rewritable; its id is not.
+class TestAComponentsTypeIsFixedAtCreation:
+    """The archive cascade matches schedules on (target_type, target_id), so a
+    rewritable type would let a component drift out from under the very
+    schedules the cascade exists to disable.
 
-    upsert_component takes a component_type, and the storage layer re-upserts
-    one on every save, so the type recorded when a schedule was created can
-    stop matching the row. A cascade -- or a liveness read -- keyed on the
-    type then matches nothing, reports zero disabled, and leaves the poller
-    firing at a component that is gone. component_id is the primary key and
-    unique across all three types, which is what a delete actually means.
+    Widening the cascade to match on the id alone looked like the fix and is
+    not: a schedule's target need not be in the catalog at all -- a
+    code-defined component of another type can hold the same id -- so an
+    id-only match disables other people's working schedules. The type is kept
+    honest at the writer instead.
     """
 
-    def test_the_cascade_still_disables_after_a_type_flip(self, db):
-        _agent(db, "shifter")
-        _arm_schedule(db, "sched-flip", "agent", "shifter")
+    def test_the_type_cannot_be_rewritten(self, db):
+        _agent(db, "fixed")
+        with pytest.raises(ValueError, match="fixed at creation"):
+            db.upsert_component(component_id="fixed", component_type=ComponentType.TEAM, name="fixed")
 
-        db.upsert_component(component_id="shifter", component_type=ComponentType.TEAM, name="shifter")
-        assert db.delete_component("shifter") is True
+    def test_re_upserting_the_same_type_is_fine(self, db):
+        """The storage layer re-upserts the type on every save."""
+        _agent(db, "steady")
+        db.upsert_component(component_id="steady", component_type=ComponentType.AGENT, name="steady renamed")
+        assert db.get_component("steady")["name"] == "steady renamed"
 
-        assert db.get_schedule("sched-flip")["enabled"] in (False, 0)
+    def test_omitting_the_type_is_fine(self, db):
+        _agent(db, "quiet")
+        db.upsert_component(component_id="quiet", name="quiet renamed")
+        assert db.get_component("quiet")["component_type"] == "agent"
 
-    def test_an_untagged_row_on_the_old_endpoint_is_disabled_too(self, db):
-        _agent(db, "shifter2")
-        _arm_schedule(db, "sched-flip-2", "agent", "shifter2", tagged=False)
+    def test_the_cascade_still_disables_its_own_schedules(self, db):
+        _agent(db, "cascader")
+        _arm_schedule(db, "sched-cascade", "agent", "cascader")
+        assert db.delete_component("cascader") is True
+        assert db.get_schedule("sched-cascade")["enabled"] in (False, 0)
 
-        db.upsert_component(component_id="shifter2", component_type=ComponentType.TEAM, name="shifter2")
-        assert db.delete_component("shifter2") is True
+    def test_a_schedule_on_another_type_with_the_same_id_is_untouched(self, db):
+        """The id is unique in the catalog, but a code-defined component of
+        another type can hold it -- and its schedules are not this archive's
+        to disable."""
+        _agent(db, "shared-id")
+        _arm_schedule(db, "sched-agent", "agent", "shared-id")
+        _arm_schedule(db, "sched-team", "team", "shared-id")
 
-        assert db.get_schedule("sched-flip-2")["enabled"] in (False, 0)
+        assert db.delete_component("shared-id") is True
 
-    def test_an_unrelated_schedule_is_left_alone(self, db):
-        """Keying on the id must not widen the blast radius."""
-        _agent(db, "shifter3")
-        _agent(db, "bystander")
-        _arm_schedule(db, "sched-flip-3", "agent", "shifter3")
-        _arm_schedule(db, "sched-bystander", "agent", "bystander")
-
-        assert db.delete_component("shifter3") is True
-
-        assert db.get_schedule("sched-bystander")["enabled"] in (True, 1)
-
-    def test_the_enable_guard_still_sees_the_archived_target(self, db):
-        """The refusal reads the row, and must not filter on the stale type."""
-        from agno.db.schemas.scheduler import Schedule
-        from agno.tools.scheduler import archived_target_refusal
-
-        _agent(db, "shifter4")
-        _arm_schedule(db, "sched-flip-4", "agent", "shifter4")
-        db.upsert_component(component_id="shifter4", component_type=ComponentType.TEAM, name="shifter4")
-        assert db.delete_component("shifter4") is True
-
-        schedule = Schedule.from_dict(db.get_schedule("sched-flip-4"))
-        assert archived_target_refusal(db, schedule) == ("agent", "shifter4")
+        assert db.get_schedule("sched-agent")["enabled"] in (False, 0)
+        assert db.get_schedule("sched-team")["enabled"] in (True, 1)
 
 
 class TestTheEnableGuardCrossesOwnersLikeTheCascadeDoes:

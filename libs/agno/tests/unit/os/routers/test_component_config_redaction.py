@@ -66,6 +66,21 @@ def _client(db, user_id):
     return TestClient(app)
 
 
+def _unscoped_write_client(db, user_id):
+    """Authenticated, but user_isolation off: writes are unscoped."""
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _scope(request, call_next):
+        request.state.user_isolation_enabled = False
+        request.state.user_id = user_id
+        request.state.scopes = []
+        return await call_next(request)
+
+    app.include_router(get_components_router(os_db=db, settings=AgnoAPISettings()))
+    return TestClient(app)
+
+
 ROUTES = [
     "/components/alice-agent/configs",
     "/components/alice-agent/configs/current",
@@ -126,3 +141,53 @@ class TestNestedBlocksAreRedactedToo:
         assert r.status_code == 200, (r.status_code, r.text)
         assert "s3cret" not in r.text
         assert r.json()["config"]["members"][0]["db"]["id"] == "prod"
+
+
+class TestASharedComponentIsReadWhole:
+    """Redaction is for configs the caller cannot write back.
+
+    An unowned row -- what `agent.save(db=...)` produces, and anything created
+    before ownership stamping -- is readable AND writable by every
+    authenticated caller. The only write the API offers is a whole config, so
+    redacting the read and accepting it back on the next save would destroy
+    the stored connection; for a nested block that loss is permanent, because
+    the resolver repairs only the top-level one.
+    """
+
+    @pytest.fixture
+    def shared(self, db):
+        db.create_component_with_config(
+            component_id="shared-agent",
+            component_type=ComponentType.AGENT,
+            name="shared-agent",
+            config={
+                "name": "shared-agent",
+                "db": {"id": "prod", "type": "postgres", "db_url": "postgresql://user:hunter2@h/db"},
+            },
+            stage="published",
+        )
+        return "shared-agent"
+
+    @pytest.mark.parametrize("route", ["/components/shared-agent/configs", "/components/shared-agent/configs/current"])
+    def test_an_authenticated_caller_reads_it_whole(self, db, shared, route):
+        r = _client(db, "bob").get(route)
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert "hunter2" in r.text
+
+    def test_a_read_modify_write_keeps_the_connection(self, db, shared):
+        # user_isolation OFF is the default and the shape that matters:
+        # get_scoped_user_id returns None so the write guard never fires, while
+        # draft_preview_identity still reports the JWT subject. The two rules
+        # disagreeing is exactly what made the round trip lossy.
+        client = _unscoped_write_client(db, "bob")
+        config = client.get("/components/shared-agent/configs/current").json()["config"]
+        config["name"] = "renamed"
+        assert client.post("/components/shared-agent/configs", json={"config": config}).status_code == 201
+        stored = db.get_config("shared-agent", version=2)["config"]
+        assert stored["db"]["db_url"] == "postgresql://user:hunter2@h/db"
+
+    def test_another_owners_component_is_still_redacted(self, db, published):
+        """The rule narrowed to unowned rows, not to nothing."""
+        r = _client(db, "bob").get(f"/components/{published}/configs/current")
+        assert r.status_code == 200
+        assert "hunter2" not in r.text

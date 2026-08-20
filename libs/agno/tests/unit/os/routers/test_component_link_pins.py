@@ -116,6 +116,44 @@ class TestPinningAnotherOwnersUnpublishedVersion:
         assert db.get_links(bob_team, version=2) == []
 
 
+class TestTheVersionIsWhateverJsonCarried:
+    """The links body is List[Dict[str, Any]], so the version arrives however
+    the client typed it and the adapter's INTEGER column coerces it on the way
+    in. A guard that inspects only ``int`` is walked around by quoting the
+    number.
+    """
+
+    @pytest.mark.parametrize("version", ["2", 2.0, " 2 "])
+    def test_a_non_int_spelling_of_the_draft_version_is_refused(self, db, bob_team, alice_agent, version):
+        r = _client(db, "bob").post(
+            f"/components/{bob_team}/configs",
+            json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, version)},
+        )
+        assert r.status_code == 404, (version, r.status_code, r.text)
+        assert db.get_links(bob_team, version=2) == []
+
+    @pytest.mark.parametrize("version", ["1", 1.0])
+    def test_a_non_int_spelling_of_a_published_version_still_works(self, db, bob_team, alice_agent, version):
+        r = _client(db, "bob").post(
+            f"/components/{bob_team}/configs",
+            json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, version)},
+        )
+        assert r.status_code == 201, (version, r.status_code, r.text)
+
+    @pytest.mark.parametrize("version", [True, None, "not-a-number"])
+    def test_a_version_that_names_no_draft_never_reaches_one(self, db, bob_team, alice_agent, version):
+        """Spellings that cannot name alice's draft are the adapter's problem,
+        not the guard's -- what matters is that none of them stores a pin at
+        the unpublished version."""
+        _client(db, "bob").post(
+            f"/components/{bob_team}/configs",
+            json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, version)},
+        )
+        for parent_version in (1, 2):
+            for link in db.get_links(bob_team, version=parent_version) or []:
+                assert link.get("child_version") != 2, (version, link)
+
+
 class TestTheLegitimateCompositionsStillWork:
     def test_pinning_the_published_version_is_allowed(self, db, bob_team, alice_agent):
         r = _client(db, "bob").post(

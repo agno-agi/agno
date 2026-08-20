@@ -109,6 +109,16 @@ def code_defined_probe(
     return probe
 
 
+def _component_type_arg(target_type: str) -> Optional[Any]:
+    """``target_type`` as a ComponentType, or None when it names no real type."""
+    from agno.db.base import ComponentType
+
+    try:
+        return ComponentType(target_type)
+    except ValueError:
+        return None
+
+
 def _archived_component_refusal(
     db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
 ) -> Optional[Tuple[str, str]]:
@@ -124,13 +134,13 @@ def _archived_component_refusal(
     if get_component is None:
         return None
     try:
-        # No component_type filter: component_id is unique across the three
-        # types, and a component's type is rewritable -- so filtering on the
-        # type recorded when the schedule was made turns a real archived row
-        # into "no such component", which reads as a live code-defined target
-        # and allows the enable.
+        # The type predicate matters: a code-defined component of another type
+        # can hold the same id, and an archived catalog row must not be read as
+        # THIS schedule's target. upsert_component refuses to rewrite a type,
+        # so the type recorded when the schedule was made still identifies it.
         row = get_component(
             target_id,
+            component_type=_component_type_arg(target_type),
             user_id=user_id,
             include_deleted=True,
         )
@@ -150,16 +160,17 @@ async def _aarchived_component_refusal(
     get_component = getattr(db, "get_component", None)
     if get_component is None:
         return None
-    # Same reason as the sync twin: no component_type filter.
+    component_type = _component_type_arg(target_type)
     try:
         if asyncio.iscoroutinefunction(get_component):
-            row = await get_component(target_id, user_id=user_id, include_deleted=True)
+            row = await get_component(target_id, component_type=component_type, user_id=user_id, include_deleted=True)
         else:
             # A sync adapter would hold the event loop for the whole query
             row = await asyncio.to_thread(
                 partial(
                     get_component,
                     target_id,
+                    component_type=component_type,
                     user_id=user_id,
                     include_deleted=True,
                 )
@@ -282,10 +293,7 @@ def _draft_only_component_refusal(
     if get_component is None:
         return None
     try:
-        # No component_type filter: the id is unique across types, and a
-        # filter on a type that has since changed reads the row as absent,
-        # which this predicate treats as a live code-defined target.
-        row = get_component(target_id, user_id=user_id)
+        row = get_component(target_id, component_type=_component_type_arg(target_type), user_id=user_id)
     except NotImplementedError:
         return None
     if not isinstance(row, dict) or row.get("current_version") is not None:
@@ -310,12 +318,14 @@ async def _adraft_only_component_refusal(
     get_component = getattr(db, "get_component", None)
     if get_component is None:
         return None
-    # Same reason as the sync twin: no component_type filter.
+    component_type = _component_type_arg(target_type)
     try:
         if asyncio.iscoroutinefunction(get_component):
-            row = await get_component(target_id, user_id=user_id)
+            row = await get_component(target_id, component_type=component_type, user_id=user_id)
         else:
-            row = await asyncio.to_thread(partial(get_component, target_id, user_id=user_id))
+            row = await asyncio.to_thread(
+                partial(get_component, target_id, component_type=component_type, user_id=user_id)
+            )
     except NotImplementedError:
         return None
     if not isinstance(row, dict) or row.get("current_version") is not None:
