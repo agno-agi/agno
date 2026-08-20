@@ -42,6 +42,10 @@ class RecordingLearningDb:
     def upsert_learning(self, id: str, **kwargs: Any) -> None:
         existing = self.rows.get(id, {})
         row = {**existing, **kwargs, "learning_id": id}
+        # user_id is a string column in every backend that stores learnings, so
+        # a non-string user id reads back as its str().
+        if row.get("user_id") is not None:
+            row["user_id"] = str(row["user_id"])
         self._clock += 1
         row["updated_at"] = self._clock
         self.rows[id] = row

@@ -1015,3 +1015,68 @@ class TestCreateEntityReservedNamespaceSegments:
         kwargs = mock_db.upsert_learning.call_args[1]
         assert kwargs["id"] == expected_id
         assert kwargs["namespace"] == namespace
+
+
+class TestLegacyRowProbeOwnerComparison:
+    """The 409 legacy-row probe matches the caller against the stored owner.
+
+    Only the SQL adapters type user_id as a string column. The document stores
+    keep whatever the agent wrote, so a row an agent created for an integer user
+    id carries an integer owner while the request body carries its string form.
+    Both spellings name one user and must reach the same 409.
+    """
+
+    def _forged_body(self):
+        return {
+            "learning_type": "entity_memory",
+            "content": {"facts": []},
+            "user_id": "42",
+            "entity_id": "acme",
+            "entity_type": "company",
+            "namespace": "user",
+        }
+
+    @pytest.mark.parametrize("stored_owner", ["42", 42], ids=["string_column", "document_store"])
+    def test_legacy_row_owned_by_the_caller_blocks_the_create(self, client, mock_db, stored_owner):
+        legacy_id = legacy_entity_learning_id(entity_id="acme", entity_type="company", namespace="user")
+        legacy_row = _make_learning(
+            learning_id=legacy_id,
+            learning_type="entity_memory",
+            namespace="user",
+            user_id=stored_owner,
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=lambda id: legacy_row if id == legacy_id else None)
+
+        resp = client.post("/learnings", json=self._forged_body())
+
+        mock_db.upsert_learning.assert_not_called()
+        assert resp.status_code == 409
+        assert legacy_id in resp.json()["detail"]
+
+    def test_legacy_row_owned_by_another_user_does_not_block_the_create(self, client, mock_db):
+        legacy_id = legacy_entity_learning_id(entity_id="acme", entity_type="company", namespace="user")
+        legacy_row = _make_learning(
+            learning_id=legacy_id,
+            learning_type="entity_memory",
+            namespace="user",
+            user_id="99",
+            entity_id="acme",
+            entity_type="company",
+        )
+        created = _make_learning(learning_type="entity_memory", namespace="user", user_id="42")
+        new_id_lookups = {"count": 0}
+
+        def lookup(id):
+            if id == legacy_id:
+                return legacy_row
+            new_id_lookups["count"] += 1
+            return None if new_id_lookups["count"] == 1 else created
+
+        mock_db.get_learning_by_id = MagicMock(side_effect=lookup)
+
+        resp = client.post("/learnings", json=self._forged_body())
+
+        assert resp.status_code == 201
+        mock_db.upsert_learning.assert_called_once()

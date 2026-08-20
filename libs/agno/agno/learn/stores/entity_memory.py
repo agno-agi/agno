@@ -42,7 +42,13 @@ from weakref import WeakKeyDictionary
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import _parse_json, build_learning_id, legacy_entity_learning_id, values_match_query
+from agno.learn.utils import (
+    _parse_json,
+    build_learning_id,
+    legacy_entity_learning_id,
+    same_user,
+    values_match_query,
+)
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -160,7 +166,13 @@ _IRREGULAR_ENTITY_TYPES = {"people": "person", "persons": "person", "companies":
 
 
 def _normalize_entity_type(entity_type: Optional[str]) -> Optional[str]:
-    if entity_type is None or not entity_type.strip():
+    # entity_type also arrives from a row's stored content, which is arbitrary
+    # JSON over the REST create route, so it is not always a string here.
+    if entity_type is None:
+        return None
+    if not isinstance(entity_type, str):
+        entity_type = str(entity_type)
+    if not entity_type.strip():
         return entity_type
     normalized = re.sub(r"\s+", "_", entity_type.strip().lower())
     if normalized in _CANONICAL_ENTITY_TYPES:
@@ -217,6 +229,19 @@ def _legacy_content_subsumed(legacy_content: Dict[str, Any], entity: "EntityMemo
         if legacy_keys is None or saved_keys is None or not legacy_keys <= saved_keys:
             return False
 
+    return _legacy_scalars_subsumed(legacy_content, entity)
+
+
+def _legacy_scalars_subsumed(legacy_content: Dict[str, Any], entity: "EntityMemory") -> bool:
+    """Whether a legacy row's non-collection fields are carried by the entity.
+
+    _merge_legacy_into gives the user-scoped side the description and every
+    conflicting properties key, so a merge can leave these behind. The keyed
+    collections merge losslessly, and a forget empties them on purpose, so they
+    are checked separately.
+    """
+    saved = entity.to_dict() or {}
+
     legacy_description = legacy_content.get("description")
     if legacy_description and legacy_description != saved.get("description"):
         return False
@@ -262,17 +287,6 @@ def _merge_legacy_into(entity: "EntityMemory", legacy: "EntityMemory") -> None:
     legacy_created = getattr(legacy, "created_at", None)
     if legacy_created and (not entity.created_at or legacy_created < entity.created_at):
         entity.created_at = legacy_created
-
-
-def _same_user(left: Any, right: Any) -> bool:
-    """Whether two user ids identify the same user.
-
-    The owner column is a string column, so a non-string user id reads back as
-    its ``str()``. The entity key applies the same coercion.
-    """
-    if left is None or right is None:
-        return False
-    return str(left) == str(right)
 
 
 def _blank_to_none(value: Optional[str]) -> Optional[str]:
@@ -3075,13 +3089,13 @@ class EntityMemoryStore(LearningStore):
         # row. The columns disambiguate.
         if row.get("namespace") != "user" or row.get("entity_id") != entity_id or row.get("entity_type") != entity_type:
             return "foreign", None
-        if not _same_user(row.get("user_id"), user_id):
+        if not same_user(row.get("user_id"), user_id):
             return "foreign", None
         content = _parse_json(row.get("content"))
         if content is None:
             return "blocked", None
         content_user = content.get("user_id")
-        if content_user is not None and not _same_user(content_user, user_id):
+        if content_user is not None and not same_user(content_user, user_id):
             return "blocked", None
         parsed = self.schema.from_dict(content)
         if parsed is None:
@@ -3195,13 +3209,19 @@ class EntityMemoryStore(LearningStore):
         The id alone does not establish ownership. The REST create route derives
         the same id from a caller-supplied namespace, so a row at this key can
         carry another owner, and serving it would disclose that owner's content.
+
+        The content's recorded user is deliberately not checked. A user-scoped
+        row recording another user is the owner's own row after it absorbed a
+        pre-fix collided row, so it carries the owner's later writes too;
+        _gate_legacy_row blocks that shape only on the user-less legacy key,
+        where it means the collision itself.
         """
         return (
             row.get("learning_type") == self.learning_type
             and row.get("namespace") == "user"
             and row.get("entity_id") == entity_id
             and row.get("entity_type") == entity_type
-            and _same_user(row.get("user_id"), user_id)
+            and same_user(row.get("user_id"), user_id)
         )
 
     def _warn_foreign_row_once(self, row_id: str, owner: Any) -> None:
@@ -4143,7 +4163,9 @@ class EntityMemoryStore(LearningStore):
         content = _parse_json(row.get("content")) if row else None
         snapshot = self._legacy_snapshots.get(legacy_id)
         if snapshot is not None and snapshot == content:
-            return "drop"
+            if content is None or _legacy_scalars_subsumed(content, merged_into):
+                return "drop"
+            return "skip"
         if content is not None and _legacy_content_subsumed(content, merged_into):
             return "drop"
         return "skip"

@@ -9,11 +9,13 @@ including the legacy-row self-heal for rows written under the old key.
 """
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
 from agno.db.base import AsyncBaseDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.learn.config import EntityMemoryConfig
 from agno.learn.stores.entity_memory import EntityMemoryStore
 from agno.learn.utils import build_learning_id, legacy_entity_learning_id
@@ -1756,3 +1758,278 @@ class TestNonStringUserIds:
         entity = store.get(entity_id="acme", entity_type="company", user_id=self.INT_USER)
 
         assert entity is None
+
+
+LEGACY_DESCRIPTION = "Enterprise customer since 2024"
+CURRENT_DESCRIPTION = "Renewal owned by the platform team"
+LEGACY_NOTE = "notes/acme-legacy.md"
+CURRENT_NOTE = "notes/acme-current.md"
+PILOT_EVENT = "signed the pilot"
+
+
+def _acme_row(
+    row_id: str,
+    facts: List[Dict[str, Any]],
+    description: Optional[str] = None,
+    note: Optional[str] = None,
+    events: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Columns for one ALICE-owned acme/company row, ready to splat into upsert_learning."""
+    return {
+        "id": row_id,
+        "learning_type": "entity_memory",
+        "entity_id": "acme",
+        "entity_type": "company",
+        "namespace": "user",
+        "user_id": ALICE,
+        "content": {
+            "entity_id": "acme",
+            "entity_type": "company",
+            "name": "Acme",
+            "description": description,
+            "properties": {"note": note} if note else {},
+            "facts": facts,
+            "events": events or [],
+            "namespace": "user",
+            "user_id": ALICE,
+        },
+    }
+
+
+def _stored_content(rows: List[Dict[str, Any]]) -> str:
+    """Every learning row's content as one JSON blob, for "survives anywhere" checks."""
+    return json.dumps([row.get("content") for row in rows], default=str)
+
+
+class TestSnapshotRetirementKeepsUncarriedFields:
+    """The merge snapshot proves this write consumed the legacy row's
+    collections; it establishes nothing about the scalars. _merge_legacy_into
+    hands the user-scoped side the description and every conflicting properties
+    key, so a legacy description or note pointer that lost such a conflict has
+    no copy anywhere else and the row holding it must survive the write.
+
+    A real SqliteDb backs these: content round-trips through JSON, so the store
+    cannot reach a stored row by reference and a snapshot comparison cannot
+    collapse into an identity compare.
+    """
+
+    LEGACY_FACTS = [{"id": "L1", "content": LEGACY_FACT}]
+    CURRENT_FACTS = [{"id": "n1", "content": CURRENT_FACT}]
+
+    def test_conflicting_description_and_note_outlive_the_write(self, tmp_path: Path) -> None:
+        db = SqliteDb(db_file=str(tmp_path / "conflict.db"))
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        db.upsert_learning(**_acme_row(legacy_id, self.LEGACY_FACTS, LEGACY_DESCRIPTION, LEGACY_NOTE))
+        db.upsert_learning(
+            **_acme_row(_user_key("acme", "company", ALICE), self.CURRENT_FACTS, CURRENT_DESCRIPTION, CURRENT_NOTE)
+        )
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        store.remember_about(entity="Acme", entity_type="company", facts=["today's note"], user_id=ALICE)
+
+        assert db.get_learning_by_id(legacy_id) is not None
+        stored = _stored_content(db.list_learnings(learning_type="entity_memory")[0])
+        assert LEGACY_DESCRIPTION in stored
+        assert LEGACY_NOTE in stored
+        assert CURRENT_DESCRIPTION in stored
+        assert CURRENT_NOTE in stored
+        assert LEGACY_FACT in stored
+        assert CURRENT_FACT in stored
+
+    async def test_conflicting_description_and_note_outlive_the_async_write(self, tmp_path: Path) -> None:
+        db = AsyncSqliteDb(db_file=str(tmp_path / "conflict_async.db"))
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        await db.upsert_learning(**_acme_row(legacy_id, self.LEGACY_FACTS, LEGACY_DESCRIPTION, LEGACY_NOTE))
+        await db.upsert_learning(
+            **_acme_row(_user_key("acme", "company", ALICE), self.CURRENT_FACTS, CURRENT_DESCRIPTION, CURRENT_NOTE)
+        )
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        await store.aremember_about(entity="Acme", entity_type="company", facts=["today's note"], user_id=ALICE)
+
+        assert await db.get_learning_by_id(legacy_id) is not None
+        rows, _ = await db.list_learnings(learning_type="entity_memory")
+        stored = _stored_content(rows)
+        assert LEGACY_DESCRIPTION in stored
+        assert LEGACY_NOTE in stored
+        assert CURRENT_DESCRIPTION in stored
+        assert CURRENT_NOTE in stored
+        assert LEGACY_FACT in stored
+        assert CURRENT_FACT in stored
+
+    def test_a_conflicting_description_outlives_the_write_when_the_notes_agree(self, tmp_path: Path) -> None:
+        # The description is the half the merge only ever uses to fill a gap,
+        # so a user-scoped row that already has one keeps its own.
+        db = SqliteDb(db_file=str(tmp_path / "description.db"))
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        db.upsert_learning(**_acme_row(legacy_id, self.LEGACY_FACTS, LEGACY_DESCRIPTION, LEGACY_NOTE))
+        db.upsert_learning(
+            **_acme_row(_user_key("acme", "company", ALICE), self.CURRENT_FACTS, CURRENT_DESCRIPTION, LEGACY_NOTE)
+        )
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        store.remember_about(entity="Acme", entity_type="company", facts=["today's note"], user_id=ALICE)
+
+        assert db.get_learning_by_id(legacy_id) is not None
+        stored = _stored_content(db.list_learnings(learning_type="entity_memory")[0])
+        assert LEGACY_DESCRIPTION in stored
+        assert CURRENT_DESCRIPTION in stored
+
+    def test_a_conflicting_note_outlives_the_write_when_the_descriptions_agree(self, tmp_path: Path) -> None:
+        # The properties map is the half that carries the note pointer, and it
+        # loses every key conflict independently of the description.
+        db = SqliteDb(db_file=str(tmp_path / "note.db"))
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        db.upsert_learning(**_acme_row(legacy_id, self.LEGACY_FACTS, LEGACY_DESCRIPTION, LEGACY_NOTE))
+        db.upsert_learning(
+            **_acme_row(_user_key("acme", "company", ALICE), self.CURRENT_FACTS, LEGACY_DESCRIPTION, CURRENT_NOTE)
+        )
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        store.remember_about(entity="Acme", entity_type="company", facts=["today's note"], user_id=ALICE)
+
+        assert db.get_learning_by_id(legacy_id) is not None
+        stored = _stored_content(db.list_learnings(learning_type="entity_memory")[0])
+        assert LEGACY_NOTE in stored
+        assert CURRENT_NOTE in stored
+
+    def test_forget_still_retires_the_legacy_row(self, tmp_path: Path) -> None:
+        # A forget empties a collection on purpose, so subsumption fails and
+        # only the snapshot can authorise the retire. A legacy row left behind
+        # keeps rendering the forgotten event and the next write resurrects it.
+        db = SqliteDb(db_file=str(tmp_path / "forget.db"))
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        db.upsert_learning(
+            **_acme_row(
+                legacy_id,
+                self.LEGACY_FACTS,
+                LEGACY_DESCRIPTION,
+                LEGACY_NOTE,
+                events=[{"content": PILOT_EVENT, "date": "2026-05-01"}],
+            )
+        )
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        result = store.forget(entity="Acme", fact=PILOT_EVENT, user_id=ALICE)
+
+        assert PILOT_EVENT in result
+        assert db.get_learning_by_id(legacy_id) is None
+        stored = _stored_content(db.list_learnings(learning_type="entity_memory")[0])
+        assert PILOT_EVENT not in stored
+        assert LEGACY_DESCRIPTION in stored
+        assert LEGACY_NOTE in stored
+        assert LEGACY_FACT in stored
+
+    async def test_aforget_still_retires_the_legacy_row(self, tmp_path: Path) -> None:
+        db = AsyncSqliteDb(db_file=str(tmp_path / "forget_async.db"))
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        await db.upsert_learning(
+            **_acme_row(
+                legacy_id,
+                self.LEGACY_FACTS,
+                LEGACY_DESCRIPTION,
+                LEGACY_NOTE,
+                events=[{"content": PILOT_EVENT, "date": "2026-05-01"}],
+            )
+        )
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        result = await store.aforget(entity="Acme", fact=PILOT_EVENT, user_id=ALICE)
+
+        assert PILOT_EVENT in result
+        assert await db.get_learning_by_id(legacy_id) is None
+        rows, _ = await db.list_learnings(learning_type="entity_memory")
+        stored = _stored_content(rows)
+        assert PILOT_EVENT not in stored
+        assert LEGACY_DESCRIPTION in stored
+        assert LEGACY_NOTE in stored
+        assert LEGACY_FACT in stored
+
+    def test_self_heal_retires_the_legacy_row_when_every_field_is_carried(self, tmp_path: Path) -> None:
+        # The user-scoped row holds no description and no note, so the merge
+        # takes the legacy row's: nothing is left behind and the row retires.
+        db = SqliteDb(db_file=str(tmp_path / "selfheal.db"))
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        new_id = _user_key("acme", "company", ALICE)
+        db.upsert_learning(**_acme_row(legacy_id, self.LEGACY_FACTS, LEGACY_DESCRIPTION, LEGACY_NOTE))
+        db.upsert_learning(**_acme_row(new_id, self.CURRENT_FACTS))
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        store.remember_about(entity="Acme", entity_type="company", facts=["today's note"], user_id=ALICE)
+
+        assert db.get_learning_by_id(legacy_id) is None
+        row = db.get_learning_by_id(new_id)
+        assert row is not None
+        content = json.loads(row["content"]) if isinstance(row["content"], str) else row["content"]
+        assert content["description"] == LEGACY_DESCRIPTION
+        assert content["properties"]["note"] == LEGACY_NOTE
+        assert sorted(f["content"] for f in content["facts"]) == sorted([LEGACY_FACT, CURRENT_FACT, "today's note"])
+
+    async def test_async_self_heal_retires_the_legacy_row_when_every_field_is_carried(self, tmp_path: Path) -> None:
+        db = AsyncSqliteDb(db_file=str(tmp_path / "selfheal_async.db"))
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        new_id = _user_key("acme", "company", ALICE)
+        await db.upsert_learning(**_acme_row(legacy_id, self.LEGACY_FACTS, LEGACY_DESCRIPTION, LEGACY_NOTE))
+        await db.upsert_learning(**_acme_row(new_id, self.CURRENT_FACTS))
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        await store.aremember_about(entity="Acme", entity_type="company", facts=["today's note"], user_id=ALICE)
+
+        assert await db.get_learning_by_id(legacy_id) is None
+        row = await db.get_learning_by_id(new_id)
+        assert row is not None
+        content = json.loads(row["content"]) if isinstance(row["content"], str) else row["content"]
+        assert content["description"] == LEGACY_DESCRIPTION
+        assert content["properties"]["note"] == LEGACY_NOTE
+        assert sorted(f["content"] for f in content["facts"]) == sorted([LEGACY_FACT, CURRENT_FACT, "today's note"])
+
+
+class TestNonStringEntityTypeInStoredContent:
+    """Resolution reads entity_type out of a row's content.
+
+    Content is arbitrary JSON over the REST create route, so entity_type is not
+    always a string there. The name-matching path compares it against the type
+    on the call, and every tool that resolves by name reaches that comparison.
+    """
+
+    def _seed_numeric_type(self, db: RecordingLearningDb) -> None:
+        db.upsert_learning(
+            id="entity_global_company_acme",
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+            namespace="global",
+            content={
+                "entity_id": "acme",
+                "entity_type": 123,
+                "name": "Acme",
+                "facts": [],
+                "events": [],
+                "relationships": [],
+                "aliases": [],
+                "properties": {},
+            },
+        )
+
+    def test_link_entities_resolves_by_name_without_raising(self, db: RecordingLearningDb) -> None:
+        self._seed_numeric_type(db)
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db))  # type: ignore[arg-type]
+
+        result = store.link_entities(entity="Acme", relation="partner_of", related_entity="Globex")
+
+        assert isinstance(result, str)
+
+    def test_forget_resolves_by_name_without_raising(self, db: RecordingLearningDb) -> None:
+        self._seed_numeric_type(db)
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db))  # type: ignore[arg-type]
+
+        result = store.forget(entity="Acme")
+
+        assert isinstance(result, str)
+
+    def test_a_string_entity_type_still_normalizes(self, db: RecordingLearningDb) -> None:
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db))  # type: ignore[arg-type]
+
+        store.remember_about(entity="Sarah", entity_type="People", facts=["likes tea"])
+
+        assert "entity_global_person_sarah" in db.rows

@@ -36,7 +36,7 @@ default "global" namespace and custom namespaces keep their keys unchanged.
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.learn.utils import _parse_json, build_learning_id, legacy_entity_learning_id
+from agno.learn.utils import _parse_json, build_learning_id, legacy_entity_learning_id, same_user
 from agno.utils.log import log_info, log_warning
 
 _ENTITY_LEARNING_TYPE = "entity_memory"
@@ -74,7 +74,7 @@ def _classify_row(row: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         return "malformed", {}
     owner = row.get("user_id")
     content_user = content.get("user_id")
-    contaminated = bool(owner) and content_user is not None and content_user != owner
+    contaminated = bool(owner) and content_user is not None and not same_user(content_user, owner)
     if row.get("learning_id") != legacy_entity_learning_id(entity_id, entity_type, "user"):
         return ("contaminated_keyed" if contaminated else "keyed"), {}
     if not owner:

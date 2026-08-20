@@ -14,6 +14,7 @@ from agno.learn.utils import (
     IDENTITY_KEYED_LEARNING_TYPES,
     build_learning_id,
     legacy_entity_learning_id,
+    same_user,
 )
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
@@ -63,7 +64,7 @@ def _row_belongs_to(row: Optional[Dict[str, Any]], user_id: Optional[str]) -> bo
     """Whether a stored learning row is owned by the given user."""
     if row is None or user_id is None:
         return False
-    return row.get("user_id") == user_id
+    return same_user(row.get("user_id"), user_id)
 
 
 def get_learnings_router(

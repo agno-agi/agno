@@ -38,6 +38,17 @@ def _user_key_segment(user_id: str) -> str:
     return sha256(str(user_id).encode("utf-8")).hexdigest()[:16]
 
 
+def same_user(left: Any, right: Any) -> bool:
+    """Whether two user ids identify the same user.
+
+    The owner column is a string column, so a non-string user id reads back as
+    its ``str()``. The entity key applies the same coercion.
+    """
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
 def build_learning_id(
     learning_type: str,
     *,

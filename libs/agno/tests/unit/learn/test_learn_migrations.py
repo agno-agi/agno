@@ -319,6 +319,101 @@ class TestContaminatedKeyedRows:
         assert report["contaminated_keyed"] == []
 
 
+class TestOwnerColumnComparison:
+    """The classifier compares the content's recorded user against the owner column.
+
+    The owner column is a string column, so an integer user id stores as "42"
+    while the JSON content keeps 42. Both spellings name one user, and a row
+    whose two ids differ only in type is "legacy" -- classifying it
+    "contaminated" hands a healthy row to purge_unrecoverable, which deletes it.
+    Users who genuinely differ are still contaminated and still purged.
+    """
+
+    NUMERIC_OWNER = "42"
+    FACT = "renewal at 50k"
+
+    def _numeric_user_content(self) -> Dict[str, Any]:
+        """Clean content recording user 42 as the integer the owner column stores as "42"."""
+        return {**_clean_content("acme", None), "user_id": 42, "facts": [self.FACT]}
+
+    @MODES
+    async def test_integer_content_user_matching_the_string_owner_is_legacy(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        legacy_id = _seed_legacy(db, "acme", self.NUMERIC_OWNER, self._numeric_user_content())
+
+        report = await _rekey(db, use_async, dry_run=True)
+
+        assert report["rekeyed"] == [legacy_id]
+        assert report["contaminated"] == []
+
+    @MODES
+    async def test_purge_rekeys_a_numeric_owner_row_instead_of_deleting_it(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        legacy_id = _seed_legacy(db, "acme", self.NUMERIC_OWNER, self._numeric_user_content())
+
+        report = await _rekey(db, use_async, dry_run=False, purge_unrecoverable=True)
+
+        assert report["rekeyed"] == [legacy_id]
+        assert report["contaminated"] == []
+        assert report["purged"] == []
+        # The row lives on under user 42's own key, the fact it was holding intact.
+        new_id = _user_key("acme", "company", self.NUMERIC_OWNER)
+        assert list(db.rows) == [new_id]
+        assert db.rows[new_id]["content"] == self._numeric_user_content()
+
+    @MODES
+    async def test_numeric_owner_on_a_user_scoped_row_stays_plain_keyed(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        keyed_id = _user_key("acme", "company", self.NUMERIC_OWNER)
+        db.upsert_learning(
+            id=keyed_id,
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+            namespace="user",
+            user_id=self.NUMERIC_OWNER,
+            content=self._numeric_user_content(),
+        )
+
+        report = await _rekey(db, use_async, dry_run=False, purge_unrecoverable=True)
+
+        assert report["keyed"] == 1
+        assert report["contaminated_keyed"] == []
+        assert db.rows[keyed_id]["content"] == self._numeric_user_content()
+
+    @MODES
+    async def test_two_different_users_are_still_contaminated(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        dirty = _seed_legacy(db, "initech", ALICE, _clean_content("initech", BOB))
+
+        report = await _rekey(db, use_async, dry_run=True)
+
+        assert report["contaminated"] == [dirty]
+        assert report["rekeyed"] == []
+
+    @MODES
+    async def test_two_different_users_are_still_purged(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        dirty = _seed_legacy(db, "initech", ALICE, _clean_content("initech", BOB))
+
+        report = await _rekey(db, use_async, dry_run=False, purge_unrecoverable=True)
+
+        assert report["contaminated"] == [dirty]
+        assert report["purged"] == [dirty]
+        assert db.rows == {}
+
+    @MODES
+    async def test_row_without_an_owner_is_unowned(self, use_async: bool) -> None:
+        db = FakeLearningDb()
+        orphan = _seed_legacy(db, "wayne", None, _clean_content("wayne", ALICE))
+
+        report = await _rekey(db, use_async, dry_run=True)
+
+        assert report["unowned"] == [orphan]
+        assert report["contaminated"] == []
+        assert report["rekeyed"] == []
+
+
 class TestReportShape:
     @MODES
     async def test_keyed_count_reconciles_scanned_with_the_buckets(self, use_async: bool) -> None:
