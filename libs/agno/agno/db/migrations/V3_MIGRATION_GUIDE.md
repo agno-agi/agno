@@ -183,6 +183,10 @@ an unmigrated database:
 This means active sessions self-migrate. The explicit migration is recommended for
 dormant sessions and for reclaiming storage in bulk.
 
+**This applies to session runs only.** Entity memory under `namespace="user"` does
+not self-migrate and the explicit migration is required for it. See
+[Entity memory: per-user keys](#entity-memory-per-user-keys) below.
+
 ### Step 3: Drop the legacy column when you're ready
 
 Once you have verified the migration and taken a backup, drop the legacy column to
@@ -210,6 +214,94 @@ table):
 ```python
 asyncio.run(MigrationManager(db).down(target_version="2.5.6"))
 ```
+
+**The entity memory re-key is not reversed by this.** The pre-3.0 entity key carries
+no user, so it is shared across users; moving those rows back onto it would collide
+them again, which is the bug the re-key exists to undo. `down()` refuses that step,
+logs why, and reverts everything else. A database rolled back to v2.5.6 keeps its
+entity memory rows on their v3.0 per-user keys, where a v2.x application will not
+find them. Restore from a backup if you need those rows readable by v2.x.
+
+## Entity memory: per-user keys
+
+The same `v3.0.0` migration re-keys entity memory rows stored under
+`namespace="user"`.
+
+Before v3.0 the row key carried no user component, so two users who recorded an
+entity with the same name and type shared one physical row: one user's facts
+replaced the other's and then appeared in their reads and in the model's prompt
+context. The migration moves each surviving row onto a key that embeds its owner.
+
+```
+before   entity_user_{entity_type}_{entity_id}
+after    entity_user_{sha256(user_id)[:16]}_{entity_type}_{entity_id}
+```
+
+Only deployments that set `namespace="user"` on entity memory are affected, on the
+backends that store learnings (`PostgresDb`, `SqliteDb`, `MongoDb`, `ValkeyDb` and
+their async twins). The default `namespace="global"` shares entities on purpose and
+its keys do not change.
+
+### This step is required
+
+Entity memory does **not** self-migrate. Until the re-key runs, the store writes to
+the new per-user key while reads still match the old row, so an entity that existed
+before the upgrade is split across two rows: reads return the old one, listings show
+the entity twice, and a delete removes the row that reads are not returning.
+
+Run it before the application serves traffic. Nothing does that for you:
+`MigrationManager` is reachable from AgentOS only through
+`POST /databases/all/migrate`, which by definition runs with the app already up. Call
+it from your deploy step instead:
+
+```python
+import asyncio
+
+from agno.db.migrations.manager import MigrationManager
+
+asyncio.run(MigrationManager(db).up())
+```
+
+If a write does land first, the re-key folds the two rows back into one — the newer
+row wins every conflict and the older only fills gaps — so the split is temporary
+rather than permanent. Closing the window is still better than relying on that.
+
+### Rows that cannot be moved cleanly
+
+A row whose stored content records a different user than its owner column held two
+users' data before the fix, and the two are not separable. The migration moves these
+under the `quarantined_user` namespace rather than deleting them: the content is
+preserved and the entity store no longer reads it.
+
+```
+entity_user_company_acme            ->  entity_quarantined_user_company_acme
+namespace = "user"                      namespace = "quarantined_user"
+```
+
+The learnings REST API filters on the owner column rather than the namespace, so a
+quarantined row is still listed and mutable through `/learnings` by whichever user
+the owner column names. "Quarantined" here means out of the entity store's reads,
+not out of every surface.
+
+To delete them instead of quarantining them, and let entity memory re-capture from
+conversation:
+
+```python
+from agno.learn.migrations import rekey_user_entity_learnings
+
+report = rekey_user_entity_learnings(db, dry_run=True)                        # inspect
+report = rekey_user_entity_learnings(db, dry_run=False, purge_unrecoverable=True)
+```
+
+That helper is also how you re-run the re-key on its own. It does not consult the
+schema version, so it works after the table has been stamped.
+
+### Reading the report
+
+`rekeyed` moved to the owner's key. `merged` folded into a row already on that key.
+`quarantined` moved out of the store's reads. `keyed` was already correct.
+`contaminated_keyed`, `unowned` and `malformed` are reported and left alone.
+`conflicts` and `failed` need an operator: re-run the helper after resolving them.
 
 ## Eval runs: per-user isolation
 
@@ -493,7 +585,16 @@ asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="metric
 3. **Custom table names**: `PostgresDb`, `AsyncPostgresDb`, `SqliteDb` and
    `AsyncSqliteDb` accept a new `runs_table` argument (defaults to `"agno_runs"`).
 
-4. **Culture feature removed**: The experimental culture feature has been removed
+4. **Entity memory under `namespace="user"` is re-keyed**, and unlike session runs it
+   does not self-migrate. Run the v3.0.0 migration before the application serves
+   traffic, or an entity that existed before the upgrade is split across two rows
+   until it does. Direct SQL against `agno_learnings` should expect
+   `entity_user_{digest}_{type}_{id}` rather than `entity_user_{type}_{id}`, and a
+   `quarantined_user` namespace holding rows that held two users' data. See
+   [Entity memory: per-user keys](#entity-memory-per-user-keys). The re-key is not
+   reversible.
+
+5. **Culture feature removed**: The experimental culture feature has been removed
    entirely. This includes:
    - `from agno.culture import CultureManager` → `ModuleNotFoundError`
    - `Agent(culture_manager=..., enable_agentic_culture=..., update_cultural_knowledge=...)` → `TypeError`
@@ -561,7 +662,8 @@ sessions you didn't touch.
 | Scenario | What you get |
 |---|---|
 | Fresh v3.0 install | No legacy column, runs in `agno_runs`. Just works. |
-| v2.x → v3.0, no migration run yet | Reads merge runs table + legacy blob; new runs go to the table, the legacy blob is preserved so nothing is lost. |
+| v2.x → v3.0, no migration run yet | **Session runs:** reads merge runs table + legacy blob; new runs go to the table, the legacy blob is preserved so nothing is lost. **Entity memory under `namespace="user"`:** an entity that existed before the upgrade is split across two rows until the migration runs — reads return the pre-3.0 row and listings show the entity twice. Nothing is deleted, and the re-key folds the pair back together. |
 | v2.x → v3.0, migration run, column not cleaned up | Reads go through the runs table, merged with the preserved legacy blob (deduped by `run_id`). Legacy column kept as a backup. |
 | v2.x → v3.0, migration + `cleanup_legacy_runs_column()` | Final v3.0 state. Smallest sessions table. |
 | Half-finished migration / hand-imported runs | Reads merge by `run_id`. No history is silently lost. |
+| Entity memory re-key re-run after a rolling deploy | `rekey_user_entity_learnings(db, dry_run=False)` ignores the schema stamp, so it can be re-run to convergence. Rows already on their per-user key are reported under `keyed` and skipped. |

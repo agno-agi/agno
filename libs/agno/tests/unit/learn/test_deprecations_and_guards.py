@@ -103,7 +103,8 @@ def test_missing_user_id_warning_separates_disabled_tools_from_refusals(caplog) 
     assert len(warnings) == 1, warnings
     message = warnings[0]
     assert "the tools and capture of user_profile are disabled" in message
-    assert 'entity_memory (namespace="user") keeps its tools exposed but refuses every call' in message
+    assert 'entity_memory (namespace="user") injects no entity context' in message
+    assert "keeps its tools exposed while refusing every call" in message
 
     # The claim the message makes has to hold: the entity tools are still there.
     tool_names = {getattr(t, "__name__", "") for t in tools}
@@ -277,3 +278,29 @@ def test_a_configured_capture_policy_survives_the_execute_contract(tmp_path) -> 
     assert "House policy: never record salaries." in instructed
     assert "House policy: never record salaries." in passive
     assert "Carry out that" in instructed
+
+
+def test_missing_user_id_warning_drops_the_tool_claim_when_tools_are_off(caplog) -> None:
+    """With agent tools off there are no entity tools to refuse, so a message
+    that says they stay exposed is false. The context claim holds either way."""
+    from agno.learn.config import EntityMemoryConfig
+    from agno.learn.stores.entity_memory import EntityMemoryStore
+
+    db = RecordingLearningDb()
+    machine = LearningMachine(  # type: ignore[arg-type]
+        db=db,
+        entity_memory=EntityMemoryStore(  # type: ignore[arg-type]
+            config=EntityMemoryConfig(db=db, namespace="user", enable_agent_tools=False)  # type: ignore[arg-type]
+        ),
+    )
+    with caplog.at_level(logging.WARNING):
+        tools = machine.get_tools(user_id=None)
+
+    warnings = [r.getMessage() for r in caplog.records if "no user_id" in r.getMessage()]
+    assert len(warnings) == 1, warnings
+    message = warnings[0]
+    assert 'entity_memory (namespace="user") injects no entity context' in message
+    assert "keeps its tools exposed" not in message
+
+    # The claim the message makes has to hold: there are no entity tools.
+    assert [getattr(t, "__name__", "") for t in tools or []] == []

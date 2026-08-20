@@ -539,10 +539,10 @@ class LearningMachine:
         is the common way to get here). Make the degradation visible, once per
         machine.
 
-        The two shapes of degradation differ and the warning names both:
-        user_profile/user_memory return no tools at all, while entity memory
-        under namespace="user" keeps its four tools exposed and answers each
-        call with a refusal.
+        The shapes of degradation differ and the warning names each one:
+        user_profile and user_memory return no tools at all; entity memory under
+        namespace="user" injects no entity context, and when its agent tools are
+        enabled it also keeps them exposed and answers each call with a refusal.
         """
         if user_id or self._missing_user_id_warned:
             return
@@ -559,9 +559,14 @@ class LearningMachine:
         if toolless:
             consequences.append(f"the tools and capture of {', '.join(toolless)} are disabled for this run")
         if entity_user_scoped:
+            entity_tools_exposed = bool(getattr(getattr(entity_store, "config", None), "enable_agent_tools", False))
             consequences.append(
-                'entity_memory (namespace="user") keeps its tools exposed but refuses every call, '
-                "recording and returning nothing"
+                'entity_memory (namespace="user") injects no entity context'
+                + (
+                    ", and keeps its tools exposed while refusing every call, recording and returning nothing"
+                    if entity_tools_exposed
+                    else ""
+                )
             )
         log_warning(
             "This run has no user_id, but per-user learning stores are configured: "
