@@ -441,3 +441,47 @@ class TestListingsExcludeWhatTheyRender:
         listed = client.get("/workflows").json()
 
         assert [w.get("id") for w in listed] == ["served"]
+
+
+class TestOneExecutorPerStep:
+    """The multi-executor guard has to see the executors that actually resolved."""
+
+    def _config(self):
+        return {"name": "nested", "agent_id": "a1", "workflow_id": "wf-x"}
+
+    def _registry(self):
+        registry = Registry(name="R", models=[_model()])
+        registry.agents.append(Agent(id="a1", name="A1", model=_model()))
+        registry.workflows.append(Workflow(id="wf-x", name="WFX", steps=[Step(name="s", executor=lambda si: None)]))
+        return registry
+
+    def test_a_resolvable_agent_alongside_a_workflow_loads_leniently(self):
+        step = Step.from_dict(self._config(), registry=self._registry(), strict=False)
+
+        # The non-workflow executor wins, and the step stays loadable rather
+        # than failing Step's own one-executor check with a bare ValueError.
+        assert step.agent is not None
+        assert step.workflow is None
+
+    def test_a_resolvable_agent_alongside_a_workflow_is_a_typed_strict_refusal(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        with pytest.raises(ComponentRehydrationError, match="exactly one executor"):
+            Step.from_dict(self._config(), registry=self._registry(), strict=True)
+
+    def test_a_resolvable_team_alongside_a_workflow_is_refused_too(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.team import Team
+
+        registry = self._registry()
+        registry.teams.append(Team(id="t1", name="T1", members=[], model=_model()))
+        config = {"name": "nested", "team_id": "t1", "workflow_id": "wf-x"}
+
+        with pytest.raises(ComponentRehydrationError, match="exactly one executor"):
+            Step.from_dict(config, registry=registry, strict=True)
+
+    def test_a_lone_workflow_id_still_resolves_from_the_registry(self):
+        step = Step.from_dict({"name": "nested", "workflow_id": "wf-x"}, registry=self._registry(), strict=True)
+
+        assert step.workflow is not None
+        assert step.workflow.id == "wf-x"

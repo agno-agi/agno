@@ -581,13 +581,22 @@ class Step:
         # db-load tier yet, because loading a stored workflow from inside a
         # step would recurse through from_dict and needs its own cycle guard
         # before it can be safe.
-        if "workflow_id" in config and config["workflow_id"] and (executor is not None or config.get("executor_ref")):
+        if (
+            "workflow_id" in config
+            and config["workflow_id"]
+            and (agent is not None or team is not None or executor is not None or config.get("executor_ref"))
+        ):
             # A well-formed step config carries exactly one executor key. On a
             # malformed one the non-workflow executor wins - the pre-registry
             # behavior, where this branch only produced a placeholder that the
             # later executor_ref assignment overwrote - so degraded configs
             # stay loadable leniently instead of failing Step's
             # one-executor check.
+            # agent and team are checked too, not just executor: the branches
+            # above set those on SUCCESS and only touch executor when they
+            # fall back to a placeholder, so a resolvable agent_id alongside
+            # workflow_id would otherwise slip past into the registry tier and
+            # reach Step with two executors.
             if strict:
                 raise ComponentRehydrationError(
                     f"Step '{config.get('name')}' carries workflow_id '{config.get('workflow_id')}' alongside "
