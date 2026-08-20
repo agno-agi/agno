@@ -9,6 +9,7 @@ from agno.metrics import MessageMetrics
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
 from agno.models.response import ModelResponse
+from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 
@@ -178,6 +179,7 @@ class RampRouter(OpenResponses):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests, including the Router-only request fields.
@@ -190,6 +192,7 @@ class RampRouter(OpenResponses):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         )
 
         # The OpenAI SDK's create() has a closed signature, so Router-only body fields ride in
