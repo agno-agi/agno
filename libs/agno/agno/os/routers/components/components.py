@@ -356,9 +356,18 @@ def _validate_pinned_versions_readable(
     draft into its own component and read it back through the detail routes --
     the disclosure ``GET /components/{id}/configs/{version}`` refuses.
 
-    The refusal is that route's, verbatim, so the two agree and neither
-    becomes an oracle for the other. A version that does not exist is left
-    alone: the adapter's own pin validation answers that.
+    The refusal is that route's, verbatim, and covers everything that route
+    refuses: to a caller who may not read this child's drafts, a draft
+    version, a tombstoned version, and a version that was never created all
+    answer with the same 404. Any split between those cases -- such as
+    allowing the write when no config row exists -- turns the write path into
+    an oracle for which version numbers hold the owner's unpublished work.
+
+    A child with no component row at all (code-defined) is out of scope. For
+    a caller who may read the child's drafts -- its owner, an unowned shared
+    row, or a privileged caller -- a version with no config row is left
+    alone: whether a pin may dangle on your own component is the adapter's
+    business, not this rule's.
     """
     if not links:
         return
@@ -381,10 +390,18 @@ def _validate_pinned_versions_readable(
             child_config = db.get_config(component_id=child_id, version=child_version)
         except NotImplementedError:
             return
-        if not isinstance(child_config, dict):
+        if isinstance(child_config, dict) and child_config.get("stage") == "published":
             continue
-        if child_config.get("stage") != "published" and not may_read_draft_configs(child_row, actor, privileged):
-            raise HTTPException(status_code=404, detail=f"Config {child_id} v{child_version} not found")
+        if may_read_draft_configs(child_row, actor, privileged):
+            # The caller may read this child at draft depth, so nothing here
+            # is withheld from it; a pin at a version with no config row yet
+            # is the adapter's business, not this rule's.
+            continue
+        # Draft, tombstoned, or never created: the direct read answers this
+        # caller with one 404 for all three, and the refusal here must be the
+        # same single answer -- a write that succeeds exactly when the version
+        # is absent would enumerate the owner's unpublished version numbers.
+        raise HTTPException(status_code=404, detail=f"Config {child_id} v{child_version} not found")
 
 
 def _redact_db_connection(value: Any) -> Any:
