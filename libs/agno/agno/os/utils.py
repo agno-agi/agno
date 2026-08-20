@@ -1314,6 +1314,7 @@ def get_agent_by_id(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
@@ -1369,7 +1370,9 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
+            db_agent = get_agent_by_id_db(
+                db=db, id=agent_id, version=version, registry=registry, user_id=user_id, strict=strict
+            )
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1389,6 +1392,7 @@ async def get_agent_by_id_async(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Async variant of get_agent_by_id that supports async factories."""
@@ -1419,7 +1423,9 @@ async def get_agent_by_id_async(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
+            db_agent = get_agent_by_id_db(
+                db=db, id=agent_id, version=version, registry=registry, user_id=user_id, strict=strict
+            )
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1439,6 +1445,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
@@ -1486,7 +1493,9 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
+            db_team = get_team_by_id_db(
+                db=db, id=team_id, version=version, registry=registry, user_id=user_id, strict=strict
+            )
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1506,6 +1515,7 @@ async def get_team_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Async variant of get_team_by_id that supports async factories."""
@@ -1530,7 +1540,9 @@ async def get_team_by_id_async(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
+            db_team = get_team_by_id_db(
+                db=db, id=team_id, version=version, registry=registry, user_id=user_id, strict=strict
+            )
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1550,6 +1562,7 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
@@ -1603,7 +1616,7 @@ def get_workflow_by_id(
 
         try:
             db_workflow = get_workflow_by_id_db(
-                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+                db=db, id=workflow_id, version=version, registry=registry, user_id=user_id, strict=strict
             )
             return db_workflow
         except ComponentRehydrationError:
@@ -1624,6 +1637,7 @@ async def get_workflow_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Async variant of get_workflow_by_id that supports async factories."""
@@ -1651,7 +1665,7 @@ async def get_workflow_by_id_async(
 
         try:
             db_workflow = get_workflow_by_id_db(
-                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+                db=db, id=workflow_id, version=version, registry=registry, user_id=user_id, strict=strict
             )
             return db_workflow
         except ComponentRehydrationError:
@@ -1752,16 +1766,9 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                 getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
             ):
                 continue
-            # Mirror JWTMiddleware.__init__ deprecated secret_key handling:
-            # append to verification_keys so manual setups using secret_key
-            # still get a working WebSocket validator.
-            verification_keys = list(kwargs.get("verification_keys") or [])
-            legacy_secret = kwargs.get("secret_key")
-            if legacy_secret and legacy_secret not in verification_keys:
-                verification_keys.append(legacy_secret)
             try:
                 lazy_validator = JWTValidator(
-                    verification_keys=verification_keys or None,
+                    verification_keys=kwargs.get("verification_keys"),
                     jwks_file=kwargs.get("jwks_file"),
                     algorithm=kwargs.get("algorithm", "RS256"),
                     validate=kwargs.get("validate", True),
@@ -1925,10 +1932,8 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     # Check the team tools
     if team.tools and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
 
@@ -1938,10 +1943,8 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             if isinstance(member, Agent):
                 if member.tools and isinstance(member.tools, list):
                     for tool in member.tools:
-                        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                        if hasattr(type(tool), "__mro__") and any(
-                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                        ):
+                        # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                        if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
 
@@ -1956,16 +1959,14 @@ def collect_mcp_tools_from_registry(registry: Optional[Registry], mcp_tools: Lis
     Registry tools are not attached to any agent, team or workflow, so the
     other collectors never see them. They still must be connected in the
     AgentOS lifespan: components created from registry tools (e.g. via
-    StudioTool) serialize a toolkit's functions at persist time, and an
+    StudioTools) serialize a toolkit's functions at persist time, and an
     unconnected MCP toolkit has none -- its tools would be silently dropped.
     """
     if registry is None or not registry.tools:
         return
     for tool in registry.tools:
-        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-        if hasattr(type(tool), "__mro__") and any(
-            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-        ):
+        # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+        if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
             if tool not in mcp_tools:
                 mcp_tools.append(tool)
 
@@ -2005,10 +2006,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.agent:
             if step.agent.tools and isinstance(step.agent.tools, list):
                 for tool in step.agent.tools:
-                    # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                    if hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                    ):
+                    # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                    if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
         # Check step's team
@@ -2030,10 +2029,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         # Direct agent in workflow steps
         if step.tools and isinstance(step.tools, list):
             for tool in step.tools:
-                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if hasattr(type(tool), "__mro__") and any(
-                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                ):
+                # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)
 
@@ -2521,6 +2518,12 @@ async def resolve_agent(
 
     Raises HTTPException on all error paths.
     """
+    # Owner scope for DB-backed components; no request means unscoped.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
     is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
     if is_factory:
         if request is None:
@@ -2528,7 +2531,7 @@ async def resolve_agent(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             agent = await get_agent_by_id_async(
-                agent_id, agents, db, registry, version=version, create_fresh=True, ctx=ctx
+                agent_id, agents, db, registry, version=version, create_fresh=True, ctx=ctx, user_id=scoped_user_id
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2542,7 +2545,16 @@ async def resolve_agent(
             raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
     else:
         try:
-            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True, strict=strict)
+            agent = get_agent_by_id(
+                agent_id,
+                agents,
+                db,
+                registry,
+                version=version,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
+            )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
@@ -2568,11 +2580,13 @@ async def resolve_team(
     factory_input: Optional[str] = None,
     strict: bool = True,
 ) -> Union[Team, RemoteTeam]:
-    """Resolve a team by ID with proper error handling for both factory and non-factory paths.
+    """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
+    # Owner scope for DB-backed components; no request means unscoped.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
 
-    Raises HTTPException on all error paths; an unrehydratable db-backed team
-    is refused with a 422 unless strict=False.
-    """
+        scoped_user_id = get_scoped_user_id(request)
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
         if request is None:
@@ -2580,7 +2594,14 @@ async def resolve_team(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             team = await get_team_by_id_async(
-                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+                team_id,
+                teams,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                ctx=ctx,
+                user_id=scoped_user_id,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2595,7 +2616,14 @@ async def resolve_team(
     else:
         try:
             team = get_team_by_id(
-                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, strict=strict
+                team_id,
+                teams,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
@@ -2622,11 +2650,13 @@ async def resolve_workflow(
     factory_input: Optional[str] = None,
     strict: bool = True,
 ) -> Union[Workflow, RemoteWorkflow]:
-    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths.
+    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
+    # Owner scope for DB-backed components; no request means unscoped.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
 
-    Raises HTTPException on all error paths; an unrehydratable db-backed
-    workflow is refused with a 422 unless strict=False.
-    """
+        scoped_user_id = get_scoped_user_id(request)
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
@@ -2634,7 +2664,14 @@ async def resolve_workflow(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             workflow = await get_workflow_by_id_async(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+                workflow_id,
+                workflows,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                ctx=ctx,
+                user_id=scoped_user_id,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2649,7 +2686,14 @@ async def resolve_workflow(
     else:
         try:
             workflow = get_workflow_by_id(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, strict=strict
+                workflow_id,
+                workflows,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so

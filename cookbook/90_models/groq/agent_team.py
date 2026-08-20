@@ -18,7 +18,7 @@ from agno.tools.yfinance import YFinanceTools
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    model=Groq(id="llama-3.3-70b-versatile"),
+    model=Groq(id="openai/gpt-oss-120b"),
     tools=[WebSearchTools()],
     instructions="Always include sources",
     markdown=True,
@@ -27,7 +27,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    model=Groq(id="llama-3.3-70b-versatile"),
+    model=Groq(id="openai/gpt-oss-120b"),
     tools=[YFinanceTools()],
     instructions="Use tables to display data",
     markdown=True,
@@ -36,7 +36,7 @@ finance_agent = Agent(
 agent_team = Team(
     members=[web_agent, finance_agent],
     model=Groq(
-        id="llama-3.3-70b-versatile"
+        id="openai/gpt-oss-120b"
     ),  # You can use a different model for the team leader agent
     instructions=["Always include sources", "Use tables to display data"],
     markdown=True,

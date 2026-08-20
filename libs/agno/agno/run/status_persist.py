@@ -96,7 +96,7 @@ async def apersist_run_status(
     return RunPersistOutcome.MISSING
 
 
-def fallback_allowed(result: RunPersistOutcome, expected_attempt: Optional[int] = None) -> bool:
+def fallback_allowed(result: RunPersistOutcome) -> bool:
     """Whether the unfenced whole-session fallback may run after the atomic
     primitive's outcome.
 
@@ -105,10 +105,6 @@ def fallback_allowed(result: RunPersistOutcome, expected_attempt: Optional[int] 
     allow it. STALE_ATTEMPT and TERMINAL_REFUSED are FINAL: retrying a
     fenced-out zombie or a write a completed/cancelled row refused through
     the unfenced save is exactly the clobber those guards exist to stop.
-
-    ``expected_attempt`` is unused and kept for caller compatibility - the
-    fence-vs-missing disambiguation now lives in the outcome itself (legacy
-    bool adapters are mapped inside ``apersist_run_status``).
     """
     return result in (RunPersistOutcome.MISSING, RunPersistOutcome.UNAVAILABLE)
 
@@ -149,7 +145,7 @@ async def apersist_run_transition(
         result = await apersist_run_status(
             component, component_type, session_id, run_id, fields, user_id=user_id, expected_attempt=expected_attempt
         )
-        if not fallback_allowed(result, expected_attempt):
+        if not fallback_allowed(result):
             return
 
     # Fallback: fresh-read + whole-session save (narrows, does not close, the

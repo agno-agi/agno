@@ -49,6 +49,7 @@ EVAL_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "model_id"},
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
 ]
@@ -73,18 +74,14 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "date"},
     {"key": "aggregation_period"},
+    # Empty-string sentinel for "no owner", matching the SQL adapters where NULL would break
+    # the unique key below; get_metrics maps it back to None
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
-    {"key": [("date", 1), ("aggregation_period", 1)], "unique": True},
-]
-
-CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA = [
-    {"key": "id", "unique": True},
-    {"key": "name"},
-    {"key": "agent_id"},
-    {"key": "team_id"},
-    {"key": "created_at"},
-    {"key": "updated_at"},
+    # user_id joined the unique key with per-user aggregation. Collections created before that
+    # keep the old (date, aggregation_period) unique index, which index creation drops.
+    {"key": [("user_id", 1), ("date", 1), ("aggregation_period", 1)], "unique": True},
 ]
 
 TRACE_COLLECTION_SCHEMA = [
@@ -131,14 +128,22 @@ LEARNINGS_COLLECTION_SCHEMA = [
 
 SCHEDULES_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
-    {"key": "name", "unique": True},
+    # Not unique on its own: name uniqueness is per owner, enforced by the router.
+    {"key": "name"},
     {"key": "enabled"},
     {"key": "next_run_at"},
     {"key": "locked_by"},
     {"key": "locked_at"},
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
     {"key": [("enabled", 1), ("next_run_at", 1)]},
+    # Scoped list / claim queries filter on user_id first
+    {"key": [("user_id", 1), ("enabled", 1), ("next_run_at", 1)]},
+    # DB backstop for the router's check-then-insert race: names are unique per
+    # owner. Unlike SQL, Mongo treats missing/null user_id as a single value, so
+    # one compound unique index covers both owned and unowned buckets.
+    {"key": [("user_id", 1), ("name", 1)], "unique": True, "name": "uq_user_name"},
 ]
 
 SCHEDULE_RUNS_COLLECTION_SCHEMA = [
@@ -147,6 +152,8 @@ SCHEDULE_RUNS_COLLECTION_SCHEMA = [
     {"key": "status"},
     {"key": "triggered_at"},
     {"key": "completed_at"},
+    # Denormalised from the parent schedule so run queries scope per user without a join
+    {"key": "user_id"},
     {"key": "created_at"},
 ]
 
@@ -160,7 +167,6 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "metrics": METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,
         "spans": SPAN_COLLECTION_SCHEMA,
         "learnings": LEARNINGS_COLLECTION_SCHEMA,

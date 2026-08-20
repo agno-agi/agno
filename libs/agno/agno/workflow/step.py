@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import inspect
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
@@ -16,8 +16,8 @@ from agno.db.base import BaseDb
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import (
@@ -66,7 +66,6 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
-    warn_session_state_param_deprecated,
 )
 
 if TYPE_CHECKING:
@@ -408,9 +407,17 @@ class Step:
 
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
+                from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    agent = get_agent_by_id(db=db, id=agent_id, version=pinned, registry=registry, strict=strict)
+                    agent = get_agent_by_id(
+                        db=db,
+                        id=agent_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
                         raise ComponentPinError(
@@ -430,7 +437,9 @@ class Step:
                         f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, which "
                         "was not found in the db; loading the agent's current version instead."
                     )
-                    agent = get_agent_by_id(db=db, id=agent_id, registry=registry, strict=False)
+                    agent = get_agent_by_id(
+                        db=db, id=agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
 
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:
@@ -505,9 +514,17 @@ class Step:
 
             if team is None and db is not None and team_id is not None:
                 from agno.team.team import get_team_by_id
+                from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    team = get_team_by_id(db=db, id=team_id, version=pinned, registry=registry, strict=strict)
+                    team = get_team_by_id(
+                        db=db,
+                        id=team_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
                         raise ComponentPinError(
@@ -527,7 +544,9 @@ class Step:
                         f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, which "
                         "was not found in the db; loading the team's current version instead."
                     )
-                    team = get_team_by_id(db=db, id=team_id, registry=registry, strict=False)
+                    team = get_team_by_id(
+                        db=db, id=team_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
 
             # A pinned lenient load may still fall back to a code-defined team.
             if team is None and pinned is not None and registry and team_id:
@@ -882,17 +901,13 @@ class Step:
         self,
         func: Callable,
         step_input: StepInput,
-        session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Call custom function with session_state support if the function accepts it"""
+        """Call custom function, passing run_context if the function accepts it"""
 
         kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
-        if session_state is not None and self._function_has_session_state_param():
-            kwargs["session_state"] = session_state
-            warn_session_state_param_deprecated(func, "custom function steps")
 
         return func(step_input, **kwargs)
 
@@ -900,17 +915,13 @@ class Step:
         self,
         func: Callable,
         step_input: StepInput,
-        session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Call custom async function with session_state support if the function accepts it"""
+        """Call custom async function, passing run_context if the function accepts it"""
 
         kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
-        if session_state is not None and self._function_has_session_state_param():
-            kwargs["session_state"] = session_state
-            warn_session_state_param_deprecated(func, "custom function steps")
 
         if _is_async_generator_function(func):
             return func(step_input, **kwargs)
@@ -936,6 +947,9 @@ class Step:
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
+
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -966,7 +980,6 @@ class Step:
                             for chunk in self._call_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,  # type: ignore[arg-type]
                                 run_context,
                             ):  # type: ignore
                                 if isinstance(chunk, (BaseRunOutputEvent)):
@@ -1008,11 +1021,10 @@ class Step:
                         else:
                             response = StepOutput(content=content)
                     else:
-                        # Execute function with signature inspection for session_state support
+                        # Execute function with signature inspection for run_context support
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
 
@@ -1111,7 +1123,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
                             run_id=executor_run_id,
@@ -1142,7 +1154,8 @@ class Step:
                         response = self._execute_nested_workflow(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
@@ -1190,17 +1203,6 @@ class Step:
         try:
             sig = inspect.signature(self.active_executor)  # type: ignore
             return "run_context" in sig.parameters
-        except Exception:
-            return False
-
-    def _function_has_session_state_param(self) -> bool:
-        """Check if the custom function has a session_state parameter"""
-        if self._executor_type != "function":
-            return False
-
-        try:
-            sig = inspect.signature(self.active_executor)  # type: ignore
-            return "session_state" in sig.parameters
         except Exception:
             return False
 
@@ -1275,6 +1277,9 @@ class Step:
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
+
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
@@ -1320,7 +1325,6 @@ class Step:
                             iterator = self._call_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
                             for event in iterator:  # type: ignore
@@ -1363,7 +1367,6 @@ class Step:
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
 
@@ -1461,7 +1464,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_events=stream_events,
@@ -1513,7 +1516,8 @@ class Step:
                         for event in self._execute_nested_workflow_stream(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
@@ -1611,6 +1615,9 @@ class Step:
         logger.info(f"Executing async step (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
 
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
+
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
@@ -1640,7 +1647,6 @@ class Step:
                                 iterator = self._call_custom_function(
                                     self.active_executor,
                                     step_input,
-                                    session_state_copy,
                                     run_context,
                                 )
                                 for chunk in iterator:  # type: ignore
@@ -1668,7 +1674,6 @@ class Step:
                                     iterator = await self._acall_custom_function(
                                         self.active_executor,
                                         step_input,
-                                        session_state_copy,
                                         run_context,
                                     )
                                     async for chunk in iterator:  # type: ignore
@@ -1708,14 +1713,12 @@ class Step:
                             result = await self._acall_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
                         else:
                             result = self._call_custom_function(
                                 self.active_executor,  # type: ignore[arg-type]
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
 
@@ -1826,7 +1829,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
                             run_id=executor_run_id,
@@ -1857,7 +1860,8 @@ class Step:
                         response = await self._aexecute_nested_workflow(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
@@ -1920,6 +1924,9 @@ class Step:
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
+
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
@@ -1964,7 +1971,6 @@ class Step:
                         iterator = await self._acall_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         async for event in iterator:  # type: ignore
@@ -2000,7 +2006,6 @@ class Step:
                         result = await self._acall_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         if isinstance(result, StepOutput):
@@ -2015,7 +2020,6 @@ class Step:
                         iterator = self._call_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         for event in iterator:  # type: ignore
@@ -2054,7 +2058,6 @@ class Step:
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         if isinstance(result, StepOutput):
@@ -2161,7 +2164,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,
                             stream=True,
                             stream_events=stream_events,
@@ -2213,7 +2216,8 @@ class Step:
                         async for event in self._aexecute_nested_workflow_stream(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,

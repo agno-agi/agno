@@ -32,11 +32,10 @@ from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
-from agno.metrics import SessionMetrics
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -350,11 +349,9 @@ class Team:
     metadata: Optional[Dict[str, Any]] = None
 
     # --- Team Reasoning ---
-    reasoning: bool = False
+    # Enable reasoning by providing a reasoning_model (must be a native reasoning model).
     reasoning_model: Optional[Model] = None
     reasoning_agent: Optional[Agent] = None
-    reasoning_min_steps: int = 1
-    reasoning_max_steps: int = 10
 
     # --- Team Followups ---
     # If True, generate followup prompts after the main response
@@ -443,6 +440,7 @@ class Team:
     def __init__(
         self,
         members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
+        *,
         id: Optional[str] = None,
         model: Optional[Union[Model, str]] = None,
         fallback_config: Optional[FallbackConfig] = None,
@@ -535,11 +533,8 @@ class Team:
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
-        reasoning_min_steps: int = 1,
-        reasoning_max_steps: int = 10,
         followups: bool = False,
         num_followups: int = 3,
         followup_model: Optional[Union[Model, str]] = None,
@@ -656,11 +651,8 @@ class Team:
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             metadata=metadata,
-            reasoning=reasoning,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,
-            reasoning_min_steps=reasoning_min_steps,
-            reasoning_max_steps=reasoning_max_steps,
             followups=followups,
             num_followups=num_followups,
             followup_model=followup_model,
@@ -1756,7 +1748,7 @@ class Team:
     ###########################################################################
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _default_tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result, user_id=self.user_id)
 
     def get_relevant_docs_from_knowledge(
         self,
@@ -1796,6 +1788,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
     strict: bool = False,
 ) -> Optional["Team"]:
     """
@@ -1812,6 +1805,7 @@ def get_team_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the team when owned by this user or shared.
         strict: If True, unresolvable members and registry references
             raise ComponentRehydrationError; None strictly means the team was not found.
 
@@ -1824,6 +1818,12 @@ def get_team_by_id(
     from agno.exceptions import ComponentRehydrationError
 
     try:
+        from agno.utils.component_scope import component_owner_scope
+
+        # Only resolve the team if owned by this user or shared.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
         row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
@@ -1841,7 +1841,9 @@ def get_team_by_id(
         except NotImplementedError:
             links = []
 
-        team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
+        # Resolve DB-backed members under the same owner scope as the team.
+        with component_owner_scope(user_id):
+            team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
         # Ensure team.id is set to the component_id
         team.id = id
         # Only fall back to the caller-provided db if the config didn't
@@ -1867,6 +1869,7 @@ def get_teams(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     exclude_component_ids: Optional[Set[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List["Team"]:
     """
     Get all teams from the database.
@@ -1875,14 +1878,17 @@ def get_teams(
         db: Database to load teams from
         registry: Optional registry for rehydrating tools
         exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load teams owned by this user or shared.
 
     Returns:
         List of Team instances loaded from the database
     """
     teams: List[Team] = []
     try:
+        from agno.utils.component_scope import component_owner_scope
+
         components, _ = db.list_components(
-            component_type=ComponentType.TEAM, exclude_component_ids=exclude_component_ids
+            component_type=ComponentType.TEAM, exclude_component_ids=exclude_component_ids, user_id=user_id
         )
         for component in components:
             component_id = component["component_id"]
@@ -1897,7 +1903,9 @@ def get_teams(
                         # components so they stay visible and fixable. Listings
                         # also show members at their current version; the
                         # per-version pin links are a detail-read concern.
-                        team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
+                        # Resolve DB-backed members under the same owner scope as the team.
+                        with component_owner_scope(user_id):
+                            team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
                         team.id = component_id
                         team._version = component.get("current_version")
                         team._stage = config.get("stage")

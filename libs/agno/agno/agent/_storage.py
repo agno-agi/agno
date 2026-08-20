@@ -768,18 +768,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["tool_choice"] = agent.tool_choice
 
     # --- Reasoning settings ---
-    if agent.reasoning:
-        config["reasoning"] = agent.reasoning
     if agent.reasoning_model is not None:
         if isinstance(agent.reasoning_model, Model):
             config["reasoning_model"] = agent.reasoning_model.to_dict()
         else:
             config["reasoning_model"] = str(agent.reasoning_model)
     # Skip reasoning_agent to avoid circular serialization
-    if agent.reasoning_min_steps != 1:
-        config["reasoning_min_steps"] = agent.reasoning_min_steps
-    if agent.reasoning_max_steps != 10:
-        config["reasoning_max_steps"] = agent.reasoning_max_steps
 
     # --- Default tools settings ---
     if agent.read_chat_history:
@@ -899,7 +893,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["store_events"] = agent.store_events
     # Skip events_to_skip as it contains RunEvent enums
 
-    # --- Role and culture settings ---
+    # --- Role settings ---
     if agent.role is not None:
         config["role"] = agent.role
     # --- Team and workflow settings ---
@@ -1084,12 +1078,6 @@ def from_dict(
     #     from agno.session import SessionSummaryManager
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
-    # --- Handle CultureManager reconstruction ---
-    # TODO: implement culture manager deserialization
-    # if "culture_manager" in config and isinstance(config["culture_manager"], dict):
-    #     from agno.culture import CultureManager
-    #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
-
     # --- Handle Knowledge reconstruction ---
     # Knowledge is stored as a reference by name and resolved from the registry,
     # since it holds live db/vector_db connections that cannot be serialized.
@@ -1129,22 +1117,6 @@ def from_dict(
     # Remove keys that aren't constructor parameters
     config.pop("team_id", None)
     config.pop("workflow_id", None)
-
-    if "search_session_history" in config:
-        log_debug("'search_session_history' has been deprecated. Use 'search_past_sessions' instead.")
-        config.pop("search_session_history", None)
-
-    if "num_history_sessions" in config:
-        log_debug("'num_history_sessions' has been deprecated. Use 'num_past_sessions_to_search' instead.")
-        config.pop("num_history_sessions", None)
-
-    if "enable_user_memories" in config:
-        log_debug("'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead.")
-        config.pop("enable_user_memories", None)
-
-    if "num_past_session_runs" in config:
-        log_debug("'num_past_session_runs' has been deprecated. Use 'num_past_session_runs_in_search' instead.")
-        config.pop("num_past_session_runs", None)
 
     return cls(
         # --- Agent settings ---
@@ -1195,10 +1167,7 @@ def from_dict(
         tool_call_limit=config.get("tool_call_limit"),
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
-        reasoning=config.get("reasoning", False),
         # reasoning_model=config.get("reasoning_model"),  # TODO
-        reasoning_min_steps=config.get("reasoning_min_steps", 1),
-        reasoning_max_steps=config.get("reasoning_max_steps", 10),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),
@@ -1249,8 +1218,6 @@ def from_dict(
         stream_events=config.get("stream_events"),
         store_events=config.get("store_events", False),
         role=config.get("role"),
-        # --- Culture settings ---
-        # culture_manager=config.get("culture_manager"),  # TODO
         # --- Metadata ---
         metadata=config.get("metadata"),
         # --- Compression settings ---

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.run.base import RunStatus
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_warning
 from agno.workflow.types import PauseKind, StepOutput, StepType
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ def drop_legacy_hitl_keys(config: Dict[str, Any], component: StepType) -> None:
     if not legacy:
         return
     name = config.get("name") or component.value
-    log_debug(
+    log_warning(
         f"{component.value} '{name}': dropping deprecated flat HITL keys {legacy}, use human_review to preserve config"
     )
     for k in legacy:

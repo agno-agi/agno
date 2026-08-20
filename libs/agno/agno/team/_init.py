@@ -64,6 +64,7 @@ from agno.utils.string import generate_id_from_name
 def __init__(
     team: "Team",
     members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
+    *,
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
     fallback_config: Optional[FallbackConfig] = None,
@@ -156,11 +157,8 @@ def __init__(
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    reasoning: bool = False,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
-    reasoning_min_steps: int = 1,
-    reasoning_max_steps: int = 10,
     followups: bool = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
@@ -341,11 +339,8 @@ def __init__(
 
     team.metadata = metadata
 
-    team.reasoning = reasoning
     team.reasoning_model = reasoning_model  # type: ignore[assignment]
     team.reasoning_agent = reasoning_agent
-    team.reasoning_min_steps = reasoning_min_steps
-    team.reasoning_max_steps = reasoning_max_steps
 
     team.followups = followups
     if num_followups < 1:
@@ -408,7 +403,7 @@ def __init__(
     # Internal resolved LearningMachine instance
     team._learning = None
 
-    # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+    # Lazy-initialized shared thread pool executor for background tasks (memory, learning, etc.)
     team._background_executor = None
 
     # Callable factory settings
@@ -428,7 +423,7 @@ def __init__(
 def background_executor(team: "Team") -> Any:
     """Lazy initialization of shared thread pool executor for background tasks.
 
-    Handles both memory creation and cultural knowledge updates concurrently.
+    Handles memory creation and learning updates concurrently.
     Initialized only on first use (runtime, not instantiation) and reused across runs.
     """
     if team._background_executor is None:
@@ -784,10 +779,10 @@ async def _connect_mcp_tools(team: "Team") -> None:
     """Connect the MCP tools to the agent."""
     if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             if (
                 hasattr(type(tool), "__mro__")
-                and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
                 and not tool.initialized  # type: ignore
             ):
                 try:
