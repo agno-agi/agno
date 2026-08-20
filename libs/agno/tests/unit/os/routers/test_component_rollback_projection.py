@@ -153,29 +153,61 @@ class TestANonMappingMetadataStillPublishes:
     """The projection says which row fields a version owns; it does not get to
     decide which configs are writable. Asking a scalar for its keys raised, and
     the route's catch-all turned a publish the adapters used to accept into a
-    500. Tolerated is not supported: a non-dict metadata on the row makes the
-    component unreadable through the API, which is a separate problem and not
-    this route's to settle.
+    500. A value that cannot be a row's metadata is not owned either: it stays
+    in the config and the column keeps what it had, because a scalar on the
+    column makes the component - and every listing that includes it -
+    unreadable.
     """
 
     @pytest.fixture
     def component_id(self, client):
         r = client.post(
             "/components",
-            json={"component_id": "a1", "component_type": "agent", "name": "A1", "config": {"name": "A1"}},
+            json={
+                "component_id": "a1",
+                "component_type": "agent",
+                "name": "A1",
+                "metadata": {"team": "ops"},
+                "config": {"name": "A1"},
+            },
         )
         assert r.status_code == 201, r.text
         return "a1"
 
     @pytest.mark.parametrize("metadata", [5, "hello", ["a", "b"], ["studio"], True])
-    def test_the_publish_is_accepted(self, client, db, component_id, metadata):
+    def test_the_publish_is_accepted_and_the_row_column_is_left_alone(self, client, db, component_id, metadata):
         r = client.post(
             f"/components/{component_id}/configs",
             json={"config": {"name": "A1", "metadata": metadata}, "stage": "published"},
         )
         assert r.status_code == 201, (r.status_code, r.text)
         assert r.json()["config"]["metadata"] == metadata
-        assert db.get_component(component_id)["metadata"] == metadata
+        assert db.get_component(component_id)["metadata"] == {"team": "ops"}
+
+    def test_the_catalog_stays_readable(self, client, component_id):
+        """The point of skipping the column: one config the projection cannot
+        store must not take out reads of the component, nor of the whole
+        listing that carries unrelated components alongside it."""
+        other = client.post(
+            "/components",
+            json={"component_id": "b2", "component_type": "agent", "name": "B2", "config": {"name": "B2"}},
+        )
+        assert other.status_code == 201, other.text
+
+        published = client.post(
+            f"/components/{component_id}/configs",
+            json={"config": {"name": "A1", "metadata": 5}, "stage": "published"},
+        )
+        assert published.status_code == 201, (published.status_code, published.text)
+
+        one = client.get(f"/components/{component_id}")
+        assert one.status_code == 200, (one.status_code, one.text)
+
+        listing = client.get("/components")
+        assert listing.status_code == 200, (listing.status_code, listing.text)
+        listed = listing.json()
+        rows = listed["data"] if isinstance(listed, dict) else listed
+        assert {row["component_id"] for row in rows} >= {component_id, "b2"}
 
 
 class TestAProjectionFailureDoesNotFailACommittedPointerMove:
@@ -243,6 +275,15 @@ class TestAFailedProjectionWriteDoesNotFailACommittedPointerMove:
 
     def test_a_plain_field_update_still_reports_the_failure(self, client, db, two_versions, exploding_projection_write):
         r = client.patch(f"/components/{two_versions}", json={"description": "explicit"})
+        assert r.status_code == 500, (r.status_code, r.text)
+
+    def test_a_body_that_changes_nothing_still_reports_the_failure(
+        self, client, two_versions, exploding_projection_write
+    ):
+        """A body with neither fields of its own nor a pointer move: nothing
+        committed ahead of this write for it to be the re-projection of, so
+        the failure is this request's own and the caller hears it."""
+        r = client.patch(f"/components/{two_versions}", json={})
         assert r.status_code == 500, (r.status_code, r.text)
 
     def test_the_pointer_move_itself_is_still_reported(self, client, db, two_versions, monkeypatch):

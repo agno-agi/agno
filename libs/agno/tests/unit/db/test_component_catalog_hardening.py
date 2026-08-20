@@ -429,13 +429,13 @@ class TestPublishProjectionOwnership:
 
 class TestPublishProjectionOfNonMappingMetadata:
     """Probing an arbitrary metadata value for keys must not turn a write into
-    an error.
+    an error, and a value that cannot be stored must not reach the column.
 
     The stamp-only test asks metadata for its keys, which only a mapping has.
-    Anything else cannot be a provenance stamp, so it is owned as it stands and
-    the publish goes through exactly as it did before this projection existed.
-    Tolerated is not supported: a non-dict metadata on the row makes the
-    component unreadable through the API, which is a separate problem.
+    Anything else cannot be a row's metadata either, so the projection skips
+    it: the publish goes through as it did before this projection existed, the
+    config keeps what the caller sent, and the column is left alone the way it
+    is for every other key the projection does not own.
     """
 
     def _operator_row(self, db):
@@ -448,11 +448,11 @@ class TestPublishProjectionOfNonMappingMetadata:
         )
 
     @pytest.mark.parametrize("metadata", [5, "hello", ["a", "b"], ["studio"], 0.5, True])
-    def test_a_non_mapping_metadata_publishes_and_lands_on_the_row(self, db, metadata):
+    def test_a_non_mapping_metadata_publishes_and_leaves_the_row_column_alone(self, db, metadata):
         self._operator_row(db)
         config = db.upsert_config("comp-a", config={"name": "comp-a", "metadata": metadata}, stage="published")
         assert config["config"]["metadata"] == metadata
-        assert db.get_component("comp-a")["metadata"] == metadata
+        assert db.get_component("comp-a")["metadata"] == {"team": "ops"}
 
 
 # ----------------------------------------------------------------------

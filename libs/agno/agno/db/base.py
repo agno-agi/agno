@@ -59,20 +59,20 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
     * ``description``: owned on key PRESENCE. Writers that go through
       ``upsert_component`` read None as "leave the column alone", so a
       present-but-empty description is returned as ``""`` to actually clear.
-    * ``metadata``: owned when it is not None, UNLESS it is a mapping whose
-      only content is the platform's provenance stamp (the ``"studio"`` key)
-      and the version does not carry the ``metadata_authored`` marker. The
-      stamp is written into every config a scoped actor saves, so stamp-only
-      metadata says nothing about whether this version authored the metadata
-      field; treating it as owned would overwrite row-only metadata on every
-      scoped publish. An explicit empty dict is a deliberate clear and IS
-      owned. A metadata value that is not a mapping at all cannot be a stamp,
-      so it is owned as it stands: probing an arbitrary value for keys would
-      raise, and this projection decides which fields a version owns, not which
-      writes are allowed - it must not reject a config the adapters accepted
-      before it existed. Tolerated is not supported: a non-dict metadata that
-      reaches the column makes the component unreadable through the API, and
-      the place to settle that is the write path that admits it.
+    * ``metadata``: owned when it is a mapping, UNLESS its only content is the
+      platform's provenance stamp (the ``"studio"`` key) and the version does
+      not carry the ``metadata_authored`` marker. The stamp is written into
+      every config a scoped actor saves, so stamp-only metadata says nothing
+      about whether this version authored the metadata field; treating it as
+      owned would overwrite row-only metadata on every scoped publish. An
+      explicit empty dict is a deliberate clear and IS owned. A metadata value
+      that is not a mapping is SKIPPED, neither raising nor claiming the
+      column: such a value cannot be a row's metadata, so the projection does
+      not own it and the column is left alone exactly as it is for every other
+      key this projection omits. Probing an arbitrary value for keys must
+      never turn a write into an error, and a value that cannot be stored must
+      never reach the column - it would make the component, and every listing
+      that includes it, unreadable. The config keeps whatever the caller sent.
     """
     projection: Dict[str, Any] = {}
     if config.get("name") is not None:
@@ -80,8 +80,8 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
     if "description" in config:
         projection["description"] = config.get("description") or ""
     metadata = config.get("metadata")
-    if metadata is not None:
-        stamp_only = isinstance(metadata, dict) and bool(metadata) and all(key == "studio" for key in metadata)
+    if isinstance(metadata, dict):
+        stamp_only = bool(metadata) and all(key == "studio" for key in metadata)
         if config.get("metadata_authored") or not stamp_only:
             projection["metadata"] = metadata
     return projection
