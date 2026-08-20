@@ -177,6 +177,64 @@ class TestNestedStepContainersAreWalked:
         assert agent_os.get_app() is not None
 
 
+class TestABareExecutorIsAStep:
+    """An agent or team can be a step with no Step wrapper around it.
+
+    Both spellings run the same component, so a walk that only reads
+    ``step.agent``/``step.team`` silently skips half the supported wirings.
+    """
+
+    def test_a_bare_agent_used_as_a_step_is_walked(self, caplog):
+        workflow = Workflow(id="wf", name="WF", steps=[_foreign_studio_agent("bare")])
+
+        with caplog.at_level("WARNING"):
+            AgentOS(workflows=[workflow])
+
+        assert any("bound to a different Registry" in r.message for r in caplog.records)
+
+    def test_a_bare_team_used_as_a_step_is_walked(self, caplog):
+        team = Team(id="bare-team", name="Bare Team", members=[_foreign_studio_agent("member")], model=_model())
+        workflow = Workflow(id="wf", name="WF", steps=[team])
+
+        with caplog.at_level("WARNING"):
+            AgentOS(workflows=[workflow])
+
+        assert any("bound to a different Registry" in r.message for r in caplog.records)
+
+    def test_a_bare_agent_nested_in_a_container_is_walked(self, caplog):
+        container = Step(name="container", executor=lambda step_input: None)
+        container.steps = [_foreign_studio_agent("nested-bare")]  # type: ignore[attr-defined]
+        workflow = Workflow(id="wf", name="WF", steps=[container])
+
+        with caplog.at_level("WARNING"):
+            AgentOS(workflows=[workflow])
+
+        assert any("bound to a different Registry" in r.message for r in caplog.records)
+
+    def test_a_tuple_of_steps_is_walked(self, caplog):
+        """A steps list spelled as a tuple is the same list."""
+        container = Step(name="container", executor=lambda step_input: None)
+        container.steps = (Step(name="inner", agent=_foreign_studio_agent("tupled")),)  # type: ignore[attr-defined]
+        workflow = Workflow(id="wf", name="WF", steps=(container,))
+
+        with caplog.at_level("WARNING"):
+            AgentOS(workflows=[workflow])
+
+        assert any("bound to a different Registry" in r.message for r in caplog.records)
+
+    def test_a_bare_agent_reachable_twice_is_visited_once(self, caplog):
+        """The id() ledger still holds once the step itself is visited."""
+        shared = _foreign_studio_agent("shared-bare")
+        container = Step(name="container", executor=lambda step_input: None)
+        container.steps = [shared, shared]  # type: ignore[attr-defined]
+        workflow = Workflow(id="wf", name="WF", steps=[container, shared])
+
+        with caplog.at_level("WARNING"):
+            AgentOS(workflows=[workflow])
+
+        assert len([r for r in caplog.records if "bound to a different Registry" in r.message]) == 1
+
+
 # A genuinely cyclic component graph is not covered here: collect_mcp_tools_from_team
 # and Workflow.propagate_run_hooks_in_background both recurse without a visited set
 # and run before this walk, so AgentOS construction dies there first. The walk keeps

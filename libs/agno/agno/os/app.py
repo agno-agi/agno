@@ -1044,10 +1044,11 @@ class AgentOS:
         def visit_steps(steps: Any):
             # steps may be a Steps container rather than a plain list --
             # WorkflowSteps accepts one at the top level, and a bare
-            # container here would otherwise skip the whole subtree.
-            if not isinstance(steps, list):
+            # container here would otherwise skip the whole subtree. A tuple
+            # is a step list too, in both spellings.
+            if not isinstance(steps, (list, tuple)):
                 inner = getattr(steps, "steps", None)
-                if steps is None or not isinstance(inner, list):
+                if steps is None or not isinstance(inner, (list, tuple)):
                     return
                 steps = inner
             for step in steps:
@@ -1056,7 +1057,11 @@ class AgentOS:
                 # application down at construction time.
                 if id(step) in seen:
                     continue
-                seen.add(id(step))
+                # An agent or team may BE the step, with no Step wrapper
+                # around it, and carries toolkits exactly like a wrapped
+                # executor does. visit() records the id, which is what keeps
+                # the guard above meaningful, so nothing marks it here.
+                yield from visit(step)
                 for attr in ("agent", "team"):
                     yield from visit(getattr(step, attr, None))
                 # Every container a step can be: Loop, Parallel and
