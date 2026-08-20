@@ -578,3 +578,155 @@ def test_snapshot_manager_is_quiet_when_the_store_fits_the_caps(tmp_path, monkey
     assert manager.max_variable_bytes == 2_000_000
     assert manager.max_snapshot_bytes == 64_000_000
     assert warnings == []
+# Parameter names: Python-safe, required first
+# ------------------------------------------------------------------
+
+
+def test_safe_param_name_keeps_a_usable_name():
+    from agno.tools.code_mode.naming import safe_param_name
+
+    assert safe_param_name("query") == "query"
+    assert safe_param_name("_private") == "_private"
+
+
+def test_safe_param_name_escapes_keywords_and_non_identifiers():
+    from agno.tools.code_mode.naming import safe_param_name
+
+    assert safe_param_name("from") == "from_"
+    assert safe_param_name("class") == "class_"
+    assert safe_param_name("start-date") == "start_date"
+    assert safe_param_name("2fa") == "_2fa"
+    assert safe_param_name("") == "_"
+
+
+def test_safe_param_name_disambiguates_a_collision():
+    from agno.tools.code_mode.naming import safe_param_name
+
+    assert safe_param_name("start-date", taken={"start_date"}) == "start_date_2"
+    assert safe_param_name("start.date", taken={"start_date", "start_date_2"}) == "start_date_3"
+
+
+def _raw_schema_function(name, properties, required):
+    """A Function carrying a hand-written schema, as an MCP tool does."""
+
+    def _entrypoint(**kwargs):
+        return kwargs
+
+    return Function(
+        name=name,
+        description=f"{name} description.",
+        parameters={"type": "object", "properties": properties, "required": required},
+        entrypoint=_entrypoint,
+        skip_entrypoint_processing=True,
+    )
+
+
+def test_params_from_schema_puts_required_parameters_first():
+    from agno.tools.code_mode.bridge import _params_from_schema
+
+    function = _raw_schema_function("search", {"limit": {"type": "integer"}, "query": {"type": "string"}}, ["query"])
+    params = _params_from_schema(function)
+    assert [p["name"] for p in params] == ["query", "limit"]
+    assert [p["required"] for p in params] == [True, False]
+
+
+def test_params_from_schema_maps_unusable_names_and_keeps_the_wire_name():
+    from agno.tools.code_mode.bridge import _params_from_schema
+
+    function = _raw_schema_function("fetch", {"from": {"type": "string"}, "start-date": {"type": "string"}}, ["from"])
+    params = _params_from_schema(function)
+    assert params == [
+        {"name": "from_", "wire": "from", "required": True},
+        {"name": "start_date", "wire": "start-date", "required": False},
+    ]
+
+
+def test_stub_doc_records_the_renamed_parameters():
+    from agno.tools.code_mode.bridge import _params_from_schema, _stub_doc
+
+    function = _raw_schema_function("fetch", {"from": {"type": "string"}}, ["from"])
+    doc = _stub_doc(function, _params_from_schema(function))
+    assert "fetch description." in doc
+    assert "from_ for 'from'" in doc
+
+
+# ------------------------------------------------------------------
+# Approval sentinel on a bridged callable
+# ------------------------------------------------------------------
+
+
+def test_approval_sentinel_on_a_bare_callable_reaches_the_bridged_function():
+    from agno.approval import approval
+    from agno.tools.code_mode.bridge import ToolBridge
+
+    @approval(type="required")
+    def wire_money(amount: int) -> str:
+        """Wire money.
+
+        Args:
+            amount: How much to wire.
+        """
+        return f"sent {amount}"
+
+    bridge = ToolBridge([wire_money])
+    function = bridge._registry[("", "wire_money")]
+    assert function.approval_type == "required"
+    assert function.requires_confirmation is True
+
+
+# ------------------------------------------------------------------
+# Injected toolkits are connected and closed with the run
+# ------------------------------------------------------------------
+
+
+class ConnectProbeTools(Toolkit):
+    """A toolkit that manages its own connection, as a database toolkit does."""
+
+    _requires_connect = True
+
+    def __init__(self, **kwargs):
+        self.connects = 0
+        self.closes = 0
+        super().__init__(name="probe_tools", tools=[self.ping], **kwargs)
+
+    def connect(self) -> None:
+        self.connects += 1
+
+    def close(self) -> None:
+        self.closes += 1
+
+    def ping(self) -> str:
+        """Return pong."""
+        return "pong"
+
+
+def test_connect_and_close_reach_the_injected_toolkits():
+    probe = ConnectProbeTools()
+    code_mode = CodeMode(tools=[probe], snapshot=False)
+    code_mode.connect()
+    assert probe.connects == 1
+    assert probe.closes == 0
+    # A second connect in the same run must not reconnect an open toolkit.
+    code_mode.connect()
+    assert probe.connects == 1
+    code_mode.close()
+    assert probe.closes == 1
+    # The next run connects again.
+    code_mode.connect()
+    assert probe.connects == 2
+
+
+async def test_aconnect_and_aclose_reach_the_injected_toolkits():
+    probe = ConnectProbeTools()
+    code_mode = CodeMode(tools=[probe], snapshot=False)
+    await code_mode.aconnect()
+    assert probe.connects == 1
+    await code_mode.aclose()
+    assert probe.closes == 1
+
+
+def test_close_of_an_unconnected_toolkit_is_not_attempted():
+    probe = ConnectProbeTools()
+    code_mode = CodeMode(tools=[probe], snapshot=False)
+    code_mode.close()
+    assert probe.closes == 0

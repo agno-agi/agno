@@ -1,9 +1,10 @@
-"""Handle-name derivation for kernel-side bindings."""
+"""Handle- and parameter-name derivation for kernel-side bindings."""
 
 from __future__ import annotations
 
+import keyword
 import re
-from typing import Any, Callable, List, Sequence, Union
+from typing import Any, Callable, Collection, List, Sequence, Union
 
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -24,6 +25,30 @@ def derive_handle_name(name: str) -> str:
     if not handle or handle[0].isdigit():
         handle = "_" + handle
     return handle
+
+
+def safe_param_name(name: str, taken: Collection[str] = ()) -> str:
+    """A valid Python parameter name for a JSON-schema property name.
+
+    Schema property names carry no Python constraints: ``from`` is a keyword,
+    ``start-date`` is not an identifier, and either one makes
+    ``inspect.Parameter`` raise. Non-identifier characters become underscores,
+    a leading digit and an empty name get a leading underscore, a keyword gets
+    a trailing one, and a name already used by an earlier parameter of the same
+    function gets a numeric suffix. The kernel stub maps the result back to the
+    schema name before the call leaves the kernel.
+    """
+    candidate = re.sub(r"\W", "_", name or "")
+    if not candidate or candidate[0].isdigit():
+        candidate = "_" + candidate
+    if keyword.iskeyword(candidate):
+        candidate = candidate + "_"
+    if candidate not in taken:
+        return candidate
+    suffix = 2
+    while f"{candidate}_{suffix}" in taken:
+        suffix += 1
+    return f"{candidate}_{suffix}"
 
 
 def handle_names_for(tools: Sequence[Union[Toolkit, Callable[..., Any], Function]]) -> List[str]:

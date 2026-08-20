@@ -267,10 +267,23 @@ class CodeMode(Toolkit):
     # ------------------------------------------------------------------
 
     def connect(self) -> None:
-        """No-op: the session is unknown at connect time; kernels start lazily."""
+        """Connect the injected toolkits that manage their own connections.
+
+        The agent walks its own tools and sees CodeMode, not the toolkits
+        bridged into the kernel, so those are connected from here. No kernel is
+        started: the session is unknown at connect time and kernels start
+        lazily on the first ``execute``.
+        """
+        if self._bridge is not None:
+            self._bridge.connect_tools()
+
+    async def aconnect(self) -> None:
+        """Async variant of ``connect``."""
+        if self._bridge is not None:
+            await self._bridge.aconnect_tools()
 
     def close(self) -> None:
-        """Flush a snapshot for the sessions that ran a cell since their last one.
+        """Close the injected toolkits and flush a snapshot for the sessions that ran a cell since their last one.
 
         The agent calls this at the end of every run, so it touches only
         sessions with unsaved work and never waits on a session whose lock
@@ -278,6 +291,8 @@ class CodeMode(Toolkit):
         ``idle_ttl`` reattaches to a warm kernel and skips the restore
         entirely. ``shutdown`` is the explicit flush-everything path.
         """
+        if self._bridge is not None:
+            self._bridge.close_tools()
         if not self._runner.started or self._snapshots is None:
             return
         if _in_event_loop():
@@ -297,6 +312,8 @@ class CodeMode(Toolkit):
 
     async def aclose(self) -> None:
         """Async variant of ``close``."""
+        if self._bridge is not None:
+            await self._bridge.aclose_tools()
         if not self._runner.started or self._snapshots is None:
             return
         try:
