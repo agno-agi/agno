@@ -38,6 +38,10 @@ def _check_openai_version() -> None:
 # merely absent deployment row; it yields this instead, and get_request_params
 # does the raising with the run's context in hand.
 _NOT_SIGNED_IN_SENTINEL = "supergrok-placeholder-not-signed-in"
+_NO_MANAGER_FOR_GUARANTEE = (
+    "require_user_token=True but no token_manager is configured, so per-user SuperGrok tokens "
+    "cannot be resolved. Configure a token_manager, or set require_user_token=False."
+)
 
 
 @dataclass
@@ -246,7 +250,19 @@ class xAIResponses(OpenResponses):
             tool_choice=tool_choice,
             run_response=run_response,
         )
-        if not self._using_oauth() or self.token_manager is None:
+        if not self._using_oauth():
+            return request_params
+
+        # A4: the guarantee outranks precedence. It decides WHETHER the request may
+        # proceed; precedence only decides which credential serves one that may.
+        guaranteed = self.require_user_token and bool(self._uid(run_response))
+        if guaranteed and self.token_manager is None:
+            raise ModelAuthenticationError(message=_NO_MANAGER_FOR_GUARANTEE, model_name=self.name)
+        # A1/A2: a provider the caller named is the more specific instruction, and a
+        # manager that resolves nothing must not veto a request the provider can serve.
+        if not guaranteed and (self.token_provider is not None or self.async_token_provider is not None):
+            return request_params
+        if self.token_manager is None:
             return request_params
 
         token = self._per_request_bearer(run_response)
