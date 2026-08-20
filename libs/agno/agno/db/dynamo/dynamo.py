@@ -2454,9 +2454,12 @@ class DynamoDb(BaseDb):
                 },
                 ReturnValues="ALL_NEW",
             )
-            # Only rename if owned by this user (also fails when the run is absent).
+            # Avoid upserting a phantom item when the run doesn't exist. Such an item carries
+            # no eval_type, and every later read of the table fails on it.
+            update_kwargs["ConditionExpression"] = "attribute_exists(run_id)"
+            # Only rename if owned by this user.
             if user_id is not None:
-                update_kwargs["ConditionExpression"] = "user_id = :user_id"
+                update_kwargs["ConditionExpression"] += " AND user_id = :user_id"
                 update_kwargs["ExpressionAttributeValues"][":user_id"] = {"S": user_id}
 
             try:
