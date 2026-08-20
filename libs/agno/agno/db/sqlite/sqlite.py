@@ -3999,11 +3999,12 @@ class SqliteDb(BaseDb):
                     if description is not None:
                         updates["description"] = description
                     if current_version is not None:
-                        # The current pointer must never name a tombstoned
-                        # version: every read would then diverge between the
-                        # pointer and the visible history. Stage rules beyond
-                        # that (published-only) are enforced by
-                        # set_current_version, the intended pointer-move API.
+                        # The current pointer names what the platform runs, and
+                        # what every actor can see: the catalog's visibility
+                        # predicate reads "has a current version" as published.
+                        # So the same invariant set_current_version enforces is
+                        # enforced here - the version must exist and be
+                        # published - or this writer becomes the way around it.
                         if configs_table is not None:
                             target_stage = sess.execute(
                                 select(configs_table.c.stage).where(
@@ -4014,6 +4015,15 @@ class SqliteDb(BaseDb):
                             if target_stage == DELETED_CONFIG_STAGE:
                                 raise ValueError(
                                     f"Cannot set deleted config {component_id} v{current_version} as current"
+                                )
+                            if target_stage is None:
+                                raise ValueError(
+                                    f"Cannot set missing config {component_id} v{current_version} as current"
+                                )
+                            if target_stage != "published":
+                                raise ValueError(
+                                    f"Cannot set draft config {component_id} v{current_version} as current. "
+                                    "Only published configs can be current."
                                 )
                         updates["current_version"] = current_version
                     if metadata is not None:

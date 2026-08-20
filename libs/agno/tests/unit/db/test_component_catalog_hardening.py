@@ -862,3 +862,53 @@ class TestArchiveFreezesTheWholeHistory:
         draft = db.upsert_config("alice-frozen", config={"name": "alice-frozen", "instructions": "v2"})
         db.delete_component("alice-frozen", user_id="alice")
         assert db.delete_config("alice-frozen", version=draft["version"], user_id="bob") is False
+
+
+class TestThePointerMeansPublished:
+    """``current_version`` is what the platform runs, and the catalog's
+    visibility predicate reads "has a current version" as published -- so a
+    pointer at an unpublished version does not merely serve the wrong config,
+    it puts a private component on the platform.
+
+    set_current_version has always enforced this. upsert_component takes the
+    same column and checked only for a tombstone, so it was the way around it.
+    """
+
+    def test_a_draft_version_cannot_become_current(self, db):
+        _mk(db, "ptr", stage="draft")
+        with pytest.raises(ValueError, match="draft"):
+            db.upsert_component(component_id="ptr", component_type=ComponentType.AGENT, name="ptr", current_version=1)
+        assert db.get_component("ptr")["current_version"] is None
+
+    def test_a_missing_version_cannot_become_current(self, db):
+        _mk(db, "ptr2", stage="published")
+        with pytest.raises(ValueError, match="missing"):
+            db.upsert_component(
+                component_id="ptr2", component_type=ComponentType.AGENT, name="ptr2", current_version=99
+            )
+
+    def test_a_published_version_still_can(self, db):
+        _mk(db, "ptr3", stage="published")
+        db.upsert_config("ptr3", config={"name": "ptr3", "v": 2}, stage="published")
+        db.upsert_component(component_id="ptr3", component_type=ComponentType.AGENT, name="ptr3", current_version=2)
+        assert db.get_component("ptr3")["current_version"] == 2
+
+    def test_the_draft_component_stays_invisible_to_others(self, db):
+        """The reason the invariant matters under share-on-publish."""
+        db.create_component_with_config(
+            component_id="ptr4",
+            component_type=ComponentType.AGENT,
+            name="ptr4",
+            config={"name": "ptr4"},
+            stage="draft",
+            user_id="alice",
+        )
+        with pytest.raises(ValueError):
+            db.upsert_component(
+                component_id="ptr4",
+                component_type=ComponentType.AGENT,
+                name="ptr4",
+                current_version=1,
+                user_id="alice",
+            )
+        assert db.get_component("ptr4", user_id="bob") is None
