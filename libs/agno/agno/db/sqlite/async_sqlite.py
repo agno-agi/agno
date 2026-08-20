@@ -3745,6 +3745,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
