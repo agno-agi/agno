@@ -1881,14 +1881,18 @@ class TestSchedules:
         # one takes effect.
         self._create_target_agent(studio_schedules)
         created = self._create_schedule(studio_schedules, cron="0 9 * * *")
-        before = db.get_schedule(created["id"])
 
         out = _loads(studio_schedules.update_schedule(created["id"], cron="*/5 * * * *"))
         assert out["ok"], out
 
         after = db.get_schedule(created["id"])
         assert after["cron_expr"] == "*/5 * * * *"
-        assert after["next_run_at"] != before["next_run_at"]
+        # The new cadence has to be what next_run_at reflects, so assert it
+        # lands inside that cadence rather than merely differing from the old
+        # value. The old daily cron and a five-minute one name the SAME instant
+        # for the five minutes before 09:00, so an inequality fails there for a
+        # reason that has nothing to do with the recompute.
+        assert after["next_run_at"] <= int(time.time()) + 300
         assert out["data"]["next_run_at"] == after["next_run_at"]
 
     def test_update_schedule_validates_cron_against_the_new_timezone(self, studio_schedules, db):
