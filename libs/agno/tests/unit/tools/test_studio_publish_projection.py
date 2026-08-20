@@ -250,3 +250,162 @@ class TestClearedFieldsReachTheCatalogRow:
         _data(asyncio.run(studio.apublish_component(component_id)))
 
         assert not db.get_component(component_id)["description"]
+
+
+# ----------------------------------------------------------------------
+# Row-only fields survive the toolkit's pointer moves
+# ----------------------------------------------------------------------
+
+
+def _operator_patch(db, component_id: str) -> None:
+    """The write PATCH /components performs: row columns only, no config."""
+    from agno.db.base import ComponentType
+
+    row = db.get_component(component_id)
+    merged = dict(row.get("metadata") or {})
+    merged["team"] = "ops"
+    db.upsert_component(
+        component_id=component_id,
+        component_type=ComponentType(row["component_type"]),
+        name=row["name"],
+        description="operator note",
+        metadata=merged,
+    )
+
+
+def _create_bare(studio, component_type: str, name: str) -> str:
+    """A published component whose configs never carry description/metadata."""
+    if component_type == "agent":
+        out = studio.create_agent(name=name, instructions="i", publish=True)
+    elif component_type == "team":
+        studio.create_agent(name=f"{name}-member", instructions="i", publish=True)
+        out = studio.create_team(name=name, instructions="i", member_ids=[f"{name}-member"], publish=True)
+    else:
+        studio.create_agent(name=f"{name}-step", instructions="i", publish=True)
+        out = studio.create_workflow(
+            name=name, steps=[{"type": "step", "name": "s1", "agent_id": f"{name}-step"}], publish=True
+        )
+    return _data(out)["id"]
+
+
+class TestRowOnlyFieldsSurviveTheToolkit:
+    """description/metadata set only on the row (PATCH /components) exist in
+    no config version, so no publish or rollback may clear them - there is no
+    version to restore them from."""
+
+    _EDITORS = {"agent": "edit_agent", "team": "edit_team", "workflow": "edit_workflow"}
+
+    def _assert_survived(self, db, component_id):
+        row = db.get_component(component_id)
+        assert row["description"] == "operator note"
+        assert row["metadata"]["team"] == "ops"
+
+    @pytest.mark.parametrize("component_type", ["agent", "team", "workflow"])
+    def test_publish_leaves_row_only_fields_alone(self, studio, db, component_type):
+        component_id = _create_bare(studio, component_type, f"rowonly-{component_type}")
+        _operator_patch(db, component_id)
+
+        edit_kwargs = {"name": f"renamed-{component_type}"} if component_type == "workflow" else {"instructions": "i2"}
+        _data(getattr(studio, self._EDITORS[component_type])(component_id, **edit_kwargs))
+        _data(studio.publish_component(component_id))
+
+        self._assert_survived(db, component_id)
+
+    def test_inline_publish_leaves_row_only_fields_alone(self, studio, db):
+        component_id = _create_bare(studio, "agent", "rowonly-inline")
+        _operator_patch(db, component_id)
+
+        _data(studio.edit_agent(component_id, instructions="i2", publish=True))
+
+        self._assert_survived(db, component_id)
+
+    def test_rollback_leaves_row_only_fields_alone(self, studio, db):
+        component_id = _create_bare(studio, "agent", "rowonly-rollback")
+        _data(studio.edit_agent(component_id, instructions="i2", publish=True))
+        _operator_patch(db, component_id)
+
+        _data(studio.set_current_version(component_id, 1))
+
+        self._assert_survived(db, component_id)
+
+    def test_async_publish_leaves_row_only_fields_alone(self, studio, db):
+        component_id = _create_bare(studio, "agent", "rowonly-async")
+        _operator_patch(db, component_id)
+        _data(studio.edit_agent(component_id, instructions="i2"))
+
+        _data(asyncio.run(studio.apublish_component(component_id)))
+
+        self._assert_survived(db, component_id)
+
+    def test_an_explicit_edit_still_overrides_the_operator(self, studio, db):
+        component_id = _create_bare(studio, "agent", "rowonly-override")
+        _operator_patch(db, component_id)
+
+        _data(studio.edit_agent(component_id, description="authored", metadata={"tier": "two"}, publish=True))
+
+        row = db.get_component(component_id)
+        assert row["description"] == "authored"
+        assert row["metadata"]["tier"] == "two"
+        assert "team" not in row["metadata"]
+
+
+class TestScopedFlowsAndTheProvenanceStamp:
+    """A scoped actor's provenance stamp rides in every config's metadata, so
+    stamp-only metadata must not read as "this version owns the column" - but
+    a scoped caller's explicit clear still must."""
+
+    @staticmethod
+    def _ctx(user_id: str = "builder-1"):
+        from agno.run import RunContext
+
+        return RunContext(run_id="r1", session_id="s1", user_id=user_id)
+
+    def _scoped_fixture(self, studio, db) -> str:
+        ctx = self._ctx()
+        created = _data(studio.create_agent(name="Scoped Bot", instructions="i", publish=True, _agno_run_context=ctx))
+        component_id = created["id"]
+        _operator_patch(db, component_id)
+        return component_id
+
+    def test_scoped_publish_keeps_operator_fields_beside_the_stamp(self, studio, db):
+        component_id = self._scoped_fixture(studio, db)
+        ctx = self._ctx()
+
+        _data(studio.edit_agent(component_id, instructions="i2", _agno_run_context=ctx))
+        _data(studio.publish_component(component_id, _agno_run_context=ctx))
+
+        row = db.get_component(component_id)
+        assert row["description"] == "operator note"
+        assert row["metadata"]["team"] == "ops"
+
+    def test_scoped_metadata_clear_still_clears(self, studio, db):
+        component_id = self._scoped_fixture(studio, db)
+        ctx = self._ctx()
+
+        _data(studio.edit_agent(component_id, metadata={}, _agno_run_context=ctx, publish=True))
+
+        metadata = db.get_component(component_id)["metadata"] or {}
+        assert "team" not in metadata
+
+    def test_scoped_description_clear_still_clears(self, studio, db):
+        component_id = self._scoped_fixture(studio, db)
+        ctx = self._ctx()
+
+        _data(studio.edit_agent(component_id, description="", _agno_run_context=ctx, publish=True))
+
+        assert not db.get_component(component_id)["description"]
+
+    def test_a_scoped_rollback_onto_an_authored_clear_re_clears(self, studio, db):
+        component_id = self._scoped_fixture(studio, db)
+        ctx = self._ctx()
+        _data(studio.edit_agent(component_id, metadata={}, _agno_run_context=ctx, publish=True))
+        # v1's stamp-only metadata owns nothing, so this rollback leaves the
+        # row alone and the operator can re-add fields.
+        _data(studio.set_current_version(component_id, 1, _agno_run_context=ctx))
+        _operator_patch(db, component_id)
+
+        # v2 carries the authored marker: rolling onto it re-clears.
+        _data(studio.set_current_version(component_id, 2, _agno_run_context=ctx))
+
+        metadata = db.get_component(component_id)["metadata"] or {}
+        assert "team" not in metadata

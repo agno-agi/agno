@@ -14,6 +14,7 @@ from agno.db.base import (
     ComponentDraftRequiredError,
     ComponentLastConfigError,
     ComponentVersionConflictError,
+    project_config_identity,
 )
 from agno.db.base import ComponentType as DbComponentType
 from agno.db.utils import DB_TABLE_NAME_KEYS
@@ -642,27 +643,13 @@ def _project_live_version(
     config = row.get("config") if isinstance(row, dict) else None
     if not isinstance(config, dict):
         return {}
-    # Present-but-empty is a CLEARED field and must be projected explicitly,
-    # because the adapters read None as "leave this column alone" - otherwise
-    # the row keeps describing the version that used to be live. Absent is
-    # different: description and metadata are also first-class columns set
-    # through POST/PATCH /components and never written into a config, so
-    # projecting an empty value for a key the config does not carry would
-    # destroy row data no version can restore.
-    # The adapter's own publish projection is the contract to mirror: name when
-    # it is not None, description on key PRESENCE, metadata when it is not
-    # None. The one difference is the mechanism - this projection is applied
-    # through upsert_component, which reads None as "leave the column alone",
-    # so a present-but-empty description is projected as "" to actually clear.
-    projection: Dict[str, Any] = {}
-    if config.get("name") is not None:
-        projection["name"] = config["name"]
-    elif component.get("name") is not None:
+    # One shared statement of which row fields the live version owns; a key
+    # the projection omits is row-only and must be left alone. This path
+    # writes through upsert_component, which reads None as "leave the column
+    # alone", so the helper returns a present-but-empty description as "".
+    projection = project_config_identity(config)
+    if "name" not in projection and component.get("name") is not None:
         projection["name"] = component["name"]
-    if "description" in config:
-        projection["description"] = config.get("description") or ""
-    if config.get("metadata") is not None:
-        projection["metadata"] = config["metadata"]
     return projection
 
 

@@ -1708,6 +1708,11 @@ class StudioTools(Toolkit):
         ):
             if value is not None:
                 setattr(component, field_name, value or None)
+        if description is not None:
+            # The catalog projection reads key presence in the config as "this
+            # version owns the description column"; record that the caller
+            # touched it so _save_edit writes the key even for a clear.
+            replaced_keys.add("description")
         if model_id is not None:
             model = self._find_model(model_id)
             if model is None:
@@ -1778,6 +1783,7 @@ class StudioTools(Toolkit):
             if studio_meta is not None and "studio" not in merged:
                 merged["studio"] = studio_meta
             component.metadata = merged or None
+            replaced_keys.add("metadata")
         return None
 
     def _created_payload(self, component: Any, component_type: str, version: Optional[int], stage: str) -> str:
@@ -2626,6 +2632,7 @@ class StudioTools(Toolkit):
                 workflow.name = name
             if description is not None:
                 workflow.description = description or None
+                replaced_keys.add("description")
             pinned = None
             if steps is not None:
                 coerced, coerce_err = self._coerce_step_specs(steps)
@@ -2664,6 +2671,7 @@ class StudioTools(Toolkit):
                 if studio_meta is not None and "studio" not in merged:
                     merged["studio"] = studio_meta
                 workflow.metadata = merged or None
+                replaced_keys.add("metadata")
             return None, pinned
 
         return self._edit_component("workflow", workflow_id, expected_version, publish, _agno_run_context, mutate)
@@ -4391,6 +4399,18 @@ class StudioTools(Toolkit):
         replaced = replaced_keys or set()
         component_id = getattr(component, "id", None)
         self._preserve_unresolved_keys(component_id, config, replaced)
+        # description and metadata are also row-only columns (PATCH
+        # /components), so the catalog projection needs an explicit signal
+        # that THIS version authored them: for description the key's presence
+        # (serialization drops a cleared None, so the empty string is written
+        # back); for metadata the marker, because the provenance stamp above
+        # makes every scoped config carry a metadata dict whether or not the
+        # caller touched the field.
+        if "description" in replaced:
+            config["description"] = getattr(component, "description", None) or ""
+        if "metadata" in replaced:
+            config["metadata"] = getattr(component, "metadata", None) or {}
+            config["metadata_authored"] = True
         if replaced & {"members", "steps"}:
             # The edit replaced the composition: pin the new children at the
             # exact versions the binder rebuilt them from.
@@ -4645,23 +4665,23 @@ class StudioTools(Toolkit):
         newly published config version."""
         if self.db is None:
             return
-        from agno.db.base import ComponentType
+        from agno.db.base import ComponentType, project_config_identity
 
         component = self.db.get_component(component_id)
         row = self.db.get_config(component_id=component_id, version=version)
         config = row.get("config") if isinstance(row, dict) else None
         if component is None or not isinstance(config, dict):
             return
+        # project_config_identity states which row fields the version owns; a
+        # key it omits is row-only and upsert_component's None leaves that
+        # column alone.
+        projection = project_config_identity(config)
         self.db.upsert_component(
             component_id=component_id,
             component_type=ComponentType(component["component_type"]),
-            name=config.get("name") or component.get("name"),
-            # A field the published version does not carry was cleared, and the
-            # adapters read None as "leave this column alone" - so the empty
-            # value is projected explicitly, or the catalog keeps serving text
-            # the live version no longer has.
-            description=config.get("description") or "",
-            metadata=config.get("metadata") or {},
+            name=projection.get("name") or component.get("name"),
+            description=projection.get("description"),
+            metadata=projection.get("metadata"),
         )
 
 
@@ -4750,7 +4770,7 @@ def _persist_only(
     if component_id is None:
         raise ValueError("Component has no id")
     from agno.db.base import ComponentArchivedError as _ComponentArchivedError
-    from agno.db.base import ComponentType
+    from agno.db.base import ComponentType, project_config_identity
 
     resolved_config = config if config is not None else _component_to_dict(component)
     if db.get_component(component_id) is None:
@@ -4806,13 +4826,17 @@ def _persist_only(
             expected_latest_version=expected_latest_version,
             user_id=user_id,
         )
-        # Same rule as the publish projection: an absent description/metadata
-        # is a cleared field, and None reads as "leave the column alone".
+        # project_config_identity states which row fields this config version
+        # owns; a key it omits is row-only (set through PATCH /components,
+        # never present in a config) and upsert_component's None leaves that
+        # column alone.
+        projection = project_config_identity(resolved_config)
         db.upsert_component(
             **{
                 **identity,
-                "description": identity["description"] or "",
-                "metadata": identity["metadata"] or {},
+                "name": projection.get("name") or identity["name"],
+                "description": projection.get("description"),
+                "metadata": projection.get("metadata"),
             }
         )
         return result.get("version")

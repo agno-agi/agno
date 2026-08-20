@@ -118,3 +118,29 @@ class TestRowOnlyFieldsSurviveAPointerMove:
         row = db.get_component(row_only)
         assert row["description"] == "Handles invoices"
         assert row["metadata"] == {"team": "finance"}
+
+    def test_stamp_only_metadata_does_not_claim_the_column(self, client, db, row_only):
+        # A scoped save stamps provenance into every config's metadata; the
+        # stamp alone is not authored metadata and must not replace the row's.
+        db.upsert_config(
+            row_only,
+            config={"name": "Invoices", "metadata": {"studio": {"last_actor": "builder-1"}}},
+            stage="published",
+        )
+        assert client.patch(f"/components/{row_only}", json={"current_version": 1}).status_code == 200
+        assert client.patch(f"/components/{row_only}", json={"current_version": 3}).status_code == 200
+        assert db.get_component(row_only)["metadata"] == {"team": "finance"}
+
+    def test_the_authored_marker_makes_stamp_only_metadata_win(self, client, db, row_only):
+        db.upsert_config(
+            row_only,
+            config={
+                "name": "Invoices",
+                "metadata": {"studio": {"last_actor": "builder-1"}},
+                "metadata_authored": True,
+            },
+            stage="published",
+        )
+        assert client.patch(f"/components/{row_only}", json={"current_version": 1}).status_code == 200
+        assert client.patch(f"/components/{row_only}", json={"current_version": 3}).status_code == 200
+        assert db.get_component(row_only)["metadata"] == {"studio": {"last_actor": "builder-1"}}
