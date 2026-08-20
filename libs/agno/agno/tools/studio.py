@@ -74,7 +74,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Set, Union
 
 from agno.run import RunContext
 from agno.tools.function import Function
@@ -156,8 +156,8 @@ class _ToolsNotFoundError(ValueError):
     from tool_not_allowed, which is a palette refusal for a name that exists)."""
 
 
-class _LiveComponentView:
-    """A sequence view over a component resolver, read at iteration time.
+class _LiveComponentView(Sequence[Any]):
+    """A sequence view over a component resolver, read at access time.
 
     SchedulerTools' code-defined probe reads its include_* sequences on every
     call; handing it these views keeps the probe aligned with the run tools'
@@ -167,6 +167,9 @@ class _LiveComponentView:
 
     def __init__(self, resolve: Callable[[], List[Any]]):
         self._resolve = resolve
+
+    def __getitem__(self, index):  # type: ignore[no-untyped-def]
+        return self._resolve()[index]
 
     def __iter__(self):
         return iter(self._resolve())
