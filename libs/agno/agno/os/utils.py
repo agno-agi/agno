@@ -706,7 +706,7 @@ def process_audio(file: UploadFile) -> Audio:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Audio(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Audio(content=content, format=extract_format(file), mime_type=normalize_mime_type(file.content_type))
 
 
 def process_video(file: UploadFile) -> Video:

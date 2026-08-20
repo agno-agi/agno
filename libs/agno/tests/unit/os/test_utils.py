@@ -11,6 +11,7 @@ from agno.media import File
 from agno.os.utils import (
     DOCUMENT_MIME_TYPES,
     classify_upload_file,
+    process_audio,
     process_document,
     to_utc_datetime,
 )
@@ -212,6 +213,19 @@ class TestProcessDocument:
         result = process_document(_make_upload_file("报告 (final).pdf", " Application/PDF ", b"data"))
         assert result is not None
         assert result.mime_type == "application/pdf"
+
+
+class TestProcessAudio:
+    """Audio uploads must retain the same normalized MIME used for routing."""
+
+    @pytest.mark.parametrize("content_type", ["AUDIO/WAV", " AUDIO/WAV "])
+    def test_mixed_case_mime_type_is_normalized(self, content_type):
+        upload = _make_upload_file("clip.wav", content_type, b"audio-data")
+
+        assert classify_upload_file(upload) == "audio"
+
+        result = process_audio(upload)
+        assert result.mime_type == "audio/wav"
 
 
 class TestDocumentMimeTypesConsistency:
