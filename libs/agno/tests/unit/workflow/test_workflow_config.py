@@ -95,6 +95,23 @@ def sample_workflow_config() -> Dict[str, Any]:
 # =============================================================================
 
 
+def _force_delete_config(db, component_id: str, version: int) -> None:
+    """Simulate a corrupt/legacy catalog by removing a config row directly.
+
+    The hardened delete_config refuses to break
+    a pin, so the broken state these tests exercise can only arrive from
+    outside the API - which is exactly what this raw delete reproduces.
+    """
+    table = db._get_table(table_type="component_configs")
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            table.delete().where(
+                table.c.component_id == component_id,
+                table.c.version == version,
+            )
+        )
+
+
 class TestWorkflowToDict:
     """Tests for Workflow.to_dict() method."""
 
@@ -471,7 +488,9 @@ class TestWorkflowDelete:
         basic_workflow.db = mock_db
         result = basic_workflow.delete()
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-workflow", hard_delete=False)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-workflow", hard_delete=False, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_hard_delete(self, basic_workflow, mock_db):
@@ -481,7 +500,9 @@ class TestWorkflowDelete:
         basic_workflow.db = mock_db
         result = basic_workflow.delete(hard_delete=True)
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-workflow", hard_delete=True)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-workflow", hard_delete=True, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_explicit_db(self, basic_workflow, mock_db):
@@ -518,6 +539,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_returns_workflow(self, mock_db):
         """Test get_workflow_by_id returns workflow from database."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {
             "config": {"id": "found-workflow", "name": "Found Workflow"},
             "version": 1,
@@ -556,6 +579,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_fetches_links(self, mock_db):
         """Test get_workflow_by_id fetches links for the workflow version."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {
             "config": {"id": "linked-workflow", "name": "Linked"},
             "version": 5,
@@ -576,6 +601,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_sets_db(self, mock_db):
         """Test get_workflow_by_id sets db on returned workflow via registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         # The db is set via registry lookup when config contains a serialized db reference
         mock_db.id = "test-db"
         mock_db.get_config.return_value = {
@@ -817,7 +844,7 @@ class TestStepPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="dp-wf", version=1)
         pinned = next(link for link in links if link["link_kind"] == "step_agent")["child_version"]
-        assert db.delete_config(component_id="dp-agent", version=pinned)
+        _force_delete_config(db, "dp-agent", pinned)
 
         lenient = get_workflow_by_id(db=db, id="dp-wf", strict=False)
         assert lenient is not None
@@ -878,7 +905,9 @@ class TestWritePathFidelity:
 
         db = SqliteDb(db_file=str(tmp_path / "noname.db"))
         Workflow(id="nn-wf", name="WF", steps=[Step(agent=Agent(id="nn-agent", name="A"))]).save(db=db)
-        db.delete_component("nn-agent", hard_delete=True)
+        # The hardened delete refuses to break nn-wf's pin; the degraded state
+        # this test exercises arrives from outside the API.
+        db.delete_component("nn-agent", hard_delete=True, require_no_dependents=False)
 
         loaded = Workflow.load(id="nn-wf", db=db, strict=False)
 

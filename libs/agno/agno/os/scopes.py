@@ -538,6 +538,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /components": ["components:write"],
         "PATCH /components/*": ["components:write"],
         "DELETE /components/*": ["components:delete"],
+        "POST /components/*/restore": ["components:delete"],
         "GET /components/*/configs": ["components:read"],
         "GET /components/*/configs/*": ["components:read"],
         "GET /components/*/configs/current": ["components:read"],

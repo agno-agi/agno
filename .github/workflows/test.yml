@@ -14,6 +14,7 @@ on:
       - "main"
       - "v2.6.0"
       - "feat/v2.7" # Sub-PRs into the release branch get the same gate
+      - "feat/v3.0" # Sub-PRs into the 3.0 line get the same gate
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -145,6 +146,25 @@ jobs:
 
     name: tests (${{ matrix.group }}/5)
 
+    # The catalog's Postgres suites live under tests/unit and skip themselves
+    # without a server, so the adapter production actually runs had no gate at
+    # all: only the SQLite half of every owner-scope and liveness guard was
+    # ever executed. Same image, port and credentials the conftest targets.
+    services:
+      postgres:
+        image: agnohq/pgvector:18
+        env:
+          POSTGRES_DB: ai
+          POSTGRES_USER: ai
+          POSTGRES_PASSWORD: ai
+        ports:
+          - "5532:5432"
+        options: >-
+          --health-cmd "pg_isready -U ai -d ai"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python 3.12
@@ -167,5 +187,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          uv pip install pytest-split --quiet
+          # psycopg, so the catalog's Postgres suites resolve their driver and
+          # run against the service above instead of importorskip-ing away.
+          uv pip install pytest-split "psycopg[binary]" --quiet
           python -m pytest --splits 5 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
