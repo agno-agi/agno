@@ -1,5 +1,17 @@
 # Test Log -- 09_hooks
 
+
+## Verification - 2026-08-20 round 4, focus areas (feat/v3.0, base ca5697ecd9)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner (240s timeout) + manual retries
+
+| File | Status | Note |
+|---|---|---|
+| pre_hook_input.py | PASS |  |
+| tool_hooks.py | PASS |  |
+
+---
+
 **Tested:** 2026-02-13
 **Environment:** .venvs/demo/bin/python, pgvector: running
 

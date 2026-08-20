@@ -1,5 +1,16 @@
 # Test Log: 08_os_config
 
+
+## Verification - 2026-08-20 round 4, focus areas (feat/v3.0, base ca5697ecd9)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner (240s timeout) + manual retries
+
+| File | Status | Note |
+|---|---|---|
+| config_basics.py | PASS | served over HTTP; /config returns manifest with labels and quick prompts |
+
+---
+
 Tested on 2026-07-24 against Agno source commit
 `37496c5ccd3be632cdbb97a9111a4a09999850fb`.
 

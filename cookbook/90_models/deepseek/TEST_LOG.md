@@ -1,5 +1,16 @@
 # TEST_LOG
 
+
+## Verification - 2026-08-20 round 4, focus areas (feat/v3.0, base ca5697ecd9)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner (240s timeout) + manual retries
+
+| File | Status | Note |
+|---|---|---|
+| basic.py | BLOCKED-BILLING | 402 Insufficient Balance on the account; code path fine |
+
+---
+
 Tested against the DeepSeek V4 API (`DEEPSEEK_API_KEY` set) on 2026-05-29.
 
 ### basic.py

@@ -1,5 +1,17 @@
 # Validation run 2026-02-15T00:41:43
 
+
+## Verification - 2026-08-20 round 4, focus areas (feat/v3.0, base ca5697ecd9)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner (240s timeout) + manual retries
+
+| File | Status | Note |
+|---|---|---|
+| model_inheritance.py | PASS |  |
+| cancel_run.py | PASS |  |
+
+---
+
 ## Pattern Check
 **Status:** PASS
 **Notes:** Passed.

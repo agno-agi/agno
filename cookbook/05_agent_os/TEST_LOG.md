@@ -1,5 +1,16 @@
 # Test Log: 05_agent_os
 
+
+## Verification - 2026-08-20 round 4, focus areas (feat/v3.0, base ca5697ecd9)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner (240s timeout) + manual retries
+
+| File | Status | Note |
+|---|---|---|
+| basic.py | PASS | served over HTTP; /health, /config, POST run COMPLETED |
+
+---
+
 Tested on 2026-07-24 against Agno source commit
 `64129408633bb3f4837b2a09a0eb087eddbed86a`.
 

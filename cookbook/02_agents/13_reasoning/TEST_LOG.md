@@ -1,5 +1,17 @@
 # Test Log -- 13_reasoning
 
+
+## Verification - 2026-08-20 round 4, focus areas (feat/v3.0, base ca5697ecd9)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner (240s timeout) + manual retries
+
+| File | Status | Note |
+|---|---|---|
+| basic_reasoning.py | PASS |  |
+| reasoning_with_model.py | PASS |  |
+
+---
+
 **Tested:** 2026-02-13
 **Environment:** .venvs/demo/bin/python, pgvector: running
 

@@ -1,5 +1,16 @@
 # Validation run 2026-02-15T00:39:43
 
+
+## Verification - 2026-08-20 round 4, focus areas (feat/v3.0, base ca5697ecd9)
+
+**Environment:** `.venvs/demo/bin/python`, batch runner (240s timeout) + manual retries
+
+| File | Status | Note |
+|---|---|---|
+| reasoning_multi_purpose_team.py | PASS | needs e2b-code-interpreter, pygithub, lancedb - none installed by demo_setup |
+
+---
+
 ## Pattern Check
 **Status:** PASS
 **Notes:** Passed.
