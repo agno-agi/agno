@@ -25,6 +25,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from agno.db.sqlite import SqliteDb
 from agno.db.base import ComponentType
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
@@ -84,6 +85,17 @@ def create_component(client, token: str, name: str, component_type: str, config:
 
 # The gate tests 404 before a model is reached, so only the owner-can-run tests need a real one.
 RUNNABLE_MODEL = {"name": "OpenAIResponses", "id": "gpt-5.5", "provider": "OpenAI"}
+
+
+@pytest.fixture
+def shared_db(tmp_path):
+    """A SqliteDb of this test's own.
+
+    This suite is the only coverage of the component write routes' 403 layer,
+    so it lives under tests/unit where the PR gate runs it; the fixture it
+    used to inherit from the integration conftest is inlined here.
+    """
+    return SqliteDb(db_file=str(tmp_path / "isolation.db"))
 
 
 @pytest.fixture
