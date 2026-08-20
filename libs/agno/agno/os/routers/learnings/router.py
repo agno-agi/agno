@@ -612,6 +612,10 @@ def _enforce_user_scope(request: Request, record: dict, *, mutating: bool = Fals
       to any authenticated caller, but mutating them (``mutating=True``, i.e. PATCH/DELETE) is
       admin-only -- a regular user must not overwrite or delete shared rows it doesn't own.
     - A record owned by a different user returns 404 (not 403) to avoid leaking which IDs exist.
+
+    Ownership compares as strings (``same_user``): only the SQL adapters type the ``user_id``
+    column and coerce on write, so a store that keeps whatever the writer passed holds the
+    owner in the writer's type, while the request carries it as the JWT subject string.
     """
     scoped_user_id = get_scoped_user_id(request)
     if scoped_user_id is None:
@@ -623,5 +627,5 @@ def _enforce_user_scope(request: Request, record: dict, *, mutating: bool = Fals
                 status_code=403, detail="Only admins can modify learnings that have no owner (user_id is null)"
             )
         return
-    if record_user_id != scoped_user_id:
+    if not same_user(record_user_id, scoped_user_id):
         raise HTTPException(status_code=404, detail="Learning not found")

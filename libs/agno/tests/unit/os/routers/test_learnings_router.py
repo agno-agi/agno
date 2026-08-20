@@ -2,6 +2,7 @@
 
 import time
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -743,6 +744,151 @@ class TestIDORScoping:
         resp = jwt_client.delete("/learnings/users/user-B")
         assert resp.status_code == 403
         mock_db.delete_user_learnings.assert_not_called()
+
+
+class TestNonStringOwnerScoping:
+    """Owner ids are compared as strings, because only the SQL adapters type the user_id
+    column and coerce on write -- MongoDb, AsyncMongoDb and ValkeyDb store whatever the
+    writer passed, so an agent that ran with a non-string user_id leaves a non-string in
+    that column while the request always carries the JWT subject string.
+
+    An id that is genuinely someone else's is still 404, and None still owns nothing.
+    """
+
+    @pytest.fixture
+    def jwt_client(self, mock_db, settings):
+        # Regular (non-admin) user with user isolation enabled; JWT subject "123".
+        return _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id="123", scopes=[])
+
+    def test_get_own_string_owned_record(self, jwt_client, mock_db):
+        # False-refusal guard: the ordinary string-owned record must stay reachable.
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="123"))
+        assert jwt_client.get("/learnings/lrn-1").status_code == 200
+
+    def test_get_own_int_owned_record(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=123))
+        resp = jwt_client.get("/learnings/lrn-1")
+        assert resp.status_code == 200
+        assert resp.json()["learning_id"] == "lrn-1"
+
+    def test_patch_own_int_owned_record(self, jwt_client, mock_db):
+        existing = _make_learning(user_id=123)
+        updated = _make_learning(user_id=123, content={"new": True})
+        mock_db.get_learning_by_id = MagicMock(side_effect=[existing, updated])
+        resp = jwt_client.patch("/learnings/lrn-1", json={"content": {"new": True}})
+        assert resp.status_code == 200
+        assert mock_db.update_learning.call_args[1]["content"] == {"new": True}
+
+    def test_delete_own_int_owned_record(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=123))
+        assert jwt_client.delete("/learnings/lrn-1").status_code == 204
+        mock_db.delete_learning.assert_called_once_with("lrn-1")
+
+    def test_get_own_uuid_owned_record(self, mock_db, settings):
+        owner = UUID("2f8a1b7c-0d3e-4f5a-9b6c-7d8e9f0a1b2c")
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id=str(owner), scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=owner))
+        assert client.get("/learnings/lrn-1").status_code == 200
+
+    def test_other_users_int_owned_record_still_404(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert jwt_client.get("/learnings/lrn-1").status_code == 404
+
+    def test_other_users_int_owned_record_not_mutable(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert jwt_client.patch("/learnings/lrn-1", json={"content": {"x": 1}}).status_code == 404
+        mock_db.update_learning.assert_not_called()
+
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert jwt_client.delete("/learnings/lrn-1").status_code == 404
+        mock_db.delete_learning.assert_not_called()
+
+    def test_prefix_of_the_subject_is_not_the_owner(self, jwt_client, mock_db):
+        # Coercion is str(), not a substring or numeric comparison.
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=12))
+        assert jwt_client.get("/learnings/lrn-1").status_code == 404
+
+    def test_non_string_subject_reaches_a_string_owned_record(self, mock_db, settings):
+        # The same coercion in the other direction: the subject claim carries the non-string.
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id=123, scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="123"))
+        assert client.get("/learnings/lrn-1").status_code == 200
+
+    def test_non_string_subject_still_404s_on_another_owner(self, mock_db, settings):
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id=123, scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="456"))
+        assert client.get("/learnings/lrn-1").status_code == 404
+
+    def test_null_owner_record_unchanged(self, jwt_client, mock_db):
+        # None is "no owner": readable by any caller, mutable only by an admin.
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert jwt_client.get("/learnings/lrn-1").status_code == 200
+
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert jwt_client.patch("/learnings/lrn-1", json={"content": {"x": 1}}).status_code == 403
+
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert jwt_client.delete("/learnings/lrn-1").status_code == 403
+
+    def test_caller_without_identity_never_matches_a_record(self, mock_db, settings):
+        # Isolation on with no subject fails closed at get_scoped_user_id (403), so a
+        # null-identity caller never reaches a record, matching or not.
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id=None, scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert client.get("/learnings/lrn-1").status_code == 403
+
+    def test_admin_unchanged_for_int_owned_record(self, mock_db, settings):
+        client = _scoped_client(
+            mock_db, settings, user_isolation_enabled=True, user_id="admin-1", scopes=["agent_os:admin"]
+        )
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert client.get("/learnings/lrn-1").status_code == 200
+
+    def test_isolation_off_unchanged_for_int_owned_record(self, mock_db, settings):
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=False, user_id="123", scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert client.get("/learnings/lrn-1").status_code == 200
+
+    def test_explicit_user_id_guards_still_reject_a_different_user(self, jwt_client, mock_db):
+        # The collection guards compare two request-supplied values and are untouched.
+        assert jwt_client.get("/learnings?user_id=456").status_code == 403
+        assert jwt_client.get("/learnings/users?user_id=456").status_code == 403
+        assert jwt_client.delete("/learnings/users/456").status_code == 403
+        assert (
+            jwt_client.post(
+                "/learnings", json={"learning_type": "user_profile", "content": {}, "user_id": "456"}
+            ).status_code
+            == 403
+        )
+        mock_db.delete_user_learnings.assert_not_called()
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_body_user_id_must_still_be_a_string(self, jwt_client, mock_db):
+        # Request-side strictness is unchanged: the body is validated before the guard runs.
+        resp = jwt_client.post("/learnings", json={"learning_type": "user_profile", "content": {}, "user_id": 123})
+        assert resp.status_code == 422
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_list_renders_an_int_owner(self, mock_db, settings):
+        # A non-string owner in the page must not fail the whole response.
+        client = _scoped_client(
+            mock_db, settings, user_isolation_enabled=True, user_id="admin-1", scopes=["agent_os:admin"]
+        )
+        mock_db.list_learnings = MagicMock(return_value=([_make_learning(user_id=123)], 1))
+        resp = client.get("/learnings")
+        assert resp.status_code == 200
+        assert resp.json()["data"][0]["user_id"] == "123"
+
+    def test_list_users_renders_an_int_owner(self, mock_db, settings):
+        client = _scoped_client(
+            mock_db, settings, user_isolation_enabled=True, user_id="admin-1", scopes=["agent_os:admin"]
+        )
+        mock_db.get_learnings_user_stats = MagicMock(
+            return_value=([{"user_id": 123, "last_learning_updated_at": 5}], 1)
+        )
+        resp = client.get("/learnings/users")
+        assert resp.status_code == 200
+        assert resp.json()["data"][0]["user_id"] == "123"
 
 
 def _scoped_client(mock_db, settings, **state):
