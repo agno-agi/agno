@@ -302,113 +302,58 @@ class ContextProvider(ABC):
 
         @tool(name=self.query_tool_name)
         async def _query(question: str, run_context: RunContext | None = None):
-            chunks = provider._query_chunks(question, run_context)
+            stream = provider._answer_stream(question, run_context, write=False)
             if provider.query_timeout is not None:
-                chunks = provider._bounded_stream(chunks, provider.query_timeout)
-            async for chunk in chunks:
+                stream = _stream_with_deadline(stream, provider.query_timeout, provider.name)
+            async for chunk in stream:
                 yield chunk
 
         return _query
-
-    async def _query_chunks(self, question: str, run_context: RunContext | None):
-        """The query pipeline: agent acquisition, aquery fallback, streaming."""
-        try:
-            agent = await self._aget_query_agent(run_context)
-        except Exception as exc:
-            yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            return
-
-        if agent is None:
-            try:
-                answer = await self.aquery(question, run_context=run_context)
-            except Exception as exc:
-                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-                return
-            yield json.dumps(serialize_answer(answer))
-            return
-
-        try:
-            if self.stream_sub_agent_events:
-                async for chunk in self._arun_sub_agent_stream(agent, question, run_context):
-                    yield chunk
-            else:
-                answer = await self._arun_sub_agent(agent, question, run_context)
-                yield json.dumps(serialize_answer(answer))
-        except Exception as exc:
-            yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-
-    async def _bounded_stream(self, stream, timeout: float):
-        """Yield ``stream``'s chunks under one wall-clock deadline.
-
-        The deadline is computed once at entry, so it covers agent
-        acquisition, a hanging ``aquery``, inter-chunk stalls, and
-        steady streams whose total time exceeds the budget alike. Each
-        ``anext`` runs under its own ``asyncio.timeout_at(deadline)``
-        scope — a single scope held across a ``yield`` would cancel the
-        consuming task while this generator is suspended. On expiry the
-        underlying generator's cleanup is itself bounded so a hanging
-        ``aclose`` cannot starve the timed-out error chunk.
-        """
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        while True:
-            scope = asyncio.timeout_at(deadline)
-            try:
-                async with scope:
-                    # The anext() builtin is 3.10+; the repo lints at py39.
-                    chunk = await stream.__anext__()
-            except StopAsyncIteration:
-                return
-            except TimeoutError:
-                if not scope.expired():
-                    # Raised by the provider itself, not our deadline.
-                    raise
-                try:
-                    async with asyncio.timeout(1):
-                        await stream.aclose()
-                except Exception:
-                    pass
-                yield json.dumps({"error": f"{self.name} timed out after {timeout}s"})
-                return
-            yield chunk
 
     def _update_tool(self):
         provider = self
 
         @tool(name=self.update_tool_name)
         async def _update(instruction: str, run_context: RunContext | None = None):
-            try:
-                agent = await provider._aget_update_agent(run_context)
-            except NotImplementedError:
-                yield json.dumps({"error": f"{provider.name} is read-only"})
-                return
-            except Exception as exc:
-                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-                return
-
-            if agent is None:
-                try:
-                    answer = await provider.aupdate(instruction, run_context=run_context)
-                except NotImplementedError:
-                    yield json.dumps({"error": f"{provider.name} is read-only"})
-                    return
-                except Exception as exc:
-                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-                    return
-                yield json.dumps(serialize_answer(answer))
-                return
-
-            try:
-                if provider.stream_sub_agent_events:
-                    async for chunk in provider._arun_sub_agent_stream(agent, instruction, run_context):
-                        yield chunk
-                else:
-                    answer = await provider._arun_sub_agent(agent, instruction, run_context)
-                    yield json.dumps(serialize_answer(answer))
-            except Exception as exc:
-                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+            # Writes are never bounded by query_timeout (see the class docstring)
+            async for chunk in provider._answer_stream(instruction, run_context, write=True):
+                yield chunk
 
         return _update
+
+    async def _answer_stream(self, message: str, run_context: RunContext | None, *, write: bool):
+        """One pipeline behind both tools: acquire the direction's sub-agent,
+        fall back to aquery()/aupdate() when there is none, and stream the
+        answer. Every failure becomes an ``{"error": ...}`` chunk so a broken
+        provider can't crash the calling agent's run.
+        """
+        get_agent = self._aget_update_agent if write else self._aget_query_agent
+        fallback = self.aupdate if write else self.aquery
+
+        try:
+            agent = await get_agent(run_context)
+            if agent is None:
+                answer = await fallback(message, run_context=run_context)
+                yield _answer_chunk(answer)
+                return
+        except Exception as exc:
+            # Base aupdate() raises NotImplementedError to signal "no write
+            # path" (see update()); on the query side it is an ordinary error
+            if write and isinstance(exc, NotImplementedError):
+                yield _error_chunk(f"{self.name} is read-only")
+            else:
+                yield _error_chunk(f"{type(exc).__name__}: {exc}")
+            return
+
+        try:
+            if self.stream_sub_agent_events:
+                async for event in self._arun_sub_agent_stream(agent, message, run_context):
+                    yield event
+            else:
+                answer = await self._arun_sub_agent(agent, message, run_context)
+                yield _answer_chunk(answer)
+        except Exception as exc:
+            yield _error_chunk(f"{type(exc).__name__}: {exc}")
 
     def _all_tools(self) -> list:
         return [self._query_tool()]
@@ -436,3 +381,49 @@ def serialize_answer(answer: Answer) -> dict:
     if answer.text is not None:
         payload["text"] = answer.text
     return payload
+
+
+def _answer_chunk(answer: Answer) -> str:
+    return json.dumps(serialize_answer(answer))
+
+
+def _error_chunk(detail: str) -> str:
+    return json.dumps({"error": detail})
+
+
+async def _stream_with_deadline(stream, timeout: float, provider_name: str):
+    """Re-yield `stream` until one wall-clock deadline; on expiry, close the
+    stream and yield a final ``{"error": ...}`` chunk instead of hanging the
+    calling agent.
+
+    Every ``__anext__`` gets its own scope pinned to the same absolute
+    deadline. One scope around the whole loop would not survive the yields:
+    expiring while the consumer holds control would cancel the consumer, not
+    the stream.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        scope = asyncio.timeout_at(deadline)
+        try:
+            async with scope:
+                # The anext() builtin is 3.10+; the repo lints at py39.
+                chunk = await stream.__anext__()
+        except StopAsyncIteration:
+            return
+        except TimeoutError:
+            if not scope.expired():
+                # Raised by the stream itself, not our deadline
+                raise
+            await _aclose_quietly(stream)
+            yield _error_chunk(f"{provider_name} timed out after {timeout}s")
+            return
+        yield chunk
+
+
+async def _aclose_quietly(stream) -> None:
+    # Cleanup gets its own short budget so a hung aclose can't stall the tool call
+    try:
+        async with asyncio.timeout(1):
+            await stream.aclose()
+    except Exception:
+        pass
