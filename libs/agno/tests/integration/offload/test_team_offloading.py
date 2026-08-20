@@ -861,3 +861,51 @@ def test_a_member_resumed_after_confirmation_replays_the_envelope(db):
     team.run("again", session_id=session_id)
     sizes = _member_seen_prompt_sizes(member)
     assert sizes and sizes[-1] < len(BIG) // 10
+
+
+async def test_async_run_storage_matches_the_sync_copy(db):
+    from agno.offload.runs import aoffload_run_for_storage, offload_run_for_storage
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+
+    team = _team(db)
+    team.initialize_team()
+    run = RunOutput(run_id="r-async", messages=[Message(role="assistant", content=BIG)], status=RunStatus.completed)
+    via_async = await aoffload_run_for_storage(team._result_store, run, session_id="s-async")
+    via_sync = offload_run_for_storage(team._result_store, run, session_id="s-async")
+    assert via_async.messages[0].content == via_sync.messages[0].content
+    assert via_async.messages[0].content.startswith('<result id="res_')
+    assert len(db.get_tool_results_for_session("s-async")) == 1
+
+
+async def test_async_search_does_not_block_the_event_loop(db):
+    import asyncio
+    import time as _time
+
+    team = _team(db)
+    session_id = _sid()
+    output = await team.arun("go", session_id=session_id)
+    result_id = _result_id(_tool_messages(output)[0].content)
+    store = team.result_store
+
+    # Stand in for a slow scan: the real one is CPU-bound regex work over the payload.
+    real_matches = store._matches_from_content
+
+    def slow_matches(content, pattern, context_lines):
+        _time.sleep(0.3)
+        return real_matches(content, pattern, context_lines)
+
+    store._matches_from_content = slow_matches  # type: ignore[method-assign]
+    ticks = []
+
+    async def heartbeat():
+        while True:
+            ticks.append(_time.perf_counter())
+            await asyncio.sleep(0.005)
+
+    beat = asyncio.create_task(heartbeat())
+    await asyncio.gather(*(store.asearch(result_id, r"^finding 1:") for _ in range(3)))
+    beat.cancel()
+    gaps = [b - a for a, b in zip(ticks, ticks[1:])]
+    # The loop kept ticking while the scans ran in worker threads.
+    assert gaps and max(gaps) < 0.25

@@ -681,7 +681,8 @@ class ResultStore:
         row = await self.aget_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
-        return self._page_from_content(await self._aread_payload(row), start_line, end_line, start_char)
+        content = await self._aread_payload(row)
+        return await asyncio.to_thread(self._page_from_content, content, start_line, end_line, start_char)
 
     def _matches_from_content(self, content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
         compiled = re.compile(pattern)
@@ -733,7 +734,9 @@ class ResultStore:
         row = await self.aget_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
-        return self._matches_from_content(await self._aread_payload(row), pattern, context_lines)
+        # The regex scan is CPU work over the whole payload; it runs off the loop.
+        content = await self._aread_payload(row)
+        return await asyncio.to_thread(self._matches_from_content, content, pattern, context_lines)
 
     # ------------------------------------------------------------------
     # Listing, cleanup, sweep

@@ -99,4 +99,68 @@ def offload_run_for_storage(
     return storage_copy
 
 
-__all__ = ["offload_run_for_storage"]
+async def aoffload_run_for_storage(
+    store: "ResultStore",
+    run: Any,
+    *,
+    session_id: str,
+    user_id: Optional[str] = None,
+) -> Any:
+    """Async variant of ``offload_run_for_storage``."""
+    if getattr(run, "is_paused", False):
+        return run
+
+    messages = getattr(run, "messages", None)
+    if not messages:
+        return run
+
+    run_id = getattr(run, "run_id", None)
+    if not run_id:
+        return run
+
+    replacements = {}
+    for index, message in enumerate(messages):
+        content = getattr(message, "content", None)
+        role = getattr(message, "role", None)
+        if role in _NEVER_OFFLOADED_ROLES or not isinstance(content, str):
+            continue
+        if not store.should_offload(getattr(message, "tool_name", None), content):
+            continue
+        tool_call_id = f"message:{index}"
+        # The same run is stored more than once (the session copy, the team
+        # row's embedded copy), so a message already stored with this content
+        # reuses its row. The content hash lives in the row's args_hash.
+        content_hash = {"sha256": hash_string_sha256(content)}
+        try:
+            existing = await store.aget_row(result_id_for(session_id, run_id, tool_call_id))
+            if existing is not None and existing.get("args_hash") == _canonical_args_hash(content_hash):
+                envelope = render_stored_envelope(store._ref_from_row(existing), str(existing.get("preview") or ""))
+            else:
+                envelope = await store.aoffload_for_model(
+                    session_id=session_id,
+                    run_id=run_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=getattr(message, "tool_name", None) or f"{role}_message",
+                    tool_args=content_hash,
+                    output=content,
+                    user_id=user_id,
+                    shared=True,
+                )
+        except Exception as e:
+            log_warning(f"Offloading a stored message of run {run_id} failed: {e}")
+            continue
+        replacements[index] = envelope
+
+    if not replacements:
+        return run
+
+    storage_copy = copy.copy(run)
+    storage_copy.messages = [
+        message.model_copy(update={"content": replacements[index]}) if index in replacements else message
+        for index, message in enumerate(messages)
+    ]
+    log_debug(f"Offloaded {len(replacements)} stored message(s) of run {run_id}")
+    return storage_copy
+
+
+__all__ = ["aoffload_run_for_storage", "offload_run_for_storage"]

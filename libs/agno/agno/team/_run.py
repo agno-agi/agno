@@ -4553,6 +4553,18 @@ def _member_run_for_storage(team: "Team", session: TeamSession, member_run: Any)
     return offload_run_for_storage(store, member_run, session_id=session.session_id, user_id=session.user_id)
 
 
+async def _amember_run_for_storage(team: "Team", session: TeamSession, member_run: Any) -> Any:
+    """Async variant of ``_member_run_for_storage``."""
+    store = team._result_store
+    if store is None or not store.member_responses:
+        return member_run
+    if team.db is None or team.parent_team_id is not None or team.workflow_id is not None:
+        return member_run
+    from agno.offload.runs import aoffload_run_for_storage
+
+    return await aoffload_run_for_storage(store, member_run, session_id=session.session_id, user_id=session.user_id)
+
+
 def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_run_id: Optional[str]) -> None:
     from agno.team._session import save_run
 
@@ -4576,7 +4588,7 @@ async def _apersist_member_runs_for_team_run(team: "Team", session: TeamSession,
         try:
             await asave_run(
                 team,
-                run=_member_run_for_storage(team, session, member_run),
+                run=await _amember_run_for_storage(team, session, member_run),
                 session_id=session.session_id,
                 user_id=session.user_id,
                 run_index=idx,
@@ -4677,7 +4689,7 @@ async def _acleanup_and_store(
         # The embedded member copies hold envelopes like the session's member
         # rows; the live member runs the caller reads stay whole.
         storage_copy.member_responses = [
-            _member_run_for_storage(team, session, member_run)
+            await _amember_run_for_storage(team, session, member_run)
             for member_run in copy.deepcopy(storage_copy.member_responses)
         ]
     scrub_run_output_for_storage(team, storage_copy)
@@ -4883,7 +4895,7 @@ async def _apersist_team_run_in_session(
         # deep-copy so it operates on the storage copy, not the live member runs.
         # The embedded copies hold envelopes like the session's member rows.
         storage_copy.member_responses = [
-            _member_run_for_storage(team, session, member_run)
+            await _amember_run_for_storage(team, session, member_run)
             for member_run in copy.deepcopy(storage_copy.member_responses)
         ]
     scrub_run_output_for_storage(team, storage_copy)
@@ -6452,12 +6464,12 @@ async def _aroute_requirements_to_members(
 
             _propagate_member_pause(run_response, member, member_response)
             # Persist paused member run so continue_run can find it after session reload
-            session.upsert_run(_member_run_for_storage(team, session, member_response))
+            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
             return None
         else:
             # Update the member's run in the team session so its status is persisted
             # (member agents skip save_session when team_id is set, so we do it here)
-            session.upsert_run(_member_run_for_storage(team, session, member_response))
+            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
 
             content = getattr(member_response, "content", None) or "Task completed"
             return f"[{member.name or member_id}]: {content}"
@@ -6576,9 +6588,9 @@ async def _aroute_requirements_to_members_stream(
 
             _propagate_member_pause(run_response, member, member_response)
             # Persist paused member run so continue_run can find it after session reload
-            session.upsert_run(_member_run_for_storage(team, session, member_response))
+            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
         else:
-            session.upsert_run(_member_run_for_storage(team, session, member_response))
+            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
