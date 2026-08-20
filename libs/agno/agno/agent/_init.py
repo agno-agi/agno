@@ -199,9 +199,24 @@ def set_result_store(agent: Agent) -> None:
     """
     from agno.offload.setup import build_result_store
 
+    # A store handed down by a team is the team's to manage.
+    if agent._result_store is not None and agent._result_store is agent._inherited_result_store:
+        return
+    if not agent.offload_tool_results:
+        agent._result_store = None
+        agent._result_store_setting = None
+        return
+    # Rebuild when the setting object or the db changed since the last build.
+    if (
+        agent._result_store is not None
+        and agent._result_store_setting is agent.offload_tool_results
+        and agent._result_store.db is agent.db
+    ):
+        return
     agent._result_store = build_result_store(
         setting=agent.offload_tool_results, db=agent.db, owner=agent, owner_kind="agent"
     )
+    agent._result_store_setting = agent.offload_tool_results
 
 
 def _initialize_session_state(
@@ -269,8 +284,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
-    if agent.offload_tool_results and agent._result_store is None:
-        set_result_store(agent)
+    set_result_store(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 

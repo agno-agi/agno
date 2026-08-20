@@ -487,24 +487,11 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
     # rest of the team. The binding is redone on every team initialization:
     # a member moved to another team follows that team, a team without
     # offloading clears a store an earlier team handed down, and the member's
-    # own declared setting is never modified.
-    inherited = getattr(member, "_inherited_result_store", None)
-    if member._result_store is None or member._result_store is inherited or member._result_store.db is not team.db:
-        store: Optional[ResultStore] = None
-        if team._result_store is not None:
-            if isinstance(member.offload_tool_results, ResultStore):
-                from agno.offload.setup import build_result_store
-
-                store = (
-                    build_result_store(
-                        setting=member.offload_tool_results, db=team.db, owner=member, owner_kind="member"
-                    )
-                    or team._result_store
-                )
-            else:
-                store = team._result_store
-        member._result_store = store
-        member._inherited_result_store = store
+    # own declared setting is never modified. Membership is permanent in
+    # every other respect too (team_id, the team session), so the binding
+    # stays with the member between team runs.
+    if isinstance(member, (Agent, Team)):
+        _bind_member_result_store(team, member)
 
     if isinstance(member, Agent):
         member.team_id = team.id
@@ -599,6 +586,37 @@ def _set_session_summary_manager(team: "Team") -> None:
 
     if team.add_session_summary_to_context is None:
         team.add_session_summary_to_context = team.enable_session_summaries or team.session_summary_manager is not None
+
+
+def _bind_member_result_store(team: "Team", member: Union[Agent, "Team"]) -> None:
+    """Give ``member`` the store it runs with inside ``team``."""
+    inherited = member._inherited_result_store
+    declares_own_store = isinstance(member.offload_tool_results, ResultStore)
+    if not (
+        member._result_store is None
+        or member._result_store is inherited
+        or member._result_store.db is not team.db
+        # A member on the team's defaults takes the team's settings, even when
+        # it built a store of its own on the same database earlier.
+        or (team._result_store is not None and not declares_own_store)
+    ):
+        return
+    store: Optional[ResultStore] = None
+    if team._result_store is not None:
+        if declares_own_store:
+            from agno.offload.setup import build_result_store
+
+            # Settings only: a member store that names its own db or fs would
+            # put payloads where the rest of the team cannot read them.
+            settings = ResultStore.from_dict(member.offload_tool_results.to_dict())  # type: ignore[union-attr]
+            store = (
+                build_result_store(setting=settings, db=team.db, owner=member, owner_kind="member")
+                or team._result_store
+            )
+        else:
+            store = team._result_store
+    member._result_store = store
+    member._inherited_result_store = store
 
 
 def _set_result_store(team: "Team") -> None:

@@ -138,7 +138,7 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
         Args:
             result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
             pattern: A Python regular expression.
-            context_lines: Lines of context to include around each match.
+            context_lines: Lines of context to include around each match (at most 20).
 
         Returns:
             str: The matches, or an error message starting with "Error".
@@ -165,7 +165,7 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
         Args:
             result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
             pattern: A Python regular expression.
-            context_lines: Lines of context to include around each match.
+            context_lines: Lines of context to include around each match (at most 20).
 
         Returns:
             str: The matches, or an error message starting with "Error".

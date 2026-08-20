@@ -183,6 +183,19 @@ def resolve_memory_manager_reference(
 # ---------------------------------------------------------------------------
 
 
+def _offload_to_config(value: Any) -> Union[bool, Dict[str, Any]]:
+    """The offload_tool_results setting as it is stored: True, or the ResultStore settings."""
+    from agno.offload.store import ResultStore
+
+    if value is True:
+        return True
+    if isinstance(value, ResultStore):
+        return value.to_dict()
+    raise TypeError(
+        "offload_tool_results must be True, False or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
+    )
+
+
 def _offload_from_config(value: Any) -> Union[bool, "ResultStore"]:
     """The offload_tool_results setting from a stored config: True, False, or a ResultStore."""
     if isinstance(value, dict):
@@ -1073,9 +1086,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
     # --- Result offloading settings ---
     if agent.offload_tool_results:
-        config["offload_tool_results"] = (
-            True if agent.offload_tool_results is True else agent.offload_tool_results.to_dict()
-        )
+        config["offload_tool_results"] = _offload_to_config(agent.offload_tool_results)
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()

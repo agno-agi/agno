@@ -537,6 +537,8 @@ class Agent:
         self._result_store: Optional["ResultStore"] = None
         # The store a team handed down, so a later team can replace or clear it
         self._inherited_result_store: Optional["ResultStore"] = None
+        # The setting the store was built from, so a changed setting rebuilds it
+        self._result_store_setting: Union[bool, "ResultStore", None] = None
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs

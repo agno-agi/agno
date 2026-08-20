@@ -395,7 +395,9 @@ def _get_task_management_tools(
                 from agno.agent._run import scrub_run_output_for_storage
 
                 scrub_run_output_for_storage(member_agent, run_response=member_run_response)  # type: ignore[arg-type]
-            session.upsert_run(member_run_response)
+            from agno.team._run import _member_run_for_storage
+
+            session.upsert_run(_member_run_for_storage(team, session, member_run_response))
 
         if run_context.session_state is not None and member_session_state_copy is not None and not skip_session_merge:
             merge_dictionaries(run_context.session_state, member_session_state_copy)

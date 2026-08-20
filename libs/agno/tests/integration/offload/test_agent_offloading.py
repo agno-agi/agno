@@ -975,3 +975,24 @@ def test_search_result_renders_context_blocks_with_their_own_line_numbers(db):
 
     capped = search.entrypoint(result_id=result_id, pattern=r"^row")
     assert capped.startswith("First 20 matches in")
+
+
+def test_turning_offloading_off_after_a_run_takes_effect(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    assert _tool_messages(agent.run("go", session_id=_sid()))[0].content.startswith('<result id="res_')
+    agent.offload_tool_results = False
+    agent.model = ScriptedToolModel()
+    assert BIG in _tool_messages(agent.run("go", session_id=_sid()))[0].content
+    assert agent.result_store is None
+
+
+def test_a_changed_db_rebinds_the_store(db, tmp_path):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    agent.run("go", session_id=_sid())
+    other = SqliteDb(db_file=str(tmp_path / "other.db"))
+    agent.db = other
+    agent.model = ScriptedToolModel()
+    output = agent.run("go", session_id=_sid())
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    assert agent.result_store.db is other
+    assert other.get_tool_result(result_id) is not None

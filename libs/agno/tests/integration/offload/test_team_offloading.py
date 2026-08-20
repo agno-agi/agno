@@ -605,3 +605,160 @@ def test_a_member_with_its_own_db_and_settings_stores_on_the_team_db(db, tmp_pat
     team.initialize_team()
     assert member._result_store.threshold_chars == 100
     assert member._result_store.db is db
+
+
+# ------------------------------------------------------------------
+# Members that are not Agents, live session copies, caps, nested teams
+# ------------------------------------------------------------------
+def test_a_remote_member_does_not_break_team_initialization(db):
+    from agno.agent.remote import RemoteAgent
+
+    remote = RemoteAgent(base_url="http://localhost:1", agent_id="explorer")
+    team = Team(name="hybrid", id="hybrid", members=[_member(), remote], model=LeaderModel(), db=db)
+    team.initialize_team()
+    with_offload = Team(
+        name="hybrid2", id="hybrid2", members=[_member(), remote], model=LeaderModel(), db=db, offload_tool_results=True
+    )
+    with_offload.initialize_team()
+    assert with_offload.members[0]._result_store is with_offload._result_store
+
+
+def _member_seen_prompt_sizes(member: Agent) -> List[int]:
+    return getattr(member.model, "prompt_sizes", [])
+
+
+class _SizeRecordingMemberModel(MemberModel):
+    """Records how big each prompt it is handed is."""
+
+    def __init__(self, body: str = BIG):
+        super().__init__(body=body)
+        self.prompt_sizes: List[int] = []
+
+    def _record(self, args, kwargs) -> None:
+        messages = kwargs.get("messages") or (args[0] if args else [])
+        self.prompt_sizes.append(sum(len(str(m.content or "")) for m in messages))
+
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self._record(args, kwargs)
+        return self._answer()
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self._record(args, kwargs)
+        return self._answer()
+
+
+def test_member_replays_the_envelope_within_one_team_run(db):
+    member = Agent(name="researcher", id="researcher", model=_SizeRecordingMemberModel(), add_history_to_context=True)
+    team = Team(
+        name="platform",
+        id="platform",
+        members=[member],
+        model=RoundRobinLeaderModel(["researcher", "researcher"]),
+        db=db,
+        offload_tool_results=True,
+    )
+    team.run("go", session_id=_sid())
+    sizes = _member_seen_prompt_sizes(member)
+    assert len(sizes) == 2
+    # The second delegation replays the first answer as history: as an envelope, not the 200KB body.
+    assert sizes[1] < len(BIG) // 10
+
+
+def test_member_replays_the_envelope_with_a_cached_session(db):
+    member = Agent(name="researcher", id="researcher", model=_SizeRecordingMemberModel(), add_history_to_context=True)
+    team = Team(
+        name="platform",
+        id="platform",
+        members=[member],
+        model=LeaderModel(),
+        db=db,
+        offload_tool_results=True,
+        cache_session=True,
+    )
+    session_id = _sid()
+    team.run("go", session_id=session_id)
+    team.model = LeaderModel()
+    team.run("again", session_id=session_id)
+    sizes = _member_seen_prompt_sizes(member)
+    assert len(sizes) == 2
+    assert sizes[1] < len(BIG) // 10
+
+
+def test_the_caller_still_gets_the_whole_member_answer_after_upsert(db):
+    team = _team(db)
+    output = team.run("go", session_id=_sid())
+    assert output.member_responses[0].content == BIG
+
+
+def test_search_result_output_stays_within_one_page(db):
+    team = _team(db)
+    session_id = _sid()
+    output = team.run("go", session_id=session_id)
+    result_id = _result_id(_tool_messages(output)[0].content)
+    from agno.offload.store import SEARCH_MAX_CHARS
+    from agno.offload.tools import get_search_result_function
+    from agno.run import RunContext
+
+    run_context = RunContext(session_id=session_id, run_id="r1", user_id=None)
+    search = get_search_result_function(team, run_context=run_context).entrypoint
+    reply = search(result_id=result_id, pattern=r"^finding", context_lines=1000)
+    assert len(reply) <= SEARCH_MAX_CHARS + 200
+
+
+def test_a_sub_teams_member_runs_leave_no_orphan_payloads(db):
+    inner_member = _member(member_id="inner")
+    inner = Team(name="inner", id="inner", members=[inner_member], model=LeaderModel("inner"))
+    outer = Team(
+        name="outer", id="outer", members=[inner], model=LeaderModel("inner"), db=db, offload_tool_results=True
+    )
+    session_id = _sid()
+    outer.run("go", session_id=session_id)
+    rows = db.get_tool_results_for_session(session_id)
+    # Every stored result is referenced by a persisted run of the session.
+    stored_ids = {row["result_id"] for row in rows}
+    session = db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+    referenced = set()
+    for run in session.runs or []:
+        for message in getattr(run, "messages", None) or []:
+            content = str(getattr(message, "content", "") or "")
+            if 'id="res_' in content:
+                referenced.add(content.split('id="')[1].split('"')[0])
+        for member_run in getattr(run, "member_responses", None) or []:
+            for message in getattr(member_run, "messages", None) or []:
+                content = str(getattr(message, "content", "") or "")
+                if 'id="res_' in content:
+                    referenced.add(content.split('id="')[1].split('"')[0])
+    assert stored_ids <= referenced, stored_ids - referenced
+
+
+def test_a_member_on_defaults_takes_the_team_settings_even_with_its_own_store(db):
+    member = _member()
+    member.db = db
+    member.offload_tool_results = True
+    member.initialize_agent()
+    own = member._result_store
+    assert own is not None and own.db is db
+
+    team = Team(
+        name="platform",
+        id="platform",
+        members=[member],
+        model=LeaderModel(),
+        db=db,
+        offload_tool_results=ResultStore(threshold_chars=100),
+    )
+    team.initialize_team()
+    assert member._result_store is team._result_store
+    assert member._result_store.threshold_chars == 100
+
+
+def test_a_member_store_that_names_its_own_db_is_still_rebound_to_the_team_db(db, tmp_path):
+    other = SqliteDb(db_file=str(tmp_path / "member3.db"))
+    member = _member()
+    member.offload_tool_results = ResultStore(db=other, threshold_chars=100)
+    team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    team.initialize_team()
+    assert member._result_store.threshold_chars == 100
+    assert member._result_store.db is db
+    # The caller's settings object is untouched.
+    assert member.offload_tool_results.db is other

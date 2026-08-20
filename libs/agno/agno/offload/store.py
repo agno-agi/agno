@@ -39,11 +39,13 @@ READ_MAX_LINES = 400
 READ_MAX_CHARS = 16_000
 # A result below one read_result page costs more to read back than to keep inline.
 DEFAULT_THRESHOLD_CHARS = READ_MAX_CHARS
+SEARCH_MAX_CHARS = READ_MAX_CHARS
 DEFAULT_PREVIEW_LINES = 20
 DEFAULT_PREVIEW_CHARS = 1200
 
 # search_result caps.
 SEARCH_MAX_MATCHES = 20
+SEARCH_MAX_CONTEXT_LINES = 20
 SEARCH_LINE_CLIP = 500
 
 _TAIL_LINES = 5
@@ -627,9 +629,14 @@ class ResultStore:
     def _matches_from_content(self, content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
         compiled = re.compile(pattern)
         lines = content.split("\n")
+        context_lines = max(0, min(int(context_lines or 0), SEARCH_MAX_CONTEXT_LINES))
         matches: List[ResultMatch] = []
+        # The whole reply stays within one read_result page, whatever the
+        # context asked for, so a search can never put back what offloading
+        # took out.
+        budget = SEARCH_MAX_CHARS
         for index, line in enumerate(lines):
-            if len(matches) >= SEARCH_MAX_MATCHES:
+            if len(matches) >= SEARCH_MAX_MATCHES or budget <= 0:
                 break
             if compiled.search(line) is None:
                 continue
@@ -638,17 +645,20 @@ class ResultStore:
                 end = min(len(lines), index + context_lines + 1)
                 # Each row carries its own line number, so the block reads the
                 # same way a read_result page does and the match line is clear.
-                block = "\n".join(
+                text = "\n".join(
                     f"{start + offset + 1}: {context_line[:SEARCH_LINE_CLIP]}"
                     for offset, context_line in enumerate(lines[start:end])
                 )
-                matches.append(ResultMatch(line_number=index + 1, line=block))
             else:
-                matches.append(ResultMatch(line_number=index + 1, line=line[:SEARCH_LINE_CLIP]))
+                text = line[:SEARCH_LINE_CLIP]
+            if len(text) > budget:
+                text = text[:budget]
+            budget -= len(text) + 1
+            matches.append(ResultMatch(line_number=index + 1, line=text))
         return matches
 
     def search(self, result_id: str, pattern: str, context_lines: int = 0) -> List[ResultMatch]:
-        """Regex search over a stored result; at most 20 matches, lines clipped."""
+        """Regex search over a stored result; at most 20 matches, lines clipped, one page in total."""
         row = self.get_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")

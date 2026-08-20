@@ -4544,6 +4544,10 @@ def _member_run_for_storage(team: "Team", session: TeamSession, member_run: Any)
     store = team._result_store
     if store is None or not store.member_responses:
         return member_run
+    # A sub-team's or a workflow step's member runs are never written, so a
+    # storage copy would only leave an unreachable payload in the store.
+    if team.db is None or team.parent_team_id is not None or team.workflow_id is not None:
+        return member_run
     from agno.offload.runs import offload_run_for_storage
 
     return offload_run_for_storage(store, member_run, session_id=session.session_id, user_id=session.user_id)

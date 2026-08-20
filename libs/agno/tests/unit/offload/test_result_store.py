@@ -492,3 +492,12 @@ def test_two_tool_call_ids_that_sanitise_alike_do_not_share_a_path(store):
     assert first.path != second.path
     assert store.read(first.result_id).text.startswith("a")
     assert store.read(second.result_id).text.startswith("b")
+
+
+def test_search_context_lines_are_clamped(store):
+    ref = _offload(store, "\n".join(f"line {i}" for i in range(1, 201)))
+    match = store.search(ref.result_id, r"^line 100$", context_lines=1000)[0]
+    from agno.offload.store import SEARCH_MAX_CONTEXT_LINES
+
+    assert len(match.line.split("\n")) == 2 * SEARCH_MAX_CONTEXT_LINES + 1
+    assert match.line.startswith(f"{100 - SEARCH_MAX_CONTEXT_LINES}: ")

@@ -592,8 +592,13 @@ def _get_delegate_task_function(
 
                 scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
 
-            # Add the member run to the team session
-            session.upsert_run(member_agent_run_response)
+            # Add the member run to the team session. The session copy is what
+            # the member replays as its own history, so it holds envelopes from
+            # the moment the run lands, not only once it is read back from the
+            # database. The live object still goes to the caller whole.
+            from agno.team._run import _member_run_for_storage
+
+            session.upsert_run(_member_run_for_storage(team, session, member_agent_run_response))
 
         # Update team session state
         merge_dictionaries(run_context.session_state, member_session_state_copy)  # type: ignore

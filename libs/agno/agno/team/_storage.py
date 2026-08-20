@@ -60,6 +60,19 @@ from agno.utils.string import generate_id_from_name
 # ---------------------------------------------------------------------------
 
 
+def _offload_to_config(value: Any) -> Union[bool, Dict[str, Any]]:
+    """The offload_tool_results setting as it is stored: True, or the ResultStore settings."""
+    from agno.offload.store import ResultStore
+
+    if value is True:
+        return True
+    if isinstance(value, ResultStore):
+        return value.to_dict()
+    raise TypeError(
+        "offload_tool_results must be True, False or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
+    )
+
+
 def _offload_from_config(value: Any) -> Union[bool, "ResultStore"]:
     """The offload_tool_results setting from a stored config: True, False, or a ResultStore."""
     if isinstance(value, dict):
@@ -781,9 +794,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
 
     # --- Result offloading settings ---
     if team.offload_tool_results:
-        config["offload_tool_results"] = (
-            True if team.offload_tool_results is True else team.offload_tool_results.to_dict()
-        )
+        config["offload_tool_results"] = _offload_to_config(team.offload_tool_results)
     # TODO: implement compression manager serialization
     # if team.compression_manager is not None:
     #     config["compression_manager"] = team.compression_manager.to_dict()
