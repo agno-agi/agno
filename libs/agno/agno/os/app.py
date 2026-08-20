@@ -3,7 +3,7 @@ import contextlib
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -841,6 +841,20 @@ class AgentOS:
         if self.registry is None:
             self.registry = Registry()
 
+        # The OS's own db goes FIRST in registry.dbs: it is the db behind the
+        # component catalog routes, and Studio toolkits without an explicit db
+        # adopt registry.dbs[0]. Without this, the component-tree walk can put
+        # an agent's private session db at the head and Studio would silently
+        # write its catalog somewhere no OS surface reads.
+        if (
+            self.db is not None
+            and isinstance(self.db, BaseDb)
+            and all(existing is not self.db for existing in self.registry.dbs)
+        ):
+            os_db_id = getattr(self.db, "id", None)
+            if os_db_id is None or all(getattr(existing, "id", None) != os_db_id for existing in self.registry.dbs):
+                self.registry.dbs.insert(0, self.db)
+
         if self._agents:
             existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
             for agent in self._agents:
@@ -926,8 +940,42 @@ class AgentOS:
         from agno.tools.studio import StudioTools
         from agno.tools.studio_runner import StudioRunnerTools
 
-        for component in [*self._agents, *self._teams]:
-            for tool in getattr(component, "tools", None) or []:
+        def iter_carriers():
+            """Every served component that can carry a toolkit: top-level
+            agents and teams, team members recursively, and the agents/teams
+            executing workflow steps (nested step containers included)."""
+            seen: Set[int] = set()
+
+            def visit(component: Any):
+                if component is None or id(component) in seen:
+                    return
+                seen.add(id(component))
+                yield component
+                for member in getattr(component, "members", None) or []:
+                    yield from visit(member)
+
+            for top in [*self._agents, *self._teams]:
+                yield from visit(top)
+
+            def visit_steps(steps: Any):
+                if not isinstance(steps, list):
+                    return
+                for step in steps:
+                    for attr in ("agent", "team"):
+                        yield from visit(getattr(step, attr, None))
+                    yield from visit_steps(getattr(step, "steps", None))
+
+            for workflow in self._workflows:
+                yield from visit_steps(getattr(workflow, "steps", None))
+
+        for component in iter_carriers():
+            tools = getattr(component, "tools", None)
+            # tools may be a callable factory; only a materialized list can be
+            # inspected here, and a factory cannot be called safely at
+            # construction time.
+            if not isinstance(tools, list):
+                continue
+            for tool in tools:
                 if not isinstance(tool, (StudioTools, StudioRunnerTools)):
                     continue
                 tool_registry = getattr(tool, "registry", None)

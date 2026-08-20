@@ -1864,3 +1864,15 @@ class TestGetTeamsPagination:
         assert len(teams) == 10
         mock_warn.assert_called_once()
         assert "10 of 50" in mock_warn.call_args[0][0]
+
+    def test_paging_advances_the_offset_past_the_first_block(self, sqlite_db):
+        # A loop stuck at offset=0 still terminates (len >= total after two
+        # identical pages) but returns duplicates and misses the tail; unique
+        # recovery of 120 rows requires the offset to actually advance.
+        for i in range(120):
+            self._create(sqlite_db, f"own-team-{i:03d}", "owner")
+
+        loaded = get_teams(db=sqlite_db, user_id="owner")
+
+        assert len(loaded) == 120
+        assert {item.id for item in loaded} == {f"own-team-{i:03d}" for i in range(120)}

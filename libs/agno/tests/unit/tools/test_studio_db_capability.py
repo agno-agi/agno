@@ -69,12 +69,50 @@ class TestAsyncTwinsAnswerTheEnvelope:
 
 class TestVersionPinnedRunsAnswerTheEnvelope:
     def test_run_agent_with_a_version_pin(self, studio):
-        out = json.loads(studio.run_agent("anything", message="hi", version=1, _agno_run_context=_ctx()))
-        assert "error" in out or out.get("ok") is False, out
+        _assert_capability_envelope(studio.run_agent("anything", message="hi", version=1, _agno_run_context=_ctx()))
 
     def test_arun_agent_with_a_version_pin(self, studio):
-        out = json.loads(asyncio.run(studio.arun_agent("anything", message="hi", version=1, _agno_run_context=_ctx())))
-        assert "error" in out or out.get("ok") is False, out
+        _assert_capability_envelope(
+            asyncio.run(studio.arun_agent("anything", message="hi", version=1, _agno_run_context=_ctx()))
+        )
+
+
+class TestAuthoringToolsAnswerTheEnvelope:
+    def test_create_agent(self, studio):
+        _assert_capability_envelope(studio.create_agent(name="X", instructions="i", _agno_run_context=_ctx()))
+
+    def test_edit_agent(self, studio):
+        # The edit path resolves the target through its own lenient lookup,
+        # which maps the missing catalog to not-found rather than the
+        # capability code; either way it must be an envelope, not a raise.
+        out = json.loads(studio.edit_agent("anything", instructions="i", _agno_run_context=_ctx()))
+        assert out.get("ok") is False, out
+        assert out["error"]["code"] in ("db_not_configured", "component_not_found"), out
+
+
+class TestPartialAdaptersAnswerTheEnvelope:
+    def test_list_versions_on_an_adapter_without_list_configs(self, tmp_path):
+        # An adapter can implement the component row API but not list_configs;
+        # list_versions' own guard has to answer the envelope then, because
+        # the shared resolver has already succeeded.
+        from agno.db.sqlite import SqliteDb
+
+        class NoListConfigsDb(SqliteDb):
+            def list_configs(self, *args, **kwargs):
+                raise NotImplementedError("no list_configs")
+
+        db = NoListConfigsDb(id="partial", db_file=str(tmp_path / "partial.db"))
+        db.create_component_with_config(
+            component_id="c",
+            component_type=__import__("agno.db.base", fromlist=["ComponentType"]).ComponentType.AGENT,
+            name="c",
+            config={"name": "c"},
+            stage="published",
+        )
+        registry = Registry(name="Partial", models=[OpenAIResponses(id="gpt-5.5")], dbs=[db])
+        studio = StudioTools(registry=registry, db=db)
+
+        _assert_capability_envelope(studio.list_versions("c"))
 
 
 class TestAsyncAdaptersAnswerTheEnvelope:

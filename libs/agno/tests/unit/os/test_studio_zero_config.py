@@ -101,6 +101,39 @@ class TestLazySchedulerResolution:
         )
         assert out.get("ok") is True, out
 
+    def test_enable_schedule_allows_what_create_schedule_allowed(self, tmp_path):
+        # The embedded SchedulerTools' code-defined probe must see the same
+        # component set the run tools resolve from (registry included), or
+        # enable_schedule refuses a target create_schedule just created.
+        from agno.db.base import ComponentType
+
+        db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        db.create_component_with_config(
+            component_id="news-agent",
+            component_type=ComponentType.AGENT,
+            name="news-agent",
+            config={"name": "news-agent"},
+            stage="draft",
+        )
+        registry = Registry(name="R", models=[_model()], dbs=[db])
+        registry.agents.append(Agent(id="news-agent", name="News", model=_model()))
+        studio = StudioTools(registry=registry, db=db, schedules=True)
+
+        created = _loads(
+            studio.create_schedule(
+                name="news-schedule", cron="0 9 * * *", target_type="agent", target_id="news-agent", message="go"
+            )
+        )
+        assert created.get("ok") is True, created
+        schedule_id = created["data"]["id"]
+        assert studio._scheduler_tools is not None
+        disabled = _loads(studio._scheduler_tools.disable_schedule(schedule_id))
+        assert "error" not in disabled, disabled
+
+        enabled = _loads(studio._scheduler_tools.enable_schedule(schedule_id))
+
+        assert "error" not in enabled, enabled
+
     def test_a_standalone_scheduler_keeps_its_eager_manager(self, tmp_path):
         from agno.tools.scheduler import SchedulerTools
 
@@ -108,6 +141,43 @@ class TestLazySchedulerResolution:
         scheduler = SchedulerTools(db=db)
 
         assert scheduler.manager.db is db
+
+
+class TestFixesFromTheBranchReview:
+    def test_a_callable_tools_factory_does_not_crash_construction(self, tmp_path):
+        # Agent.tools may be a factory; the registry-split walk must skip it
+        # rather than iterate it.
+        def tools_factory(agent=None):
+            return []
+
+        agent = Agent(id="factory-agent", name="Factory", model=_model(), tools=tools_factory)
+        db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        AgentOS(agents=[agent], db=db)
+
+    def test_the_os_db_outranks_an_agents_session_db_for_adoption(self, tmp_path):
+        # The catalog routes are wired to the OS db; a Studio toolkit without
+        # an explicit db must adopt THAT, not whichever agent-private db the
+        # component walk happened to reach first.
+        registry = Registry(name="R", models=[_model()])
+        studio = StudioTools(registry=registry)
+        session_db = SqliteDb(id="builder-sessions", db_file=str(tmp_path / "sessions.db"))
+        builder = Agent(id="builder", name="Builder", model=_model(), db=session_db, tools=[studio])
+        os_db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        AgentOS(agents=[builder], registry=registry, db=os_db)
+
+        assert registry.dbs[0] is os_db
+        assert studio.db is os_db
+
+    def test_a_deep_copied_toolkit_resolves_through_its_own_copy(self):
+        import copy
+
+        registry = Registry(name="R", models=[_model()])
+        studio = StudioTools(registry=registry, schedules=True)
+        clone = copy.deepcopy(studio)
+
+        assert clone._scheduler_tools is not None
+        resolver_owner = getattr(clone._scheduler_tools._db_resolver, "__self__", None)
+        assert resolver_owner is clone, "the copied scheduler must resolve through the copy, not the original"
 
 
 class TestSplitRegistryIsLoud:
@@ -122,6 +192,33 @@ class TestSplitRegistryIsLoud:
 
         with caplog.at_level("WARNING"):
             AgentOS(agents=[builder], db=db)
+
+        assert any("bound to a different Registry" in r.message for r in caplog.records)
+
+    def test_a_studio_toolkit_on_a_team_member_still_warns(self, tmp_path, caplog):
+        from agno.team import Team
+
+        studio_registry = Registry(name="Studio R", models=[_model()])
+        db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        member = self._studio_agent(studio_registry, db=db)
+        team = Team(id="crew", name="Crew", members=[member], model=_model())
+
+        with caplog.at_level("WARNING"):
+            AgentOS(teams=[team], db=db)
+
+        assert any("bound to a different Registry" in r.message for r in caplog.records)
+
+    def test_a_studio_toolkit_on_a_workflow_step_agent_still_warns(self, tmp_path, caplog):
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        studio_registry = Registry(name="Studio R", models=[_model()])
+        db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+        step_agent = self._studio_agent(studio_registry, db=db)
+        workflow = Workflow(id="wf", name="WF", steps=[Step(name="s1", agent=step_agent)])
+
+        with caplog.at_level("WARNING"):
+            AgentOS(workflows=[workflow], db=db)
 
         assert any("bound to a different Registry" in r.message for r in caplog.records)
 

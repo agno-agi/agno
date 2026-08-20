@@ -103,6 +103,12 @@ def _is_team_instance(candidate: Any) -> bool:
     return isinstance(candidate, Team)
 
 
+def _is_workflow_instance(candidate: Any) -> bool:
+    from agno.workflow.workflow import Workflow
+
+    return isinstance(candidate, Workflow)
+
+
 class UnresolvableCallableError(RuntimeError):
     """Raised when a lenient-load placeholder for an unresolved callable executes.
 
@@ -575,7 +581,23 @@ class Step:
         # db-load tier yet, because loading a stored workflow from inside a
         # step would recurse through from_dict and needs its own cycle guard
         # before it can be safe.
-        if "workflow_id" in config and config["workflow_id"]:
+        if "workflow_id" in config and config["workflow_id"] and (executor is not None or config.get("executor_ref")):
+            # A well-formed step config carries exactly one executor key. On a
+            # malformed one the non-workflow executor wins - the pre-registry
+            # behavior, where this branch only produced a placeholder that the
+            # later executor_ref assignment overwrote - so degraded configs
+            # stay loadable leniently instead of failing Step's
+            # one-executor check.
+            if strict:
+                raise ComponentRehydrationError(
+                    f"Step '{config.get('name')}' carries workflow_id '{config.get('workflow_id')}' alongside "
+                    "another executor reference; fix the config to exactly one executor."
+                )
+            log_warning(
+                f"Step '{config.get('name')}' carries workflow_id '{config.get('workflow_id')}' alongside "
+                "another executor reference; ignoring the workflow half."
+            )
+        elif "workflow_id" in config and config["workflow_id"]:
             workflow_id = config.get("workflow_id")
             if registry and workflow_id:
                 registry_workflow = registry.get_workflow(workflow_id)
@@ -587,6 +609,11 @@ class Step:
                             raise ComponentRehydrationError(
                                 f"Registry workflow '{workflow_id}' deep_copy returned the shared "
                                 "instance; a strict load requires an isolated copy."
+                            )
+                        if strict and not _is_workflow_instance(workflow):
+                            raise ComponentRehydrationError(
+                                f"Registry workflow '{workflow_id}' deep_copy returned a "
+                                f"{type(workflow).__name__}, not a Workflow; a strict load refuses it."
                             )
                         # No copy_divergence check here, unlike the agent/team
                         # tiers: Workflow.deep_copy regenerates step ids, so a

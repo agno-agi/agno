@@ -272,6 +272,71 @@ class TestNestedWorkflowSteps:
             Step.from_dict({"name": "outer", "workflow_id": "shared-wf"}, registry=registry, strict=True)
 
 
+@pytest.mark.skipif(find_spec("fastmcp") is None, reason="fastmcp not installed")
+class TestMcpListingDedup:
+    async def test_the_mcp_config_lists_a_shared_id_once(self, db):
+        from fastmcp import Client
+
+        from agno.os.mcp import build_mcp_server
+
+        seed_registry = Registry(name="Seed", models=[_model()], dbs=[db])
+        studio = StudioTools(registry=seed_registry, db=db)
+        assert _loads(studio.create_agent(name="step-agent", instructions="i", publish=True))["ok"]
+        out = _loads(
+            studio.create_workflow(
+                name="wf-shared", steps=[{"type": "step", "name": "s1", "agent_id": "step-agent"}], publish=True
+            )
+        )
+        assert out.get("ok"), out
+        os_app = AgentOS(workflows=[_wf("wf-shared", "Shared Workflow")], db=db, mcp_server=True)
+        os_app.get_app()
+
+        async with Client(build_mcp_server(os_app)) as client:
+            result = await client.call_tool("get_agentos_config", {})
+
+        structured = result.structured_content or {}
+        payload = structured.get("result", structured)
+        ids = [w["id"] for w in payload["workflows"]]
+        assert ids.count("wf-shared") == 1
+
+
+class TestMalformedStepConfigs:
+    def test_a_workflow_id_beside_a_placeholder_executor_stays_loadable_leniently(self):
+        registry = Registry(name="R", workflows=[_wf("inner-wf", "Inner")])
+
+        step = Step.from_dict(
+            {"name": "outer", "agent_id": "ghost-agent", "workflow_id": "inner-wf"}, registry=registry, strict=False
+        )
+
+        assert getattr(step.executor, "__agno_unresolved__", None) == {"agent_id": "ghost-agent"}
+
+    def test_a_workflow_id_beside_an_executor_ref_is_a_typed_strict_refusal(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        registry = Registry(name="R", workflows=[_wf("inner-wf", "Inner")])
+
+        with pytest.raises(ComponentRehydrationError, match="alongside"):
+            Step.from_dict(
+                {"name": "outer", "executor_ref": "some_fn", "workflow_id": "inner-wf"},
+                registry=registry,
+                strict=True,
+            )
+
+    def test_a_deep_copy_of_the_wrong_type_is_refused_strictly(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        class WrongTypeWorkflow(Workflow):
+            def deep_copy(self, *, update=None):
+                return object()
+
+        agent = Agent(id="wrong-agent", name="A", model=_model())
+        wf = WrongTypeWorkflow(id="wrong-wf", name="Wrong", steps=[Step(name="s1", agent=agent)])
+        registry = Registry(name="R", workflows=[wf])
+
+        with pytest.raises(ComponentRehydrationError, match="not a Workflow"):
+            Step.from_dict({"name": "outer", "workflow_id": "wrong-wf"}, registry=registry, strict=True)
+
+
 @pytest.mark.skipif(
     find_spec("croniter") is None or find_spec("pytz") is None,
     reason="scheduler extras not installed (pip install agno[scheduler])",

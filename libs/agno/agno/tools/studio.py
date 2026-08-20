@@ -156,6 +156,25 @@ class _ToolsNotFoundError(ValueError):
     from tool_not_allowed, which is a palette refusal for a name that exists)."""
 
 
+class _LiveComponentView:
+    """A sequence view over a component resolver, read at iteration time.
+
+    SchedulerTools' code-defined probe reads its include_* sequences on every
+    call; handing it these views keeps the probe aligned with the run tools'
+    resolution (explicit lists, else the registry) even when the registry is
+    populated after the toolkit is built.
+    """
+
+    def __init__(self, resolve: Callable[[], List[Any]]):
+        self._resolve = resolve
+
+    def __iter__(self):
+        return iter(self._resolve())
+
+    def __len__(self) -> int:
+        return len(self._resolve())
+
+
 class StudioTools(Toolkit):
     """Toolkit that lets an agent compose agents, teams, and workflows.
 
@@ -304,10 +323,18 @@ class StudioTools(Toolkit):
             # refuse a code-defined target that create_schedule just allowed.
             self._scheduler_tools = SchedulerTools(
                 db=self._db,
-                db_resolver=lambda: self.db,
-                include_agents=self.include_agents,
-                include_teams=self.include_teams,
-                include_workflows=self.include_workflows,
+                # A bound method, not a lambda: deepcopy treats plain functions
+                # as atomic but rebinds methods through its memo, so a
+                # deep-copied toolkit's scheduler resolves through the COPY.
+                db_resolver=self._registry_db,
+                # Live views, not the raw lists: the embedded toolkit's own
+                # refusals build a code-defined probe from these, and that
+                # probe must see the same set the run tools resolve from
+                # (explicit lists, else the registry) - or enable_schedule
+                # refuses a target create_schedule just allowed.
+                include_agents=_LiveComponentView(self._runner_tools._iter_agents),
+                include_teams=_LiveComponentView(self._runner_tools._iter_teams),
+                include_workflows=_LiveComponentView(self._runner_tools._iter_workflows),
             )
 
         tools: List[Callable] = [
@@ -504,6 +531,9 @@ class StudioTools(Toolkit):
     @db.setter
     def db(self, value: Optional["BaseDb"]) -> None:
         self._db = value
+
+    def _registry_db(self) -> Optional["BaseDb"]:
+        return self.db
 
     # ------------------------------------------------------------------
     # Registry lookups
