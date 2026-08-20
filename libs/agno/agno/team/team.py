@@ -1912,18 +1912,29 @@ def get_teams(
         # (other users' published components compete for the same slots), so
         # page until the filtered total is exhausted or the cap is hit.
         components: List[Dict[str, Any]] = []
+        seen_component_ids: Set[str] = set()
+        scanned = 0
         while True:
             page, total = db.list_components(
                 component_type=ComponentType.TEAM,
                 exclude_component_ids=exclude_component_ids,
                 user_id=user_id,
                 limit=_COMPONENT_LIST_PAGE,
-                offset=len(components),
+                offset=scanned,
             )
-            components.extend(page)
-            if not page or len(components) >= total:
+            scanned += len(page)
+            for row in page:
+                # Each page is its own read, so a row created between two of
+                # them shifts the window and hands back something an earlier
+                # page already carried.
+                row_id = row.get("component_id")
+                if row_id is None or row_id in seen_component_ids:
+                    continue
+                seen_component_ids.add(row_id)
+                components.append(row)
+            if not page or scanned >= total:
                 break
-            if len(components) >= _COMPONENT_LIST_CAP:
+            if scanned >= _COMPONENT_LIST_CAP:
                 log_warning(f"Team listing truncated by safety cap: returning {len(components)} of {total} components")
                 break
         for component in components:
