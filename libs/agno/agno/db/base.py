@@ -32,6 +32,35 @@ class ComponentType(str, Enum):
     WORKFLOW = "workflow"
 
 
+class _ReentrantAsyncLock:
+    """asyncio.Lock with RLock semantics: the owning task may re-acquire.
+
+    Table resolution recurses (FK parents, version stamping after a create),
+    so the same task legitimately re-enters the resolution lock.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: Optional[Any] = None
+        self._depth = 0
+
+    async def __aenter__(self) -> "_ReentrantAsyncLock":
+        task = asyncio.current_task()
+        if self._owner is task:
+            self._depth += 1
+            return self
+        await self._lock.acquire()
+        self._owner = task
+        self._depth = 1
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner = None
+            self._lock.release()
+
+
 class TableResolutionMixin:
     """Table-resolution cache shared by the sync and async SQL adapters.
 
@@ -1769,9 +1798,9 @@ class AsyncBaseDb(TableResolutionMixin, ABC):
         # See BaseDb._table_cache: same contract for async adapters.
         self._table_cache: Dict[Tuple[str, str], Any] = {}
         self._cache_tables: bool = True
-        # See BaseDb._resolve_lock. asyncio.Lock is not reentrant: code
-        # already holding it must call _resolve_table directly.
-        self._resolve_lock_async = asyncio.Lock()
+        # See BaseDb._resolve_lock: reentrant, because resolving a table may
+        # resolve FK parents and stamp the versions table.
+        self._resolve_lock_async = _ReentrantAsyncLock()
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""

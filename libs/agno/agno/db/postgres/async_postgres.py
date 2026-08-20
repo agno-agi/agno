@@ -287,7 +287,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 registered = {t.name for t in self.metadata.tables.values()}
                 for ref_type, ref_name in self._fk_dependencies(table_type):
                     if ref_name not in registered:
-                        # Already under _resolve_lock_async: bypass the wrapper
                         await self._resolve_table(
                             table_name=ref_name,
                             table_type=ref_type,
@@ -551,8 +550,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         if cached is not None:
             return cached
         # Serialize resolution: concurrent reflection into the shared metadata
-        # can expose a half-built Table to other coroutines. The lock is not
-        # reentrant; code already holding it calls _resolve_table directly.
+        # can expose a half-built Table to other coroutines. The lock is
+        # task-reentrant (FK parents and version stamping recurse into it).
         async with self._resolve_lock_async:
             cached = self._get_cached_table(table_type, table_name)
             if cached is not None:

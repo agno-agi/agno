@@ -305,3 +305,22 @@ def test_in_memory_sqlite_multi_thread_does_not_collide():
     for t in threads:
         t.join()
     assert not errors, errors[:2]
+
+
+def test_async_create_from_scratch_does_not_deadlock(tmp_path):
+    """Creating a table via the async adapter stamps the versions table, which
+    re-enters the resolution lock; the lock must be task-reentrant.
+    (Regression: AgentOS startup hung in _create_all_tables on async adapters.)"""
+    import asyncio
+
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    async def run():
+        adb = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
+        table = await asyncio.wait_for(
+            adb._get_table(table_type="sessions", create_table_if_not_found=True), timeout=15
+        )
+        assert table is not None
+        await asyncio.wait_for(adb._create_all_tables(), timeout=30)
+
+    asyncio.run(run())
