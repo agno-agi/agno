@@ -56,6 +56,7 @@ from agno.run.requirement import RunRequirement
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
+from agno.skills.executor import SkillExecutor
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_warning
@@ -903,8 +904,21 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry, strict=strict)
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        *,
+        db: Optional["BaseDb"] = None,
+        strict: bool = False,
+        skill_executor: Optional[SkillExecutor] = None,
+    ) -> "Agent":
+        # registry keeps its pre-existing second positional slot; db and strict are
+        # keyword-only so external Agent.from_dict(config, registry) calls do not
+        # silently mis-bind a third positional argument.
+        return _storage.from_dict(
+            cls, data=data, db=db, registry=registry, strict=strict, skill_executor=skill_executor
+        )
 
     def save(
         self,
@@ -926,8 +940,18 @@ class Agent:
         label: Optional[str] = None,
         version: Optional[int] = None,
         strict: bool = False,
+        skill_executor: Optional[SkillExecutor] = None,
     ) -> Optional["Agent"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
+        return _storage.load(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            skill_executor=skill_executor,
+        )
 
     def delete(
         self,
@@ -1725,7 +1749,7 @@ def get_agent_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
 
-        agent = Agent.from_dict(cfg, registry=registry, strict=strict)
+        agent = Agent.from_dict(cfg, db=db, registry=registry, strict=strict)
         agent.id = id
         # Only fall back to the caller-provided db if the config didn't
         # reconstruct one, matching Agent.load.
@@ -1781,7 +1805,7 @@ def get_agents(
                             agent_config["id"] = component_id
                         # Lenient on purpose: listings must show degraded
                         # components so they stay visible and fixable.
-                        agent = Agent.from_dict(agent_config, registry=registry, strict=False)
+                        agent = Agent.from_dict(agent_config, db=db, registry=registry, strict=False)
                         agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")

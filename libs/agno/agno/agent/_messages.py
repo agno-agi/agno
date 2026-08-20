@@ -310,7 +310,7 @@ def get_system_message(
         system_message_content += f"{agent.additional_context}\n"
     # 3.3.8.1 Then add skills to the system prompt
     if agent.skills is not None:
-        skills_snippet = agent.skills.get_system_prompt_snippet()
+        skills_snippet = agent.skills.get_system_prompt_snippet(user_id=user_id)
         if skills_snippet:
             system_message_content += f"\n{skills_snippet}\n"
     # 3.3.9 Then add memories to the system prompt
@@ -611,7 +611,7 @@ async def aget_system_message(
         system_message_content += f"{agent.additional_context}\n"
     # 3.3.8.1 Then add skills to the system prompt
     if agent.skills is not None:
-        skills_snippet = agent.skills.get_system_prompt_snippet()
+        skills_snippet = await agent.skills.aget_system_prompt_snippet(user_id=user_id)
         if skills_snippet:
             system_message_content += f"\n{skills_snippet}\n"
     # 3.3.9 Then add memories to the system prompt

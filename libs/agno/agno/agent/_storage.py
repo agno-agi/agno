@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.skills.executor import SkillExecutor
 
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
@@ -712,6 +713,24 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.references_format != "json":
         config["references_format"] = agent.references_format
 
+    # --- Skills ---
+    # Skills are stored as name references and re-resolved from the database's
+    # skills table on load, the way team members are stored by id and re-resolved.
+    # Saving freezes the current names: rows added later are not picked up on load.
+    if agent.skills is not None:
+        skill_names = agent.skills.get_skills_from_db()
+        if skill_names:
+            config["skills"] = {"names": skill_names}
+            # An executor cannot be serialized, so record only that a non-default one was
+            # configured. Loading without it would move script execution back onto the
+            # host, so from_dict refuses rather than quietly downgrading the policy.
+            from agno.skills.executor import LocalSkillExecutor
+
+            if type(agent.skills.executor) is not LocalSkillExecutor:
+                config["skills"]["requires_executor"] = True
+        else:
+            log_warning("Agent skills hold no skills to reference; skills will not be saved.")
+
     # --- Tools ---
     # Serialize tools to their dictionary representations (skip callable factories)
     _tools: List[Union[Function, dict]] = []
@@ -929,7 +948,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
 
 def from_dict(
-    cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False
+    cls: Type[Agent],
+    data: Dict[str, Any],
+    db: Optional[BaseDb] = None,
+    registry: Optional[Registry] = None,
+    strict: bool = False,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> Agent:
     """
     Create an agent from a dictionary.
@@ -937,6 +961,9 @@ def from_dict(
     Args:
         cls: The Agent class (or subclass) to instantiate.
         data: Dictionary containing agent configuration
+        db: Optional database for resolving skills
+        skill_executor: Executor to run skill scripts with. Required when the saved
+            config records a non-default executor, since one cannot be serialized.
         registry: Optional registry for rehydrating tools and schemas
         strict: If True, unresolvable registry references (tools,
             schemas, knowledge) raise ComponentRehydrationError instead of
@@ -1102,6 +1129,35 @@ def from_dict(
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
             del config["knowledge"]
 
+    # --- Handle Skills reconstruction ---
+    # Skills are stored as name references and re-resolved from the database's
+    # skills table, the way team members are stored by id and re-resolved.
+    if "skills" in config and isinstance(config["skills"], dict):
+        skill_names = config["skills"].get("names")
+        # The db block above already turned config["db"] into a live BaseDb (or dropped
+        # the key), so an agent saved with its own db resolves its skills without the
+        # caller threading one in. An explicit db still wins, and is the only source
+        # when the agent had no db of its own to serialize.
+        skills_db = db if db is not None else config.get("db")
+        if skill_names and skills_db is not None:
+            from agno.skills import DbSkills, Skills
+            from agno.skills.errors import SkillError
+
+            # A non-default executor was configured when this was saved and cannot be
+            # serialized. Refuse rather than fall back to the host executor: that would
+            # silently turn a sandbox policy into running scripts on this machine.
+            if config["skills"].get("requires_executor") and skill_executor is None:
+                raise SkillError(
+                    "This was saved with a non-default skill executor, which cannot be serialized. "
+                    "Pass skill_executor= to load it; loading without one would run skill scripts "
+                    "on the host."
+                )
+            config["skills"] = Skills(loaders=[DbSkills(skills_db, names=skill_names)], executor=skill_executor)
+        else:
+            if skill_names:
+                log_warning(f"No db provided, skills {skill_names} will not be resolved.")
+            del config["skills"]
+
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
     # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
@@ -1162,6 +1218,8 @@ def from_dict(
         enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
         add_knowledge_to_context=config.get("add_knowledge_to_context", False),
         references_format=config.get("references_format", "json"),
+        # --- Skills ---
+        skills=config.get("skills"),
         # --- Tools ---
         tools=config.get("tools"),
         tool_call_limit=config.get("tool_call_limit"),
@@ -1275,10 +1333,26 @@ def save(
             metadata=getattr(agent, "metadata", None),
         )
 
+        agent_config = to_dict(agent)
+        # A loader that has never loaded successfully serializes nothing for its
+        # skills, so saving would erase their previously stored names. Merge the
+        # prior names back in — a deliberate improvement over Knowledge, which
+        # tolerates the same erasure. Once every loader has loaded, the serialized
+        # names are authoritative again.
+        if agent.skills is not None and agent.skills.has_unloaded_loaders():
+            prior = db_.get_config(component_id=agent.id)
+            prior_skills = (prior.get("config") or {}).get("skills") if prior else None
+            prior_names = prior_skills.get("names") if isinstance(prior_skills, dict) else None
+            if prior_names:
+                current_names = agent_config.get("skills", {}).get("names", [])
+                merged = list(current_names) + [name for name in prior_names if name not in current_names]
+                agent_config["skills"] = {"names": merged}
+                log_warning("Agent skills have not fully loaded; preserving the previously saved skill names.")
+
         # Create or update config
         config = db_.upsert_config(
             component_id=agent.id,
-            config=to_dict(agent),
+            config=agent_config,
             label=label,
             stage=stage,
             notes=notes,
@@ -1300,6 +1374,7 @@ def load(
     label: Optional[str] = None,
     version: Optional[int] = None,
     strict: bool = False,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> Optional[Agent]:
     """
     Load an agent by id.
@@ -1308,6 +1383,8 @@ def load(
         cls: The Agent class (or subclass) to instantiate.
         id: The id of the agent to load.
         db: The database to load the agent from.
+        skill_executor: Executor to run skill scripts with. Required when the saved config
+            records a non-default executor, since one cannot be serialized.
         registry: Optional registry for rehydrating tools and schemas.
         label: The label of the agent to load.
         version: The version of the agent to load.
@@ -1326,7 +1403,7 @@ def load(
     if config is None:
         return None
 
-    agent = cls.from_dict(config, registry=registry, strict=strict)
+    agent = cls.from_dict(config, db=db, registry=registry, strict=strict, skill_executor=skill_executor)
     agent.id = id
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names

@@ -1628,10 +1628,14 @@ async def test_read_parity_knowledge():
 
 
 class StubSkills:
-    """Duck-typed skills: the two methods the run path calls."""
+    """Duck-typed skills: the methods the run path calls, on both the sync and
+    async agent paths -- the async path awaits aget_system_prompt_snippet."""
 
     def get_system_prompt_snippet(self):
         return "SKILLS-MARKER-XYZZY"
+
+    async def aget_system_prompt_snippet(self, user_id=None):
+        return self.get_system_prompt_snippet()
 
     def get_tools(self):
         return []

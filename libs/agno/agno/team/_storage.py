@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.skills.executor import SkillExecutor
     from agno.team.mode import TeamMode
     from agno.team.team import Team
 
@@ -625,6 +626,24 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     if team.references_format != "json":  # default is "json"
         config["references_format"] = team.references_format
 
+    # --- Skills ---
+    # Skills are stored as name references and re-resolved from the database's
+    # skills table on load, the way members are stored by id and re-resolved.
+    # Saving freezes the current names: rows added later are not picked up on load.
+    if team.skills is not None:
+        skill_names = team.skills.get_skills_from_db()
+        if skill_names:
+            config["skills"] = {"names": skill_names}
+            # An executor cannot be serialized, so record only that a non-default one was
+            # configured. Loading without it would move script execution back onto the
+            # host, so from_dict refuses rather than quietly downgrading the policy.
+            from agno.skills.executor import LocalSkillExecutor
+
+            if type(team.skills.executor) is not LocalSkillExecutor:
+                config["skills"]["requires_executor"] = True
+        else:
+            log_warning("Team skills hold no skills to reference; skills will not be saved.")
+
     # --- Tools ---
     if team.tools and isinstance(team.tools, list):
         serialized_tools = []
@@ -881,6 +900,7 @@ def from_dict(
     registry: Optional["Registry"] = None,
     links: Optional[List[Dict[str, Any]]] = None,
     strict: bool = False,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> "Team":
     """
     Create a Team from a dictionary.
@@ -1225,6 +1245,35 @@ def from_dict(
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
             del config["knowledge"]
 
+    # --- Handle Skills reconstruction ---
+    # Skills are stored as name references and re-resolved from the database's
+    # skills table, the way members are stored by id and re-resolved.
+    if "skills" in config and isinstance(config["skills"], dict):
+        skill_names = config["skills"].get("names")
+        # The db block above already turned config["db"] into a live BaseDb (or dropped
+        # the key), so a team saved with its own db resolves its skills without the
+        # caller threading one in. An explicit db still wins, and is the only source
+        # when the team had no db of its own to serialize.
+        skills_db = db if db is not None else config.get("db")
+        if skill_names and skills_db is not None:
+            from agno.skills import DbSkills, Skills
+            from agno.skills.errors import SkillError
+
+            # A non-default executor was configured when this was saved and cannot be
+            # serialized. Refuse rather than fall back to the host executor: that would
+            # silently turn a sandbox policy into running scripts on this machine.
+            if config["skills"].get("requires_executor") and skill_executor is None:
+                raise SkillError(
+                    "This was saved with a non-default skill executor, which cannot be serialized. "
+                    "Pass skill_executor= to load it; loading without one would run skill scripts "
+                    "on the host."
+                )
+            config["skills"] = Skills(loaders=[DbSkills(skills_db, names=skill_names)], executor=skill_executor)
+        else:
+            if skill_names:
+                log_warning(f"No db provided, skills {skill_names} will not be resolved.")
+            del config["skills"]
+
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
     # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
@@ -1295,6 +1344,8 @@ def from_dict(
             search_knowledge=config.get("search_knowledge", True),
             add_search_knowledge_instructions=config.get("add_search_knowledge_instructions", True),
             references_format=config.get("references_format", "json"),
+            # --- Skills ---
+            skills=config.get("skills"),
             # --- Tools ---
             tools=config.get("tools"),
             tool_call_limit=config.get("tool_call_limit"),
@@ -1421,10 +1472,26 @@ def save(
             metadata=getattr(team, "metadata", None),
         )
 
+        team_config = team.to_dict()
+        # A loader that has never loaded successfully serializes nothing for its
+        # skills, so saving would erase their previously stored names. Merge the
+        # prior names back in — a deliberate improvement over Knowledge, which
+        # tolerates the same erasure. Once every loader has loaded, the serialized
+        # names are authoritative again.
+        if team.skills is not None and team.skills.has_unloaded_loaders():
+            prior = db_.get_config(component_id=team.id)
+            prior_skills = (prior.get("config") or {}).get("skills") if prior else None
+            prior_names = prior_skills.get("names") if isinstance(prior_skills, dict) else None
+            if prior_names:
+                current_names = team_config.get("skills", {}).get("names", [])
+                merged = list(current_names) + [name for name in prior_names if name not in current_names]
+                team_config["skills"] = {"names": merged}
+                log_warning("Team skills have not fully loaded; preserving the previously saved skill names.")
+
         # Create or update config with links
         config = db_.upsert_config(
             component_id=team.id,
-            config=team.to_dict(),
+            config=team_config,
             links=all_links if all_links else None,
             label=label,
             stage=stage,
@@ -1445,6 +1512,7 @@ def _hydrate_from_graph(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     strict: bool = False,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> Optional["Team"]:
     """
     Hydrate a team and its members from an already-loaded component graph.
@@ -1462,7 +1530,9 @@ def _hydrate_from_graph(
     # graph children overwrite it - and a current version that fails strict
     # resolution would abort the load even though the pinned version is fine.
     member_links = [child["link"] for child in graph.get("children", []) if child.get("link")]
-    team = cls.from_dict(config, db=db, registry=registry, links=member_links, strict=strict)
+    team = cls.from_dict(
+        config, db=db, registry=registry, links=member_links, strict=strict, skill_executor=skill_executor
+    )
     team.id = graph["component"]["component_id"]
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names
@@ -1489,7 +1559,9 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config, registry=registry, strict=strict)
+            agent = Agent.from_dict(
+                child_config, db=db, registry=registry, strict=strict, skill_executor=skill_executor
+            )
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 if strict:
@@ -1498,7 +1570,9 @@ def _hydrate_from_graph(
             graph_members[agent.id] = agent
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph
-            nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry, strict=strict)
+            nested_team = _hydrate_from_graph(
+                cls, child_graph, db=db, registry=registry, strict=strict, skill_executor=skill_executor
+            )
             if nested_team is not None and nested_team.id is not None:
                 graph_members[nested_team.id] = nested_team
 
@@ -1538,6 +1612,7 @@ def load(
     label: Optional[str] = None,
     version: Optional[int] = None,
     strict: bool = False,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> Optional["Team"]:
     """
     Load a team by id, with hydrated members.
@@ -1558,7 +1633,7 @@ def load(
     if graph is None:
         return None
 
-    return _hydrate_from_graph(cls, graph, db=db, registry=registry, strict=strict)
+    return _hydrate_from_graph(cls, graph, db=db, registry=registry, strict=strict, skill_executor=skill_executor)
 
 
 def delete(
