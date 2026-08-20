@@ -6,11 +6,10 @@ from typing import Optional
 def sanitize_media_id(media_id: str) -> str:
     """Make a media id safe to use as a storage-key path component.
 
-    Strips characters that could escape the storage root (path separators, ``..``),
-    preventing path traversal in filesystem-backed storage and stray prefixes in S3.
+    Everything outside ``[A-Za-z0-9._-]`` becomes an underscore, so no path separator
+    survives to traverse out of the storage root or add a prefix in S3.
     """
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(media_id))
-    safe = safe.replace("..", "_")
     return safe.strip("._") or "media"
 
 

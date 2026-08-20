@@ -1638,12 +1638,11 @@ class AgentOS:
         identities = {(getattr(storage, "backend_name", None), getattr(storage, "bucket", None)) for storage in found}
         if len(identities) > 1:
             log_warning(
-                f"Several media storage backends are configured across the agent tree. Serving media with "
-                f"{type(self.media_storage).__name__} only; media stored by the others answers 404. Set "
-                "media_storage on AgentOS to choose explicitly."
+                f"Multiple media storage backends found across the agent tree, serving media with "
+                f"{type(self.media_storage).__name__}. Set media_storage on AgentOS to choose explicitly."
             )
         else:
-            log_debug(f"Serving media with {type(self.media_storage).__name__} found on the agent tree")
+            log_debug(f"Media storage auto-discovered from the agent tree: {type(self.media_storage).__name__}")
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""

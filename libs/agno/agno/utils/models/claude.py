@@ -304,7 +304,7 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
 
             raw_bytes = file.get_content_bytes()
             if raw_bytes is None:
-                log_error(f"Document could not be read from url: {file}")
+                log_error(f"Failed to read document from url: {file}")
                 return None
 
             source_type = mime_mapping.get(media_type, "base64")

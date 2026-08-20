@@ -377,7 +377,7 @@ def test_image_artifact_conversion_keeps_the_storage_key_stable():
             converted = step._convert_image_artifacts_to_images([artifact])[0]
             assert converted.id == artifact.id
             assert converted.mime_type == artifact.mime_type
-            _offload_single_media(converted, storage, "s1", "r1", "image")
+            _offload_single_media(converted, storage, "s1", "image")
 
         assert len(set(storage.uploads)) == 1
 
@@ -445,22 +445,24 @@ def test_step_conversion_reads_offloaded_bytes_back():
         storage = LocalMediaStorage(base_path=tmpdir)
         img = Image(id="i1", mime_type="image/png", content=b"STORED-BYTES")
         run = RunOutput(run_id="r1", images=[img])
-        offload_run_media(run, storage, "s1", "r1")
+        offload_run_media(run, storage, "s1")
 
         offloaded = run.images[0]
         assert offloaded.content is None and offloaded.url is None
 
         step = Step(name="s", executor=Agent(id="a"))
-        converted = step._convert_image_artifacts_to_images([offloaded], storage)
+        step_input = StepInput(input="hi", images=[offloaded])
+        step._rehydrate_step_input_media(step_input, storage)
+        converted = step._convert_image_artifacts_to_images(step_input.images)
 
         assert converted[0].content == b"STORED-BYTES"
         assert converted[0].media_reference is offloaded.media_reference
 
 
 def test_step_conversion_rejects_an_async_backend():
-    """The converters are sync and rehydrate through a blocking download an AsyncMediaStorage
-    does not have. Reporting the mismatch is the point: warning past it would hand the executor
-    an image with nothing in it."""
+    """Rehydration is sync here and reads through a blocking download an AsyncMediaStorage does
+    not have. Reporting the mismatch is the point: warning past it would hand the executor an
+    image with nothing in it."""
     from agno.agent.agent import Agent
     from agno.media.storage.local import AsyncLocalMediaStorage
 
@@ -469,8 +471,9 @@ def test_step_conversion_rejects_an_async_backend():
         offloaded = Image(id="i1", mime_type="image/png", media_reference=ref)
 
         step = Step(name="s", executor=Agent(id="a"))
+        step_input = StepInput(input="hi", images=[offloaded])
         with pytest.raises(ValueError, match="Cannot use sync run\\(\\) with an AsyncMediaStorage"):
-            step._convert_image_artifacts_to_images([offloaded], AsyncLocalMediaStorage(base_path=tmpdir))
+            step._rehydrate_step_input_media(step_input, AsyncLocalMediaStorage(base_path=tmpdir))
 
 
 async def test_async_step_execution_reads_offloaded_bytes_back_from_an_async_backend():
@@ -484,25 +487,23 @@ async def test_async_step_execution_reads_offloaded_bytes_back_from_an_async_bac
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = AsyncLocalMediaStorage(base_path=tmpdir)
         img = Image(id="i1", mime_type="image/png", content=b"ASYNC-STORED-BYTES")
-        await aoffload_run_media(RunOutput(run_id="r1", images=[img]), storage, "s1", "r1")
+        await aoffload_run_media(RunOutput(run_id="r1", images=[img]), storage, "s1")
 
         offloaded = copy.deepcopy(img)
         assert offloaded.content is None and offloaded.url is None
 
         step = Step(name="s", executor=Agent(id="a"))
         step_input = StepInput(input="hi", images=[offloaded])
-        converter_storage = await step._arehydrate_step_input_media(step_input, storage)
+        await step._arehydrate_step_input_media(step_input, storage)
 
-        # The async backend is read here, so the sync converters are handed nothing to read.
-        assert converter_storage is None
-        converted = step._convert_image_artifacts_to_images(step_input.images, converter_storage)
+        # The async backend is read here, so the sync converters only convert.
+        converted = step._convert_image_artifacts_to_images(step_input.images)
         assert converted[0].content == b"ASYNC-STORED-BYTES"
         assert converted[0].media_reference is offloaded.media_reference
 
 
-async def test_async_step_execution_leaves_a_sync_backend_to_the_converters():
-    """A sync backend passes straight through: its blocking download belongs in the worker
-    thread the converters already run in, not on the loop."""
+async def test_async_step_execution_rehydrates_a_sync_backend():
+    """A sync backend is read back too; _arehydrate keeps its blocking download off the loop."""
     from agno.agent.agent import Agent
     from agno.run.agent import RunOutput
     from agno.utils.media_offload import offload_run_media
@@ -510,15 +511,15 @@ async def test_async_step_execution_leaves_a_sync_backend_to_the_converters():
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = LocalMediaStorage(base_path=tmpdir)
         img = Image(id="i1", mime_type="image/png", content=b"SYNC-STORED-BYTES")
-        offload_run_media(RunOutput(run_id="r1", images=[img]), storage, "s1", "r1")
+        offload_run_media(RunOutput(run_id="r1", images=[img]), storage, "s1")
 
         offloaded = copy.deepcopy(img)
         step = Step(name="s", executor=Agent(id="a"))
         step_input = StepInput(input="hi", images=[offloaded])
 
-        assert await step._arehydrate_step_input_media(step_input, storage) is storage
-        assert offloaded.content is None
-        assert step._convert_image_artifacts_to_images(step_input.images, storage)[0].content == b"SYNC-STORED-BYTES"
+        await step._arehydrate_step_input_media(step_input, storage)
+
+        assert offloaded.content == b"SYNC-STORED-BYTES"
 
 
 def test_workflow_no_media_storage_unchanged():
@@ -557,9 +558,102 @@ def test_offload_reaches_media_parked_on_step_requirements():
             )
         ]
 
-        offload_workflow_media(run, storage, "sess", "r")
+        offload_workflow_media(run, storage, "sess")
 
         for media in (parked_input, parked_output, nested.files[0]):
             assert media.media_reference is not None, f"{media.id} was left inline"
             assert media.content is None
             assert storage.exists(media.media_reference.storage_key)
+
+
+async def test_errored_stream_persists_with_an_async_backend_on_a_sync_db():
+    """The sync branch raised inside save_run and the guard swallowed it, losing the run."""
+    from agno.media.storage.local import AsyncLocalMediaStorage
+    from agno.run.base import RunStatus
+    from agno.run.workflow import WorkflowRunOutput
+
+    with tempfile.TemporaryDirectory() as tmp:
+        wf = Workflow(
+            name="wf",
+            id="wf",
+            db=SqliteDb(db_file=f"{tmp}/wf.db", session_table="wf_sessions"),
+            steps=[Step(name="s1", executor=_image_step)],
+            media_storage=AsyncLocalMediaStorage(base_path=f"{tmp}/media"),
+        )
+        session = wf.read_or_create_session(session_id="s1", user_id=None)
+        run = WorkflowRunOutput(run_id="r1", workflow_id="wf", session_id="s1", status=RunStatus.error)
+
+        await wf._apersist_errored_run_stream(session=session, run=run)
+
+        stored = wf.get_run(run_id="r1", session_id="s1")
+        assert stored is not None
+        assert stored.status == RunStatus.error
+
+
+def test_nested_workflow_reads_the_parents_offloaded_media():
+    """workflow_media_storage was threaded through the nested executors and never used, so an
+    inner step received a reference with no bytes behind it."""
+    from agno.utils.media_offload import _offload_single_media
+
+    seen: dict = {}
+
+    def inspect(step_input: StepInput) -> StepOutput:
+        image = (step_input.images or [None])[0]
+        doc = (step_input.files or [None])[0]
+        seen["content"] = image.content if image is not None else None
+        seen["file_content"] = doc.content if doc is not None else None
+        return StepOutput(content="ok")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = LocalMediaStorage(base_path=f"{tmp}/media")
+        inner = Workflow(name="inner", id="inner", steps=[Step(name="inspect", executor=inspect)])
+        outer = Workflow(
+            name="outer",
+            id="outer",
+            db=SqliteDb(db_file=f"{tmp}/wf.db", session_table="wf_sessions"),
+            steps=[inner],
+            media_storage=storage,
+        )
+
+        offloaded = Image(content=b"NESTED-BYTES", id="img", mime_type="image/png")
+        _offload_single_media(offloaded, storage, "s1", "image")
+        doc = File(content=b"NESTED-FILE", id="doc", mime_type="text/plain", filename="r.txt")
+        _offload_single_media(doc, storage, "s1", "file")
+        assert offloaded.content is None and doc.content is None
+
+        outer.run(input="hi", images=[offloaded], files=[doc], session_id="s1")
+
+        assert seen["content"] == b"NESTED-BYTES"
+        # files are forwarded across the boundary too, so they have to be readable as well
+        assert seen["file_content"] == b"NESTED-FILE"
+
+
+def test_a_function_step_reads_offloaded_media():
+    """Rehydration used to be gated on the executor kind, so a function step saw content=None."""
+    from agno.utils.media_offload import _offload_single_media
+
+    seen: dict = {}
+
+    def probe(step_input: StepInput) -> StepOutput:
+        seen["image"] = (step_input.images or [None])[0]
+        seen["file"] = (step_input.files or [None])[0]
+        return StepOutput(content="ok")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = LocalMediaStorage(base_path=f"{tmp}/media")
+        img = Image(content=b"FN-IMAGE", id="i", mime_type="image/png")
+        doc = File(content=b"FN-FILE", id="d", mime_type="text/plain", filename="r.txt")
+        _offload_single_media(img, storage, "s1", "image")
+        _offload_single_media(doc, storage, "s1", "file")
+
+        wf = Workflow(
+            name="w",
+            id="w",
+            db=SqliteDb(db_file=f"{tmp}/w.db", session_table="w_sessions"),
+            steps=[Step(name="probe", executor=probe)],
+            media_storage=storage,
+        )
+        wf.run(input="hi", images=[img], files=[doc], session_id="s1")
+
+        assert seen["image"].content == b"FN-IMAGE"
+        assert seen["file"].content == b"FN-FILE"

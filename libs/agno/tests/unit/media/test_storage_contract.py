@@ -200,19 +200,21 @@ def test_offload_refuses_a_backend_without_a_name(storage_class):
         storage = storage_class(base_path=tmpdir)
         run = RunOutput(run_id="r1", images=[Image(id="i1", mime_type="image/png", content=b"BYTES")])
 
-        offload_run_media(run, storage, "s1", "r1")
+        offload_run_media(run, storage, "s1")
 
         assert run.images[0].media_reference is None
         assert run.images[0].content == b"BYTES"
         assert not [f for f in Path(tmpdir).rglob("*") if f.is_file()]
 
 
-def test_bucket_and_region_default_to_none():
-    """A backend with no container concept reports None rather than being absent."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        storage = LocalMediaStorage(base_path=tmpdir)
-        assert storage.bucket is None
-        assert storage.region is None
+def test_local_reports_its_directory_as_the_container():
+    """Two local roots are otherwise indistinguishable, so a reference could not name its store."""
+    with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as two:
+        first = LocalMediaStorage(base_path=one)
+        second = LocalMediaStorage(base_path=two)
+        assert first.bucket == str(Path(one).resolve())
+        assert first.bucket != second.bucket
+        assert first.region is None
 
 
 def test_s3_and_gcs_report_their_container():

@@ -16,7 +16,6 @@ from agno.media import Image
 from agno.media.storage import LocalMediaStorage
 from agno.models.openai import OpenAIResponses
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

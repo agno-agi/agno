@@ -13,6 +13,7 @@ other supported storage adapters without repeating the same AgentOS example.
 | `postgres.py` | Selects a synchronous or asynchronous Postgres adapter for production persistence. |
 | `surreal.py` | Shows SurrealDB's client, credentials, namespace, and database constructor shape. |
 | `media_storage.py` | Offloads file bytes to S3 so the database keeps only a MediaReference. |
+| `media_storage_delete.py` | Reads session media back through the media route, and deletes the objects with the session. |
 
 ## Default database and provisioning
 
@@ -76,7 +77,7 @@ without it media saves cleanly and then fails to load.
 - Install `agno[surrealdb]` and start SurrealDB with
   `./cookbook/scripts/run_surrealdb.sh`.
 - Install `agno[s3]` and set `AGNO_FILE_OUTPUT_S3_BUCKET` plus AWS credentials
-  for `media_storage.py`.
+  for `media_storage.py` and `media_storage_delete.py`.
 
 ## Run
 
@@ -110,6 +111,13 @@ S3 media storage:
 ```bash
 AGNO_FILE_OUTPUT_S3_BUCKET=my-bucket \
   .venvs/demo/bin/python cookbook/05_agent_os/02_databases/media_storage.py
+```
+
+Reading and deleting session media:
+
+```bash
+AGNO_FILE_OUTPUT_S3_BUCKET=my-bucket \
+  .venvs/demo/bin/python cookbook/05_agent_os/02_databases/media_storage_delete.py
 ```
 
 Each server listens on port 7777. Read its database ID from `GET /config`, then

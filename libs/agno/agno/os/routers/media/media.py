@@ -16,10 +16,9 @@ from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.schema import NotFoundResponse, UnauthenticatedResponse
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import iter_run_media
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_warning
-from agno.utils.media_offload import reference_matches_storage
+from agno.utils.media_offload import iter_run_media, reference_matches_storage
 
 # A type/subtype of RFC 9110 tokens and nothing else; the rest is octet-stream.
 _MIME_TYPE_PATTERN = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+")
@@ -145,7 +144,7 @@ def attach_routes(
                     url = await asyncio.to_thread(media_storage.get_url, storage_key)
             except Exception as e:
                 log_warning(f"Failed to generate media URL for {storage_key}: {e}")
-                raise HTTPException(status_code=500, detail="Failed to generate a media URL")
+                raise HTTPException(status_code=500, detail="Failed to generate media URL")
             # A browser can only follow http(s); file:// (local backend) cannot be fetched, so
             # fall through to streaming the bytes instead.
             if url.startswith(("http://", "https://")):

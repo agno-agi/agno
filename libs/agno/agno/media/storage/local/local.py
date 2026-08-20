@@ -30,6 +30,9 @@ class LocalMediaStorage(MediaStorage):
     ):
         # Resolved once: a relative base_path would otherwise follow the cwd across a chdir.
         self.base_path = Path(base_path).resolve()
+        # The directory is this backend's container, recorded so a reference names the store
+        # that holds it — two LocalMediaStorage roots are otherwise indistinguishable.
+        self.bucket = str(self.base_path)
         self.base_url = base_url.rstrip("/") if base_url else None
         self.persist_remote_urls = persist_remote_urls
         self.base_path.mkdir(parents=True, exist_ok=True)

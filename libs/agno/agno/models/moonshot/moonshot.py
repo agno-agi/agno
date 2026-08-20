@@ -189,10 +189,7 @@ class MoonShot(OpenAILike):
         """
         import time
 
-        # File ids are auto-generated UUIDs, so the ``ms://`` prefix is what marks a file as
-        # already uploaded — the same marker _video_reference uses. A stored id is still only
-        # a hint (it may be stale or deleted server-side), so a failed fetch re-uploads rather
-        # than failing the file outright.
+        # The ``ms://`` prefix marks an id as already uploaded; a stale one just re-uploads.
         if file.id and file.id.startswith("ms://"):
             stored_id = file.id[len("ms://") :]
             try:

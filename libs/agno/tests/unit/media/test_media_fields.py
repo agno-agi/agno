@@ -159,7 +159,7 @@ class TestFileIdDefaults:
             storage = CountingStorage(base_path=tmpdir)
             run = RunOutput(run_id="r1", files=[File(content=b"CSV" * 300, mime_type="text/csv")])
             for _ in range(3):
-                offload_run_media(copy.deepcopy(run), storage, "s1", "r1", offload_cache_for(run))
+                offload_run_media(copy.deepcopy(run), storage, "s1", offload_cache_for(run))
 
         assert len(uploaded) == 1
         assert len(set(uploaded)) == 1

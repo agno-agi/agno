@@ -33,7 +33,7 @@ class TestOffloadSingleMedia:
     def test_offload_image_with_content(self):
         storage = _mock_storage()
         img = Image(content=b"fake-png-bytes", id="img-1", mime_type="image/png")
-        _offload_single_media(img, storage, "session-1", "run-1", "image")
+        _offload_single_media(img, storage, "session-1", "image")
 
         storage.upload.assert_called_once()
         assert img.media_reference is not None
@@ -46,14 +46,14 @@ class TestOffloadSingleMedia:
 
         ref = MediaReference(media_id="img-2", storage_key="key", storage_backend="s3")
         img = Image(url="https://example.com/img.png", media_reference=ref, id="img-2")
-        _offload_single_media(img, storage, "session-1", "run-1", "image")
+        _offload_single_media(img, storage, "session-1", "image")
 
         storage.upload.assert_not_called()
 
     def test_skip_url_only_media(self):
         storage = _mock_storage()
         img = Image(url="https://example.com/img.png")
-        _offload_single_media(img, storage, "session-1", "run-1", "image")
+        _offload_single_media(img, storage, "session-1", "image")
 
         storage.upload.assert_not_called()
 
@@ -62,7 +62,7 @@ class TestOffloadSingleMedia:
         img = Image(url="https://example.com/img.png", id="img-url-1", mime_type="image/png")
 
         with patch.object(Image, "get_content_bytes", return_value=b"downloaded-bytes"):
-            _offload_single_media(img, storage, "session-1", "run-1", "image")
+            _offload_single_media(img, storage, "session-1", "image")
 
         storage.upload.assert_called_once()
         assert img.media_reference is not None
@@ -72,14 +72,14 @@ class TestOffloadSingleMedia:
     def test_skip_external_file(self):
         storage = _mock_storage()
         f = File(external=MagicMock(), content=b"data")
-        _offload_single_media(f, storage, "session-1", "run-1", "file")
+        _offload_single_media(f, storage, "session-1", "file")
 
         storage.upload.assert_not_called()
 
     def test_offload_file_string_content(self):
         storage = _mock_storage()
         f = File(content="text content", mime_type="text/plain", id="file-1")
-        _offload_single_media(f, storage, "session-1", "run-1", "file")
+        _offload_single_media(f, storage, "session-1", "file")
 
         storage.upload.assert_called_once()
         # Verify bytes were passed (string encoded to utf-8)
@@ -104,7 +104,7 @@ class TestOffloadRunMedia:
         msg.images = [Image(content=b"png-bytes", id="msg-img-1", mime_type="image/png")]
         run_response.messages = [msg]
 
-        offload_run_media(run_response, storage, "session-1", "run-1")
+        offload_run_media(run_response, storage, "session-1")
 
         storage.upload.assert_called_once()
         assert msg.images[0].media_reference is not None
@@ -125,8 +125,33 @@ class TestOffloadRunMedia:
         msg.images = [Image(content=b"png-bytes", id="hist-img", mime_type="image/png")]
         run_response.messages = [msg]
 
-        offload_run_media(run_response, storage, "session-1", "run-1")
+        offload_run_media(run_response, storage, "session-1")
 
+        storage.upload.assert_not_called()
+
+    def test_history_message_keeps_no_signed_url(self):
+        """The refresh signs history media for this turn's model call; the row must not keep it."""
+        from agno.media.reference import MediaReference
+
+        storage = _mock_storage()
+        run_response = MagicMock()
+        run_response.input = None
+        run_response.additional_input = None
+        run_response.reasoning_messages = None
+        run_response.images = None
+        run_response.videos = None
+        run_response.audio = None
+        run_response.files = None
+        run_response.response_audio = None
+
+        ref = MediaReference(media_id="hist-img", storage_key="key-1", storage_backend="mock", bucket="test-bucket")
+        msg = Message(role="user", content="test", from_history=True)
+        msg.images = [Image(url="https://b.s3.amazonaws.com/key-1?X-Amz-Signature=abc", media_reference=ref)]
+        run_response.messages = [msg]
+
+        offload_run_media(run_response, storage, "session-1")
+
+        assert msg.images[0].url is None
         storage.upload.assert_not_called()
 
 
@@ -162,7 +187,7 @@ class TestOffloadWorkflowMediaNestedSteps:
         container = StepOutput(step_name="parallel", steps=[StepOutput(step_name="p1", files=[nested_file])])
         run = WorkflowRunOutput(run_id="wr", workflow_id="wf", step_results=[container])
 
-        offload_workflow_media(run, storage, "session-1", "wr")
+        offload_workflow_media(run, storage, "session-1")
 
         storage.upload.assert_called_once()
         assert nested_file.media_reference is not None
@@ -175,7 +200,7 @@ class TestOffloadWorkflowMediaNestedSteps:
         outer = StepOutput(step_name="outer", steps=[inner])
         run = WorkflowRunOutput(run_id="wr", workflow_id="wf", step_results=[outer])
 
-        offload_workflow_media(run, storage, "session-1", "wr")
+        offload_workflow_media(run, storage, "session-1")
 
         assert deep_img.media_reference is not None
         assert deep_img.content is None
@@ -200,7 +225,13 @@ class TestRefreshMessageMediaUrls:
 
         from agno.media.reference import MediaReference
 
-        ref = MediaReference(media_id="img-1", storage_key="key-1", storage_backend="s3", url="https://old-url.com")
+        ref = MediaReference(
+            media_id="img-1",
+            storage_key="key-1",
+            storage_backend="mock",
+            bucket="test-bucket",
+            url="https://old-url.com",
+        )
         img = Image(url="https://old-url.com", media_reference=ref, id="img-1")
 
         msg = Message(role="user", content="test")
@@ -223,6 +254,22 @@ class TestRefreshMessageMediaUrls:
 
         storage.get_url.assert_not_called()
 
+    def test_skip_media_stored_on_another_backend(self):
+        storage = _mock_storage()
+
+        from agno.media.reference import MediaReference
+
+        ref = MediaReference(media_id="img-1", storage_key="key-1", storage_backend="s3", bucket="other-bucket")
+        img = Image(media_reference=ref, id="img-1")
+
+        msg = Message(role="user", content="test")
+        msg.images = [img]
+
+        refresh_message_media_urls(msg, storage)
+
+        storage.get_url.assert_not_called()
+        storage.download.assert_not_called()
+
 
 def _mock_async_storage():
     storage = AsyncMock()
@@ -240,7 +287,13 @@ class TestAsyncRefreshMessageMediaUrls:
 
         from agno.media.reference import MediaReference
 
-        ref = MediaReference(media_id="img-1", storage_key="key-1", storage_backend="s3", url="https://old-url.com")
+        ref = MediaReference(
+            media_id="img-1",
+            storage_key="key-1",
+            storage_backend="mock-async",
+            bucket="test-bucket",
+            url="https://old-url.com",
+        )
         img = Image(url="https://old-url.com", media_reference=ref, id="img-1")
 
         msg = Message(role="user", content="test")
@@ -263,3 +316,57 @@ class TestAsyncRefreshMessageMediaUrls:
         await arefresh_message_media_urls(msg, storage)
 
         storage.get_url.assert_not_called()
+
+
+class TestStorageKeyScoping:
+    def test_two_sessions_get_distinct_keys_for_the_same_bytes(self):
+        """Deleting one session's media must not reach another session that sent the same file."""
+        storage = _mock_storage()
+        storage.upload.side_effect = lambda media_id, *a, **kw: f"{media_id}.png"
+
+        first = Image(content=b"SAME BYTES", id="img", mime_type="image/png")
+        second = Image(content=b"SAME BYTES", id="img", mime_type="image/png")
+        _offload_single_media(first, storage, "session-A", "image")
+        _offload_single_media(second, storage, "session-B", "image")
+
+        assert first.media_reference.storage_key != second.media_reference.storage_key
+        assert first.media_reference.storage_key.startswith("session-A-")
+        assert second.media_reference.storage_key.startswith("session-B-")
+
+    def test_a_long_session_id_does_not_overrun_the_key(self):
+        """A filesystem name stops at 255 bytes, and a failed upload leaves base64 in the row."""
+        storage = _mock_storage()
+        storage.upload.side_effect = lambda media_id, *a, **kw: f"{media_id}.png"
+
+        img = Image(content=b"BYTES", id="img", mime_type="image/png")
+        _offload_single_media(img, storage, "s" * 500, "image")
+
+        key = img.media_reference.storage_key
+        assert len(key) < 255
+        assert key.endswith(f"-img-{img.media_reference.content_hash[:16]}.png")
+
+    def test_presigned_url_is_dropped_before_persistence(self):
+        """A URL signed for this turn's model call expires, so it must not reach the row."""
+        storage = _mock_storage()
+
+        from agno.media.reference import MediaReference
+
+        ref = MediaReference(media_id="img-1", storage_key="key-1", storage_backend="mock", bucket="test-bucket")
+        img = Image(url="https://b.s3.amazonaws.com/key-1?X-Amz-Signature=abc&X-Amz-Expires=900", media_reference=ref)
+
+        _offload_single_media(img, storage, "session-1", "image")
+
+        assert img.url is None
+        storage.upload.assert_not_called()
+
+    def test_a_durable_url_survives_offload(self):
+        """A caller's own public URL is not a signed one, so offload leaves it in place."""
+        storage = _mock_storage(persist_remote_urls=True)
+        storage.get_url.return_value = ""
+        img = Image(url="https://example.com/logo.png", id="img", mime_type="image/png")
+
+        with patch.object(Image, "get_content_bytes", return_value=b"IMG"):
+            _offload_single_media(img, storage, "session-1", "image")
+
+        assert img.url == "https://example.com/logo.png"
+        assert img.media_reference is not None

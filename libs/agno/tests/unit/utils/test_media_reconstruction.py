@@ -468,7 +468,7 @@ def test_reconstruction_keeps_the_stored_url_and_filepath():
         img = Image(id="i1", mime_type="image/png", url="https://origin.example.com/chart.png")
         img.content = b"CHART"
         run = RunOutput(run_id="r1", images=[img])
-        offload_run_media(run, storage, "s1", "r1")
+        offload_run_media(run, storage, "s1")
 
         stored = run.images[0].to_dict()
         assert stored["url"] == "https://origin.example.com/chart.png"
@@ -489,7 +489,7 @@ def test_message_round_trip_keeps_the_persisted_url():
         img.content = b"CHART"
         msg = Message(role="user", content="hi", images=[img])
         run = RunOutput(run_id="r1", messages=[msg])
-        offload_run_media(run, storage, "s1", "r1")
+        offload_run_media(run, storage, "s1")
 
         rebuilt = Message.from_dict(run.messages[0].to_dict())
 

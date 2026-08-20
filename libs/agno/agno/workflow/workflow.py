@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
-from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
@@ -547,6 +547,27 @@ WorkflowSteps = Union[
 ]
 
 
+def _record_input_media(
+    run_response: "WorkflowRunOutput",
+    images: List[Image],
+    videos: List[Video],
+    audio: List[Audio],
+    files: List[File],
+) -> None:
+    """Put the caller's input media on the run so a pause persists it.
+
+    The lists are the same objects the executor extends, so the run tracks them.
+    """
+    if images:
+        run_response.images = images
+    if videos:
+        run_response.videos = videos
+    if audio:
+        run_response.audio = audio
+    if files:
+        run_response.files = files
+
+
 @dataclass
 class Workflow:
     """Pipeline-based workflow execution"""
@@ -1013,25 +1034,82 @@ class Workflow:
 
         return session.session_data["session_state"]  # type: ignore
 
-    async def adelete_session(self, session_id: str, user_id: Optional[str] = None):
-        """Delete the current session and save to storage"""
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+        """Async variant of :meth:`delete_session`."""
         if self.db is None:
             return
+
+        keys: List[str] = []
+        storage = self.media_storage
+        if delete_media:
+            from agno.utils.media_offload import session_media_keys
+
+            if storage is None:
+                log_warning("delete_media=True but no media_storage is configured; no objects were deleted.")
+            else:
+                try:
+                    if self._has_async_db():
+                        session = await self.db.get_session(session_id=session_id, user_id=user_id)  # type: ignore
+                    else:
+                        session = self.db.get_session(session_id=session_id, user_id=user_id)
+                except Exception as e:
+                    log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                    session = None
+                if session is not None:
+                    keys = session_media_keys(session, [session_id], storage)
+
         # -*- Delete session
         if self._has_async_db():
             await self.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
         else:
             self.db.delete_session(session_id=session_id, user_id=user_id)
 
-    def delete_session(self, session_id: str, user_id: Optional[str] = None):
-        """Delete the current session and save to storage"""
+        if keys and storage is not None:
+            from agno.utils.media_offload import adelete_media_keys
+
+            await adelete_media_keys(keys, storage)
+
+    def delete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+        """Delete the current session and save to storage.
+
+        ``delete_media`` deletes the session's offloaded objects along with it.
+        """
         if self._has_async_db():
             raise ValueError("Cannot use sync delete_session() with an async database. Use adelete_session() instead.")
 
         if self.db is None:
             return
+
+        keys: List[str] = []
+        storage = self.media_storage
+        if delete_media:
+            from agno.media.storage.base import AsyncMediaStorage
+            from agno.utils.media_offload import session_media_keys
+
+            if storage is None:
+                log_warning("delete_media=True but no media_storage is configured; no objects were deleted.")
+            else:
+                # Refused before the row is deleted: raising afterwards would leave the object
+                # with nothing pointing at it, which is what reading the keys first exists to avoid.
+                if isinstance(storage, AsyncMediaStorage):
+                    raise ValueError(
+                        "Cannot use sync delete_session() with an AsyncMediaStorage. Use adelete_session() instead."
+                    )
+                try:
+                    session = self.db.get_session(session_id=session_id, user_id=user_id)
+                except Exception as e:
+                    log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                    session = None
+                if session is not None:
+                    keys = session_media_keys(session, [session_id], storage)
+
         # -*- Delete session
         self.db.delete_session(session_id=session_id, user_id=user_id)
+
+        if keys and storage is not None:
+            from agno.utils.media_offload import delete_media_keys
+
+            delete_media_keys(keys, storage)  # type: ignore[arg-type]
 
     # -*- Serialization Functions
     def to_dict(self) -> Dict[str, Any]:
@@ -2155,6 +2233,37 @@ class Workflow:
             run_index=run_index,
         )
 
+    def _refresh_executor_run_media(self, executor: Any, run_response: Any) -> None:
+        """Read the paused executor's offloaded media back before it rebuilds its messages.
+
+        An executor refreshes against its own backend, and inside a workflow the backend is the
+        workflow's, so without this the resumed model sees empty media where it saw an image.
+        """
+        if not self.store_media or self.media_storage is None:
+            return
+        # Its own backend means its own continue_run already refreshes.
+        if getattr(executor, "media_storage", None) is not None:
+            return
+        messages = getattr(run_response, "messages", None)
+        if not messages:
+            return
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(messages, self.media_storage)
+
+    async def _arefresh_executor_run_media(self, executor: Any, run_response: Any) -> None:
+        """Async variant of :meth:`_refresh_executor_run_media`."""
+        if not self.store_media or self.media_storage is None:
+            return
+        if getattr(executor, "media_storage", None) is not None:
+            return
+        messages = getattr(run_response, "messages", None)
+        if not messages:
+            return
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(messages, self.media_storage)
+
     async def _apersist_session_and_run(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
         """Async variant of ``_persist_session_and_run``."""
         from agno.session._utils import resolve_run_index
@@ -2719,6 +2828,7 @@ class Workflow:
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
+                _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
                 # Track current step so the cancel handler can record a placeholder
                 # for the in-flight step (mirrors _execute_stream's behaviour).
@@ -3118,6 +3228,7 @@ class Workflow:
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
+                _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
                 early_termination = False
 
@@ -3754,6 +3865,7 @@ class Workflow:
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
+                _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
                 # Track current step so the cancel handler can record a placeholder
                 # for the in-flight step (mirrors _aexecute_stream's behaviour).
@@ -4173,6 +4285,7 @@ class Workflow:
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
+                _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
                 early_termination = False
 
@@ -6648,9 +6761,13 @@ class Workflow:
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
         )
 
-        # Create execution input from the original input
+        # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.
         execution_input = WorkflowExecutionInput(
             input=run_response.input,
+            images=run_response.images,
+            videos=run_response.videos,
+            audio=run_response.audio,
+            files=run_response.files,
         )
 
         # Store user input in kwargs to pass to continue_execute
@@ -7314,6 +7431,7 @@ class Workflow:
 
         # Apply resolved requirements to the paused run_response (update tool states)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        self._refresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's continue_run with the stored run_response
         continued_response = executor.continue_run(
@@ -7373,6 +7491,7 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        self._refresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's continue_run with the stored run_response (streaming).
         response_stream = executor.continue_run(
@@ -7461,6 +7580,7 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        await self._arefresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's acontinue_run with the stored run_response (streaming).
         # stream_events=True ensures RunCompleted/RunError lifecycle events are emitted.
@@ -7545,6 +7665,7 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        await self._arefresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's acontinue_run with the stored run_response
         continued_response = await executor.acontinue_run(
@@ -8657,9 +8778,13 @@ class Workflow:
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
         )
 
-        # Create execution input from the original input
+        # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.
         execution_input = WorkflowExecutionInput(
             input=run_response.input,
+            images=run_response.images,
+            videos=run_response.videos,
+            audio=run_response.audio,
+            files=run_response.files,
         )
 
         # Store user input in kwargs to pass to continue_execute

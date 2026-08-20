@@ -71,6 +71,7 @@ uv pip install 'agno[gcs]'  # GCS (google-cloud-storage)
 - [`06_media_storage_s3.py`](06_media_storage_s3.py) - Offload media to S3-compatible object storage (S3MediaStorage)
 - [`07_media_storage_multiturn.py`](07_media_storage_multiturn.py) - Multi-turn media reuse: offload on turn 1, reference reloaded on turn 2
 - [`08_media_storage_gcs.py`](08_media_storage_gcs.py) - Offload media to Google Cloud Storage (GCSMediaStorage)
+- [`09_media_storage_delete.py`](09_media_storage_delete.py) - Delete a session's stored objects along with its rows (delete_media=True)
 
 ### Enable this only after the whole fleet is upgraded
 

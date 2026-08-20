@@ -970,6 +970,7 @@ class Step:
         for attempt in range(self.max_retries + 1):
             try:
                 response: Union[RunOutput, TeamRunOutput, StepOutput]
+                self._rehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
@@ -1054,22 +1055,13 @@ class Step:
                         elif self._executor_type == "team":
                             use_team_logger()
 
-                        media_storage = self._resolve_media_storage(workflow_media_storage)
                         images = (
-                            self._convert_image_artifacts_to_images(step_input.images, media_storage)
-                            if step_input.images
-                            else None
+                            self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
                         videos = (
-                            self._convert_video_artifacts_to_videos(step_input.videos, media_storage)
-                            if step_input.videos
-                            else None
+                            self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
-                        audios = (
-                            self._convert_audio_artifacts_to_audio(step_input.audio, media_storage)
-                            if step_input.audio
-                            else None
-                        )
+                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
@@ -1314,6 +1306,7 @@ class Step:
                 log_debug(f"Step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
                 final_response = None
 
+                self._rehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for step: {self.name}")
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
@@ -1395,22 +1388,13 @@ class Step:
                         elif self._executor_type == "team":
                             use_team_logger()
 
-                        media_storage = self._resolve_media_storage(workflow_media_storage)
                         images = (
-                            self._convert_image_artifacts_to_images(step_input.images, media_storage)
-                            if step_input.images
-                            else None
+                            self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
                         videos = (
-                            self._convert_video_artifacts_to_videos(step_input.videos, media_storage)
-                            if step_input.videos
-                            else None
+                            self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
-                        audios = (
-                            self._convert_audio_artifacts_to_audio(step_input.audio, media_storage)
-                            if step_input.audio
-                            else None
-                        )
+                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
@@ -1636,6 +1620,7 @@ class Step:
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
+                await self._arehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
                     if _is_generator_function(self.active_executor) or _is_async_generator_function(
                         self.active_executor
@@ -1749,30 +1734,18 @@ class Step:
                         elif self._executor_type == "team":
                             use_team_logger()
 
-                        media_storage = self._resolve_media_storage(workflow_media_storage)
-                        # An async backend is read back here, on the loop that can await it,
-                        # and drops out of what the converters are handed. What is left is a
-                        # sync backend, whose blocking download stays off the event loop in
-                        # the worker thread the converters already run in.
-                        media_storage = await self._arehydrate_step_input_media(step_input, media_storage)
                         images = (
-                            await asyncio.to_thread(
-                                self._convert_image_artifacts_to_images, step_input.images, media_storage
-                            )
+                            await asyncio.to_thread(self._convert_image_artifacts_to_images, step_input.images)
                             if step_input.images
                             else None
                         )
                         videos = (
-                            await asyncio.to_thread(
-                                self._convert_video_artifacts_to_videos, step_input.videos, media_storage
-                            )
+                            await asyncio.to_thread(self._convert_video_artifacts_to_videos, step_input.videos)
                             if step_input.videos
                             else None
                         )
                         audios = (
-                            await asyncio.to_thread(
-                                self._convert_audio_artifacts_to_audio, step_input.audio, media_storage
-                            )
+                            await asyncio.to_thread(self._convert_audio_artifacts_to_audio, step_input.audio)
                             if step_input.audio
                             else None
                         )
@@ -1961,6 +1934,7 @@ class Step:
                 log_debug(f"Async step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
                 final_response = None
 
+                await self._arehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
                     log_debug(f"Executing async function executor for step: {self.name}")
 
@@ -2084,30 +2058,18 @@ class Step:
                         elif self._executor_type == "team":
                             use_team_logger()
 
-                        media_storage = self._resolve_media_storage(workflow_media_storage)
-                        # An async backend is read back here, on the loop that can await it,
-                        # and drops out of what the converters are handed. What is left is a
-                        # sync backend, whose blocking download stays off the event loop in
-                        # the worker thread the converters already run in.
-                        media_storage = await self._arehydrate_step_input_media(step_input, media_storage)
                         images = (
-                            await asyncio.to_thread(
-                                self._convert_image_artifacts_to_images, step_input.images, media_storage
-                            )
+                            await asyncio.to_thread(self._convert_image_artifacts_to_images, step_input.images)
                             if step_input.images
                             else None
                         )
                         videos = (
-                            await asyncio.to_thread(
-                                self._convert_video_artifacts_to_videos, step_input.videos, media_storage
-                            )
+                            await asyncio.to_thread(self._convert_video_artifacts_to_videos, step_input.videos)
                             if step_input.videos
                             else None
                         )
                         audios = (
-                            await asyncio.to_thread(
-                                self._convert_audio_artifacts_to_audio, step_input.audio, media_storage
-                            )
+                            await asyncio.to_thread(self._convert_audio_artifacts_to_audio, step_input.audio)
                             if step_input.audio
                             else None
                         )
@@ -2554,16 +2516,13 @@ class Step:
             # Convert any other type to string
             return RunOutput(content=str(result))
 
-    def _convert_audio_artifacts_to_audio(
-        self, audio_artifacts: List[Audio], media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
-    ) -> List[Audio]:
+    def _convert_audio_artifacts_to_audio(self, audio_artifacts: List[Audio]) -> List[Audio]:
         """Convert AudioArtifact objects to Audio objects"""
         audios = []
         for audio_artifact in audio_artifacts:
             # id, format and mime_type carry over so offload keys the same bytes to the same object.
             # An offloaded audio carries only its reference, so that is checked first.
             if audio_artifact.media_reference is not None:
-                self._rehydrate(audio_artifact, media_storage)
                 audios.append(
                     Audio(
                         content=audio_artifact.content,
@@ -2700,6 +2659,7 @@ class Step:
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
         log_debug(f"Executing nested workflow: {self.workflow.name}")
+        self._rehydrate_step_input_media(step_input, workflow_media_storage)
 
         nested_run_id = str(uuid4())
         if workflow_run_response is not None and workflow_run_response.run_id:
@@ -2823,6 +2783,7 @@ class Step:
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
         log_debug(f"Executing nested workflow (streaming): {self.workflow.name}")
+        self._rehydrate_step_input_media(step_input, workflow_media_storage)
 
         nested_run_id = str(uuid4())
         if workflow_run_response is not None and workflow_run_response.run_id:
@@ -2975,6 +2936,7 @@ class Step:
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
         log_debug(f"Executing nested workflow (async): {self.workflow.name}")
+        await self._arehydrate_step_input_media(step_input, workflow_media_storage)
 
         nested_run_id = str(uuid4())
         if workflow_run_response is not None and workflow_run_response.run_id:
@@ -3099,6 +3061,7 @@ class Step:
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
         log_debug(f"Executing nested workflow (async streaming): {self.workflow.name}")
+        await self._arehydrate_step_input_media(step_input, workflow_media_storage)
 
         nested_run_id = str(uuid4())
         if workflow_run_response is not None and workflow_run_response.run_id:
@@ -3203,6 +3166,36 @@ class Step:
         return getattr(self.active_executor, "media_storage", None) or workflow_media_storage
 
     @staticmethod
+    def _step_input_media(step_input: StepInput) -> List[Any]:
+        """Every media kind a step receives, files included."""
+        media: List[Any] = []
+        for field_name in ("images", "videos", "audio", "files"):
+            media.extend(getattr(step_input, field_name, None) or [])
+        return media
+
+    def _rehydrate_step_input_media(
+        self, step_input: StepInput, workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
+    ) -> None:
+        """Read offloaded media back so the executor receives bytes, not an empty pointer.
+
+        Every executor kind needs this: a model cannot fetch a reference, and a function step
+        reads ``content`` directly.
+        """
+        if workflow_media_storage is None:
+            return
+        for media in self._step_input_media(step_input):
+            self._rehydrate(media, workflow_media_storage)
+
+    async def _arehydrate_step_input_media(
+        self, step_input: StepInput, workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
+    ) -> None:
+        """Async variant of :meth:`_rehydrate_step_input_media`."""
+        if workflow_media_storage is None:
+            return
+        for media in self._step_input_media(step_input):
+            await self._arehydrate(media, workflow_media_storage)
+
+    @staticmethod
     def _rehydrate(media: Any, media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]) -> None:
         """Read an offloaded object's bytes back so the model can actually see it.
 
@@ -3215,11 +3208,16 @@ class Step:
             return
 
         from agno.media.storage.base import AsyncMediaStorage
+        from agno.utils.media_offload import reference_matches_storage
 
         # Raised outside the guard below: an async backend on a sync run is a configuration
         # error, and falling back to inline would hide it for the life of the run.
         if isinstance(media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+        if not reference_matches_storage(media.media_reference, media_storage):
+            logger.warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
+            return
 
         try:
             media.content = media_storage.download(media.media_reference.storage_key)
@@ -3233,6 +3231,13 @@ class Step:
             return
         if media.url:
             return
+
+        from agno.utils.media_offload import reference_matches_storage
+
+        if not reference_matches_storage(media.media_reference, media_storage):
+            logger.warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
+            return
+
         try:
             from agno.media.storage.base import AsyncMediaStorage
 
@@ -3244,28 +3249,7 @@ class Step:
         except Exception as e:
             logger.warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
 
-    async def _arehydrate_step_input_media(
-        self, step_input: StepInput, media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
-    ) -> Optional[MediaStorage]:
-        """Read an async backend's offloaded objects back, and say what the converters get.
-
-        The converters are sync and run in a worker thread, so they rehydrate through
-        ``download()`` — which an AsyncMediaStorage does not have as a blocking call. Its
-        objects are read here instead, on the loop that can await them, and the converters are
-        handed None because there is nothing left for them to read. A sync backend is passed
-        straight through: its blocking download belongs in the thread they already run in.
-        """
-        from agno.media.storage.base import AsyncMediaStorage
-
-        if not isinstance(media_storage, AsyncMediaStorage):
-            return media_storage
-        for media in [*(step_input.images or []), *(step_input.videos or []), *(step_input.audio or [])]:
-            await self._arehydrate(media, media_storage)
-        return None
-
-    def _convert_image_artifacts_to_images(
-        self, image_artifacts: List[Image], media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
-    ) -> List[Image]:
+    def _convert_image_artifacts_to_images(self, image_artifacts: List[Image]) -> List[Image]:
         """
         Convert ImageArtifact objects to Image objects with proper content handling.
 
@@ -3284,7 +3268,6 @@ class Step:
             # An offloaded image carries only its reference, so it has to be checked before the skip
             # below or the step loses media that storage holds.
             if img_artifact.media_reference is not None:
-                self._rehydrate(img_artifact, media_storage)
                 images.append(
                     Image(
                         content=img_artifact.content,
@@ -3357,9 +3340,7 @@ class Step:
 
         return images
 
-    def _convert_video_artifacts_to_videos(
-        self, video_artifacts: List[Video], media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
-    ) -> List[Video]:
+    def _convert_video_artifacts_to_videos(self, video_artifacts: List[Video]) -> List[Video]:
         """
         Convert VideoArtifact objects to Video objects with proper content handling.
 
@@ -3375,7 +3356,6 @@ class Step:
             # id, format and mime_type carry over as in _convert_image_artifacts_to_images, and an
             # offloaded video carries only its reference, so that is checked first.
             if video_artifact.media_reference is not None:
-                self._rehydrate(video_artifact, media_storage)
                 videos.append(
                     Video(
                         content=video_artifact.content,

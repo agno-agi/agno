@@ -367,27 +367,84 @@ async def asave_run(
         log_debug(f"Saved run {run.run_id} to session {session_id}")
 
 
-def delete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+def delete_session(agent: Agent, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Delete the current session and save to storage.
+
+    ``delete_media`` deletes the session's offloaded objects along with it.
+    """
     from agno.agent import _init
 
     if agent.db is None:
         return
     if _init.has_async_db(agent):
         raise ValueError("Cannot use sync delete_session() with an async database. Use adelete_session() instead.")
+
+    keys: List[str] = []
+    storage = agent.media_storage
+    if delete_media:
+        from agno.media.storage.base import AsyncMediaStorage
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured; no objects were deleted.")
+        else:
+            # Refused before the row is deleted: raising afterwards would leave the object with
+            # nothing left pointing at it, which is what reading the keys first exists to avoid.
+            if isinstance(storage, AsyncMediaStorage):
+                raise ValueError(
+                    "Cannot use sync delete_session() with an AsyncMediaStorage. Use adelete_session() instead."
+                )
+            try:
+                session = agent.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+
     agent.db.delete_session(session_id=session_id, user_id=user_id)
 
+    if keys and storage is not None:
+        from agno.utils.media_offload import delete_media_keys
 
-async def adelete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+        delete_media_keys(keys, storage)  # type: ignore[arg-type]
+
+
+async def adelete_session(agent: Agent, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Async variant of :func:`delete_session`."""
     from agno.agent import _init
 
     if agent.db is None:
         return
+
+    keys: List[str] = []
+    storage = agent.media_storage
+    if delete_media:
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured; no objects were deleted.")
+        else:
+            try:
+                if _init.has_async_db(agent):
+                    session = await agent.db.get_session(session_id=session_id, user_id=user_id)  # type: ignore
+                else:
+                    session = agent.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+
     if _init.has_async_db(agent):
         await agent.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
     else:
         agent.db.delete_session(session_id=session_id, user_id=user_id)
+
+    if keys and storage is not None:
+        from agno.utils.media_offload import adelete_media_keys
+
+        await adelete_media_keys(keys, storage)
 
 
 # ---------------------------------------------------------------------------

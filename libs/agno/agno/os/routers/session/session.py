@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import time
 from typing import Any, Dict, List, Optional, Union, cast
@@ -38,10 +37,9 @@ from agno.os.schema import (
 from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import iter_run_media
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.media_offload import reference_matches_storage
+from agno.utils.media_offload import adelete_media_keys, session_media_keys
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +70,9 @@ def attach_routes(
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
 ) -> APIRouter:
     async def _collect_media_keys(db: Any, session_ids: List[str], user_id: Optional[str]) -> List[str]:
-        """Storage keys held by these sessions, read before the rows that name them are gone.
-
-        The reference is the only record of which object belongs to which session, so a caller
-        that deletes first can never find the objects again. Objects a session merely borrowed
-        (a fork copies the reference) belong to the session that uploaded them and are left be.
-        """
+        """Storage keys held by these sessions, read before the rows that name them are gone."""
+        if media_storage is None:
+            return []
         keys: List[str] = []
         for session_id in session_ids:
             get_kwargs: Dict[str, Any] = {"session_id": session_id, "user_id": user_id}
@@ -89,33 +84,14 @@ def attach_routes(
             except Exception as e:
                 logger.warning(f"Could not read session {session_id} for media deletion: {e}")
                 continue
-            for run in getattr(session, "runs", None) or []:
-                for media in iter_run_media(run):
-                    ref = getattr(media, "media_reference", None)
-                    if ref is None or not ref.storage_key:
-                        continue
-                    # Only this session's own objects. A forked session copies the reference
-                    # verbatim, so deleting the fork would otherwise take the source's media.
-                    if ref.session_id not in session_ids:
-                        continue
-                    # A key only resolves against the backend that wrote it, matching the
-                    # guard the fetch route applies before serving one.
-                    if media_storage is not None and not reference_matches_storage(ref, media_storage):
-                        continue
-                    keys.append(ref.storage_key)
-        return list(dict.fromkeys(keys))
+            keys.extend(session_media_keys(session, session_ids, media_storage))
+        return keys
 
     async def _delete_media_keys(keys: List[str]) -> None:
         """Best-effort: the rows are already gone, so a storage failure must not fail the request."""
         if not keys or media_storage is None:
             return
-        try:
-            if isinstance(media_storage, AsyncMediaStorage):
-                await media_storage.delete_many(keys)
-            else:
-                await asyncio.to_thread(media_storage.delete_many, keys)
-        except Exception as e:
-            logger.warning(f"Failed to delete {len(keys)} media objects: {e}")
+        await adelete_media_keys(keys, media_storage)
 
     @router.get(
         "/sessions",

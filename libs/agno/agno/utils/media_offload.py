@@ -1,7 +1,8 @@
 """Media offloading utilities for uploading media to external storage before DB persistence."""
 
+import asyncio
 import hashlib
-from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence, Union
 from urllib.parse import parse_qs, urlsplit
 
 from agno.media import Audio, File, Image, Video
@@ -30,6 +31,11 @@ _EXPIRING_URL_PARAMS = frozenset(
         "token",
     }
 )
+
+# How much of the session id a storage key carries. A filesystem caps a name at 255 bytes and
+# the media id, content hash and extension spend ~70 more, so a longer session id made the
+# upload raise and the row keep its base64 — and the session id is caller-supplied.
+_MAX_SESSION_KEY_CHARS = 120
 
 
 def _is_expiring_url(url: Optional[str]) -> bool:
@@ -72,29 +78,71 @@ def _cache_key(media_type: str, mime_type: Optional[str], filename: Optional[str
     return f"{media_type}|{mime_type or ''}|{filename or ''}|{storage_media_id}"
 
 
+def _iter_message_media(message: Message) -> Iterator[Any]:
+    """Every media object on a message, including the audio_output that to_dict() serializes."""
+    for media_list in [message.images, message.audio, message.videos, message.files]:
+        for media in media_list or []:
+            yield media
+    if message.audio_output is not None:
+        yield message.audio_output
+
+
+def reference_matches_storage(ref: Optional[MediaReference], storage: Union[MediaStorage, AsyncMediaStorage]) -> bool:
+    """True if ``storage`` is the backend that minted ``ref``.
+
+    A key only resolves against the backend that wrote it, so reading one team's S3 key
+    through a member's local disk returns nothing the model can use.
+    """
+    if ref is None:
+        return False
+    backend_name = getattr(storage, "backend_name", None)
+    return bool(backend_name) and ref.storage_backend == backend_name and ref.bucket == getattr(storage, "bucket", None)
+
+
 def _attach_reference(media: Union[Image, Audio, Video, File], ref: MediaReference) -> None:
     """Point ``media`` at a stored object and drop its inline bytes."""
     media.media_reference = ref  # type: ignore[attr-defined]
-    # Surface the URL for frontend access. _persistable_url has already dropped the ones a
-    # browser or a model API cannot fetch, so readers of those go through the backend instead.
-    if not media.url:
-        media.url = ref.url
+    # Surface the URL for frontend access, keeping a caller-supplied one when it survives
+    # _persistable_url. Readers of a dropped URL go through the backend instead.
+    media.url = _persistable_url(media.url) or ref.url
     # Clear content bytes to save memory / DB space
     media.content = None  # type: ignore[assignment]
+
+
+def _drop_history_message_urls(message: Message) -> None:
+    """Drop the transient URL a refresh put on already-stored media of a history message.
+
+    History media is skipped by the offload, so the URL scrub :func:`_offload_single_media`
+    does on its own early return has to happen here instead.
+    """
+    for media in _iter_message_media(message):
+        if getattr(media, "media_reference", None) is not None:
+            media.url = _persistable_url(media.url)
 
 
 def _offload_single_media(
     media: Union[Image, Audio, Video, File],
     storage: MediaStorage,
     session_id: str,
-    run_id: str,
     media_type: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     """Upload a single media object to storage and attach a MediaReference."""
-    # Skip if already offloaded
-    if hasattr(media, "media_reference") and media.media_reference is not None:
-        return
+    if media.media_reference is not None:
+        if media.media_reference.session_id in (None, session_id):
+            # Already this session's object; drop the URL this turn's model call signed for it.
+            media.url = _persistable_url(media.url)
+            return
+        # Inherited from another session, which only a fork does. Copy the object so the two
+        # sessions can be deleted independently, as copied bytes were before offload existed.
+        if not reference_matches_storage(media.media_reference, storage):
+            return
+        try:
+            media.content = storage.download(media.media_reference.storage_key)
+        except Exception as e:
+            log_warning(f"Failed to copy inherited media {getattr(media, 'id', '?')}: {e}")
+            return
+        media.media_reference = None
 
     # Skip File objects with external (managed by provider, e.g. GeminiFile)
     if isinstance(media, File) and media.external is not None:
@@ -139,8 +187,10 @@ def _offload_single_media(
         filename = Path(str(media.filepath)).name
 
     content_hash = hashlib.sha256(content_bytes).hexdigest()
-    # Content-address the storage id so distinct payloads never collide on a reused id
-    storage_media_id = f"{media_id}-{content_hash[:16]}"
+    # Scoped to the session and content-addressed, so a reused id never collides and deleting
+    # one session's media never reaches another session that sent the same bytes. Only the
+    # scope is truncated, never the media id or the hash that identify the object.
+    storage_media_id = f"{session_id[:_MAX_SESSION_KEY_CHARS]}-{media_id}-{content_hash[:16]}"
 
     cache_key = _cache_key(media_type, mime_type, filename, storage_media_id)
     if cache is not None and cache_key in cache:
@@ -152,7 +202,7 @@ def _offload_single_media(
     backend_name = getattr(storage, "backend_name", None)
     if not backend_name:
         # Checked before the upload so a written object is never left with nothing pointing at it.
-        log_warning(f"media_storage has no backend_name; skipping offload of {media_type} {media_id}")
+        log_warning(f"media_storage has no backend_name, skipping offload of {media_type} {media_id}")
         return
 
     storage_key = storage.upload(
@@ -169,6 +219,7 @@ def _offload_single_media(
     ref = MediaReference(
         media_id=media_id,
         storage_key=storage_key,
+        session_id=session_id,
         storage_backend=backend_name,
         bucket=getattr(storage, "bucket", None),
         region=getattr(storage, "region", None),
@@ -190,7 +241,6 @@ def _offload_media_list(
     media_list: Optional[Sequence[Union[Image, Audio, Video, File]]],
     storage: MediaStorage,
     session_id: str,
-    run_id: str,
     media_type: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
@@ -199,7 +249,7 @@ def _offload_media_list(
         return
     for media in media_list:
         try:
-            _offload_single_media(media, storage, session_id, run_id, media_type, cache=cache)
+            _offload_single_media(media, storage, session_id, media_type, cache=cache)
         except Exception as e:
             log_warning(f"Failed to offload {media_type} {getattr(media, 'id', '?')}: {e}")
 
@@ -208,20 +258,22 @@ def _offload_message_media(
     message: Message,
     storage: MediaStorage,
     session_id: str,
-    run_id: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     """Offload all media from a single Message."""
     if message.from_history:
+        # Nothing to upload, but the refresh that fed this turn's model call wrote a signed
+        # URL onto this media, and that must not be written to the row alongside the reference.
+        _drop_history_message_urls(message)
         return
-    _offload_media_list(message.images, storage, session_id, run_id, "image", cache=cache)
-    _offload_media_list(message.audio, storage, session_id, run_id, "audio", cache=cache)
-    _offload_media_list(message.videos, storage, session_id, run_id, "video", cache=cache)
-    _offload_media_list(message.files, storage, session_id, run_id, "file", cache=cache)
+    _offload_media_list(message.images, storage, session_id, "image", cache=cache)
+    _offload_media_list(message.audio, storage, session_id, "audio", cache=cache)
+    _offload_media_list(message.videos, storage, session_id, "video", cache=cache)
+    _offload_media_list(message.files, storage, session_id, "file", cache=cache)
     # audio_output is the only output field serialized by Message.to_dict()
     if message.audio_output:
         try:
-            _offload_single_media(message.audio_output, storage, session_id, run_id, "audio", cache=cache)
+            _offload_single_media(message.audio_output, storage, session_id, "audio", cache=cache)
         except Exception as e:
             log_warning(f"Failed to offload audio_output: {e}")
 
@@ -230,7 +282,6 @@ def offload_run_media(
     run_response: Union["RunOutput", "TeamRunOutput"],
     storage: MediaStorage,
     session_id: str,
-    run_id: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     """Upload all media content to external storage, replace with MediaReference.
@@ -241,51 +292,43 @@ def offload_run_media(
     """
     # 1. Input media
     if run_response.input is not None:
-        _offload_media_list(
-            getattr(run_response.input, "images", None), storage, session_id, run_id, "image", cache=cache
-        )
-        _offload_media_list(
-            getattr(run_response.input, "videos", None), storage, session_id, run_id, "video", cache=cache
-        )
-        _offload_media_list(
-            getattr(run_response.input, "audios", None), storage, session_id, run_id, "audio", cache=cache
-        )
-        _offload_media_list(
-            getattr(run_response.input, "files", None), storage, session_id, run_id, "file", cache=cache
-        )
+        _offload_media_list(getattr(run_response.input, "images", None), storage, session_id, "image", cache=cache)
+        _offload_media_list(getattr(run_response.input, "videos", None), storage, session_id, "video", cache=cache)
+        _offload_media_list(getattr(run_response.input, "audios", None), storage, session_id, "audio", cache=cache)
+        _offload_media_list(getattr(run_response.input, "files", None), storage, session_id, "file", cache=cache)
 
     # 2. Messages
     if run_response.messages:
         for message in run_response.messages:
-            _offload_message_media(message, storage, session_id, run_id, cache=cache)
+            _offload_message_media(message, storage, session_id, cache=cache)
 
     # 3. Top-level output media
-    _offload_media_list(getattr(run_response, "images", None), storage, session_id, run_id, "image", cache=cache)
-    _offload_media_list(getattr(run_response, "videos", None), storage, session_id, run_id, "video", cache=cache)
-    _offload_media_list(getattr(run_response, "audio", None), storage, session_id, run_id, "audio", cache=cache)
-    _offload_media_list(getattr(run_response, "files", None), storage, session_id, run_id, "file", cache=cache)
+    _offload_media_list(getattr(run_response, "images", None), storage, session_id, "image", cache=cache)
+    _offload_media_list(getattr(run_response, "videos", None), storage, session_id, "video", cache=cache)
+    _offload_media_list(getattr(run_response, "audio", None), storage, session_id, "audio", cache=cache)
+    _offload_media_list(getattr(run_response, "files", None), storage, session_id, "file", cache=cache)
     response_audio = getattr(run_response, "response_audio", None)
     if response_audio is not None:
         try:
-            _offload_single_media(response_audio, storage, session_id, run_id, "audio", cache=cache)
+            _offload_single_media(response_audio, storage, session_id, "audio", cache=cache)
         except Exception as e:
             log_warning(f"Failed to offload response_audio: {e}")
 
     # 4. Additional input
     if run_response.additional_input:
         for message in run_response.additional_input:
-            _offload_message_media(message, storage, session_id, run_id, cache=cache)
+            _offload_message_media(message, storage, session_id, cache=cache)
 
     # 5. Reasoning messages
     if run_response.reasoning_messages:
         for message in run_response.reasoning_messages:
-            _offload_message_media(message, storage, session_id, run_id, cache=cache)
+            _offload_message_media(message, storage, session_id, cache=cache)
 
     # 6. Member responses (TeamRunOutput only)
     member_responses = getattr(run_response, "member_responses", None)
     if member_responses:
         for member_response in member_responses:
-            offload_run_media(member_response, storage, session_id, run_id, cache=cache)
+            offload_run_media(member_response, storage, session_id, cache=cache)
 
 
 # ---------------------------------------------------------------------------
@@ -297,13 +340,23 @@ async def _aoffload_single_media(
     media: Union[Image, Audio, Video, File],
     storage: AsyncMediaStorage,
     session_id: str,
-    run_id: str,
     media_type: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     """Upload a single media object to async storage and attach a MediaReference."""
-    if hasattr(media, "media_reference") and media.media_reference is not None:
-        return
+    if media.media_reference is not None:
+        if media.media_reference.session_id in (None, session_id):
+            media.url = _persistable_url(media.url)
+            return
+        # See the sync variant: a fork gets its own copy of what it inherited.
+        if not reference_matches_storage(media.media_reference, storage):
+            return
+        try:
+            media.content = await storage.download(media.media_reference.storage_key)
+        except Exception as e:
+            log_warning(f"Failed to copy inherited media {getattr(media, 'id', '?')}: {e}")
+            return
+        media.media_reference = None
 
     if isinstance(media, File) and media.external is not None:
         return
@@ -345,8 +398,10 @@ async def _aoffload_single_media(
         filename = Path(str(media.filepath)).name
 
     content_hash = hashlib.sha256(content_bytes).hexdigest()
-    # Content-address the storage id so distinct payloads never collide on a reused id
-    storage_media_id = f"{media_id}-{content_hash[:16]}"
+    # Scoped to the session and content-addressed, so a reused id never collides and deleting
+    # one session's media never reaches another session that sent the same bytes. Only the
+    # scope is truncated, never the media id or the hash that identify the object.
+    storage_media_id = f"{session_id[:_MAX_SESSION_KEY_CHARS]}-{media_id}-{content_hash[:16]}"
 
     cache_key = _cache_key(media_type, mime_type, filename, storage_media_id)
     if cache is not None and cache_key in cache:
@@ -358,7 +413,7 @@ async def _aoffload_single_media(
     backend_name = getattr(storage, "backend_name", None)
     if not backend_name:
         # Checked before the upload so a written object is never left with nothing pointing at it.
-        log_warning(f"media_storage has no backend_name; skipping offload of {media_type} {media_id}")
+        log_warning(f"media_storage has no backend_name, skipping offload of {media_type} {media_id}")
         return
 
     storage_key = await storage.upload(
@@ -375,6 +430,7 @@ async def _aoffload_single_media(
     ref = MediaReference(
         media_id=media_id,
         storage_key=storage_key,
+        session_id=session_id,
         storage_backend=backend_name,
         bucket=getattr(storage, "bucket", None),
         region=getattr(storage, "region", None),
@@ -396,7 +452,6 @@ async def _aoffload_media_list(
     media_list: Optional[Sequence[Union[Image, Audio, Video, File]]],
     storage: AsyncMediaStorage,
     session_id: str,
-    run_id: str,
     media_type: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
@@ -404,7 +459,7 @@ async def _aoffload_media_list(
         return
     for media in media_list:
         try:
-            await _aoffload_single_media(media, storage, session_id, run_id, media_type, cache=cache)
+            await _aoffload_single_media(media, storage, session_id, media_type, cache=cache)
         except Exception as e:
             log_warning(f"Failed to offload {media_type} {getattr(media, 'id', '?')}: {e}")
 
@@ -413,18 +468,18 @@ async def _aoffload_message_media(
     message: Message,
     storage: AsyncMediaStorage,
     session_id: str,
-    run_id: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     if message.from_history:
+        _drop_history_message_urls(message)
         return
-    await _aoffload_media_list(message.images, storage, session_id, run_id, "image", cache=cache)
-    await _aoffload_media_list(message.audio, storage, session_id, run_id, "audio", cache=cache)
-    await _aoffload_media_list(message.videos, storage, session_id, run_id, "video", cache=cache)
-    await _aoffload_media_list(message.files, storage, session_id, run_id, "file", cache=cache)
+    await _aoffload_media_list(message.images, storage, session_id, "image", cache=cache)
+    await _aoffload_media_list(message.audio, storage, session_id, "audio", cache=cache)
+    await _aoffload_media_list(message.videos, storage, session_id, "video", cache=cache)
+    await _aoffload_media_list(message.files, storage, session_id, "file", cache=cache)
     if message.audio_output:
         try:
-            await _aoffload_single_media(message.audio_output, storage, session_id, run_id, "audio", cache=cache)
+            await _aoffload_single_media(message.audio_output, storage, session_id, "audio", cache=cache)
         except Exception as e:
             log_warning(f"Failed to offload audio_output: {e}")
 
@@ -433,51 +488,48 @@ async def aoffload_run_media(
     run_response: Union["RunOutput", "TeamRunOutput"],
     storage: AsyncMediaStorage,
     session_id: str,
-    run_id: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     """Async variant: upload all media content to external storage."""
     if run_response.input is not None:
         await _aoffload_media_list(
-            getattr(run_response.input, "images", None), storage, session_id, run_id, "image", cache=cache
+            getattr(run_response.input, "images", None), storage, session_id, "image", cache=cache
         )
         await _aoffload_media_list(
-            getattr(run_response.input, "videos", None), storage, session_id, run_id, "video", cache=cache
+            getattr(run_response.input, "videos", None), storage, session_id, "video", cache=cache
         )
         await _aoffload_media_list(
-            getattr(run_response.input, "audios", None), storage, session_id, run_id, "audio", cache=cache
+            getattr(run_response.input, "audios", None), storage, session_id, "audio", cache=cache
         )
-        await _aoffload_media_list(
-            getattr(run_response.input, "files", None), storage, session_id, run_id, "file", cache=cache
-        )
+        await _aoffload_media_list(getattr(run_response.input, "files", None), storage, session_id, "file", cache=cache)
 
     if run_response.messages:
         for message in run_response.messages:
-            await _aoffload_message_media(message, storage, session_id, run_id, cache=cache)
+            await _aoffload_message_media(message, storage, session_id, cache=cache)
 
-    await _aoffload_media_list(getattr(run_response, "images", None), storage, session_id, run_id, "image", cache=cache)
-    await _aoffload_media_list(getattr(run_response, "videos", None), storage, session_id, run_id, "video", cache=cache)
-    await _aoffload_media_list(getattr(run_response, "audio", None), storage, session_id, run_id, "audio", cache=cache)
-    await _aoffload_media_list(getattr(run_response, "files", None), storage, session_id, run_id, "file", cache=cache)
+    await _aoffload_media_list(getattr(run_response, "images", None), storage, session_id, "image", cache=cache)
+    await _aoffload_media_list(getattr(run_response, "videos", None), storage, session_id, "video", cache=cache)
+    await _aoffload_media_list(getattr(run_response, "audio", None), storage, session_id, "audio", cache=cache)
+    await _aoffload_media_list(getattr(run_response, "files", None), storage, session_id, "file", cache=cache)
     response_audio = getattr(run_response, "response_audio", None)
     if response_audio is not None:
         try:
-            await _aoffload_single_media(response_audio, storage, session_id, run_id, "audio", cache=cache)
+            await _aoffload_single_media(response_audio, storage, session_id, "audio", cache=cache)
         except Exception as e:
             log_warning(f"Failed to offload response_audio: {e}")
 
     if run_response.additional_input:
         for message in run_response.additional_input:
-            await _aoffload_message_media(message, storage, session_id, run_id, cache=cache)
+            await _aoffload_message_media(message, storage, session_id, cache=cache)
 
     if run_response.reasoning_messages:
         for message in run_response.reasoning_messages:
-            await _aoffload_message_media(message, storage, session_id, run_id, cache=cache)
+            await _aoffload_message_media(message, storage, session_id, cache=cache)
 
     member_responses = getattr(run_response, "member_responses", None)
     if member_responses:
         for member_response in member_responses:
-            await aoffload_run_media(member_response, storage, session_id, run_id, cache=cache)
+            await aoffload_run_media(member_response, storage, session_id, cache=cache)
 
 
 # ---------------------------------------------------------------------------
@@ -517,87 +569,77 @@ def offload_workflow_media(
     run_response: Any,
     storage: MediaStorage,
     session_id: str,
-    run_id: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     """Offload all media in a WorkflowRunOutput: top-level media, step outputs, and the
     agent/team/nested-workflow runs captured during execution. Already-offloaded media is skipped."""
     from agno.run.workflow import WorkflowRunOutput
 
-    _offload_media_list(getattr(run_response, "images", None), storage, session_id, run_id, "image", cache=cache)
-    _offload_media_list(getattr(run_response, "videos", None), storage, session_id, run_id, "video", cache=cache)
-    _offload_media_list(getattr(run_response, "audio", None), storage, session_id, run_id, "audio", cache=cache)
-    _offload_media_list(getattr(run_response, "files", None), storage, session_id, run_id, "file", cache=cache)
+    _offload_media_list(getattr(run_response, "images", None), storage, session_id, "image", cache=cache)
+    _offload_media_list(getattr(run_response, "videos", None), storage, session_id, "video", cache=cache)
+    _offload_media_list(getattr(run_response, "audio", None), storage, session_id, "audio", cache=cache)
+    _offload_media_list(getattr(run_response, "files", None), storage, session_id, "file", cache=cache)
     response_audio = getattr(run_response, "response_audio", None)
     if response_audio is not None:
         try:
-            _offload_single_media(response_audio, storage, session_id, run_id, "audio", cache=cache)
+            _offload_single_media(response_audio, storage, session_id, "audio", cache=cache)
         except Exception as e:
             log_warning(f"Failed to offload response_audio: {e}")
 
     # Step results, including the children nested inside container steps
     for step_output in iter_step_outputs(run_response):
-        _offload_media_list(getattr(step_output, "images", None), storage, session_id, run_id, "image", cache=cache)
-        _offload_media_list(getattr(step_output, "videos", None), storage, session_id, run_id, "video", cache=cache)
-        _offload_media_list(getattr(step_output, "audio", None), storage, session_id, run_id, "audio", cache=cache)
-        _offload_media_list(getattr(step_output, "files", None), storage, session_id, run_id, "file", cache=cache)
+        _offload_media_list(getattr(step_output, "images", None), storage, session_id, "image", cache=cache)
+        _offload_media_list(getattr(step_output, "videos", None), storage, session_id, "video", cache=cache)
+        _offload_media_list(getattr(step_output, "audio", None), storage, session_id, "audio", cache=cache)
+        _offload_media_list(getattr(step_output, "files", None), storage, session_id, "file", cache=cache)
 
     # Step executor runs: agent/team RunOutputs, or nested workflow runs
     for executor_run in getattr(run_response, "step_executor_runs", None) or []:
         if isinstance(executor_run, WorkflowRunOutput):
-            offload_workflow_media(executor_run, storage, session_id, run_id, cache=cache)
+            offload_workflow_media(executor_run, storage, session_id, cache=cache)
         else:
-            offload_run_media(executor_run, storage, session_id, run_id, cache=cache)
+            offload_run_media(executor_run, storage, session_id, cache=cache)
 
     workflow_agent_run = getattr(run_response, "workflow_agent_run", None)
     if workflow_agent_run is not None:
-        offload_run_media(workflow_agent_run, storage, session_id, run_id, cache=cache)
+        offload_run_media(workflow_agent_run, storage, session_id, cache=cache)
 
 
 async def aoffload_workflow_media(
     run_response: Any,
     storage: AsyncMediaStorage,
     session_id: str,
-    run_id: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     """Async variant of offload_workflow_media."""
     from agno.run.workflow import WorkflowRunOutput
 
-    await _aoffload_media_list(getattr(run_response, "images", None), storage, session_id, run_id, "image", cache=cache)
-    await _aoffload_media_list(getattr(run_response, "videos", None), storage, session_id, run_id, "video", cache=cache)
-    await _aoffload_media_list(getattr(run_response, "audio", None), storage, session_id, run_id, "audio", cache=cache)
-    await _aoffload_media_list(getattr(run_response, "files", None), storage, session_id, run_id, "file", cache=cache)
+    await _aoffload_media_list(getattr(run_response, "images", None), storage, session_id, "image", cache=cache)
+    await _aoffload_media_list(getattr(run_response, "videos", None), storage, session_id, "video", cache=cache)
+    await _aoffload_media_list(getattr(run_response, "audio", None), storage, session_id, "audio", cache=cache)
+    await _aoffload_media_list(getattr(run_response, "files", None), storage, session_id, "file", cache=cache)
     response_audio = getattr(run_response, "response_audio", None)
     if response_audio is not None:
         try:
-            await _aoffload_single_media(response_audio, storage, session_id, run_id, "audio", cache=cache)
+            await _aoffload_single_media(response_audio, storage, session_id, "audio", cache=cache)
         except Exception as e:
             log_warning(f"Failed to offload response_audio: {e}")
 
     for step_output in iter_step_outputs(run_response):
-        await _aoffload_media_list(
-            getattr(step_output, "images", None), storage, session_id, run_id, "image", cache=cache
-        )
-        await _aoffload_media_list(
-            getattr(step_output, "videos", None), storage, session_id, run_id, "video", cache=cache
-        )
-        await _aoffload_media_list(
-            getattr(step_output, "audio", None), storage, session_id, run_id, "audio", cache=cache
-        )
-        await _aoffload_media_list(
-            getattr(step_output, "files", None), storage, session_id, run_id, "file", cache=cache
-        )
+        await _aoffload_media_list(getattr(step_output, "images", None), storage, session_id, "image", cache=cache)
+        await _aoffload_media_list(getattr(step_output, "videos", None), storage, session_id, "video", cache=cache)
+        await _aoffload_media_list(getattr(step_output, "audio", None), storage, session_id, "audio", cache=cache)
+        await _aoffload_media_list(getattr(step_output, "files", None), storage, session_id, "file", cache=cache)
 
     for executor_run in getattr(run_response, "step_executor_runs", None) or []:
         if isinstance(executor_run, WorkflowRunOutput):
-            await aoffload_workflow_media(executor_run, storage, session_id, run_id, cache=cache)
+            await aoffload_workflow_media(executor_run, storage, session_id, cache=cache)
         else:
-            await aoffload_run_media(executor_run, storage, session_id, run_id, cache=cache)
+            await aoffload_run_media(executor_run, storage, session_id, cache=cache)
 
     workflow_agent_run = getattr(run_response, "workflow_agent_run", None)
     if workflow_agent_run is not None:
-        await aoffload_run_media(workflow_agent_run, storage, session_id, run_id, cache=cache)
+        await aoffload_run_media(workflow_agent_run, storage, session_id, cache=cache)
 
 
 # ---------------------------------------------------------------------------
@@ -607,76 +649,155 @@ async def aoffload_workflow_media(
 
 def refresh_message_media_urls(message: Message, storage: MediaStorage) -> None:
     """Refresh pre-signed URLs for all media with media_reference in a message."""
-    for media_list in [message.images, message.audio, message.videos, message.files]:
-        if media_list:
-            for media in media_list:
-                if hasattr(media, "media_reference") and media.media_reference is not None:
-                    try:
-                        fresh_url = storage.get_url(media.media_reference.storage_key)
-                        # The reference is the durable pointer; media.url below is the transient
-                        # value this turn's model call uses.
-                        media.media_reference.url = _persistable_url(fresh_url)
-                        if not fresh_url or fresh_url.startswith("file://"):
-                            # Local file:// URLs — and empty/unsigned URLs (e.g. GCS with
-                            # non-signing credentials) — are not accepted by model APIs. Read
-                            # the bytes so the model adapter can base64-encode them.
-                            media.content = storage.download(media.media_reference.storage_key)
-                            media.url = None
-                        else:
-                            media.url = fresh_url
-                    except Exception as e:
-                        log_warning(f"Failed to refresh URL for {getattr(media, 'id', '?')}: {e}")
-    # audio_output is the only output field serialized by Message.to_dict()
-    if (
-        message.audio_output
-        and hasattr(message.audio_output, "media_reference")
-        and message.audio_output.media_reference is not None
-    ):
+    for media in _iter_message_media(message):
+        ref: Optional[MediaReference] = getattr(media, "media_reference", None)
+        if ref is None:
+            continue
+        if not reference_matches_storage(ref, storage):
+            log_warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
+            continue
         try:
-            fresh_url = storage.get_url(message.audio_output.media_reference.storage_key)
-            message.audio_output.media_reference.url = _persistable_url(fresh_url)
+            fresh_url = storage.get_url(ref.storage_key)
+            # The reference is the durable pointer; media.url is this turn's transient value.
+            ref.url = _persistable_url(fresh_url)
             if not fresh_url or fresh_url.startswith("file://"):
-                message.audio_output.content = storage.download(message.audio_output.media_reference.storage_key)
-                message.audio_output.url = None
+                # Model APIs reject file:// and unsigned URLs, so hand them the bytes instead.
+                media.content = storage.download(ref.storage_key)
+                media.url = None
             else:
-                message.audio_output.url = fresh_url
+                media.url = fresh_url
         except Exception as e:
-            log_warning(f"Failed to refresh URL for audio_output: {e}")
+            log_warning(f"Failed to refresh URL for {getattr(media, 'id', '?')}: {e}")
 
 
 async def arefresh_message_media_urls(message: Message, storage: AsyncMediaStorage) -> None:
     """Async: refresh pre-signed URLs for all media with media_reference in a message."""
-    for media_list in [message.images, message.audio, message.videos, message.files]:
-        if media_list:
-            for media in media_list:
-                if hasattr(media, "media_reference") and media.media_reference is not None:
-                    try:
-                        fresh_url = await storage.get_url(media.media_reference.storage_key)
-                        # The reference is the durable pointer; media.url below is the transient
-                        # value this turn's model call uses.
-                        media.media_reference.url = _persistable_url(fresh_url)
-                        if not fresh_url or fresh_url.startswith("file://"):
-                            # Local file:// URLs — and empty/unsigned URLs (e.g. GCS with
-                            # non-signing credentials) — are not accepted by model APIs. Read
-                            # the bytes so the model adapter can base64-encode them.
-                            media.content = await storage.download(media.media_reference.storage_key)
-                            media.url = None
-                        else:
-                            media.url = fresh_url
-                    except Exception as e:
-                        log_warning(f"Failed to refresh URL for {getattr(media, 'id', '?')}: {e}")
-    if (
-        message.audio_output
-        and hasattr(message.audio_output, "media_reference")
-        and message.audio_output.media_reference is not None
-    ):
+    for media in _iter_message_media(message):
+        ref: Optional[MediaReference] = getattr(media, "media_reference", None)
+        if ref is None:
+            continue
+        if not reference_matches_storage(ref, storage):
+            log_warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
+            continue
         try:
-            fresh_url = await storage.get_url(message.audio_output.media_reference.storage_key)
-            message.audio_output.media_reference.url = _persistable_url(fresh_url)
+            fresh_url = await storage.get_url(ref.storage_key)
+            ref.url = _persistable_url(fresh_url)
             if not fresh_url or fresh_url.startswith("file://"):
-                message.audio_output.content = await storage.download(message.audio_output.media_reference.storage_key)
-                message.audio_output.url = None
+                media.content = await storage.download(ref.storage_key)
+                media.url = None
             else:
-                message.audio_output.url = fresh_url
+                media.url = fresh_url
         except Exception as e:
-            log_warning(f"Failed to refresh URL for audio_output: {e}")
+            log_warning(f"Failed to refresh URL for {getattr(media, 'id', '?')}: {e}")
+
+
+def iter_run_media(run: Any):
+    """Yield every media object hanging off a run, across agent/team/workflow shapes."""
+    run_input = getattr(run, "input", None)
+    for attr in ("images", "videos", "audios", "files"):
+        for media in getattr(run_input, attr, None) or []:
+            yield media
+    for message in getattr(run, "messages", None) or []:
+        for attr in ("images", "videos", "audio", "files"):
+            for media in getattr(message, attr, None) or []:
+                yield media
+        audio_output = getattr(message, "audio_output", None)
+        if audio_output is not None:
+            yield audio_output
+    for attr in ("images", "videos", "audio", "files"):
+        for media in getattr(run, attr, None) or []:
+            yield media
+    response_audio = getattr(run, "response_audio", None)
+    if response_audio is not None:
+        yield response_audio
+    for collection in ("additional_input", "reasoning_messages"):
+        for message in getattr(run, collection, None) or []:
+            for attr in ("images", "videos", "audio", "files"):
+                for media in getattr(message, attr, None) or []:
+                    yield media
+    # Team members
+    for member in getattr(run, "member_responses", None) or []:
+        yield from iter_run_media(member)
+    # Workflow steps, including the children nested inside container steps
+    for step_output in iter_step_outputs(run):
+        for attr in ("images", "videos", "audio", "files"):
+            for media in getattr(step_output, attr, None) or []:
+                yield media
+    for executor_run in getattr(run, "step_executor_runs", None) or []:
+        yield from iter_run_media(executor_run)
+    workflow_agent_run = getattr(run, "workflow_agent_run", None)
+    if workflow_agent_run is not None:
+        yield from iter_run_media(workflow_agent_run)
+
+
+# ---------------------------------------------------------------------------
+# Session media deletion
+# ---------------------------------------------------------------------------
+
+
+def session_media_keys(
+    session: Any,
+    session_ids: Sequence[str],
+    storage: Union[MediaStorage, AsyncMediaStorage],
+) -> List[str]:
+    """Storage keys these sessions own, read before the rows that name them are gone.
+
+    The reference is the only record of which object belongs to which session, so a caller
+    that deletes first can never find the objects again. A run that merely inherited a
+    reference names the session that uploaded the object, and is left be.
+    """
+    keys: List[str] = []
+    for run in getattr(session, "runs", None) or []:
+        for media in iter_run_media(run):
+            ref = getattr(media, "media_reference", None)
+            if ref is None or not ref.storage_key:
+                continue
+            if ref.session_id not in session_ids:
+                continue
+            # A key only resolves against the backend that wrote it, matching the guard the
+            # fetch route applies before serving one.
+            if not reference_matches_storage(ref, storage):
+                continue
+            keys.append(ref.storage_key)
+    return keys
+
+
+def delete_media_keys(keys: Sequence[str], storage: MediaStorage) -> None:
+    """Best-effort: the rows are already gone, so a storage failure must not fail the delete."""
+    unique = list(dict.fromkeys(keys))
+    try:
+        storage.delete_many(unique)
+    except Exception as e:
+        log_warning(f"Failed to delete {len(unique)} media objects: {e}")
+
+
+async def adelete_media_keys(keys: Sequence[str], storage: Union[MediaStorage, AsyncMediaStorage]) -> None:
+    """Async variant of :func:`delete_media_keys`."""
+    unique = list(dict.fromkeys(keys))
+    try:
+        if isinstance(storage, AsyncMediaStorage):
+            await storage.delete_many(unique)
+        else:
+            await asyncio.to_thread(storage.delete_many, unique)
+    except Exception as e:
+        log_warning(f"Failed to delete {len(unique)} media objects: {e}")
+
+
+def refresh_messages_media(messages: Sequence[Message], storage: Union[MediaStorage, AsyncMediaStorage]) -> None:
+    """Re-read offloaded media on messages headed for the model."""
+    if isinstance(storage, AsyncMediaStorage):
+        raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+    for message in messages:
+        refresh_message_media_urls(message, storage)
+
+
+async def arefresh_messages_media(messages: Sequence[Message], storage: Union[MediaStorage, AsyncMediaStorage]) -> None:
+    """Async variant of :func:`refresh_messages_media`."""
+    if isinstance(storage, AsyncMediaStorage):
+        for message in messages:
+            await arefresh_message_media_urls(message, storage)
+    else:
+        # A sync backend re-signs (and on a non-signing one, downloads) per message, so it
+        # runs in a worker thread rather than on the loop the model call is waiting on.
+        for message in messages:
+            await asyncio.to_thread(refresh_message_media_urls, message, storage)

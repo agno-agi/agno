@@ -139,7 +139,7 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
             # Return no URL rather than one S3 will reject on use.
             log_warning(
                 f"presigned_url_expiry {expires_in}s exceeds the SigV4 maximum of "
-                f"{S3_MAX_PRESIGNED_EXPIRY}s; will stream instead"
+                f"{S3_MAX_PRESIGNED_EXPIRY}s, falling back to streaming"
             )
             return ""
 

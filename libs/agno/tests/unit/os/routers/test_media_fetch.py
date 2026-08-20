@@ -1,4 +1,4 @@
-"""Integration tests for the session-scoped media fetch endpoint.
+"""Tests for the session-scoped media fetch endpoint.
 
 Validates that GET /sessions/{session_id}/media/{storage_key}:
 - returns the owner's media bytes

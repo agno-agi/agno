@@ -80,10 +80,7 @@ class GCSMediaStorage(MediaStorage):
                 )
             if self.credentials_path:
                 if not Path(self.credentials_path).is_file():
-                    raise ValueError(
-                        f"credentials_path '{self.credentials_path}' does not exist, so GCSMediaStorage "
-                        "cannot authenticate."
-                    )
+                    raise ValueError(f"credentials_path not found: {self.credentials_path}")
                 self._client = storage.Client.from_service_account_json(self.credentials_path)
             elif self.project:
                 self._client = storage.Client(project=self.project)
@@ -152,11 +149,13 @@ class GCSMediaStorage(MediaStorage):
             )
         except AttributeError as e:
             # What google-cloud-storage raises for a credential with no private key.
-            log_debug(f"Could not sign GCS URL for {storage_key} (non-signing credentials); will stream instead: {e}")
+            log_debug(
+                f"Could not sign GCS URL for {storage_key} (non-signing credentials), falling back to streaming: {e}"
+            )
             return ""
         except Exception as e:
             # Anything else is a misconfiguration, e.g. an expiry above the V4 seven-day ceiling.
-            log_warning(f"Could not sign GCS URL for {storage_key}; will stream instead: {e}")
+            log_warning(f"Could not sign GCS URL for {storage_key}, falling back to streaming: {e}")
             return ""
 
     def delete(self, storage_key: str) -> bool:

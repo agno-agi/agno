@@ -39,7 +39,7 @@ def _seed(db, storage, session_id, user_id="u-1", content=IMAGE_BYTES):
         status=RunStatus.completed,
         images=[Image(id=f"img-{session_id}", mime_type="image/png", content=content)],
     )
-    offload_run_media(run, storage, session_id, run.run_id or "")
+    offload_run_media(run, storage, session_id)
     now = int(time.time())
     db.upsert_session(
         AgentSession(
@@ -198,3 +198,45 @@ def test_bulk_delete_media_without_a_backend_is_refused(storage_dir):
 
     assert response.status_code == 503
     assert storage.exists(key) is True
+
+
+def test_a_fork_does_not_delete_the_media_it_borrowed(storage_dir):
+    """A fork copies the reference verbatim, so its sweep must leave the source's object alone."""
+    import copy
+
+    db = InMemoryDb()
+    storage = LocalMediaStorage(base_path=storage_dir)
+    key = _seed(db, storage, "source")
+
+    source = db.get_session(session_id="source", user_id="u-1")
+    forked_run = copy.deepcopy(source.runs[0])
+    forked_run.run_id = "run-fork"
+    forked_run.session_id = "fork"
+    now = int(time.time())
+    db.upsert_session(
+        AgentSession(
+            session_id="fork",
+            agent_id="a-1",
+            user_id="u-1",
+            runs=[forked_run],
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    assert forked_run.images[0].media_reference.storage_key == key
+
+    client = _build_client(db, media_storage=storage)
+    assert client.delete("/sessions/fork?delete_media=true").status_code == 204
+
+    assert _objects(storage_dir) == {Path(key).name}
+
+
+def test_a_session_still_deletes_the_media_it_owns(storage_dir):
+    db = InMemoryDb()
+    storage = LocalMediaStorage(base_path=storage_dir)
+    _seed(db, storage, "source")
+
+    client = _build_client(db, media_storage=storage)
+    assert client.delete("/sessions/source?delete_media=true").status_code == 204
+
+    assert _objects(storage_dir) == set()

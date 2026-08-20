@@ -769,7 +769,7 @@ def get_team_router(
             if not isinstance(value, (list, tuple)):
                 raise HTTPException(
                     status_code=422,
-                    detail=f"`{field}` must be a JSON array; upload binary content via `files`",
+                    detail=f"'{field}' must be a JSON array. Upload binary content via 'files'",
                 )
             target.extend(value)
 

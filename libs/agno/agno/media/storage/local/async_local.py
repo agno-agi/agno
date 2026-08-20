@@ -25,6 +25,7 @@ class AsyncLocalMediaStorage(AsyncMediaStorage):
         # Read back off the delegate so the Path/rstrip normalization is not duplicated.
         self.base_path = self._sync.base_path
         self.base_url = self._sync.base_url
+        self.bucket = self._sync.bucket
 
     async def upload(
         self,

@@ -73,3 +73,22 @@ prefix (77 and 82 bytes, `ContentType: text/csv`), and
 a 307 to a freshly-signed URL.
 
 ---
+
+### media_storage_delete.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started AgentOS against a real S3 bucket, attached a text file to a run
+through `POST /agents/media-delete-agent/runs`, read the session and the object back, then
+deleted the session both without and with `delete_media=true`.
+
+**Result:** Run returned 200 and uploaded one object under `agno/agentos/files/`. The session
+row carried a `media_reference` and no base64.
+`GET /sessions/{session_id}/media/{storage_key}` returned 200 with `text/plain; charset=utf-8`
+and the exact 21 bytes; `redirect=true` returned 307. `DELETE /sessions/{session_id}` returned
+204 and left the object in S3; the same delete with `delete_media=true` returned 204 and
+removed it. The bucket was restored to its prior contents afterwards.
+
+---

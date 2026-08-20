@@ -393,8 +393,7 @@ def _get_task_management_tools(
             ):
                 from agno.agent._run import scrub_run_output_for_storage
 
-                # Record what this member's own flags drop, so the copy already promoted onto
-                # the team's row is dropped with it — by here the ids exist nowhere else.
+                # Recorded before the scrub: by here the ids exist nowhere else.
                 if not member_agent.store_media:
                     _record_opted_out_media(team, member_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_run_response)  # type: ignore[arg-type]

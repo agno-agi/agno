@@ -10,6 +10,7 @@ import asyncio
 import copy
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ from agno.media.storage.local import LocalMediaStorage
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.utils.agent import scrub_media_from_message
-from agno.utils.media_offload import offload_run_media
+from agno.utils.media_offload import _offload_single_media, offload_run_media
 
 
 def test_idless_files_get_distinct_keys():
@@ -29,7 +30,7 @@ def test_idless_files_get_distinct_keys():
         storage = LocalMediaStorage(base_path=tmpdir)
         f1 = File(content=b"REPORT ALPHA", mime_type="text/plain")
         f2 = File(content=b"REPORT BRAVO", mime_type="text/plain")
-        offload_run_media(RunOutput(run_id="r", files=[f1, f2]), storage, "s", "r")
+        offload_run_media(RunOutput(run_id="r", files=[f1, f2]), storage, "s")
 
         assert f1.media_reference.storage_key != f2.media_reference.storage_key
         assert storage.download(f1.media_reference.storage_key) == b"REPORT ALPHA"
@@ -40,7 +41,7 @@ def test_idless_media_gets_id_assigned():
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = LocalMediaStorage(base_path=tmpdir)
         f = File(content=b"data", mime_type="text/plain")
-        offload_run_media(RunOutput(run_id="r", files=[f]), storage, "s", "r")
+        offload_run_media(RunOutput(run_id="r", files=[f]), storage, "s")
         assert f.id is not None
 
 
@@ -49,7 +50,7 @@ def test_media_reference_rebuilt_from_dict():
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = LocalMediaStorage(base_path=tmpdir)
         img = Image(content=b"hello", id="i1", mime_type="image/png")
-        offload_run_media(RunOutput(run_id="r", images=[img]), storage, "s", "r")
+        offload_run_media(RunOutput(run_id="r", images=[img]), storage, "s")
 
         rebuilt = Image.model_validate(img.to_dict())
         assert isinstance(rebuilt.media_reference, MediaReference)
@@ -76,7 +77,7 @@ def test_get_content_bytes_never_reads_a_file_uri():
         # The offloaded bytes are still retrievable, just through the backend.
         storage = LocalMediaStorage(base_path=tmpdir)
         img = Image(content=b"png-bytes", id="i2", mime_type="image/png")
-        offload_run_media(RunOutput(run_id="r", images=[img]), storage, "s", "r")
+        offload_run_media(RunOutput(run_id="r", images=[img]), storage, "s")
         rebuilt = Image.model_validate(img.to_dict())
         assert storage.download(rebuilt.media_reference.storage_key) == b"png-bytes"
 
@@ -103,8 +104,8 @@ def test_same_id_distinct_content_no_overwrite():
         storage = LocalMediaStorage(base_path=tmpdir)
         a = Image(content=b"AAAA", id="dup", mime_type="image/png")
         b = Image(content=b"BBBB", id="dup", mime_type="image/png")
-        offload_run_media(RunOutput(run_id="r1", images=[a]), storage, "s", "r1")
-        offload_run_media(RunOutput(run_id="r2", images=[b]), storage, "s", "r2")
+        offload_run_media(RunOutput(run_id="r1", images=[a]), storage, "s")
+        offload_run_media(RunOutput(run_id="r2", images=[b]), storage, "s")
 
         assert a.media_reference.storage_key != b.media_reference.storage_key
         assert storage.download(a.media_reference.storage_key) == b"AAAA"
@@ -139,7 +140,7 @@ def test_per_item_offload_failure_kept_inline():
     good = Image(content=b"GOOD", id="g", mime_type="image/png")
     bad = Image(content=b"FAIL", id="b", mime_type="image/png")
     run = RunOutput(run_id="r", messages=[Message(role="user", content="x", images=[good, bad])])
-    offload_run_media(run, FlakyStorage(), "s", "r")
+    offload_run_media(run, FlakyStorage(), "s")
     scrub_media_from_run_output(run, keep_references=True)
 
     ids = {i.id for i in (run.messages[0].images or [])}
@@ -159,14 +160,14 @@ def test_async_storage_on_sync_path_keeps_media_inline():
         assert run.images is not None and len(run.images) == 1
 
 
-def test_nested_team_keeps_referenced_leaf_media():
-    """Leaf media offloaded by the root team must survive nested member scrub."""
+def _nested_team(leaf_kwargs):
+    """A top team with offload configured, a sub-team under it, and one leaf agent."""
     from agno.agent.agent import Agent
     from agno.models.openai import OpenAIResponses
     from agno.run.team import TeamRunOutput
     from agno.team.team import Team
 
-    leaf = Agent(name="leaf", id="leaf", model=OpenAIResponses(id="gpt-5.5"), store_media=False)
+    leaf = Agent(name="leaf", id="leaf", model=OpenAIResponses(id="gpt-5.5"), **leaf_kwargs)
     sub = Team(name="sub", id="sub", members=[leaf], model=OpenAIResponses(id="gpt-5.5"))
     top = Team(
         name="top",
@@ -180,12 +181,62 @@ def test_nested_team_keeps_referenced_leaf_media():
     leaf_img = Image(url="file:///x", media_reference=ref, id="leafimg")
     leaf_run = RunOutput(run_id="lr", agent_id="leaf", images=[leaf_img])
     sub_run = TeamRunOutput(run_id="sr", team_id="sub", member_responses=[leaf_run])
+    return top, sub_run, leaf_run
+
+
+def test_nested_team_keeps_referenced_leaf_media():
+    """Leaf media offloaded by the root team must survive nested member scrub."""
+    top, sub_run, leaf_run = _nested_team({"store_media": True, "store_history_messages": False})
 
     top._scrub_member_responses([sub_run])
 
     assert leaf_run.images is not None
     assert len(leaf_run.images) == 1
     assert leaf_run.images[0].media_reference is not None
+
+
+def test_nested_team_drops_media_of_opted_out_leaf():
+    """store_media=False on a member means no trace, not a reference to the team's bucket."""
+    top, sub_run, leaf_run = _nested_team({"store_media": False})
+
+    top._scrub_member_responses([sub_run])
+
+    assert leaf_run.images is None
+
+
+def test_offload_skips_member_that_opted_out_of_media():
+    """The team never uploads media belonging to a member whose store_media is off."""
+    from agno.agent.agent import Agent
+    from agno.models.openai import OpenAIResponses
+    from agno.run.team import TeamRunOutput
+    from agno.team.team import Team
+    from agno.utils.agent import build_offloaded_storage_copy
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        private = Agent(name="private", id="private", model=OpenAIResponses(id="gpt-5.5"), store_media=False)
+        sharing = Agent(name="sharing", id="sharing", model=OpenAIResponses(id="gpt-5.5"))
+        team = Team(
+            name="team",
+            id="team",
+            members=[private, sharing],
+            model=OpenAIResponses(id="gpt-5.5"),
+            media_storage=LocalMediaStorage(base_path=tmpdir),
+        )
+
+        private_run = RunOutput(
+            run_id="pr", agent_id="private", images=[Image(content=b"SECRET", id="secret", mime_type="image/png")]
+        )
+        sharing_run = RunOutput(
+            run_id="sr", agent_id="sharing", images=[Image(content=b"SHARED", id="shared", mime_type="image/png")]
+        )
+        team_run = TeamRunOutput(run_id="tr", team_id="team", member_responses=[private_run, sharing_run])
+
+        storage_copy = build_offloaded_storage_copy(team, team_run, "session-1")
+
+        assert storage_copy is not None
+        stored = sorted(f.name for f in Path(tmpdir).rglob("*") if f.is_file() and f.suffix != ".json")
+        assert not any("secret" in name for name in stored)
+        assert any("shared" in name for name in stored)
 
 
 def test_team_save_session_offloads_nothing():
@@ -667,7 +718,7 @@ def test_offload_cache_uploads_once_across_persists():
 
         for _ in range(3):
             storage_copy = copy.deepcopy(run)
-            offload_run_media(storage_copy, storage, "s1", "r1", cache=offload_cache_for(run))
+            offload_run_media(storage_copy, storage, "s1", cache=offload_cache_for(run))
             assert storage_copy.images[0].media_reference is not None
             assert storage_copy.images[0].content is None
 
@@ -690,7 +741,7 @@ def test_cache_does_not_hand_one_media_kind_another_kinds_object():
             images=[Image(id="same", mime_type="image/png", content=b"SHARED")],
             files=[File(id="same", mime_type="text/plain", content=b"SHARED")],
         )
-        offload_run_media(run, storage, "s1", "r1", cache=offload_cache_for(run))
+        offload_run_media(run, storage, "s1", cache=offload_cache_for(run))
 
         img_ref = run.images[0].media_reference
         file_ref = run.files[0].media_reference
@@ -777,3 +828,143 @@ def test_member_run_rows_are_offloaded_with_the_teams_backend():
         # The caller's own object keeps its bytes: offload works on a copy.
         assert img.content == b"MEMBERBYTES" * 60
         assert getattr(img, "media_reference", None) is None
+
+
+def test_continue_run_reads_offloaded_media_back():
+    """A HITL resume must see the images the paused turn saw, not empty media."""
+    from agno.agent._messages import get_continue_run_messages
+    from agno.agent.agent import Agent
+    from agno.models.openai import OpenAIResponses
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalMediaStorage(base_path=tmpdir)
+        agent = Agent(model=OpenAIResponses(id="gpt-5.5"), media_storage=storage)
+
+        img = Image(content=b"PAUSED IMAGE", id="img", mime_type="image/png")
+        offloaded = copy.deepcopy(img)
+        _offload_single_media(offloaded, storage, "session-1", "image")
+        assert offloaded.content is None
+
+        paused = Message(role="user", content="what is this?", images=[offloaded])
+        run_messages = get_continue_run_messages(agent, input=[paused])
+
+        assert run_messages.messages[-1].images[0].content == b"PAUSED IMAGE"
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_reads_offloaded_media_back():
+    from agno.agent._messages import aget_continue_run_messages
+    from agno.agent.agent import Agent
+    from agno.models.openai import OpenAIResponses
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalMediaStorage(base_path=tmpdir)
+        agent = Agent(model=OpenAIResponses(id="gpt-5.5"), media_storage=storage)
+
+        img = Image(content=b"PAUSED IMAGE", id="img", mime_type="image/png")
+        _offload_single_media(img, storage, "session-1", "image")
+
+        paused = Message(role="user", content="what is this?", images=[img])
+        run_messages = await aget_continue_run_messages(agent, input=[paused])
+
+        assert run_messages.messages[-1].images[0].content == b"PAUSED IMAGE"
+
+
+def test_scrub_survives_a_remote_member():
+    """RemoteAgent and RemoteTeam carry the storage flags but no media_storage attribute.
+
+    A team with offload configured never reads it — the check short-circuits — so the
+    team under test is the one without, which is every team that predates this feature.
+    """
+    from agno.agent.remote import RemoteAgent
+    from agno.models.openai import OpenAIResponses
+    from agno.os.routers.agents.schema import AgentResponse
+    from agno.team.team import Team
+
+    remote = RemoteAgent(base_url="http://localhost:7777", agent_id="remote")
+    # The scrub resolves a member by id, and on a remote that reads its published config.
+    remote._cached_agent_config = (AgentResponse(id="remote", name="remote"), time.time())
+    team = Team(name="team", id="team", members=[remote], model=OpenAIResponses(id="gpt-5.5"))
+
+    member_run = RunOutput(run_id="mr", agent_id="remote", images=[Image(content=b"IMG", id="i")])
+
+    # store_media is on for this remote, so the scrub reaches it and leaves the media alone.
+    team._scrub_member_responses([member_run])
+
+    assert member_run.images is not None
+
+
+def test_a_fork_gets_its_own_copy_of_inherited_media():
+    """Before offload a fork deep-copied the bytes, so the two sessions were independent."""
+    from agno.media.storage.local import LocalMediaStorage
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalMediaStorage(base_path=tmpdir)
+        img = Image(content=b"FORKED-BYTES", id="img", mime_type="image/png")
+        _offload_single_media(img, storage, "source", "image")
+        source_key = img.media_reference.storage_key
+
+        inherited = copy.deepcopy(img)
+        _offload_single_media(inherited, storage, "fork", "image")
+
+        assert inherited.media_reference.storage_key != source_key
+        assert inherited.media_reference.session_id == "fork"
+        assert storage.download(source_key) == b"FORKED-BYTES"
+        assert storage.download(inherited.media_reference.storage_key) == b"FORKED-BYTES"
+
+
+def test_a_member_that_stores_no_media_keeps_it_off_the_team_row():
+    """Delegated media reaches the team through the tool result, which carries no member id."""
+    from agno.agent.agent import Agent
+    from agno.models.openai import OpenAIResponses
+    from agno.run.team import TeamRunOutput
+    from agno.team._run import _record_opted_out_media, drop_opted_out_member_media
+    from agno.team.team import Team
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        private = Agent(name="private", id="private", model=OpenAIResponses(id="gpt-5.5"), store_media=False)
+        team = Team(
+            name="team",
+            id="team",
+            members=[private],
+            model=OpenAIResponses(id="gpt-5.5"),
+            media_storage=LocalMediaStorage(base_path=tmpdir),
+        )
+
+        secret = Image(content=b"SECRET", id="secret", mime_type="image/png")
+        member_run = RunOutput(run_id="mr", agent_id="private", images=[secret])
+        _record_opted_out_media(team, member_run)
+
+        # the tool result already promoted it onto the team's own output
+        team_run = TeamRunOutput(run_id="tr", team_id="team", images=[secret], member_responses=[member_run])
+        drop_opted_out_member_media(team, team_run)
+
+        assert team_run.images is None
+
+
+def test_a_member_that_stores_no_media_keeps_its_files_off_the_team_row():
+    """Files travel the same promotion path as images and were missed by the first fix."""
+    from agno.agent.agent import Agent
+    from agno.models.openai import OpenAIResponses
+    from agno.run.team import TeamRunOutput
+    from agno.team._run import _record_opted_out_media, drop_opted_out_member_media
+    from agno.team.team import Team
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        private = Agent(name="private", id="private", model=OpenAIResponses(id="gpt-5.5"), store_media=False)
+        team = Team(
+            name="team",
+            id="team",
+            members=[private],
+            model=OpenAIResponses(id="gpt-5.5"),
+            media_storage=LocalMediaStorage(base_path=tmpdir),
+        )
+
+        report = File(content=b"col_a,col_b\n1,2\n", id="report", mime_type="text/csv", filename="r.csv")
+        member_run = RunOutput(run_id="mr", agent_id="private", files=[report])
+        _record_opted_out_media(team, member_run)
+
+        team_run = TeamRunOutput(run_id="tr", team_id="team", files=[report], member_responses=[member_run])
+        drop_opted_out_member_media(team, team_run)
+
+        assert team_run.files is None

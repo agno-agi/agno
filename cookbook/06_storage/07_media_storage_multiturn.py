@@ -17,7 +17,6 @@ Requirements:
 """
 
 import os
-from pathlib import Path
 
 import httpx
 from agno.agent import Agent
@@ -60,9 +59,6 @@ agent = Agent(
 # Run the Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Start from a clean slate so turn 1 really offloads for the first time
-    Path(DB_FILE).unlink(missing_ok=True)
-
     image_bytes = httpx.get(IMAGE_URL, follow_redirects=True).content
 
     # Turn 1: send the image and ask about it

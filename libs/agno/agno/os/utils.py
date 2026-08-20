@@ -81,55 +81,14 @@ def parse_files_metadata(files_metadata: Optional[str]) -> List[Optional[Dict[st
         )
     try:
         parsed = json.loads(files_metadata)
-    except json.JSONDecodeError:
-        log_warning(f"Invalid files_metadata JSON: {files_metadata}")
+    except json.JSONDecodeError as e:
+        log_warning(f"Invalid files_metadata JSON: {files_metadata}: {str(e)}")
         return []
     if not isinstance(parsed, list):
         return []
     # Coerce non-object entries to None so the matching file is still processed (just without
     # metadata) instead of being dropped.
     return [m if isinstance(m, dict) else None for m in parsed]
-
-
-def iter_run_media(run: Any):
-    """Yield every media object hanging off a run, across agent/team/workflow shapes."""
-    from agno.utils.media_offload import iter_step_outputs
-
-    run_input = getattr(run, "input", None)
-    for attr in ("images", "videos", "audios", "files"):
-        for media in getattr(run_input, attr, None) or []:
-            yield media
-    for message in getattr(run, "messages", None) or []:
-        for attr in ("images", "videos", "audio", "files"):
-            for media in getattr(message, attr, None) or []:
-                yield media
-        audio_output = getattr(message, "audio_output", None)
-        if audio_output is not None:
-            yield audio_output
-    for attr in ("images", "videos", "audio", "files"):
-        for media in getattr(run, attr, None) or []:
-            yield media
-    response_audio = getattr(run, "response_audio", None)
-    if response_audio is not None:
-        yield response_audio
-    for collection in ("additional_input", "reasoning_messages"):
-        for message in getattr(run, collection, None) or []:
-            for attr in ("images", "videos", "audio", "files"):
-                for media in getattr(message, attr, None) or []:
-                    yield media
-    # Team members
-    for member in getattr(run, "member_responses", None) or []:
-        yield from iter_run_media(member)
-    # Workflow steps, including the children nested inside container steps
-    for step_output in iter_step_outputs(run):
-        for attr in ("images", "videos", "audio", "files"):
-            for media in getattr(step_output, attr, None) or []:
-                yield media
-    for executor_run in getattr(run, "step_executor_runs", None) or []:
-        yield from iter_run_media(executor_run)
-    workflow_agent_run = getattr(run, "workflow_agent_run", None)
-    if workflow_agent_run is not None:
-        yield from iter_run_media(workflow_agent_run)
 
 
 def drop_media_references(media_dicts: Any) -> Any:

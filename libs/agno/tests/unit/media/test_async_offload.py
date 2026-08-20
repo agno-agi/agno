@@ -41,7 +41,7 @@ class TestAsyncOffloadRunMedia:
                 messages=[Message(role="user", content="hi", images=[msg_img])],
             )
 
-            await aoffload_run_media(run, storage, "s1", "r1")
+            await aoffload_run_media(run, storage, "s1")
 
             for media, payload in ((out_img, b"OUTPUT-BYTES"), (msg_img, b"MESSAGE-BYTES")):
                 assert media.media_reference is not None
@@ -58,7 +58,7 @@ class TestAsyncOffloadRunMedia:
             payload = b"\x89PNG\r\n" + b"x" * 500
             img = Image(content=payload, id="i", mime_type="image/png")
 
-            await aoffload_run_media(RunOutput(run_id="r", images=[img]), storage, "s", "r")
+            await aoffload_run_media(RunOutput(run_id="r", images=[img]), storage, "s")
 
             ref = img.media_reference
             assert ref.size == len(payload)
@@ -75,7 +75,7 @@ class TestAsyncOffloadRunMedia:
             payload = b"\x89PNG\r\n" + b"y" * 300
             img = Image(content=payload, id="i", mime_type="image/png")
 
-            offload_run_media(RunOutput(run_id="r", images=[img]), storage, "s", "r")
+            offload_run_media(RunOutput(run_id="r", images=[img]), storage, "s")
 
             ref = img.media_reference
             assert ref.size == len(payload)
@@ -93,7 +93,7 @@ class TestAsyncOffloadRunMedia:
                 messages=[Message(role="user", content="old", from_history=True, images=[img])],
             )
 
-            await aoffload_run_media(run, storage, "s", "r")
+            await aoffload_run_media(run, storage, "s")
 
             assert img.media_reference is None
             assert img.content == b"HISTORY"
@@ -105,7 +105,7 @@ class TestAsyncOffloadRunMedia:
             ref = MediaReference(media_id="i", storage_key="already.png", storage_backend="local")
             img = Image(url="file:///already.png", media_reference=ref, id="i")
 
-            await aoffload_run_media(RunOutput(run_id="r", images=[img]), storage, "s", "r")
+            await aoffload_run_media(RunOutput(run_id="r", images=[img]), storage, "s")
 
             assert img.media_reference is ref
             assert not await storage.exists("already.png")
@@ -118,7 +118,7 @@ class TestAsyncOffloadRunMedia:
             a = Image(content=b"AAAA", mime_type="image/png")
             b = Image(content=b"BBBB", mime_type="image/png")
 
-            await aoffload_run_media(RunOutput(run_id="r", images=[a, b]), storage, "s", "r")
+            await aoffload_run_media(RunOutput(run_id="r", images=[a, b]), storage, "s")
 
             assert a.media_reference.storage_key != b.media_reference.storage_key
             assert await storage.download(a.media_reference.storage_key) == b"AAAA"
@@ -141,7 +141,7 @@ class TestAsyncOffloadWorkflowMedia:
             )
             run.step_executor_runs = [RunOutput(run_id="ar", images=[exec_img])]
 
-            await aoffload_workflow_media(run, storage, "s", "wr")
+            await aoffload_workflow_media(run, storage, "s")
 
             for media, payload in ((top, b"TOP"), (step_img, b"STEP"), (exec_img, b"EXEC")):
                 assert media.media_reference is not None, f"{media.id} was not offloaded"
@@ -157,7 +157,7 @@ class TestAsyncOffloadWorkflowMedia:
             outer = WorkflowRunOutput(run_id="outer", workflow_id="outer-wf")
             outer.step_executor_runs = [nested]
 
-            await aoffload_workflow_media(outer, storage, "s", "outer")
+            await aoffload_workflow_media(outer, storage, "s")
 
             assert nested_img.media_reference is not None
             assert await storage.download(nested_img.media_reference.storage_key) == b"NESTED"
@@ -339,7 +339,7 @@ class TestPresignedUrlIsNotPersisted:
 
     def test_sync_offload_does_not_persist_presigned_url(self):
         img = Image(content=b"data", id="i", mime_type="image/png")
-        _offload_single_media(img, _PresignedUrlStorage(), "s", "r", "image")
+        _offload_single_media(img, _PresignedUrlStorage(), "s", "image")
 
         assert img.media_reference.url is None
         assert img.url is None
@@ -349,7 +349,7 @@ class TestPresignedUrlIsNotPersisted:
         img = Image(content=b"data", id="i", mime_type="image/png")
         run = RunOutput(run_id="r", images=[img])
 
-        await aoffload_run_media(run, _AsyncPresignedUrlStorage(), "s", "r")
+        await aoffload_run_media(run, _AsyncPresignedUrlStorage(), "s")
 
         assert img.media_reference.url is None
         assert img.url is None
@@ -364,7 +364,7 @@ class TestPresignedUrlIsNotPersisted:
                 return f"https://cdn.example.com/{storage_key}"
 
         img = Image(content=b"data", id="i", mime_type="image/png")
-        _offload_single_media(img, _PublicUrlStorage(), "s", "r", "image")
+        _offload_single_media(img, _PublicUrlStorage(), "s", "image")
 
         expected = f"https://cdn.example.com/{img.media_reference.storage_key}"
         assert img.media_reference.url == expected

@@ -65,3 +65,15 @@
 **Result:** Objects uploaded under `agno/media/`; the persisted run holds a `media_reference` with backend `gcs`. ADC cannot sign URLs, so the reference stores no URL and AgentOS streams the bytes instead.
 
 ---
+
+### 09_media_storage_delete.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Two sessions each offload the same image to a real S3 bucket (`MEDIA_S3_BUCKET`, prefix `agno/media_delete/`). One is deleted without the flag, the other with `delete_media=True`. Ran with `OpenAIResponses(id="gpt-5.5")`.
+
+**Result:** Exit 0. Two objects in S3 after the runs; deleting the first session without the flag left both; deleting the second with `delete_media=True` swept only its own object, leaving one — the deliberate orphan from the un-flagged delete, which the example prints by key.
+
+---

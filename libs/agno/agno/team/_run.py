@@ -1888,6 +1888,7 @@ def run_dispatch(
     **kwargs: Any,
 ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team and return the response."""
+    from agno.media.storage.base import AsyncMediaStorage
     from agno.team._init import _has_async_db, _initialize_session, _initialize_session_state
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options
@@ -1895,6 +1896,10 @@ def run_dispatch(
 
     if _has_async_db(team):
         raise Exception("run() is not supported with an async DB. Please use arun() instead.")
+
+    # Refused here rather than at the persist below, which runs after the model call.
+    if isinstance(team.media_storage, AsyncMediaStorage):
+        raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
     # Set the id for the run
     run_id = run_id or str(uuid4())
@@ -4402,6 +4407,20 @@ def arun_dispatch(  # type: ignore
         )
 
 
+def _record_opted_out_media(team: "Team", run_response: Union[TeamRunOutput, RunOutput]) -> None:
+    """Remember the media ids of a member that stores none, before its own scrub drops them.
+
+    A delegated member's media reaches the team's row through the tool result, which carries no
+    member identity, so the ids have to be taken while the member run still holds them.
+    """
+    if team._opted_out_media_ids is None:
+        team._opted_out_media_ids = set()
+    for field_name in ("images", "videos", "audio", "files"):
+        for media in getattr(run_response, field_name, None) or []:
+            if media.id:
+                team._opted_out_media_ids.add(media.id)
+
+
 def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutput]) -> None:
     """Update the team state with the run response."""
     if run_response.images is not None:
@@ -4607,11 +4626,11 @@ def _cleanup_and_store(
             # Deep-copy first: offload strips content bytes off media objects the caller may reuse.
             # Taken inside the guard so an uncopyable payload also stays inline.
             offload_copy = copy.deepcopy(run_response)
+            drop_opted_out_member_media(team, offload_copy)
             offload_run_media(
                 offload_copy,
                 team.media_storage,
                 session.session_id,
-                run_response.run_id or "",
                 cache=offload_cache_for(run_response),
             )
             storage_copy = offload_copy
@@ -4706,12 +4725,12 @@ async def _acleanup_and_store(
                     from agno.utils.media_offload import offload_cache_for, offload_run_media
 
                     offload_copy = copy.deepcopy(run_response)
+                    drop_opted_out_member_media(team, offload_copy)
                     await asyncio.to_thread(
                         offload_run_media,
                         offload_copy,
                         team.media_storage,
                         session.session_id,
-                        run_response.run_id or "",
                         offload_cache_for(run_response),
                     )
                     storage_copy = offload_copy
@@ -4724,11 +4743,11 @@ async def _acleanup_and_store(
                 from agno.utils.media_offload import aoffload_run_media, offload_cache_for
 
                 offload_copy = copy.deepcopy(run_response)
+                drop_opted_out_member_media(team, offload_copy)
                 await aoffload_run_media(
                     offload_copy,
                     team.media_storage,
                     session.session_id,
-                    run_response.run_id or "",
                     cache=offload_cache_for(run_response),
                 )
                 storage_copy = offload_copy
@@ -5116,10 +5135,55 @@ def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> b
     return scrubbed
 
 
+def drop_opted_out_member_media(
+    team: "Team",
+    run_response: TeamRunOutput,
+) -> None:
+    """Remove media from member runs whose own store_media is off, before the team uploads it.
+
+    The team offloads the whole run, member responses included, so without this a member that
+    refused media persistence has its bytes written to the team's bucket anyway.
+    """
+    from agno.team._tools import _find_member_by_id
+    from agno.team.team import Team
+    from agno.utils.agent import scrub_media_from_run_output
+
+    # Media a member surfaced as the team's own answer: promotion recorded it because by this
+    # point nothing else knows which member produced it.
+    if team._opted_out_media_ids:
+        for field_name in ("images", "videos", "audio", "files"):
+            current = getattr(run_response, field_name, None)
+            if current:
+                setattr(
+                    run_response,
+                    field_name,
+                    [m for m in current if m.id not in team._opted_out_media_ids] or None,
+                )
+
+    for member_response in getattr(run_response, "member_responses", None) or []:
+        member_id = None
+        if isinstance(member_response, RunOutput):
+            member_id = member_response.agent_id
+        elif isinstance(member_response, TeamRunOutput):
+            member_id = member_response.team_id
+
+        if not member_id:
+            continue
+
+        member_result = _find_member_by_id(team, member_id)
+        if not member_result:
+            continue
+
+        _, member = member_result
+        if not member.store_media:
+            scrub_media_from_run_output(member_response, keep_references=False)
+        elif isinstance(member, Team) and getattr(member_response, "member_responses", None):
+            drop_opted_out_member_media(member, member_response)  # type: ignore[arg-type]
+
+
 def _scrub_member_responses(
     team: "Team",
     member_responses: List[Union[TeamRunOutput, RunOutput]],
-    keep_media_references: Optional[bool] = None,
 ) -> None:
     """
     Scrub member responses based on each member's storage flags.
@@ -5128,9 +5192,6 @@ def _scrub_member_responses(
     """
     from agno.team._tools import _find_member_by_id
     from agno.team.team import Team
-
-    if keep_media_references is None:
-        keep_media_references = team.media_storage is not None and team.store_media
 
     for member_response in member_responses:
         member_id = None
@@ -5150,20 +5211,17 @@ def _scrub_member_responses(
 
         _, member = member_result
 
-        keep_references = keep_media_references or member.media_storage is not None
-
         if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
             from agno.agent._run import scrub_run_output_for_storage
 
             scrub_run_output_for_storage(
                 member,  # type: ignore[arg-type]
                 run_response=member_response,  # type: ignore[arg-type]
-                keep_media_references=keep_references,
             )
 
         # If this is a nested team, recursively scrub its member responses
         if isinstance(member, Team) and isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            member._scrub_member_responses(member_response.member_responses, keep_media_references=keep_references)  # type: ignore
+            member._scrub_member_responses(member_response.member_responses)  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -5243,7 +5301,7 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
 # ---------------------------------------------------------------------------
 
 
-def _get_continue_run_messages(
+def _build_continue_run_messages(
     team: "Team",
     input: List[Message],
     session: Optional[TeamSession] = None,
@@ -5317,6 +5375,42 @@ def _get_continue_run_messages(
     if run_context is not None:
         run_context.messages = run_messages.messages
 
+    return run_messages
+
+
+def _get_continue_run_messages(
+    team: "Team",
+    input: List[Message],
+    session: Optional[TeamSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Build the messages that resume a paused run, reading offloaded media back first.
+
+    The paused run's own messages come off the database carrying a reference and no bytes,
+    so without the refresh the resumed model sees empty media where it saw an image before.
+    """
+    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    if team.media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, team.media_storage)
+    return run_messages
+
+
+async def _aget_continue_run_messages(
+    team: "Team",
+    input: List[Message],
+    session: Optional[TeamSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Async variant of :func:`_get_continue_run_messages`."""
+    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    if team.media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, team.media_storage)
     return run_messages
 
 
@@ -7178,7 +7272,7 @@ def fork_session_dispatch(
         # still holds the member runs inline, so the fork would otherwise write back raw base64.
         save_run(
             team,
-            run=build_offloaded_storage_copy(team, run, new_session.session_id) or run,
+            run=build_offloaded_storage_copy(team, cast(TeamRunOutput, run), new_session.session_id) or run,
             session_id=new_session.session_id,
             user_id=new_session.user_id,
             run_index=idx,
@@ -7223,7 +7317,7 @@ async def afork_session_dispatch(
     for idx, run in enumerate(new_session.runs or []):
         # Offloaded for the same reason as the sync twin: a cached source session hands us
         # the member runs with their bytes still inline.
-        storage_run = await abuild_offloaded_storage_copy(team, run, new_session.session_id) or run
+        storage_run = await abuild_offloaded_storage_copy(team, cast(TeamRunOutput, run), new_session.session_id) or run
         if _has_async_db(team):
             await asave_run(
                 team,
@@ -7278,6 +7372,7 @@ def continue_run_dispatch(
     COMPLETED team run produces a new ``run_id`` with the member rows
     cloned (per ADR — forked teams own their member rows).
     """
+    from agno.media.storage.base import AsyncMediaStorage
     from agno.team._init import _has_async_db, _initialize_session
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options
@@ -7292,6 +7387,10 @@ def continue_run_dispatch(
 
     if _has_async_db(team):
         raise Exception("continue_run() is not supported with an async DB. Please use acontinue_run() instead.")
+
+    # Refused here rather than at the persist below, which runs after the model call.
+    if isinstance(team.media_storage, AsyncMediaStorage):
+        raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
 
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
@@ -9414,7 +9513,7 @@ async def _acontinue_run(
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(
+                    run_messages = await _aget_continue_run_messages(
                         team,
                         input=input_messages,
                         session=team_session,
@@ -9462,7 +9561,7 @@ async def _acontinue_run(
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(
+                    run_messages = await _aget_continue_run_messages(
                         team,
                         input=input_messages,
                         session=team_session,
@@ -9892,7 +9991,7 @@ async def _acontinue_run_stream(
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(
+                    run_messages = await _aget_continue_run_messages(
                         team,
                         input=input_messages,
                         session=team_session,
@@ -10020,7 +10119,7 @@ async def _acontinue_run_stream(
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(
+                    run_messages = await _aget_continue_run_messages(
                         team,
                         input=input_messages,
                         session=team_session,

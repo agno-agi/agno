@@ -23,7 +23,6 @@ from agno.media import Image
 from agno.media.storage import GCSMediaStorage
 from agno.models.openai import OpenAIResponses
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

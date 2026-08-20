@@ -1306,9 +1306,14 @@ def run_dispatch(
     """Run the Agent and return the response."""
     from agno.agent._init import has_async_db
     from agno.agent._response import get_response_format
+    from agno.media.storage.base import AsyncMediaStorage
 
     if has_async_db(agent):
         raise RuntimeError("`run` method is not supported with an async database. Please use `arun` method instead.")
+
+    # Refused here rather than at the persist below, which runs after the model call.
+    if isinstance(agent.media_storage, AsyncMediaStorage):
+        raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
     # Set the id for the run and register it immediately for cancellation tracking
     run_id = run_id or str(uuid4())
@@ -3359,6 +3364,7 @@ def continue_run_dispatch(
     from agno.agent._response import get_response_format
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._tools import determine_tools_for_model
+    from agno.media.storage.base import AsyncMediaStorage
 
     if run_response is None and run_id is None:
         raise ValueError("Either run_response or run_id must be provided.")
@@ -3368,6 +3374,10 @@ def continue_run_dispatch(
 
     if has_async_db(agent):
         raise Exception("continue_run() is not supported with an async DB. Please use acontinue_run() instead.")
+
+    # Refused here rather than at the persist below, which runs after the model call.
+    if isinstance(agent.media_storage, AsyncMediaStorage):
+        raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
 
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
