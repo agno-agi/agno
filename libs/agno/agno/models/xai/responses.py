@@ -260,6 +260,28 @@ class xAIResponses(OpenResponses):
             }
         return request_params
 
+    async def _awarm_credential(self, run_response: Optional[RunOutput]) -> None:
+        """Resolve this run's credential on the async path, so assembly is a cache read.
+
+        get_request_params is synchronous and the manager's sync read refuses an
+        async db adapter, so without this the row an async backend holds is
+        invisible to arun(). Only the cache is populated here: the decisions stay
+        in _per_request_bearer, and a failure leaves the cache cold so the
+        synchronous path raises exactly what it would have raised anyway.
+        """
+        if not self._using_oauth() or self.token_manager is None:
+            return
+        user_id = self._uid(run_response)
+        candidates = [user_id] if user_id else []
+        if not (user_id and self.require_user_token):
+            candidates.append("")
+        for candidate in candidates:
+            try:
+                await self.token_manager.aget_access_token(user_id=candidate)
+                return
+            except (ModelAuthenticationError, httpx.HTTPError):
+                continue
+
     @staticmethod
     def _uid(run_response: Optional[RunOutput]) -> str:
         """The run's user, or the empty deployment slot for script and unidentified runs."""
@@ -270,10 +292,9 @@ class xAIResponses(OpenResponses):
 
         Resolution happens here rather than in the baked callable so the
         no-credential error carries the run's context and is raised before the
-        SDK is ever called. On the async path this resolves synchronously: the
-        base class builds request params outside the await, and the token is a
-        cache hit on all but the one request per user that crosses the refresh
-        margin.
+        SDK is ever called. This is synchronous on both paths; the async legs
+        await _awarm_credential first, so the lookup here is a cache hit rather
+        than a blocking db read on the event loop.
         """
         manager = self.token_manager
         if manager is None:
@@ -437,6 +458,7 @@ class xAIResponses(OpenResponses):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         )
+        await self._awarm_credential(run_response)
         try:
             return await super().ainvoke(**call_kwargs)
         except ModelProviderError as exc:
@@ -519,6 +541,7 @@ class xAIResponses(OpenResponses):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         )
+        await self._awarm_credential(run_response)
         yielded_anything = False
         try:
             async for chunk in super().ainvoke_stream(**call_kwargs):

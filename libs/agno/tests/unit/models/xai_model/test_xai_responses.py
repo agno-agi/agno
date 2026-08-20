@@ -38,6 +38,18 @@ def _assistant():
     return Message(role="assistant")
 
 
+def _mock_manager() -> MagicMock:
+    """A stubbed manager that models the real one's async surface.
+
+    The async legs await aget_access_token before delegating (spec v3 §1.2d B1),
+    so a bare MagicMock would hand them a non-awaitable.
+    """
+    manager = MagicMock()
+    manager.aget_access_token = AsyncMock(return_value="stub-token")
+    manager.aforce_refresh = AsyncMock()
+    return manager
+
+
 def _fake_client() -> MagicMock:
     client = MagicMock()
     client.is_closed.return_value = False
@@ -88,7 +100,7 @@ def test_async_client_receives_async_token_provider():
 
 
 def test_token_manager_derives_providers_at_build_time():
-    manager = MagicMock()
+    manager = _mock_manager()
     manager.aget_access_token = AsyncMock()
     model = xAIResponses(token_manager=manager)
 
@@ -260,7 +272,7 @@ def test_403_decorated_in_oauth_mode():
     error = ModelProviderError(raw, status_code=403)
 
     with patch.object(OpenAIResponses, "invoke", MagicMock(side_effect=error)):
-        model = xAIResponses(token_manager=MagicMock())
+        model = xAIResponses(token_manager=_mock_manager())
         with pytest.raises(ModelProviderError) as exc_info:
             model.invoke(messages=_messages(), assistant_message=_assistant())
 
@@ -296,7 +308,7 @@ def test_403_untouched_in_api_key_mode():
 
 
 def test_401_one_shot_refresh_and_retry():
-    manager = MagicMock()
+    manager = _mock_manager()
     error = ModelProviderError("unauthorized", status_code=401)
     response = MagicMock(name="model_response")
     parent = MagicMock(side_effect=[error, response])
@@ -313,7 +325,7 @@ def test_401_one_shot_refresh_and_retry():
 
 
 def test_second_401_propagates():
-    manager = MagicMock()
+    manager = _mock_manager()
     first = ModelProviderError("unauthorized", status_code=401)
     second = ModelProviderError("still unauthorized", status_code=401)
     parent = MagicMock(side_effect=[first, second])
@@ -329,7 +341,7 @@ def test_second_401_propagates():
 
 
 def test_403_after_401_retry_is_decorated():
-    manager = MagicMock()
+    manager = _mock_manager()
     first = ModelProviderError("unauthorized", status_code=401)
     second = ModelProviderError("Tier does not allow this model", status_code=403)
     parent = MagicMock(side_effect=[first, second])
@@ -353,7 +365,7 @@ async def test_ainvoke_403_decorated_in_oauth_mode():
     error = ModelProviderError(raw, status_code=403)
 
     with patch.object(OpenAIResponses, "ainvoke", AsyncMock(side_effect=error)):
-        model = xAIResponses(token_manager=MagicMock())
+        model = xAIResponses(token_manager=_mock_manager())
         with pytest.raises(ModelProviderError) as exc_info:
             await model.ainvoke(messages=_messages(), assistant_message=_assistant())
 
@@ -371,7 +383,7 @@ def test_invoke_stream_403_decorated_in_oauth_mode():
         yield  # pragma: no cover - makes this a generator
 
     with patch.object(OpenAIResponses, "invoke_stream", MagicMock(side_effect=[failing()])):
-        model = xAIResponses(token_manager=MagicMock())
+        model = xAIResponses(token_manager=_mock_manager())
         with pytest.raises(ModelProviderError) as exc_info:
             list(model.invoke_stream(messages=_messages(), assistant_message=_assistant()))
 
@@ -388,7 +400,7 @@ async def test_ainvoke_stream_403_decorated_in_oauth_mode():
         yield  # pragma: no cover - makes this an async generator
 
     with patch.object(OpenAIResponses, "ainvoke_stream", MagicMock(side_effect=[failing()])):
-        model = xAIResponses(token_manager=MagicMock())
+        model = xAIResponses(token_manager=_mock_manager())
         with pytest.raises(ModelProviderError) as exc_info:
             async for _ in model.ainvoke_stream(messages=_messages(), assistant_message=_assistant()):
                 pass
@@ -401,7 +413,7 @@ def test_401_not_retried_when_token_provider_overrides_manager():
     # The sync client's bearer comes from the user's token_provider, which wins
     # over the manager - refreshing the manager would not change what the retry
     # sends, so the retry must not fire
-    manager = MagicMock()
+    manager = _mock_manager()
     error = ModelProviderError("unauthorized", status_code=401)
     parent = MagicMock(side_effect=error)
 
@@ -415,7 +427,7 @@ def test_401_not_retried_when_token_provider_overrides_manager():
 
 
 async def test_401_not_retried_when_async_token_provider_overrides_manager():
-    manager = MagicMock()
+    manager = _mock_manager()
     manager.aforce_refresh = AsyncMock()
 
     async def aprovider() -> str:
@@ -436,7 +448,7 @@ async def test_401_not_retried_when_async_token_provider_overrides_manager():
 async def test_401_retried_on_async_path_when_manager_wins_over_sync_provider():
     # On the async path the manager outranks a sync-only token_provider in the
     # callable resolution, so a manager refresh DOES change the bearer: retry fires
-    manager = MagicMock()
+    manager = _mock_manager()
     manager.aforce_refresh = AsyncMock()
     error = ModelProviderError("unauthorized", status_code=401)
     response = MagicMock(name="model_response")
@@ -454,7 +466,7 @@ async def test_401_retried_on_async_path_when_manager_wins_over_sync_provider():
 def test_stream_401_not_retried_when_token_provider_overrides_manager():
     # Positive guard (not a red regression): pins the sync stream twin to the
     # same explicit-provider truth table as invoke
-    manager = MagicMock()
+    manager = _mock_manager()
     error = ModelProviderError("unauthorized", status_code=401)
 
     def failing():
@@ -474,7 +486,7 @@ def test_stream_401_not_retried_when_token_provider_overrides_manager():
 
 async def test_astream_401_not_retried_when_async_token_provider_overrides_manager():
     # Positive guard (not a red regression): pins the async stream twin
-    manager = MagicMock()
+    manager = _mock_manager()
     manager.aforce_refresh = AsyncMock()
 
     async def aprovider() -> str:
@@ -511,7 +523,7 @@ def test_401_api_key_mode_not_retried():
 
 
 async def test_ainvoke_401_one_shot():
-    manager = MagicMock()
+    manager = _mock_manager()
     manager.aforce_refresh = AsyncMock()
     error = ModelProviderError("unauthorized", status_code=401)
     response = MagicMock(name="model_response")
@@ -529,7 +541,7 @@ async def test_ainvoke_401_one_shot():
 
 
 def test_stream_401_before_first_yield_retries_once():
-    manager = MagicMock()
+    manager = _mock_manager()
     error = ModelProviderError("unauthorized", status_code=401)
     chunks = [MagicMock(name="chunk-1"), MagicMock(name="chunk-2")]
 
@@ -549,7 +561,7 @@ def test_stream_401_before_first_yield_retries_once():
 
 
 def test_stream_401_after_first_yield_propagates():
-    manager = MagicMock()
+    manager = _mock_manager()
     error = ModelProviderError("unauthorized", status_code=401)
     chunk = MagicMock(name="chunk-1")
 
@@ -572,7 +584,7 @@ def test_stream_401_after_first_yield_propagates():
 
 
 async def test_astream_401_after_first_yield_propagates():
-    manager = MagicMock()
+    manager = _mock_manager()
     manager.aforce_refresh = AsyncMock()
     error = ModelProviderError("unauthorized", status_code=401)
     chunk = MagicMock(name="chunk-1")
@@ -596,7 +608,7 @@ async def test_astream_401_after_first_yield_propagates():
 
 
 async def test_astream_401_before_first_yield_retries_once():
-    manager = MagicMock()
+    manager = _mock_manager()
     manager.aforce_refresh = AsyncMock()
     error = ModelProviderError("unauthorized", status_code=401)
     chunks = [MagicMock(name="chunk-1"), MagicMock(name="chunk-2")]
@@ -760,7 +772,7 @@ def test_the_baked_callable_never_raises_for_an_absent_deployment_row(sqlite_db,
 
 
 def test_the_401_retry_refreshes_the_runs_own_user():
-    manager = MagicMock()
+    manager = _mock_manager()
     parent = MagicMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
 
     with patch.object(OpenAIResponses, "invoke", parent):
@@ -772,7 +784,7 @@ def test_the_401_retry_refreshes_the_runs_own_user():
 
 
 def test_the_async_401_retry_refreshes_the_runs_own_user():
-    manager = MagicMock()
+    manager = _mock_manager()
     manager.aforce_refresh = AsyncMock()
     parent = AsyncMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
 
