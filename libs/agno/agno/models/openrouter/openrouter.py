@@ -78,6 +78,14 @@ class OpenRouter(OpenAILike):
         allowed = {"id", "name", "provider", "models"}
         return cls(**{key: value for key, value in data.items() if key in allowed})
 
+    def _get_cache_identity_fields(self) -> Dict[str, Any]:
+        """Keep differing fallback lists in separate cache entries.
+
+        `id` names only the primary model, so two instances that fail over to different candidates
+        would otherwise share a cache key.
+        """
+        return {"models": self.models} if self.models else {}
+
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,

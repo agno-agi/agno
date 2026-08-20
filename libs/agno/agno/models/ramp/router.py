@@ -172,6 +172,15 @@ class RampRouter(OpenResponses):
         allowed = {"id", "name", "provider", *ROUTING_FIELDS}
         return cls(**{key: value for key, value in data.items() if key in allowed})
 
+    def _get_cache_identity_fields(self) -> Dict[str, Any]:
+        """Keep routed requests out of each other's cache entries.
+
+        When `models` is set the request carries no `model`, so `id` stays at its default and two
+        routers over different candidate lists would otherwise share a cache key: a request routed
+        to one provider could be served a response cached for another.
+        """
+        return {"models": self.models} if self.models else {}
+
     def _get_model_request_kwargs(self) -> Dict[str, Any]:
         """Select a single model, or hand Router the candidate list to choose from.
 

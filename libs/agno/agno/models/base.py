@@ -439,6 +439,15 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    def _get_cache_identity_fields(self) -> Dict[str, Any]:
+        """Extra fields that identify which model actually serves a request.
+
+        `id` alone identifies most providers. A gateway that routes over a candidate list serves
+        different upstream models under one unchanged `id`, so it overrides this to keep those
+        requests in separate cache entries.
+        """
+        return {}
+
     def _get_model_cache_key(self, messages: List[Message], stream: bool, **kwargs: Any) -> str:
         """Generate a cache key based on model messages and core parameters."""
         message_data = []
@@ -458,6 +467,7 @@ class Model(ABC):
             "has_tools": has_tools,
             "response_format": kwargs.get("response_format"),
             "stream": stream,
+            **self._get_cache_identity_fields(),
         }
 
         def _cache_default(obj: Any) -> Any:
