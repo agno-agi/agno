@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from agno.exceptions import ModelAuthenticationError
+from agno.models.xai import oauth
 from agno.models.xai.oauth import (
     REFRESH_MARGIN_SECONDS,
     XAI_DEVICE_CODE_URL,
@@ -266,3 +267,56 @@ def test_poll_past_deadline_is_terminal(fake_clock):
     # Advancing 1000s per sleep against an 1800s deadline permits exactly two
     # pre-deadline polls; none may happen after the deadline passes
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Transport timeout: httpx defaults to 5s, which is too short for a live IdP
+# ---------------------------------------------------------------------------
+
+
+def test_the_manager_defaults_to_a_thirty_second_timeout():
+    assert XAITokenManager().timeout == 30.0
+
+
+def test_the_sync_form_post_applies_the_managers_timeout(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def post(self, url, data=None):
+            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(oauth.httpx, "Client", FakeClient)
+    oauth.XAITokenManager(timeout=12.5)._post_form("https://auth.example.invalid/token", {})
+
+    assert captured["timeout"] == 12.5
+
+
+async def test_the_async_form_post_applies_the_managers_timeout(monkeypatch):
+    captured = {}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, data=None):
+            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(oauth.httpx, "AsyncClient", FakeAsyncClient)
+    await oauth.XAITokenManager(timeout=12.5)._apost_form("https://auth.example.invalid/token", {})
+
+    assert captured["timeout"] == 12.5

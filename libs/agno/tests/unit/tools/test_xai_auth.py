@@ -808,3 +808,74 @@ async def test_the_async_check_stores_the_token_under_the_caller(endpoint, sqlit
 
     assert payload == {"message": SIGNED_IN_PER_USER}
     assert sqlite_db.get_auth_token("xai", "u1", "supergrok") is not None
+
+
+# ---------------------------------------------------------------------------
+# Transport failures must not escape the tools
+#
+# Found live in AgentOS: xAI had authorised the device, the poll timed out, the
+# exception escaped, and the model told the user their approval had not arrived.
+# ---------------------------------------------------------------------------
+
+TRANSPORT_FAILED = "Could not reach the sign-in service just now. Your approval is not lost - tell me to check again."
+
+
+class FlakyEndpoint(AuthEndpoint):
+    """Device grants succeed; the token endpoint times out."""
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if str(request.url) == XAI_DEVICE_CODE_URL and not getattr(self, "fail_device", False):
+            return super().__call__(request)
+        raise httpx.ReadTimeout("simulated network timeout", request=request)
+
+
+@pytest.fixture
+def flaky(device_response, token_response) -> FlakyEndpoint:
+    return FlakyEndpoint(device_response, token_response)
+
+
+def test_a_poll_timeout_is_reported_as_json_not_raised(flaky, sqlite_db, encryption_key):
+    auth = _toolkit(flaky, db=sqlite_db, encryption_key=encryption_key)
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+
+    payload = json.loads(auth.check_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"error": TRANSPORT_FAILED}
+
+
+def test_a_poll_timeout_keeps_the_login_resumable(flaky, sqlite_db, encryption_key):
+    """The approval is not lost: the pending row must survive so a retry works."""
+    auth = _toolkit(flaky, db=sqlite_db, encryption_key=encryption_key)
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+
+    auth.check_supergrok_login(run_context=_ctx("u1"))
+
+    assert _stash(sqlite_db, "u1", encryption_key)["device_code"] == "device-code-1"
+
+
+def test_a_device_start_timeout_is_reported_as_json_not_raised(flaky, sqlite_db, encryption_key):
+    flaky.fail_device = True
+    auth = _toolkit(flaky, db=sqlite_db, encryption_key=encryption_key)
+
+    payload = json.loads(auth.sign_in_with_supergrok(run_context=_ctx("u1")))
+
+    assert payload == {"error": TRANSPORT_FAILED}
+
+
+async def test_the_async_poll_timeout_is_reported_as_json_not_raised(flaky, sqlite_db, encryption_key):
+    auth = _async_toolkit(flaky, db=AsyncDb(sqlite_db), encryption_key=encryption_key)
+    await auth.asign_in_with_supergrok(run_context=_ctx("u1"))
+
+    payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
+
+    assert payload == {"error": TRANSPORT_FAILED}
+    assert _stash(sqlite_db, "u1", encryption_key)["device_code"] == "device-code-1"
+
+
+async def test_the_async_device_start_timeout_is_reported_as_json_not_raised(flaky, sqlite_db, encryption_key):
+    flaky.fail_device = True
+    auth = _async_toolkit(flaky, db=AsyncDb(sqlite_db), encryption_key=encryption_key)
+
+    payload = json.loads(await auth.asign_in_with_supergrok(run_context=_ctx("u1")))
+
+    assert payload == {"error": TRANSPORT_FAILED}
