@@ -6585,7 +6585,7 @@ class SqliteDb(BaseDb):
         # leaves the schedule armed at a target that is gone. ``any_type``
         # keys on the id alone, which is what a delete means.
         types = ("agent", "team", "workflow") if any_type else (target_type,)
-        endpoints = []
+        endpoints: List[str] = []
         for candidate in types:
             endpoint = build_run_endpoint(candidate, target_id)
             # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
