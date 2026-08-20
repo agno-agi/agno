@@ -246,10 +246,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            # Re-verify cached tables against the live database (one existence
-            # check each), so this call still recreates tables dropped
-            # externally without re-reflecting everything
-            if self._get_cached_table(table_type, table_name) is not None and not await self.table_exists(table_name):
+            # Re-verify against the live database (one existence check each), so
+            # this call still recreates tables dropped externally - including
+            # tables registered only as an FK side effect of another reflection
+            if not await self.table_exists(table_name):
                 self._invalidate_table_cache(table_name)
             await self._get_or_create_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
@@ -542,24 +542,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.service_accounts_table
 
         raise ValueError(f"Unknown table type: {table_type}")
-
-    async def _get_or_create_table(
-        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
-    ) -> Optional[Table]:
-        cached = self._get_cached_table(table_type, table_name)
-        if cached is not None:
-            return cached
-        # Serialize resolution: concurrent reflection into the shared metadata
-        # can expose a half-built Table to other coroutines. The lock is
-        # task-reentrant (FK parents and version stamping recurse into it).
-        async with self._resolve_lock_async:
-            cached = self._get_cached_table(table_type, table_name)
-            if cached is not None:
-                return cached
-            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
-            return await self._resolve_table(
-                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
-            )
 
     async def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False

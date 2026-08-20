@@ -76,7 +76,7 @@ def test_cleanup_invalidates_cached_table(db):
 def test_separate_instances_have_separate_caches(db):
     db._get_table(table_type="sessions", create_table_if_not_found=True)
     other = SqliteDb(db_file=db.db_file)
-    assert other._table_cache == {}
+    assert len(other._table_cache) == 0
     assert other._get_table(table_type="sessions") is not None
 
 
@@ -129,9 +129,9 @@ def test_migration_invalidates_resolved_table(db):
 
 def test_in_memory_sqlite_does_not_cache():
     mem = SqliteDb(db_url="sqlite:///:memory:")
-    assert mem._cache_tables is False
+    assert mem._table_cache.enabled is False
     mem._get_table(table_type="sessions", create_table_if_not_found=True)
-    assert mem._table_cache == {}
+    assert len(mem._table_cache) == 0
 
 
 def test_external_drop_then_recreate_rebuilds_table_and_indexes(db):
@@ -324,3 +324,101 @@ def test_async_create_from_scratch_does_not_deadlock(tmp_path):
         await asyncio.wait_for(adb._create_all_tables(), timeout=30)
 
     asyncio.run(run())
+
+
+def test_async_lock_survives_sequential_event_loops(tmp_path):
+    """One adapter instance across repeated asyncio.run calls: the inner lock
+    is recreated per loop, so a contended acquire in the second loop must not
+    raise 'bound to a different event loop'."""
+    import asyncio
+
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    adb = AsyncSqliteDb(db_file=str(tmp_path / "l.db"))
+
+    async def contend():
+        await asyncio.gather(
+            adb._get_table(table_type="sessions", create_table_if_not_found=True),
+            adb._get_table(table_type="memories", create_table_if_not_found=True),
+        )
+
+    asyncio.run(contend())
+    adb._invalidate_table_cache(adb.session_table_name)
+    adb._invalidate_table_cache(adb.memory_table_name)
+    asyncio.run(contend())  # second loop, contended
+
+
+def test_in_memory_threads_do_not_accumulate_constraints():
+    """extend_existing re-runs of _create_table must not re-append constraints:
+    the metrics unique constraint stays single however many threads create."""
+    import threading
+
+    from sqlalchemy import UniqueConstraint
+
+    mem = SqliteDb(db_url="sqlite:///:memory:")
+
+    def worker():
+        mem._get_table(table_type="metrics", create_table_if_not_found=True)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    table = next(t for t in mem.metadata.tables.values() if t.name == mem.metrics_table_name)
+    uqs = [c for c in table.constraints if isinstance(c, UniqueConstraint)]
+    assert len(uqs) == 1, f"{len(uqs)} copies of the unique constraint"
+
+
+def test_fk_parent_reregistered_when_cached_but_unregistered(db):
+    """The FK loop must re-register a parent that is cached but missing from
+    metadata (the invalidation half-window), not trust the cache fast path."""
+    db._get_table(table_type="sessions", create_table_if_not_found=True)
+    for t in list(db.metadata.tables.values()):
+        if t.name == db.session_table_name:
+            db.metadata.remove(t)  # half-invalidation: metadata gone, cache entry kept
+
+    table = db._get_table(table_type="runs", create_table_if_not_found=True)
+    assert table is not None
+
+
+def test_create_all_recreates_table_registered_only_via_fk_side_effect(db):
+    """Reflecting runs pulls sessions into metadata without caching it; after an
+    external drop, _create_all_tables must still recreate sessions."""
+    db._create_all_tables()
+
+    fresh = SqliteDb(db_file=db.db_file)
+    fresh._get_or_create_table(table_name=fresh.runs_table_name, table_type="runs", create_table_if_not_found=True)
+    assert fresh._get_cached_table("sessions", fresh.session_table_name) is None
+    assert any(t.name == fresh.session_table_name for t in fresh.metadata.tables.values())
+
+    with fresh.Session() as sess, sess.begin():
+        sess.execute(text("PRAGMA foreign_keys=OFF"))
+        sess.execute(text("DROP TABLE agno_sessions"))
+    fresh._create_all_tables()
+    with fresh.Session() as sess:
+        exists = sess.execute(text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agno_sessions'")).scalar()
+    assert exists == 1
+
+
+def test_absent_table_read_probe_does_not_take_resolve_lock(db):
+    """get with create=False on a missing table must answer without the lock,
+    so a permanently absent table cannot serialize other resolutions."""
+    import threading
+
+    db._get_table(table_type="sessions", create_table_if_not_found=True)
+    acquired = db._resolve_lock.acquire()  # hold the lock from this thread
+    try:
+        result = {}
+
+        def probe():
+            result["runs"] = db._get_table(table_type="runs", create_table_if_not_found=False)
+
+        t = threading.Thread(target=probe)
+        t.start()
+        t.join(timeout=3)
+        assert not t.is_alive(), "read probe blocked on the resolution lock"
+        assert result["runs"] is None
+    finally:
+        if acquired:
+            db._resolve_lock.release()

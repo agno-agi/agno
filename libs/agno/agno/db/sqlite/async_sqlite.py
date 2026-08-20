@@ -183,9 +183,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         # async in-memory arrangement) shares one connection and caches fine.
         from sqlalchemy.pool import SingletonThreadPool
 
-        pool = getattr(self.db_engine, "pool", None) or self.db_engine.sync_engine.pool
-        if isinstance(pool, SingletonThreadPool):
-            self._cache_tables = False
+        if isinstance(self.db_engine.sync_engine.pool, SingletonThreadPool):
+            self._table_cache.enabled = False
             log_debug("Table cache: disabled for in-memory SQLite (per-thread private databases)")
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
@@ -230,10 +229,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            # Re-verify cached tables against the live database (one existence
-            # check each), so this call still recreates tables dropped
-            # externally without re-reflecting everything
-            if self._get_cached_table(table_type, table_name) is not None and not await self.table_exists(table_name):
+            # Re-verify against the live database (one existence check each), so
+            # this call still recreates tables dropped externally - including
+            # tables registered only as an FK side effect of another reflection
+            if not await self.table_exists(table_name):
                 self._invalidate_table_cache(table_name)
             await self._get_or_create_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
@@ -312,46 +311,46 @@ class AsyncSqliteDb(AsyncBaseDb):
             # In-memory SQLite (cache disabled): every thread has a private
             # database, so re-creation of an already-registered table is
             # legitimate; allow redefinition instead of "already defined"
-            table = Table(table_name, self.metadata, *columns, extend_existing=not self._cache_tables)
+            already_registered = any(t.name == table_name for t in self.metadata.tables.values())
+            table = Table(table_name, self.metadata, *columns, extend_existing=not self._table_cache.enabled)
 
-            existing_index_names = {i.name for i in table.indexes}
+            # A pre-registered Table (extend_existing path) already carries its
+            # constraints and indexes; re-appending duplicates them unboundedly
+            attach_constraints = not already_registered
 
             # Add multi-column unique constraints with table-specific names
-            for constraint in schema_unique_constraints:
+            for constraint in schema_unique_constraints if attach_constraints else []:
                 constraint_name = f"{table_name}_{constraint['name']}"
                 constraint_columns = constraint["columns"]
                 table.append_constraint(UniqueConstraint(*constraint_columns, name=constraint_name))
 
             # Add indexes to the table definition
-            for idx_col in indexes:
+            for idx_col in indexes if attach_constraints else []:
                 idx_name = f"idx_{table_name}_{idx_col}"
-                if idx_name not in existing_index_names:
-                    table.append_constraint(Index(idx_name, idx_col))
+                table.append_constraint(Index(idx_name, idx_col))
 
             # Composite indexes
-            for idx_config in schema_composite_indexes:
+            for idx_config in schema_composite_indexes if attach_constraints else []:
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
-                if idx_name not in existing_index_names:
-                    table.append_constraint(Index(idx_name, *idx_config["columns"]))
+                table.append_constraint(Index(idx_name, *idx_config["columns"]))
 
             # Partial unique indexes (unique only for rows matching the where clause).
             # Fail loudly on missing columns like every other backend: silently
             # skipping would drop a uniqueness guarantee (e.g. unique active
             # service-account names) on this backend only.
-            for idx_config in schema_partial_unique_indexes:
+            for idx_config in schema_partial_unique_indexes if attach_constraints else []:
                 missing_columns = [col for col in idx_config["columns"] if col not in table.c]
                 if missing_columns:
                     raise ValueError(
                         f"Partial unique index references missing columns in {table_name}: {missing_columns}"
                     )
                 idx_name = f"{table_name}_{idx_config['name']}"
-                if idx_name not in existing_index_names:
-                    Index(
-                        idx_name,
-                        *[table.c[col] for col in idx_config["columns"]],
-                        unique=True,
-                        sqlite_where=text(idx_config["where"]),
-                    )
+                Index(
+                    idx_name,
+                    *[table.c[col] for col in idx_config["columns"]],
+                    unique=True,
+                    sqlite_where=text(idx_config["where"]),
+                )
 
             # Create table
             table_created = False
@@ -519,24 +518,6 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
-
-    async def _get_or_create_table(
-        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
-    ) -> Optional[Table]:
-        cached = self._get_cached_table(table_type, table_name)
-        if cached is not None:
-            return cached
-        # Serialize resolution: concurrent reflection into the shared metadata
-        # can expose a half-built Table to other coroutines. The lock is
-        # task-reentrant (FK parents and version stamping recurse into it).
-        async with self._resolve_lock_async:
-            cached = self._get_cached_table(table_type, table_name)
-            if cached is not None:
-                return cached
-            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
-            return await self._resolve_table(
-                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
-            )
 
     async def _resolve_table(
         self,

@@ -215,10 +215,10 @@ class SingleStoreDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            # Re-verify cached tables against the live database (one existence
-            # check each), so this call still recreates tables dropped
-            # externally without re-reflecting everything
-            if self._get_cached_table(table_type, table_name) is not None and not self.table_exists(table_name):
+            # Re-verify against the live database (one existence check each), so
+            # this call still recreates tables dropped externally - including
+            # tables registered only as an FK side effect of another reflection
+            if not self.table_exists(table_name):
                 self._invalidate_table_cache(table_name)
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
@@ -254,7 +254,9 @@ class SingleStoreDb(BaseDb):
                 registered = {t.name for t in self.metadata.tables.values()}
                 for ref_type, ref_name in self._fk_dependencies(table_type):
                     if ref_name not in registered:
-                        self._get_or_create_table(
+                        # Under _resolve_lock: resolve directly so the parent is
+                        # re-registered even if a stale cache entry exists
+                        self._resolve_table(
                             table_name=ref_name,
                             table_type=ref_type,
                             create_table_if_not_found=True,
@@ -471,23 +473,6 @@ class SingleStoreDb(BaseDb):
             return self.spans_table
 
         raise ValueError(f"Unknown table type: {table_type}")
-
-    def _get_or_create_table(
-        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
-    ) -> Optional[Table]:
-        cached = self._get_cached_table(table_type, table_name)
-        if cached is not None:
-            return cached
-        # Serialize resolution: concurrent reflection into the shared metadata
-        # can expose a half-built Table to other threads
-        with self._resolve_lock:
-            cached = self._get_cached_table(table_type, table_name)
-            if cached is not None:
-                return cached
-            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
-            return self._resolve_table(
-                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
-            )
 
     def _resolve_table(
         self,
