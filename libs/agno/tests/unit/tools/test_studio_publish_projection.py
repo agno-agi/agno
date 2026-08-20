@@ -440,31 +440,27 @@ class TestAProjectionFailureDoesNotFailACommittedMove:
         _data(studio.edit_agent(agent_id=component_id, name=f"{name} Two", instructions="be two"))
         return component_id
 
-    def test_set_current_version_reports_the_move_it_made(self, studio, db, monkeypatch, caplog):
+    def test_set_current_version_reports_the_move_it_made(self, studio, db, monkeypatch):
         component_id = _rollback_fixture(studio, db)
         self._explode_projection(monkeypatch)
 
-        with caplog.at_level(logging.WARNING, logger="agno"):
-            out = _loads(studio.set_current_version(component_id, 2))
+        out = _loads(studio.set_current_version(component_id, 2))
 
         assert out["ok"] is True, out
         assert out["status"] == "set_current"
         assert db.get_component(component_id)["current_version"] == 2
         assert any("could not be re-projected" in w for w in out["warnings"]), out
-        assert any("could not be re-projected" in record.message for record in caplog.records)
 
-    def test_publish_component_reports_the_publish_it_made(self, studio, db, monkeypatch, caplog):
+    def test_publish_component_reports_the_publish_it_made(self, studio, db, monkeypatch):
         component_id = self._draft(studio, db, "Publisher")
         self._explode_projection(monkeypatch)
 
-        with caplog.at_level(logging.WARNING, logger="agno"):
-            out = _loads(studio.publish_component(component_id))
+        out = _loads(studio.publish_component(component_id))
 
         assert out["ok"] is True, out
         assert out["status"] == "published"
         assert db.get_component(component_id)["current_version"] == out["data"]["version"]
         assert any("could not be re-projected" in w for w in out["warnings"]), out
-        assert any("could not be re-projected" in record.message for record in caplog.records)
 
     def test_async_set_current_version_inherits_the_same_answer(self, studio, db, monkeypatch):
         component_id = _rollback_fixture(studio, db)

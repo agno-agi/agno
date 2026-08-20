@@ -4085,17 +4085,27 @@ class StudioTools(Toolkit):
             schedule = manager.update(schedule_id, user_id=actor, **updates)
             if schedule is None:
                 return error_result("schedule_not_found", f"Schedule not found: {schedule_id}")
+            warnings: List[str] = []
             if _agno_run_context is not None:
                 # Through the manager, not the adapter: on an async database the
                 # direct call builds a coroutine nobody awaits, so the stamp is
                 # dropped while the tool reports success.
-                manager.stamp_provenance(
-                    schedule_id,
-                    updated_by_run_id=_agno_run_context.run_id,
-                    updated_by_session_id=_agno_run_context.session_id,
-                )
+                #
+                # The update above is already committed, so the stamp is
+                # best-effort: a failure here loses only the record of who made
+                # a change that did happen, while reporting an error would tell
+                # the caller a cadence it can see take effect was never applied.
+                try:
+                    manager.stamp_provenance(
+                        schedule_id,
+                        updated_by_run_id=_agno_run_context.run_id,
+                        updated_by_session_id=_agno_run_context.session_id,
+                    )
+                except Exception as e:
+                    warnings.append(f"Updated schedule {schedule_id} but could not stamp provenance on it: {e}")
             return ok_result(
                 "updated",
+                warnings=warnings,
                 id=schedule.id,
                 name=schedule.name,
                 cron=schedule.cron_expr,
@@ -4839,14 +4849,15 @@ class StudioTools(Toolkit):
         again. Reporting it as an error is not: the caller hears that a move
         which actually happened did not, and retries or reports a failure that
         never was. The row sync is therefore best-effort here, and the returned
-        warning tells the caller the row lags the live version.
+        warning tells the caller the row lags the live version. The envelope
+        is where these tools report a side effect of an operation that
+        otherwise succeeded, so it is the only channel used here; the REST
+        route for the same move has no such field and logs instead.
         """
         try:
             self._sync_component_row(component_id, version)
         except Exception as e:
-            warning = f"{component_id} is live at v{version} but its catalog row could not be re-projected: {e}"
-            logger.warning(warning)
-            return [warning]
+            return [f"{component_id} is live at v{version} but its catalog row could not be re-projected: {e}"]
         return []
 
     def _sync_component_row(self, component_id: str, version: Optional[int]) -> None:
