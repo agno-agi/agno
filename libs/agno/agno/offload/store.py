@@ -47,6 +47,7 @@ DEFAULT_PREVIEW_CHARS = 1200
 SEARCH_MAX_MATCHES = 20
 SEARCH_MAX_CONTEXT_LINES = 20
 SEARCH_LINE_CLIP = 500
+_MATCH_HEADER_CHARS = 48
 
 _TAIL_LINES = 5
 
@@ -709,6 +710,11 @@ class ResultStore:
                 )
             else:
                 text = _clip_around(line, char_offset)
+            # Each match is rendered with a short header line; reserve room
+            # for it so the reply the model sees stays within one page.
+            budget -= _MATCH_HEADER_CHARS
+            if budget <= 0:
+                break
             if len(text) > budget:
                 text = text[:budget]
             budget -= len(text) + 1

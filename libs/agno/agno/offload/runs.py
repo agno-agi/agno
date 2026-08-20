@@ -15,7 +15,9 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any, Optional
 
+from agno.offload.store import _canonical_args_hash, render_stored_envelope, result_id_for
 from agno.utils.log import log_debug, log_warning
+from agno.utils.string import hash_string_sha256
 
 if TYPE_CHECKING:
     from agno.offload.store import ResultStore
@@ -60,17 +62,26 @@ def offload_run_for_storage(
             continue
         if not store.should_offload(getattr(message, "tool_name", None), content):
             continue
+        tool_call_id = f"message:{index}"
+        # The same run is stored more than once (the session copy, the team
+        # row's embedded copy), so a message already stored with this content
+        # reuses its row. The content hash lives in the row's args_hash.
+        content_hash = {"sha256": hash_string_sha256(content)}
         try:
-            envelope = store.offload_for_model(
-                session_id=session_id,
-                run_id=run_id,
-                tool_call_id=f"message:{index}",
-                tool_name=getattr(message, "tool_name", None) or f"{role}_message",
-                tool_args={},
-                output=content,
-                user_id=user_id,
-                shared=True,
-            )
+            existing = store.get_row(result_id_for(session_id, run_id, tool_call_id))
+            if existing is not None and existing.get("args_hash") == _canonical_args_hash(content_hash):
+                envelope = render_stored_envelope(store._ref_from_row(existing), str(existing.get("preview") or ""))
+            else:
+                envelope = store.offload_for_model(
+                    session_id=session_id,
+                    run_id=run_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=getattr(message, "tool_name", None) or f"{role}_message",
+                    tool_args=content_hash,
+                    output=content,
+                    user_id=user_id,
+                    shared=True,
+                )
         except Exception as e:
             log_warning(f"Offloading a stored message of run {run_id} failed: {e}")
             continue

@@ -762,3 +762,102 @@ def test_a_member_store_that_names_its_own_db_is_still_rebound_to_the_team_db(db
     assert member._result_store.db is db
     # The caller's settings object is untouched.
     assert member.offload_tool_results.db is other
+
+
+# ------------------------------------------------------------------
+# Every copy of a member run a model can read holds envelopes
+# ------------------------------------------------------------------
+def test_storing_the_same_member_run_twice_keeps_one_payload(db):
+    from agno.offload.runs import offload_run_for_storage
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+
+    team = _team(db)
+    team.initialize_team()
+    run = RunOutput(run_id="r-twice", messages=[Message(role="assistant", content=BIG)], status=RunStatus.completed)
+    first = offload_run_for_storage(team._result_store, run, session_id="s-twice")
+    second = offload_run_for_storage(team._result_store, run, session_id="s-twice")
+    assert first.messages[0].content == second.messages[0].content
+    assert len(db.get_tool_results_for_session("s-twice")) == 1
+
+    # Different content under the same run and message index is a new payload.
+    changed = RunOutput(
+        run_id="r-twice",
+        messages=[Message(role="assistant", content=BIG.replace("d", "e"))],
+        status=RunStatus.completed,
+    )
+    offload_run_for_storage(team._result_store, changed, session_id="s-twice")
+    assert len(db.get_tool_results_for_session("s-twice")) == 2
+
+
+def test_the_team_row_embeds_envelopes_when_member_responses_are_stored(db):
+    team = _team(db, store_member_responses=True)
+    session_id = _sid()
+    output = team.run("go", session_id=session_id)
+    # The caller's copy is whole.
+    assert output.member_responses[0].content == BIG
+    # The persisted team row's embedded member copy is not.
+    stored = db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+    team_runs = [r for r in (stored.runs or []) if getattr(r, "member_responses", None)]
+    assert team_runs, "the team row carries the embedded member run"
+    embedded = team_runs[0].member_responses[0]
+    assistant = [m for m in (embedded.messages or []) if m.role == "assistant"][0]
+    assert str(assistant.content).startswith('<result id="res_')
+    # And only one payload exists for that member answer across the session row and the team row.
+    rows = [r for r in db.get_tool_results_for_session(session_id) if r["tool_name"] == "assistant_message"]
+    assert len(rows) == 1
+
+
+class _GatedMemberModel(_SizeRecordingMemberModel):
+    """Calls a confirmation-gated tool once, then answers with the long body."""
+
+    def _answer(self) -> ModelResponse:
+        self.calls = getattr(self, "calls", 0) + 1
+        if self.calls == 1:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[{"id": "gate-1", "type": "function", "function": {"name": "gated", "arguments": "{}"}}],
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(role="assistant", content=self.body, response_usage=MessageMetrics())
+
+
+def test_a_member_resumed_after_confirmation_replays_the_envelope(db):
+    from agno.tools.decorator import tool
+
+    @tool(requires_confirmation=True)
+    def gated() -> str:
+        """A gated tool.
+
+        Returns:
+            str: ok.
+        """
+        return "ok"
+
+    member = Agent(
+        name="researcher", id="researcher", model=_GatedMemberModel(), tools=[gated], add_history_to_context=True
+    )
+    team = Team(
+        name="platform",
+        id="platform",
+        members=[member],
+        model=LeaderModel(),
+        db=db,
+        offload_tool_results=True,
+        cache_session=True,
+    )
+    session_id = _sid()
+    paused = team.run("go", session_id=session_id)
+    assert paused.is_paused
+    for requirement in paused.requirements or []:
+        if requirement.tool_execution is not None:
+            requirement.tool_execution.confirmed = True
+    team.continue_run(paused, session_id=session_id)
+
+    # The member's next turn replays its earlier answer as history: an envelope, not 200KB.
+    team.model = LeaderModel()
+    member.model = _GatedMemberModel()
+    member.model.calls = 1
+    team.run("again", session_id=session_id)
+    sizes = _member_seen_prompt_sizes(member)
+    assert sizes and sizes[-1] < len(BIG) // 10
