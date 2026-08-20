@@ -80,9 +80,28 @@ def build_result_store(
             store.db.tool_result_filesystems = registered
         except Exception:
             registered = None
-    if registered is not None and all(existing.backend is not fs.backend for existing in registered):
-        registered.append(fs)
+    if registered is not None:
+        key = _storage_key(fs.backend)
+        if all(_storage_key(existing.backend) != key for existing in registered):
+            registered.append(fs)
     return store
+
+
+def _storage_key(backend: Any) -> Tuple[Any, ...]:
+    """What one filesystem backend writes to.
+
+    Every store build wraps the db in a new backend object, so identity would
+    register one entry per agent built. Two backends that write to the same
+    engine, table and schema, or the same directory, are one entry.
+    """
+    engine = getattr(backend, "db_engine", None)
+    return (
+        type(backend).__name__,
+        engine if engine is not None else id(backend),
+        getattr(backend, "table_name", None),
+        getattr(backend, "db_schema", None),
+        str(getattr(backend, "root", "")),
+    )
 
 
 __all__ = ["build_result_store"]

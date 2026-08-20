@@ -1333,6 +1333,13 @@ class SqliteDb(BaseDb):
                 ).fetchall()
             if not rows:
                 return
+            # Payloads are removed through every filesystem a store on this db
+            # registered, and from the default payload table as well: a fresh
+            # process has no registrations, and the exact (namespace, path)
+            # delete cannot touch anything but these rows. A row whose payload
+            # was found nowhere is reported; its bytes live in a filesystem
+            # this process cannot reach.
+            removed = set()
             filesystems = list(getattr(self, "tool_result_filesystems", []) or [])
             if filesystems:
                 from agno.fs import FileSystem
@@ -1340,19 +1347,29 @@ class SqliteDb(BaseDb):
                 for _, namespace, path in rows:
                     for fs in filesystems:
                         try:
-                            FileSystem(backend=fs.backend, namespace=str(namespace)).delete(str(path))
+                            if FileSystem(backend=fs.backend, namespace=str(namespace)).delete(str(path)):
+                                removed.add((str(namespace), str(path)))
                         except Exception as e:
                             log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
-            else:
-                with self.Session() as sess, sess.begin():
-                    if self._default_payload_table_exists(sess):
-                        for _, namespace, path in rows:
-                            sess.execute(
-                                text(
-                                    f"DELETE FROM {self._default_payload_table()} WHERE namespace = :ns AND path = :p"
-                                ),
-                                {"ns": str(namespace), "p": str(path)},
-                            )
+            with self.Session() as sess, sess.begin():
+                if self._default_payload_table_exists(sess):
+                    for _, namespace, path in rows:
+                        if (str(namespace), str(path)) in removed:
+                            continue
+                        result = sess.execute(
+                            text(f"DELETE FROM {self._default_payload_table()} WHERE namespace = :ns AND path = :p"),
+                            {"ns": str(namespace), "p": str(path)},
+                        )
+                        if result.rowcount:
+                            removed.add((str(namespace), str(path)))
+            missing = [
+                f"{namespace}/{path}" for _, namespace, path in rows if (str(namespace), str(path)) not in removed
+            ]
+            if missing:
+                log_warning(
+                    f"Tool-result cascade removed {len(rows) - len(missing)} of {len(rows)} payloads; "
+                    f"{len(missing)} live in a filesystem this process has no store for: {missing[:3]}"
+                )
             result_ids = [str(row[0]) for row in rows]
             for start in range(0, len(result_ids), 500):
                 with self.Session() as sess, sess.begin():

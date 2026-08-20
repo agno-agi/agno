@@ -130,8 +130,8 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
 
         if not matches:
             return f"No matches in {result_id}."
-        if len(matches) >= SEARCH_MAX_MATCHES:
-            lines = [f"First {len(matches)} matches in {result_id} (more may follow; narrow the pattern):"]
+        if matches[-1].more or len(matches) >= SEARCH_MAX_MATCHES:
+            lines = [f"First {len(matches)} matches in {result_id} (more follow; narrow the pattern):"]
         else:
             lines = [f"{len(matches)} match(es) in {result_id}:"]
         for match in matches:

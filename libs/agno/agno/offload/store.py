@@ -83,21 +83,23 @@ def _format_size(size: float) -> str:
     return f"{size:.1f}GB"
 
 
-def _clip_around(line: str, char_offset: int) -> str:
-    """The line clipped to the search clip, as a window around ``char_offset``.
+def _clip_around(line: str, char_offset: int, match_len: int = 1) -> str:
+    """The line clipped to the search clip, as a window around the match.
 
     A line shorter than the clip is returned whole. A longer one is shown
     from a little before the match, with ellipses marking cut ends, so the
-    match itself is always visible whatever its position in the line.
+    match itself is always inside the window whatever its position.
     """
     if len(line) <= SEARCH_LINE_CLIP:
         return line
-    lead = SEARCH_LINE_CLIP // 4
-    start = max(0, min(char_offset - lead, len(line) - SEARCH_LINE_CLIP))
+    width = SEARCH_LINE_CLIP - 6
+    lead = width // 4
+    start = max(0, min(char_offset - lead, len(line) - width))
+    need_end = char_offset + min(max(match_len, 1), width)
+    if start + width < need_end:
+        start = min(need_end - width, len(line) - width)
     head = "..." if start > 0 else ""
-    width = SEARCH_LINE_CLIP - len(head)
     tail = "..." if start + width < len(line) else ""
-    width -= len(tail)
     return f"{head}{line[start : start + width]}{tail}"
 
 
@@ -694,28 +696,29 @@ class ResultStore:
         # took out.
         budget = SEARCH_MAX_CHARS
         for index, line in enumerate(lines):
-            if len(matches) >= SEARCH_MAX_MATCHES or budget <= 0:
-                break
             found = compiled.search(line)
             if found is None:
                 continue
+            if len(matches) >= SEARCH_MAX_MATCHES or budget <= _MATCH_HEADER_CHARS:
+                # Another match exists past the cap or the budget.
+                matches[-1].more = True
+                break
             char_offset = found.start()
+            match_len = found.end() - found.start()
             if context_lines > 0:
                 start = max(0, index - context_lines)
                 end = min(len(lines), index + context_lines + 1)
                 # Each row carries its own line number, so the block reads the
                 # same way a read_result page does and the match line is clear.
                 text = "\n".join(
-                    f"{start + offset + 1}: {_clip_around(context_line, char_offset if start + offset == index else 0)}"
+                    f"{start + offset + 1}: {_clip_around(context_line, char_offset if start + offset == index else 0, match_len)}"
                     for offset, context_line in enumerate(lines[start:end])
                 )
             else:
-                text = _clip_around(line, char_offset)
+                text = _clip_around(line, char_offset, match_len)
             # Each match is rendered with a short header line; reserve room
             # for it so the reply the model sees stays within one page.
             budget -= _MATCH_HEADER_CHARS
-            if budget <= 0:
-                break
             if len(text) > budget:
                 text = text[:budget]
             budget -= len(text) + 1

@@ -245,11 +245,11 @@ def test_search_stops_at_20_matches(store):
     assert len(store.search(ref.result_id, "needle")) == 20
 
 
-def test_search_clips_each_line_at_500_chars(store):
+def test_search_clips_each_line_to_the_window(store):
     payload = "needle " + "x" * 2000
     ref = _offload(store, payload)
     match = store.search(ref.result_id, "needle")[0]
-    assert len(match.line) == 500
+    assert len(match.line) <= 500 and len(match.line) >= 490
     assert match.line_number == 1
 
 
@@ -588,3 +588,33 @@ def test_sweep_deletes_index_rows_in_bounded_batches(tmp_path, monkeypatch):
     assert sum(sizes) == count
     assert max(sizes) <= 500
     assert store.live_ids("S") == []
+
+
+def test_search_reports_when_the_budget_stopped_the_scan(store):
+    payload = "\n".join(f"entry {i}: " + "w" * 480 for i in range(1, 301))
+    ref = _offload(store, payload)
+    matches = store.search(ref.result_id, r"^entry")
+    assert len(matches) < 300
+    assert matches[-1].more is True
+    few = store.search(ref.result_id, r"^entry 1: ")
+    assert few and few[-1].more is False
+
+
+def test_clip_window_always_contains_the_match(store):
+    from agno.offload.store import _clip_around
+
+    for offset in (0, 1, 100, 124, 125, 126, 400, 499, 500, 1000, 1999):
+        line = "x" * offset + "NEEDLE" + "y" * (2000 - offset)
+        window = _clip_around(line, offset, len("NEEDLE"))
+        assert "NEEDLE" in window, offset
+        assert len(window) <= 500
+
+
+def test_clip_window_keeps_a_long_match_whole_when_it_fits():
+    from agno.offload.store import _clip_around
+
+    match = "M" * 400
+    line = "x" * 1000 + match + "y" * 1000
+    window = _clip_around(line, 1000, len(match))
+    assert match in window
+    assert len(window) <= 500

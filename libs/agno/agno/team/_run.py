@@ -4535,18 +4535,34 @@ def _iter_member_runs_for_team_run(session: TeamSession, team_run_id: Optional[s
             yield idx, entry
 
 
+def _member_opted_out_of_the_store(team: "Team", member_run: Any) -> bool:
+    """True when the member that produced ``member_run`` set offload_tool_results=False.
+
+    That member has no read-back tools and no instruction about envelopes, so
+    its stored run, the history it replays, must keep the whole text.
+    """
+    member_id = getattr(member_run, "agent_id", None) or getattr(member_run, "team_id", None)
+    if not member_id:
+        return False
+    found = team._find_member_by_id(str(member_id))
+    if found is None:
+        return False
+    return getattr(found[1], "offload_tool_results", None) is False
+
+
 def _member_run_for_storage(team: "Team", session: TeamSession, member_run: Any) -> Any:
     """The member run as it should be stored, with big messages offloaded.
 
     The live object is returned unchanged when offloading is off, so callers
-    reading ``RunOutput.member_responses`` always see the whole answer.
+    reading ``RunOutput.member_responses`` always see the whole answer. A
+    sub-team offloads too: its member runs are written by the parent through
+    the session copy. A workflow step's member runs are never written, so no
+    storage copy is made for them.
     """
-    store = team._result_store
+    store = getattr(team, "_result_store", None)
     if store is None or not store.member_responses:
         return member_run
-    # A sub-team's or a workflow step's member runs are never written, so a
-    # storage copy would only leave an unreachable payload in the store.
-    if team.db is None or team.parent_team_id is not None or team.workflow_id is not None:
+    if getattr(team, "workflow_id", None) is not None or _member_opted_out_of_the_store(team, member_run):
         return member_run
     from agno.offload.runs import offload_run_for_storage
 
@@ -4555,10 +4571,10 @@ def _member_run_for_storage(team: "Team", session: TeamSession, member_run: Any)
 
 async def _amember_run_for_storage(team: "Team", session: TeamSession, member_run: Any) -> Any:
     """Async variant of ``_member_run_for_storage``."""
-    store = team._result_store
+    store = getattr(team, "_result_store", None)
     if store is None or not store.member_responses:
         return member_run
-    if team.db is None or team.parent_team_id is not None or team.workflow_id is not None:
+    if getattr(team, "workflow_id", None) is not None or _member_opted_out_of_the_store(team, member_run):
         return member_run
     from agno.offload.runs import aoffload_run_for_storage
 

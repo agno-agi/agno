@@ -1083,3 +1083,48 @@ def test_an_explicit_false_round_trips_and_unset_is_omitted(db):
     assert "offload_tool_results" not in unset
     unset.pop("model", None)
     assert Agent.from_dict(unset).offload_tool_results is None
+
+
+def test_the_filesystem_registry_holds_one_entry_per_storage(db):
+    for _ in range(25):
+        Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True).initialize_agent()
+    assert len(db.tool_result_filesystems) == 1
+
+
+def test_a_fresh_process_still_removes_default_table_payloads(tmp_path):
+    path = str(tmp_path / "fresh.db")
+    agent = Agent(model=ScriptedToolModel(), db=SqliteDb(db_file=path), tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id)
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    row = agent.result_store.get_row(result_id)
+
+    # A db object with no store registered, as a new process would have.
+    fresh = SqliteDb(db_file=path)
+    assert getattr(fresh, "tool_result_filesystems", None) is None
+    fresh.delete_session(session_id=session_id)
+    assert agent.result_store.get_row(result_id) is None
+    assert agent.result_store._fs_for_namespace(row["namespace"]).read(row["path"]) is None
+
+
+def test_a_payload_this_process_cannot_reach_is_reported(tmp_path, monkeypatch):
+    from agno.db.sqlite import sqlite as sqlite_module
+    from agno.fs import FileSystem
+    from agno.fs.local import LocalFileSystem
+
+    path = str(tmp_path / "custom.db")
+    payload_dir = tmp_path / "payloads"
+    settings = ResultStore(fs=FileSystem(backend=LocalFileSystem(root=payload_dir), namespace="tool-results"))
+    agent = Agent(
+        model=ScriptedToolModel(), db=SqliteDb(db_file=path), tools=[fetch_page], offload_tool_results=settings
+    )
+    session_id = _sid()
+    agent.run("go", session_id=session_id)
+
+    warnings: List[str] = []
+    monkeypatch.setattr(sqlite_module, "log_warning", warnings.append)
+    # A fresh db object knows nothing about the custom filesystem: the index
+    # rows go, the payload stays on disk, and the gap is reported.
+    SqliteDb(db_file=path).delete_session(session_id=session_id)
+    assert any("no store for" in w for w in warnings), warnings
+    assert [p for p in payload_dir.rglob("*") if p.is_file()]

@@ -705,30 +705,21 @@ def test_search_result_output_stays_within_one_page(db):
     assert len(reply) <= SEARCH_MAX_CHARS + 200
 
 
-def test_a_sub_teams_member_runs_leave_no_orphan_payloads(db):
-    inner_member = _member(member_id="inner")
-    inner = Team(name="inner", id="inner", members=[inner_member], model=LeaderModel("inner"))
+def test_a_sub_teams_member_replays_an_envelope_and_its_rows_are_reclaimed(db):
+    inner_member = Agent(name="inner", id="inner", model=_SizeRecordingMemberModel(), add_history_to_context=True)
+    inner = Team(name="inner", id="inner", members=[inner_member], model=RoundRobinLeaderModel(["inner", "inner"]))
     outer = Team(
         name="outer", id="outer", members=[inner], model=LeaderModel("inner"), db=db, offload_tool_results=True
     )
     session_id = _sid()
     outer.run("go", session_id=session_id)
-    rows = db.get_tool_results_for_session(session_id)
-    # Every stored result is referenced by a persisted run of the session.
-    stored_ids = {row["result_id"] for row in rows}
-    session = db.get_session(session_id=session_id, session_type=SessionType.TEAM)
-    referenced = set()
-    for run in session.runs or []:
-        for message in getattr(run, "messages", None) or []:
-            content = str(getattr(message, "content", "") or "")
-            if 'id="res_' in content:
-                referenced.add(content.split('id="')[1].split('"')[0])
-        for member_run in getattr(run, "member_responses", None) or []:
-            for message in getattr(member_run, "messages", None) or []:
-                content = str(getattr(message, "content", "") or "")
-                if 'id="res_' in content:
-                    referenced.add(content.split('id="')[1].split('"')[0])
-    assert stored_ids <= referenced, stored_ids - referenced
+    # The inner member's second turn replays its first answer as an envelope, not the 200KB body.
+    sizes = _member_seen_prompt_sizes(inner_member)
+    assert len(sizes) == 2 and sizes[1] < len(BIG) // 10
+    # Every row of the session, referenced by a persisted run or not, goes with the session.
+    assert db.get_tool_results_for_session(session_id)
+    db.delete_sessions(session_ids=[session_id])
+    assert db.get_tool_results_for_session(session_id) == []
 
 
 def test_a_member_on_defaults_takes_the_team_settings_even_with_its_own_store(db):
@@ -921,3 +912,29 @@ def test_an_explicit_false_keeps_a_member_out_of_the_teams_store(db):
     output = team.run("go", session_id=_sid())
     assert _tool_messages(output)[0].content.startswith('<result id="res_')
     assert member.offload_tool_results is False
+
+
+def test_an_opted_out_members_history_is_never_rewritten(db):
+    member = Agent(name="researcher", id="researcher", model=_SizeRecordingMemberModel(), add_history_to_context=True)
+    member.offload_tool_results = False
+    team = Team(
+        name="platform",
+        id="platform",
+        members=[member],
+        model=RoundRobinLeaderModel(["researcher", "researcher"]),
+        db=db,
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    output = team.run("go", session_id=session_id)
+    # The leader still reads envelopes.
+    assert _tool_messages(output)[0].content.startswith('<result id="res_')
+    # The member has no read-back tools, so its own history keeps the whole text.
+    sizes = _member_seen_prompt_sizes(member)
+    assert len(sizes) == 2 and sizes[1] > len(BIG)
+    stored = db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+    member_runs = [r for r in (stored.runs or []) if getattr(r, "agent_id", None) == "researcher"]
+    assert member_runs
+    for run in member_runs:
+        for message in run.messages or []:
+            assert not str(message.content or "").startswith('<result id="res_')

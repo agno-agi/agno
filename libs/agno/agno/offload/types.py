@@ -58,6 +58,9 @@ class ResultMatch:
     # is shown as a window around the match, and the offset is where to
     # continue reading with read_result(start_char=...).
     char_offset: int = 0
+    # True on the last match when the scan stopped before the end of the
+    # payload, at the match cap or the reply budget, so more may follow.
+    more: bool = False
 
 
 __all__ = ["NEVER_OFFLOADED_TOOLS", "ResultMatch", "ResultPage", "ResultRef"]
