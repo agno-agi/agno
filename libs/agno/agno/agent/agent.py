@@ -702,6 +702,15 @@ class Agent:
         return self._cached_session
 
     @property
+    def result_store(self) -> Optional["ResultStore"]:
+        """The store offloaded tool results go to, or None when offloading is off."""
+        if self._result_store is None and self.offload_tool_results:
+            from agno.agent import _init
+
+            _init.set_result_store(self)
+        return self._result_store
+
+    @property
     def learning_machine(self) -> Optional[LearningMachine]:
         if (
             self._learning is None

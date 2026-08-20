@@ -148,8 +148,10 @@ def pg_engine():
     with engine.begin() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{PG_SCHEMA}" CASCADE'))
         # Payloads live in the shared fs schema, which other lanes use too.
-        # Remove this module's rows by namespace rather than the table.
-        conn.execute(text("DELETE FROM fs.agno_fs WHERE namespace LIKE 'tool-results/offload-team-%'"))
+        # Remove this module's rows by namespace rather than the table, and
+        # only when a test in this session created the table at all.
+        if conn.execute(text("SELECT to_regclass('fs.agno_fs')")).scalar() is not None:
+            conn.execute(text("DELETE FROM fs.agno_fs WHERE namespace LIKE 'tool-results/offload-team-%'"))
     engine.dispose()
 
 
@@ -549,3 +551,57 @@ def test_shared_member_interactions_grow_one_answer_per_member(db):
     team.run("go", session_id=_sid())
 
     assert seen == [0, 1, 2, 3, 4]
+
+
+# ------------------------------------------------------------------
+# Store inheritance follows the team, never the member object
+# ------------------------------------------------------------------
+def test_a_member_moved_to_a_second_team_follows_that_team(db, tmp_path):
+    member = _member()
+    first = Team(name="first", id="first", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    first.initialize_team()
+    assert member._result_store is first._result_store
+
+    other_db = SqliteDb(db_file=str(tmp_path / "other.db"))
+    second = Team(
+        name="second", id="second", members=[member], model=LeaderModel(), db=other_db, offload_tool_results=True
+    )
+    second.initialize_team()
+    assert member._result_store is second._result_store
+    assert member._result_store.db is other_db
+    assert member.offload_tool_results is False
+
+
+def test_a_team_without_offloading_clears_an_inherited_store(db):
+    member = _member()
+    with_offload = Team(name="a", id="a", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    with_offload.initialize_team()
+    assert member._result_store is not None
+
+    without = Team(name="b", id="b", members=[member], model=LeaderModel(), db=db)
+    without.initialize_team()
+    assert member._result_store is None
+
+
+def test_a_member_with_its_own_db_is_rebound_to_the_team_db(db, tmp_path):
+    member = _member()
+    member.db = SqliteDb(db_file=str(tmp_path / "member.db"))
+    member.offload_tool_results = True
+    member.initialize_agent()
+    assert member._result_store is not None and member._result_store.db is member.db
+
+    team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    team.initialize_team()
+    # In the team, payloads go where the leader can read them back.
+    assert member._result_store.db is db
+    assert member.offload_tool_results is True
+
+
+def test_a_member_with_its_own_db_and_settings_stores_on_the_team_db(db, tmp_path):
+    member = _member()
+    member.db = SqliteDb(db_file=str(tmp_path / "member2.db"))
+    member.offload_tool_results = ResultStore(threshold_chars=100)
+    team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    team.initialize_team()
+    assert member._result_store.threshold_chars == 100
+    assert member._result_store.db is db

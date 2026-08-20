@@ -806,7 +806,7 @@ class Model(ABC):
                                 model_response.content += function_call_response.content  # type: ignore
 
                 # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -1029,7 +1029,7 @@ class Model(ABC):
                                 model_response.content += function_call_response.content  # type: ignore
 
                 # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -1523,7 +1523,7 @@ class Model(ABC):
                     yield function_call_response
 
                 # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
 
                 # Format and add results to messages
                 if stream_data and stream_data.extra is not None:
@@ -1804,7 +1804,7 @@ class Model(ABC):
                     yield function_call_response
 
                 # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
 
                 # Format and add results to messages
                 if stream_data and stream_data.extra is not None:
@@ -2195,6 +2195,21 @@ class Model(ABC):
             files=files,
             **kwargs,  # type: ignore
         )
+
+    @staticmethod
+    def _limit_charge_for(function_call_results: List[Message], result_store: Optional["ResultStore"]) -> int:
+        """How many of this batch's results spend the tool call limit.
+
+        With offloading on, the read-back tools are exempt: they exist only
+        because a result was replaced with a pointer the model was told to
+        follow, so the running total charges the same calls the per-batch
+        check charges.
+        """
+        if result_store is None:
+            return len(function_call_results)
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
+        return sum(1 for m in function_call_results if m.tool_name not in NEVER_OFFLOADED_TOOLS)
 
     def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
         return Message(

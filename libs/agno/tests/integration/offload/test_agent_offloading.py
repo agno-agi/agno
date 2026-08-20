@@ -889,3 +889,75 @@ def test_the_read_back_tools_do_not_spend_the_tool_call_limit(db):
     )
     assert "Tool call limit" not in str(results[0].content)
     assert "row 1: " in str(results[0].content)
+
+
+class ScriptedSequenceModel(ScriptedToolModel):
+    """Calls one tool per turn from a script, then answers."""
+
+    def __init__(self, script):
+        super().__init__()
+        self.script = script
+
+    def _next(self) -> ModelResponse:
+        self.calls += 1
+        if self.calls <= len(self.script):
+            name, args = self.script[self.calls - 1]
+            if callable(args):
+                args = args(self)
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": f"call-{self.calls}",
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(args)},
+                    }
+                ],
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(role="assistant", content="done", response_usage=MessageMetrics())
+
+
+def _last_result_id(model: Model) -> dict:
+    for message in reversed(getattr(model, "seen_messages", [])):
+        if message.role == "tool" and 'id="res_' in str(message.content):
+            return {"result_id": str(message.content).split('id="')[1].split('"')[0]}
+    raise AssertionError("no offloaded result in the transcript yet")
+
+
+class _SeesMessages(ScriptedSequenceModel):
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self.seen_messages = kwargs.get("messages") or (args[0] if args else [])
+        return self._next()
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self.seen_messages = kwargs.get("messages") or (args[0] if args else [])
+        return self._next()
+
+
+def test_read_back_calls_do_not_spend_the_limit_across_turns(db):
+    model = _SeesMessages([("fetch_page", {}), ("read_result", _last_result_id), ("fetch_page", {})])
+    agent = Agent(model=model, db=db, tools=[fetch_page], offload_tool_results=True, tool_call_limit=2)
+    output = agent.run("go", session_id=_sid())
+    tool_messages = _tool_messages(output)
+    assert len(tool_messages) == 3
+    # Two fetches fit the limit of two; the read_result between them is free.
+    assert "Tool call limit" not in str(tool_messages[2].content)
+    assert str(tool_messages[2].content).startswith('<result id="res_')
+
+
+async def test_read_back_calls_do_not_spend_the_limit_across_turns_async(db):
+    model = _SeesMessages([("fetch_page", {}), ("read_result", _last_result_id), ("fetch_page", {})])
+    agent = Agent(model=model, db=db, tools=[fetch_page], offload_tool_results=True, tool_call_limit=2)
+    output = await agent.arun("go", session_id=_sid())
+    tool_messages = _tool_messages(output)
+    assert len(tool_messages) == 3
+    assert "Tool call limit" not in str(tool_messages[2].content)
+
+
+def test_the_limit_still_applies_to_ordinary_tools_with_offloading_on(db):
+    model = _SeesMessages([("fetch_page", {}), ("fetch_page", {}), ("fetch_page", {})])
+    agent = Agent(model=model, db=db, tools=[fetch_page], offload_tool_results=True, tool_call_limit=2)
+    output = agent.run("go", session_id=_sid())
+    tool_messages = _tool_messages(output)
+    assert "Tool call limit" in str(tool_messages[2].content)

@@ -432,6 +432,8 @@ class Team:
     _connectable_tools_initialized_on_run: Optional[List[Any]] = None
     # Store for offloaded results, shared with the members
     _result_store: Optional["ResultStore"] = None
+    # The store a parent team handed down, so a later team can replace or clear it
+    _inherited_result_store: Optional["ResultStore"] = None
     # Internal resolved LearningMachine instance
     _learning: Optional[LearningMachine] = None
     # Whether learning init has been attempted (prevents repeated attempts when db is None)
@@ -710,6 +712,15 @@ class Team:
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
         return _init.initialize_team(self, debug_mode=debug_mode)
+
+    @property
+    def result_store(self) -> Optional["ResultStore"]:
+        """The store offloaded tool results go to, or None when offloading is off."""
+        if self._result_store is None and self.offload_tool_results:
+            from agno.team import _init
+
+            _init._set_result_store(self)
+        return self._result_store
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:
