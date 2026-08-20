@@ -38,7 +38,7 @@ class TestS3MediaStorage:
         mock_client.get_object.assert_called_once_with(Bucket="test-bucket", Key="some/key.png")
 
     def test_download_missing_object_raises_filenotfound(self):
-        """S3 NoSuchKey must surface as FileNotFoundError so the router returns 404, not 502."""
+        """S3 NoSuchKey must surface as FileNotFoundError so the router returns 404, not 500."""
         from agno.media.storage.s3 import S3MediaStorage
 
         client_error = pytest.importorskip("botocore.exceptions").ClientError

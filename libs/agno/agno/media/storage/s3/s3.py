@@ -91,11 +91,10 @@ class S3MediaStorage(MediaStorage):
         if self.acl:
             put_kwargs["ACL"] = self.acl
 
-        # Entries the sanitizer drops aren't lost — the full metadata stays on the MediaReference.
+        # Entries the sanitizer drops stay on the MediaReference.
         s3_metadata: Dict[str, str] = {"content-sha256": hashlib.sha256(content).hexdigest()}
-        # original-filename first: sanitize_s3_metadata stops at the size budget, so a large
-        # caller value would otherwise push the framework's own key out. A caller key of the
-        # same name still wins, because dict(metadata) overwrites it.
+        # original-filename first: the sanitizer stops at the size budget, so a large caller
+        # value would otherwise push it out. A caller key of the same name still wins.
         extra: Dict[str, Any] = {"original-filename": filename} if filename else {}
         extra.update(dict(metadata) if metadata else {})
         s3_metadata.update(sanitize_s3_metadata(extra))
@@ -115,8 +114,7 @@ class S3MediaStorage(MediaStorage):
             response = client.get_object(Bucket=self.bucket, Key=storage_key)
             return response["Body"].read()
         except Exception as e:
-            # Normalize a missing object to FileNotFoundError so the media router returns 404
-            # rather than 502.
+            # Normalize a missing object to FileNotFoundError so the media router returns 404.
             from botocore.exceptions import ClientError
 
             if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
@@ -138,8 +136,7 @@ class S3MediaStorage(MediaStorage):
             return f"https://{host}/{encoded_key}"
 
         if expires_in > S3_MAX_PRESIGNED_EXPIRY:
-            # Return no URL rather than one S3 will reject on use. Callers read "" as
-            # "no URL, stream the bytes instead".
+            # Return no URL rather than one S3 will reject on use.
             log_warning(
                 f"presigned_url_expiry {expires_in}s exceeds the SigV4 maximum of "
                 f"{S3_MAX_PRESIGNED_EXPIRY}s; will stream instead"
@@ -155,8 +152,7 @@ class S3MediaStorage(MediaStorage):
 
     def delete(self, storage_key: str) -> bool:
         try:
-            # Client construction inside the guard: a missing boto3 or an unusable credential
-            # is a failed delete like any other, so it returns False rather than raising.
+            # Client construction inside the guard: an unusable credential is a failed delete.
             client = self._get_client()
             client.delete_object(Bucket=self.bucket, Key=storage_key)
             return True
@@ -166,9 +162,7 @@ class S3MediaStorage(MediaStorage):
 
     def delete_many(self, storage_keys: List[str]) -> int:
         try:
-            # Inside the guard for the same reason as delete(): the contract promises a count
-            # of what is gone, so a client that cannot be built is 0 deleted, not a raise that
-            # aborts the caller's sweep.
+            # Inside the guard as in delete(): a client that cannot be built is 0 deleted.
             client = self._get_client()
         except Exception as e:
             log_warning(f"Failed to delete objects: {e}")
@@ -193,14 +187,12 @@ class S3MediaStorage(MediaStorage):
         except Exception as e:
             log_warning(f"Failed to delete {len(keys)} objects: {e}")
             return 0
-        # Quiet mode reports only the failures, and S3 reports no error for a key that
-        # was never there — so everything not listed is gone, matching delete()'s contract.
+        # Quiet mode reports only failures, and a key that was never there is not one.
         return len(keys) - len(response.get("Errors") or [])
 
     def exists(self, storage_key: str) -> bool:
         try:
-            # Inside the guard for the same reason as delete(): the contract is a bool, so a
-            # client that cannot be built is False rather than a raise.
+            # Inside the guard as in delete(): a client that cannot be built is False.
             client = self._get_client()
             client.head_object(Bucket=self.bucket, Key=storage_key)
             return True

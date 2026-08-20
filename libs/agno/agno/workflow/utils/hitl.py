@@ -269,9 +269,8 @@ async def asave_paused_session(
     """
     workflow._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
     session.upsert_run(run=workflow_run_response)
-    # asave_run/asave_session already absorb a sync DB, so there is nothing to branch on here.
-    # Branching would also pick the sync media path, which raises on an async backend rather
-    # than awaiting it on the loop this resume already holds.
+    # asave_run/asave_session already absorb a sync DB. Branching would also pick the sync
+    # media path, which raises on an async backend instead of awaiting it.
     await workflow._apersist_session_and_run(session=session, run=workflow_run_response)
 
 

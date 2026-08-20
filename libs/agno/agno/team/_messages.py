@@ -1120,9 +1120,8 @@ async def _aget_run_messages(
                 else:
                     from agno.utils.media_offload import refresh_message_media_urls
 
-                    # Sync storage in an async run — refresh in a worker thread. Inline, every
-                    # history image re-signs (and on a non-signing backend, downloads) on the
-                    # event loop before the model call can start.
+                    # Sync storage in an async run — refresh in a worker thread rather than re-signing
+                    # every history image on the event loop.
                     for _msg in history_copy:
                         await asyncio.to_thread(refresh_message_media_urls, _msg, team.media_storage)
 

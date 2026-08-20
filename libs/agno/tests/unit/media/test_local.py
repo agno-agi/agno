@@ -131,9 +131,8 @@ def test_local_read_path_allows_keys_inside_root():
         assert storage.get_url(key).startswith("file://")
 
 
-# Keys that the hand-rolled containment check used to wave through: they resolved to the
-# storage root itself, or to a Windows device handle, and only failed later as an
-# IsADirectoryError (or, on Windows, a device write).
+# Keys the hand-rolled containment check waved through: they resolved to the storage root
+# or a Windows device handle, and only failed later as an IsADirectoryError.
 _REJECTED_KEYS = [
     "../secret",
     "../../etc/passwd",

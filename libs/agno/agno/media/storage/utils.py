@@ -31,10 +31,8 @@ def build_storage_key(
     media_id = sanitize_media_id(media_id)
     ext = ""
     if filename and "." in filename:
-        # Sanitized like the media id is, and for the same reason: the filename is
-        # caller-supplied, so a raw suffix puts path separators into the key, and a long tail
-        # overruns the filesystem name limit — that raises, the offload falls back, and the
-        # row silently keeps its base64. Falls through to the mime type when nothing survives.
+        # Sanitized like the media id: the filename is caller-supplied, so a raw suffix
+        # puts separators into the key and a long tail overruns the filesystem name limit.
         ext = re.sub(r"[^A-Za-z0-9]", "", filename.rsplit(".", 1)[-1])[:16]
         ext = f".{ext}" if ext else ""
     if not ext and mime_type:

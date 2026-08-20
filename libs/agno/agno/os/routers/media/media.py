@@ -1,4 +1,4 @@
-"""Media API router -- stream or re-sign session media held in external media storage."""
+"""Media API router — stream or re-sign session media held in external media storage."""
 
 import asyncio
 import mimetypes
@@ -20,14 +20,11 @@ from agno.os.utils import iter_run_media
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_warning
 
-# A type/subtype of RFC 9110 tokens and nothing else. Anything else is served as
-# application/octet-stream, which covers a newline injected into the header as well as the
-# wildcards and novel subtypes the active-content list cannot enumerate.
+# A type/subtype of RFC 9110 tokens and nothing else; the rest is octet-stream.
 _MIME_TYPE_PATTERN = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+")
 
-# Content types a browser can execute as script on the API origin. These are re-typed as
-# application/octet-stream on the way out: nosniff only blocks execution when the declared
-# type is not already executable, and XML can carry an XSLT/entity payload.
+# Content types a browser can execute on the API origin, re-typed as octet-stream:
+# nosniff only blocks execution when the declared type is not already executable.
 _ACTIVE_CONTENT_TYPES = {
     "text/html",
     "application/xhtml+xml",
@@ -107,9 +104,8 @@ def attach_routes(
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Media fetch is not supported for remote databases")
 
-        # Ownership: with user_isolation on, resolve_db_and_scope binds user_id to the JWT
-        # subject, so a caller only reads sessions they own. Without it RBAC alone applies and
-        # the session membership check below is the only thing scoping the fetch.
+        # With user_isolation on, resolve_db_and_scope binds user_id to the JWT subject. Without
+        # it the session membership check below is the only thing scoping the fetch.
         if session_type is None:
             session_type, _ = await resolve_session_type(db, session_id, session_type, effective_user_id)
             if session_type is None:
@@ -146,11 +142,8 @@ def attach_routes(
             raise HTTPException(status_code=404, detail="Media is not served by the configured storage backend")
 
         if redirect:
-            # Always re-derive the URL from storage_key, never redirect to the one stored on the
-            # reference. The key has just been checked against this session; a stored url is an
-            # opaque string that only has to look like a link, so honouring it would turn this
-            # route into an open redirect. A public-bucket backend returns its stable public URL
-            # from get_url anyway, so nothing is lost by re-deriving.
+            # Always re-derive the URL from storage_key. The key has just been checked against this
+            # session; a stored url is opaque, so honouring it would make this an open redirect.
             try:
                 if isinstance(media_storage, AsyncMediaStorage):
                     url = await media_storage.get_url(storage_key)
@@ -182,22 +175,19 @@ def attach_routes(
         media_type = getattr(ref, "mime_type", None)
         if not media_type:
             media_type = mimetypes.guess_type(storage_key)[0] or "application/octet-stream"
-        # The mime type arrives from the client at upload time and is then persisted, so it is
-        # validated on the way out rather than trusted. Starlette copies it into Content-Type
-        # verbatim, and a newline in it breaks every response for that object, permanently.
+        # The mime type arrives from the client and is persisted, so it is validated on the way
+        # out: Starlette copies it into Content-Type verbatim and a newline breaks the response.
         media_type = media_type.split(";")[0].strip().lower()
         if not _MIME_TYPE_PATTERN.fullmatch(media_type):
             media_type = "application/octet-stream"
         headers = {"X-Content-Type-Options": "nosniff"}
         if media_type in _ACTIVE_CONTENT_TYPES:
-            # Content-Disposition is ignored for subresources, so it alone does not stop a
-            # <script src> include. Declaring a non-executable type is what makes nosniff
-            # bite; the disposition then covers top-level navigation to the same URL.
+            # Content-Disposition is ignored for subresources; declaring a non-executable type is
+            # what makes nosniff bite.
             headers["Content-Disposition"] = "attachment"
             media_type = "application/octet-stream"
-        # download() already returns the whole object, so send it as one body with a
-        # Content-Length. Handing the bytes to StreamingResponse instead would iterate them
-        # as lines, emitting one chunked-transfer frame per newline in the payload.
+        # download() returns the whole object, so send one body with a Content-Length.
+        # StreamingResponse would iterate the bytes as lines, one frame per newline.
         return Response(content=data, media_type=media_type, headers=headers)
 
     return router

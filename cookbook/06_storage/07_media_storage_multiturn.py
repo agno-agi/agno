@@ -2,15 +2,12 @@
 Multi-turn Media Storage
 ========================
 
-A multi-turn conversation keeps working when a media_storage backend is configured. On turn 1
-the image is offloaded to storage and only a MediaReference is kept in the database. On turn 2
-the agent answers about the image without it being re-sent: the reference is reloaded from
-history and its bytes re-read from storage so the model can see the image again, while the raw
-bytes never bloat the database.
+Demonstrates a multi-turn conversation over offloaded media. Turn 1 uploads the image and
+keeps only a MediaReference; turn 2 asks about it without re-sending it, and the bytes are
+re-read from storage.
 
-Note the store=False on the model. OpenAIResponses otherwise chains turns server-side via
-previous_response_id, so turn 2 would send no image at all and the reference-reload path this
-example exists to show would never run.
+store=False keeps history client-side; OpenAIResponses would otherwise chain turns via
+previous_response_id and turn 2 would send no image at all.
 """
 
 import shutil
@@ -61,5 +58,5 @@ if __name__ == "__main__":
         images=[Image(content=image_bytes, format="jpeg", mime_type="image/jpeg")],
     )
 
-    # Turn 2: ask again without re-attaching the image -- it is reloaded from storage
+    # Turn 2: ask again without re-attaching the image — it is reloaded from storage
     agent.print_response("What was the image about?")

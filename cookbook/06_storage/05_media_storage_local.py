@@ -2,16 +2,11 @@
 Local Media Storage
 ===================
 
-LocalMediaStorage saves media files to the local filesystem instead of S3, useful for
-development and testing. In production use S3MediaStorage or another cloud backend.
+Demonstrates LocalMediaStorage, which writes media to the filesystem and keeps only a
+MediaReference in the database. For development; use S3MediaStorage or GCSMediaStorage
+in production.
 
-When media_storage is configured, media content (images, audio, video, files) is written
-to storage and only a lightweight MediaReference is kept in the database.
-
-By default only media with content bytes or a local filepath is offloaded; URL-only media
-is skipped (downloading every URL could grow storage unexpectedly, and many URLs are already
-public). To download and store media from every source -- filepath, content bytes, and url --
-set persist_remote_urls=True on the storage.
+URL-only media is skipped by default. Set persist_remote_urls=True to download and store it.
 """
 
 import httpx
@@ -79,7 +74,7 @@ if __name__ == "__main__":
         images=[Image(content=image_bytes, format="jpeg", mime_type="image/jpeg")],
     )
 
-    # URL-only media is NOT stored locally by default -- it is skipped during offload.
+    # URL-only media is NOT stored locally by default — it is skipped during offload.
     agent.print_response(
         "What do you see in this image?",
         images=[Image(url=IMAGE_URL)],

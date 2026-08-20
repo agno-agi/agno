@@ -288,9 +288,8 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
 
     # Case 1: Document is a URL
     if file.url is not None:
-        # Anthropic accepts a url document source for PDFs only. Media storage hands every
-        # offloaded File a signed url regardless of its type, so a csv or json would reach the
-        # provider as a url document and come back as a 400; fetch those and send the bytes.
+        # Anthropic accepts a url document source for PDFs only, and offload signs a url for
+        # every File, so a csv would reach the provider as a url document and 400.
         media_type = file.mime_type
         if media_type is None or media_type == "application/pdf":
             document = {

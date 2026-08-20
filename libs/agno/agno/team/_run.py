@@ -3397,10 +3397,8 @@ async def _arun_background(
     # 2. Set status to PENDING
     run_response.status = RunStatus.pending
 
-    # 3. Persist the PENDING run so polling can find it immediately. This row survives for the
-    # whole run — and forever if the process dies before the terminal write — so its media is
-    # offloaded first rather than parked in the DB as base64. The RUNNING transition below
-    # writes the identical state, so it reuses the same copy instead of offloading twice.
+    # 3. Persist the PENDING run so polling can find it immediately. The row survives the whole
+    # run, so its media is offloaded first; the RUNNING transition reuses the same copy.
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
     storage_run = await abuild_offloaded_storage_copy(team, run_response, session_id) or run_response
@@ -4547,9 +4545,8 @@ def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_r
 
     for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
         try:
-            # The team owns this write, so the team's media_storage offloads it. Without this the
-            # member rows keep raw base64 while the team row written beside them holds references.
-            # Returns None when there is nothing to offload, so the member run is written as-is.
+            # The team owns this write, so the team's media_storage offloads it, or the member rows
+            # keep raw base64 beside a team row holding references. None means nothing to offload.
             save_run(
                 team,
                 run=build_offloaded_storage_copy(team, member_run, session.session_id) or member_run,
@@ -4594,23 +4591,21 @@ def _cleanup_and_store(
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Scrub a copy for storage — the original run_response is never mutated so the
-    # caller always sees full media regardless of store_media.
+    # Scrub a copy for storage so the caller always sees full media.
     storage_copy = copy.copy(run_response)
     if team.media_storage is not None and team.store_media:
         from agno.media.storage.base import AsyncMediaStorage
 
         # Raised outside the guard below: an async backend on a sync run is a configuration
-        # error, not a storage failure, and falling back to inline would hide it.
+        # error, and falling back to inline would hide it for the life of the run.
         if isinstance(team.media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
         try:
             from agno.utils.media_offload import offload_cache_for, offload_run_media
 
-            # Deep-copy first: offload strips content bytes off media objects, and a shallow
-            # copy would share those objects with the caller (e.g. reused input Images). The
-            # copy is taken inside the guard so an uncopyable payload also stays inline.
+            # Deep-copy first: offload strips content bytes off media objects the caller may reuse.
+            # Taken inside the guard so an uncopyable payload also stays inline.
             offload_copy = copy.deepcopy(run_response)
             offload_run_media(
                 offload_copy,
@@ -4626,9 +4621,8 @@ def _cleanup_and_store(
     if run_response.run_id:
         cleanup_member_runs(run_response.run_id)
 
-    # The media scrub recurses into member_responses, which are the same objects the sibling
-    # member rows are written from further down. Isolate them so dropping media from the team
-    # row does not also strip it off runs governed by each member's own store_media.
+    # The media scrub recurses into member_responses, the same objects the sibling member rows
+    # are written from. Isolate them so the team row's scrub does not strip those too.
     if not team.store_media:
         from agno.utils.agent import isolate_media_scrub_targets
 
@@ -4697,11 +4691,9 @@ async def _acleanup_and_store(
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Scrub a copy for storage — the original run_response is never mutated so the
-    # caller always sees full media regardless of store_media. When offloading, deep-copy
-    # first: offload strips content bytes off media objects, and a shallow copy would share
-    # those objects with the caller (e.g. reused input Images). Each copy is taken inside its
-    # guard so an uncopyable payload also stays inline.
+    # Scrub a copy for storage so the caller always sees full media. Deep-copy when offloading:
+    # it strips content bytes off media objects the caller may reuse. Each copy is taken inside
+    # its guard so an uncopyable payload stays inline.
     storage_copy = copy.copy(run_response)
     if team.media_storage is not None and team.store_media:
         from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -4746,9 +4738,8 @@ async def _acleanup_and_store(
     if run_response.run_id:
         await acleanup_member_runs(run_response.run_id)
 
-    # The media scrub recurses into member_responses, which are the same objects the sibling
-    # member rows are written from further down. Isolate them so dropping media from the team
-    # row does not also strip it off runs governed by each member's own store_media.
+    # The media scrub recurses into member_responses, the same objects the sibling member rows
+    # are written from. Isolate them so the team row's scrub does not strip those too.
     if not team.store_media:
         from agno.utils.agent import isolate_media_scrub_targets
 
@@ -4893,9 +4884,8 @@ def _persist_team_run_in_session(
     # Mid-run checkpoint: offload its media the same way the terminal write does, so the
     # checkpoint row carries references rather than inline base64 for the rest of the run.
     storage_copy = build_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(run_response)
-    # Scrubbing mutates shared objects in place, and a shallow copy aliases the live run.
-    # Isolate what the scrubs touch so a checkpoint never strips state off the still-running
-    # team run. An offloaded copy is a deep copy, so it is already isolated.
+    # Scrubbing mutates shared objects in place and a shallow copy aliases the live run, so
+    # isolate what the scrubs touch. An offloaded copy is deep and already isolated.
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
@@ -4949,9 +4939,8 @@ async def _apersist_team_run_in_session(
     storage_copy = await abuild_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(
         run_response
     )
-    # Scrubbing mutates shared objects in place, and a shallow copy aliases the live run.
-    # Isolate what the scrubs touch so a checkpoint never strips state off the still-running
-    # team run. An offloaded copy is a deep copy, so it is already isolated.
+    # Scrubbing mutates shared objects in place and a shallow copy aliases the live run, so
+    # isolate what the scrubs touch. An offloaded copy is deep and already isolated.
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
@@ -5112,7 +5101,7 @@ def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> b
     scrubbed = False
 
     if not team.store_media:
-        # store_media is off: offload was skipped and media is dropped from the persisted run.
+        # store_media is off, so the media was never offloaded — the run keeps no pointer to it.
         scrub_media_from_run_output(run_response, keep_references=False)
         scrubbed = True
 
@@ -5136,12 +5125,6 @@ def _scrub_member_responses(
     Scrub member responses based on each member's storage flags.
     This is called when saving the team session to ensure member data is scrubbed per member settings.
     Recursively handles nested team's member responses.
-
-    keep_media_references carries the offload context down the team hierarchy. Offload runs
-    whenever any team in the hierarchy has media_storage, so once a parent enables it the
-    nested members must preserve their references too — otherwise leaf media offloaded by the
-    root team would be scrubbed away (and orphaned in storage). None means "resolve from this
-    team", used for the top-level call.
     """
     from agno.team._tools import _find_member_by_id
     from agno.team.team import Team
@@ -5178,7 +5161,7 @@ def _scrub_member_responses(
                 keep_media_references=keep_references,
             )
 
-        # If this is a nested team, recursively scrub its member responses, propagating context
+        # If this is a nested team, recursively scrub its member responses
         if isinstance(member, Team) and isinstance(member_response, TeamRunOutput) and member_response.member_responses:
             member._scrub_member_responses(member_response.member_responses, keep_media_references=keep_references)  # type: ignore
 
@@ -7191,9 +7174,8 @@ def fork_session_dispatch(
     from agno.team._session import save_run
 
     for idx, run in enumerate(new_session.runs or []):
-        # The team owns this write, so the team's media_storage offloads it. A cached source
-        # session still holds the member runs inline (the DB copy was offloaded, the in-memory
-        # one was not), so without this the fork writes back the raw base64 the source shed.
+        # The team owns this write, so the team's media_storage offloads it. A cached source session
+        # still holds the member runs inline, so the fork would otherwise write back raw base64.
         save_run(
             team,
             run=build_offloaded_storage_copy(team, run, new_session.session_id) or run,
@@ -8798,9 +8780,7 @@ async def _acontinue_run_background_stream(
                                 RunStatus.running,
                             ):
                                 persist_run.status = cast(RunStatus, restore_status)
-                                # Offloaded like the takeover write above: persist_run is the
-                                # caller's own run with its media still inline, so restoring it
-                                # raw would put back the base64 the takeover row already shed.
+                                # Offloaded like the takeover write above: persist_run still holds its media inline.
                                 storage_run = (
                                     await abuild_offloaded_storage_copy(team, persist_run, session_id) or persist_run
                                 )

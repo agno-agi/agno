@@ -1927,10 +1927,8 @@ async def _arun_background(
     # 2. Set status to PENDING
     run_response.status = RunStatus.pending
 
-    # 3. Persist the PENDING run so polling can find it immediately. This row survives for the
-    # whole run — and forever if the process dies before the terminal write — so its media is
-    # offloaded first rather than parked in the DB as base64. The RUNNING transition below
-    # writes the identical state, so it reuses the same copy instead of offloading twice.
+    # 3. Persist the PENDING run so polling can find it immediately. The row survives the whole
+    # run, so its media is offloaded first; the RUNNING transition reuses the same copy.
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     storage_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
@@ -5933,9 +5931,8 @@ def persist_run_in_session(
     from agno.agent import _session
 
     if storage_copy is None:
-        # No pre-built copy means this is a mid-run checkpoint. Offload its media the same
-        # way the terminal write does, so the checkpoint row carries references rather than
-        # inline base64 for the rest of the run.
+        # No pre-built copy means a mid-run checkpoint, so offload it like the terminal write
+        # does rather than leaving base64 in the row for the rest of the run.
         offloaded = build_offloaded_storage_copy(agent, run_response, session.session_id)
         storage_copy = _scrub_and_propagate_session_state(
             agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
@@ -6013,8 +6010,8 @@ def cleanup_and_store(
 
     from agno.run.approval import update_approval_run_status
 
-    # Stop the timer for the Run duration (terminal only). Done before the storage copy is
-    # taken so the persisted run carries the duration too.
+    # Stop the timer for the Run duration (terminal only), before the storage copy is taken
+    # so the persisted run carries it.
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
@@ -6023,16 +6020,15 @@ def cleanup_and_store(
         from agno.media.storage.base import AsyncMediaStorage
 
         # Raised outside the guard below: an async backend on a sync run is a configuration
-        # error, not a storage failure, and falling back to inline would hide it.
+        # error, and falling back to inline would hide it for the life of the run.
         if isinstance(agent.media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
         try:
             from agno.utils.media_offload import offload_cache_for, offload_run_media
 
-            # Offload onto a deep copy before scrubbing, so the caller's reused input media
-            # is never mutated (offload strips content bytes off media objects). The copy is
-            # taken inside the guard so an uncopyable payload also falls back to inline.
+            # Offload onto a deep copy before scrubbing: offload strips content bytes, and the copy
+            # is taken inside the guard so an uncopyable payload also falls back to inline.
             storage_copy = copy.deepcopy(run_response)
             offload_run_media(
                 storage_copy,
@@ -6124,8 +6120,8 @@ async def acleanup_and_store(
 
     from agno.run.approval import aupdate_approval_run_status
 
-    # Stop the timer for the Run duration (terminal only). Done before the storage copy is
-    # taken so the persisted run carries the duration too.
+    # Stop the timer for the Run duration (terminal only), before the storage copy is taken
+    # so the persisted run carries it.
     if run_response.metrics:
         run_response.metrics.stop_timer()
 

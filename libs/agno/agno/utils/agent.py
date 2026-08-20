@@ -501,9 +501,8 @@ def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput], k
         run_response.audio = None
         run_response.files = None
 
-    # 6. Member responses (TeamRunOutput only). The embedded member runs are part of this
-    # row, so they follow the same store_media decision as the rest of it. Each member's
-    # own flags are applied separately by Team._scrub_member_responses.
+    # 6. Member responses (TeamRunOutput only) are part of this row, so they follow its
+    # store_media. Each member's own flags are applied by Team._scrub_member_responses.
     member_responses = getattr(run_response, "member_responses", None)
     if member_responses:
         for member_response in member_responses:
@@ -666,16 +665,10 @@ def build_offloaded_storage_copy(
 ) -> Optional[RunOutputT]:
     """Return a deep copy of ``run_response`` with its media offloaded, or None.
 
-    The pre-terminal writes — the background PENDING/RUNNING rows and every mid-run
-    checkpoint — persist the run while its media is still inline, so without this the row
-    carries raw base64 for the whole life of the run, and permanently if the process dies
-    before the terminal write. This performs the same offload ``cleanup_and_store`` does,
-    including the deep copy: offload strips content bytes off media objects, and the live
-    run still needs them for the model turns to come.
-
-    Returns None when there is nothing to offload or the offload failed, so the caller
-    falls back to writing the run inline exactly as it does today. An AsyncMediaStorage
-    raises instead, the same way a sync entry point does with an async database.
+    The pre-terminal writes — background PENDING/RUNNING rows and mid-run checkpoints —
+    persist the run while its media is still inline, so without this the row carries raw
+    base64 for the life of the run. Returns None when there is nothing to offload or the
+    offload failed, so the caller writes the run inline as before.
     """
     # store_media first: with it off the media is scrubbed from the row anyway, so
     # uploading it would be wasted work.
@@ -687,8 +680,7 @@ def build_offloaded_storage_copy(
     from agno.media.storage.base import AsyncMediaStorage
 
     # Raised outside the guard below: an async backend on a sync run is a configuration
-    # error, not a storage failure, and falling back to inline would hide it for the whole
-    # life of the run.
+    # error, and falling back to inline would hide it for the life of the run.
     if isinstance(entity.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 

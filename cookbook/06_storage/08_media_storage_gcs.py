@@ -2,23 +2,16 @@
 GCS Media Storage
 =================
 
-GCSMediaStorage offloads media content (images, audio, video, files) to Google Cloud Storage.
-The content is uploaded to GCS and only a lightweight MediaReference is stored in the database.
+Demonstrates GCSMediaStorage, which offloads media to Google Cloud Storage and keeps only a
+MediaReference in the database. URL-only media is skipped unless persist_remote_urls=True.
 
-By default only media with content bytes or a local filepath is offloaded; URL-only media
-is skipped (downloading every URL could grow storage unexpectedly, and many URLs are already
-public). To download and store media from every source -- filepath, content bytes, and url --
-set persist_remote_urls=True on the storage.
+Signing a URL needs a service-account private key, so under application-default credentials
+nothing is signed and AgentOS streams the bytes through the /media route instead.
 
 Requirements:
 - uv pip install 'agno[gcs]'
-- Authenticate with application-default credentials (`gcloud auth application-default login`)
-  or a service-account JSON via credentials_path
+- `gcloud auth application-default login`, or a service-account JSON via credentials_path
 - Set MEDIA_GCS_BUCKET to a bucket you own; GCP_PROJECT to set the project
-
-Signing a GCS URL needs a service-account private key, so presigned_url_expiry only takes
-effect when you authenticate via credentials_path. Under application-default credentials no
-URL can be signed and AgentOS streams the bytes through the /media route instead.
 """
 
 import os
@@ -38,7 +31,7 @@ from agno.models.openai import OpenAIResponses
 IMAGE_URL = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
 
 # A bucket you do not own makes every upload fail, and offload falls back to inline
-# base64 -- the run still succeeds, so the failure is easy to miss. Ask for the bucket
+# base64 — the run still succeeds, so the failure is easy to miss. Ask for the bucket
 # up front instead.
 bucket = os.getenv("MEDIA_GCS_BUCKET")
 if not bucket:
@@ -100,7 +93,7 @@ if __name__ == "__main__":
         images=[Image(content=image_bytes, format="jpeg", mime_type="image/jpeg")],
     )
 
-    # URL-only media is NOT stored in GCS by default -- it is skipped during offload.
+    # URL-only media is NOT stored in GCS by default — it is skipped during offload.
     agent.print_response(
         "What do you see in this image?",
         images=[Image(url=IMAGE_URL)],

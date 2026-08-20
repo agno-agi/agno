@@ -1,7 +1,7 @@
 """Tests for the call sites that must offload media before a row is written.
 
 Every persist an agent, team or workflow makes has to hand its media to storage
-first -- the terminal write, the mid-run checkpoints, the background PENDING and
+first — the terminal write, the mid-run checkpoints, the background PENDING and
 RUNNING rows, and a team's member run rows. A call site that skips it writes the
 bytes into the database inline, which is the whole thing offloading exists to avoid.
 """
@@ -215,9 +215,8 @@ def test_team_save_session_offloads_nothing():
         # Caller's image is untouched: bytes preserved, no reference attached.
         assert img.content == b"ORIGINAL"
         assert getattr(img, "media_reference", None) is None
-        # And nothing was uploaded. Runs are offloaded on the path that actually persists
-        # them, _cleanup_and_store, which puts the offloaded copy on the session before the
-        # session row is written; an offload here would only re-upload what that already did.
+        # And nothing was uploaded: _cleanup_and_store puts the offloaded copy on the session
+        # before the row is written, so an offload here would only re-upload it.
         media_dir = Path(tmpdir) / "media"
         assert not media_dir.exists() or not [f for f in media_dir.rglob("*") if f.is_file()]
 
@@ -249,8 +248,7 @@ def test_refresh_downloads_bytes_when_url_is_empty():
 
 
 # ---------------------------------------------------------------------------
-# Pre-terminal writes must be offloaded too (background PENDING/RUNNING rows and
-# mid-run checkpoints), not just the terminal write.
+# Pre-terminal writes: background PENDING/RUNNING rows and mid-run checkpoints
 # ---------------------------------------------------------------------------
 
 
@@ -512,7 +510,7 @@ def test_team_background_pending_row_is_offloaded(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# store_media=False on a Team must also clear the member data embedded in its row.
+# store_media=False on a Team clears the member data embedded in its row
 # ---------------------------------------------------------------------------
 
 
@@ -621,7 +619,7 @@ def test_request_media_cannot_carry_a_storage_pointer():
     """A media_reference names an object in the configured bucket, and the media route serves
     any key it finds on a session the caller owns. Honouring one off a request body would let a
     caller name any key the AgentOS credentials can reach, have it persisted onto their own
-    session, and read it back -- so the OS boundary drops it before reconstruction."""
+    session, and read it back — so the OS boundary drops it before reconstruction."""
     import base64
 
     from agno.os.utils import drop_media_references
@@ -652,7 +650,7 @@ def test_request_media_cannot_carry_a_storage_pointer():
 
 def test_offload_cache_uploads_once_across_persists():
     """Every persist offloads a fresh deep copy, so the media_reference the last one attached
-    is gone and the bytes go up again -- a HITL run that pauses three times uploaded its media
+    is gone and the bytes go up again — a HITL run that pauses three times uploaded its media
     five times. The cache lives on the live run, so the second persist is a no-op."""
     from agno.utils.media_offload import offload_cache_for
 
@@ -705,8 +703,8 @@ def test_cache_does_not_hand_one_media_kind_another_kinds_object():
 @pytest.mark.asyncio
 async def test_pre_terminal_writes_upload_once_under_a_sync_backend_on_arun():
     """The sync-backend branch hands offload_run_media to to_thread by reference, so the cache
-    had to travel as a positional argument and did not. Every pre-terminal write -- the PENDING
-    row, the RUNNING row, each checkpoint -- re-uploaded the whole run."""
+    had to travel as a positional argument and did not. Every pre-terminal write — the PENDING
+    row, the RUNNING row, each checkpoint — re-uploaded the whole run."""
     from agno.utils.agent import abuild_offloaded_storage_copy
 
     class CountingStorage(LocalMediaStorage):

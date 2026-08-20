@@ -153,10 +153,7 @@ class Message(BaseModel):
                 if isinstance(img_data, dict):
                     # Check for media_reference FIRST
                     if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
-                        # Checked before the base64 branch: a row carrying both must keep the
-                        # reference rather than decode the bytes. The validator builds the
-                        # MediaReference and keeps every other stored field, so rebuilding by
-                        # hand here only dropped the persisted url and filepath.
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
                         reconstructed_images.append(Image(**img_data))
                     elif "content" in img_data and isinstance(img_data["content"], str):
                         reconstructed_images.append(
@@ -179,10 +176,7 @@ class Message(BaseModel):
             for i, aud_data in enumerate(data["audio"]):
                 if isinstance(aud_data, dict):
                     if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
-                        # Checked before the base64 branch: a row carrying both must keep the
-                        # reference rather than decode the bytes. The validator builds the
-                        # MediaReference and keeps every other stored field, so rebuilding by
-                        # hand here only dropped the persisted url and filepath.
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
                         reconstructed_audio.append(Audio(**aud_data))
                     elif "content" in aud_data and isinstance(aud_data["content"], str):
                         reconstructed_audio.append(
@@ -208,10 +202,7 @@ class Message(BaseModel):
             for i, vid_data in enumerate(data["videos"]):
                 if isinstance(vid_data, dict):
                     if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
-                        # Checked before the base64 branch: a row carrying both must keep the
-                        # reference rather than decode the bytes. The validator builds the
-                        # MediaReference and keeps every other stored field, so rebuilding by
-                        # hand here only dropped the persisted url and filepath.
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
                         reconstructed_videos.append(Video(**vid_data))
                     elif "content" in vid_data and isinstance(vid_data["content"], str):
                         reconstructed_videos.append(
@@ -234,10 +225,7 @@ class Message(BaseModel):
             for i, file_data in enumerate(data["files"]):
                 if isinstance(file_data, dict):
                     if "media_reference" in file_data and isinstance(file_data["media_reference"], dict):
-                        # Checked before the base64 branch: a row carrying both must keep the
-                        # reference rather than decode the bytes. The validator builds the
-                        # MediaReference and keeps every other stored field, so rebuilding by
-                        # hand here only dropped the persisted url and filepath.
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
                         reconstructed_files.append(File(**file_data))
                     elif "content" in file_data and isinstance(file_data["content"], str):
                         reconstructed_files.append(
@@ -260,10 +248,7 @@ class Message(BaseModel):
             aud_data = data["audio_output"]
             if isinstance(aud_data, dict):
                 if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
-                    # Checked before the base64 branch: a row carrying both must keep the
-                    # reference rather than decode the bytes. The validator builds the
-                    # MediaReference and keeps every other stored field, so rebuilding by
-                    # hand here only dropped the persisted url and filepath.
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
                     data["audio_output"] = Audio(**aud_data)
                 elif "content" in aud_data and isinstance(aud_data["content"], str):
                     data["audio_output"] = Audio.from_base64(
@@ -282,10 +267,7 @@ class Message(BaseModel):
             img_data = data["image_output"]
             if isinstance(img_data, dict):
                 if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
-                    # Checked before the base64 branch: a row carrying both must keep the
-                    # reference rather than decode the bytes. The validator builds the
-                    # MediaReference and keeps every other stored field, so rebuilding by
-                    # hand here only dropped the persisted url and filepath.
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
                     data["image_output"] = Image(**img_data)
                 elif "content" in img_data and isinstance(img_data["content"], str):
                     data["image_output"] = Image.from_base64(
@@ -301,10 +283,7 @@ class Message(BaseModel):
             vid_data = data["video_output"]
             if isinstance(vid_data, dict):
                 if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
-                    # Checked before the base64 branch: a row carrying both must keep the
-                    # reference rather than decode the bytes. The validator builds the
-                    # MediaReference and keeps every other stored field, so rebuilding by
-                    # hand here only dropped the persisted url and filepath.
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
                     data["video_output"] = Video(**vid_data)
                 elif "content" in vid_data and isinstance(vid_data["content"], str):
                     data["video_output"] = Video.from_base64(

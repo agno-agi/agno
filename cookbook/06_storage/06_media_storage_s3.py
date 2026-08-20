@@ -2,20 +2,13 @@
 S3 Media Storage
 ================
 
-S3MediaStorage offloads media content (images, audio, video, files) to S3-compatible object
-storage. The content is uploaded to S3 and only a lightweight MediaReference (bucket, key,
-size, hash) is stored in the database -- never the bytes, and never a pre-signed URL, which
-would expire. Readers re-sign on demand from the stored key.
-
-By default only media with content bytes or a local filepath is offloaded; URL-only media
-is skipped (downloading every URL could grow storage unexpectedly, and many URLs are already
-public). To download and store media from every source -- filepath, content bytes, and url --
-set persist_remote_urls=True on the storage.
+Demonstrates S3MediaStorage, which offloads media to S3-compatible object storage and keeps
+only a MediaReference in the database — never the bytes, and never a pre-signed URL, which
+would expire. URL-only media is skipped unless persist_remote_urls=True.
 
 Requirements:
 - uv pip install 'agno[s3]'
-- Set environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
-  (or configure them via boto3)
+- AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION (or configure them via boto3)
 - Set MEDIA_S3_BUCKET to a bucket you own; AWS_ENDPOINT_URL to target an S3-compatible
   service such as MinIO
 """
@@ -37,7 +30,7 @@ from agno.models.openai import OpenAIResponses
 IMAGE_URL = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
 
 # A bucket you do not own makes every upload fail, and offload falls back to inline
-# base64 -- the run still succeeds, so the failure is easy to miss. Ask for the bucket
+# base64 — the run still succeeds, so the failure is easy to miss. Ask for the bucket
 # up front instead.
 bucket = os.getenv("MEDIA_S3_BUCKET")
 if not bucket:
@@ -109,7 +102,7 @@ if __name__ == "__main__":
         images=[Image(content=image_bytes, format="jpeg", mime_type="image/jpeg")],
     )
 
-    # URL-only media is NOT stored in S3 by default -- it is skipped during offload.
+    # URL-only media is NOT stored in S3 by default — it is skipped during offload.
     agent.print_response(
         "What do you see in this image?",
         images=[Image(url=IMAGE_URL)],

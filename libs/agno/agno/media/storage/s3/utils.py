@@ -6,8 +6,7 @@ _UNSAFE_HEADER_CHARS = re.compile(r"[^\t\x20-\x7e]")
 # DeleteObjects accepts at most 1000 keys per call.
 S3_DELETE_BATCH_SIZE = 1000
 
-# SigV4 signs for at most seven days. boto3 does not check, so an expiry above this yields a
-# URL that looks valid and is rejected on use.
+# SigV4 signs for at most seven days, and boto3 does not check.
 S3_MAX_PRESIGNED_EXPIRY = 7 * 24 * 60 * 60
 
 
@@ -24,9 +23,7 @@ def sanitize_s3_metadata(items: Dict[str, Any], *, max_bytes: int = 1800) -> Dic
     total = 0
     for k, v in items.items():
         try:
-            # Lowercased because S3 does: two keys differing only in case become one header
-            # twice over, and the request fails signature validation. The guard above then
-            # swallows it and the row silently reverts to inline base64.
+            # Lowercased because S3 does: two keys differing only in case break the signature.
             key = str(k).encode("ascii").decode("ascii").lower()
             val = str(v).encode("ascii").decode("ascii")
         except UnicodeEncodeError:

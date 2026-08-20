@@ -2,14 +2,10 @@
 External Media Storage
 ======================
 
-Keep file bytes out of the database. With media_storage set, AgentOS uploads
-both uploaded input files and generated output files to object storage and
-persists only a lightweight MediaReference, so the session row stays small no
-matter how large the attachment is.
+Demonstrates keeping file bytes out of the database. AgentOS sends both attached and
+generated files to object storage and persists only a MediaReference.
 
 Set AGNO_FILE_OUTPUT_S3_BUCKET to the destination bucket.
-AGNO_FILE_OUTPUT_S3_PREFIX optionally sets the object-key prefix, and
-AWS_ENDPOINT_URL targets an S3-compatible service such as MinIO.
 
 Prerequisites: OPENAI_API_KEY, AWS credentials, and pip install 'agno[s3]'
 Run: .venvs/demo/bin/python cookbook/05_agent_os/02_databases/media_storage.py

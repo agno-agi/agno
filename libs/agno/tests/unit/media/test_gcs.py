@@ -93,7 +93,7 @@ class TestGCSMediaStorage:
         bucket.blob.assert_called_with("some/key.png")
 
     def test_download_missing_object_raises_filenotfound(self):
-        """A missing GCS object must surface as FileNotFoundError so the router returns 404, not 502."""
+        """A missing GCS object must surface as FileNotFoundError so the router returns 404, not 500."""
         not_found = pytest.importorskip("google.cloud.exceptions").NotFound
         storage, bucket, blob = _storage_with_mock_blob()
         blob.download_as_bytes.side_effect = not_found("No such object: test-bucket/missing/key.png")
@@ -104,7 +104,7 @@ class TestGCSMediaStorage:
     def test_download_missing_object_in_a_bucket_named_bucket(self):
         """GCS names the bucket in every missing-object message, so ruling the missing-bucket
         case out by looking for the word turned each missing object in a bucket like
-        "prod-bucket-eu" into a 502 instead of a 404."""
+        "prod-bucket-eu" into a 500 instead of a 404."""
         not_found = pytest.importorskip("google.cloud.exceptions").NotFound
         storage, bucket, blob = _storage_with_mock_blob()
         blob.download_as_bytes.side_effect = not_found("No such object: prod-bucket-eu/agno/img.png")

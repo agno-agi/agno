@@ -2560,10 +2560,8 @@ class Step:
         """Convert AudioArtifact objects to Audio objects"""
         audios = []
         for audio_artifact in audio_artifacts:
-            # id, format and mime_type carry over so offload keys the same bytes to the same
-            # object across runs instead of minting a fresh uuid each time. An offloaded audio
-            # carries only its reference, so that is checked first or it falls through to the
-            # skip below and the step silently loses it.
+            # id, format and mime_type carry over so offload keys the same bytes to the same object.
+            # An offloaded audio carries only its reference, so that is checked first.
             if audio_artifact.media_reference is not None:
                 self._rehydrate(audio_artifact, media_storage)
                 audios.append(
@@ -3219,7 +3217,7 @@ class Step:
         from agno.media.storage.base import AsyncMediaStorage
 
         # Raised outside the guard below: an async backend on a sync run is a configuration
-        # error, not a read failure, and warning past it would hand the executor empty media.
+        # error, and falling back to inline would hide it for the life of the run.
         if isinstance(media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
@@ -3283,9 +3281,8 @@ class Step:
         images = []
         for i, img_artifact in enumerate(image_artifacts):
             # Create Image object with proper data from ImageArtifact
-            # An offloaded image carries only its reference — url, filepath and content are all
-            # None — so it has to be checked first or it falls through to the skip below and the
-            # step silently loses media that storage holds perfectly well.
+            # An offloaded image carries only its reference, so it has to be checked before the skip
+            # below or the step loses media that storage holds.
             if img_artifact.media_reference is not None:
                 self._rehydrate(img_artifact, media_storage)
                 images.append(
@@ -3303,10 +3300,8 @@ class Step:
                 images.append(Image(url=img_artifact.url, id=img_artifact.id, mime_type=img_artifact.mime_type))
 
             elif img_artifact.filepath:
-                # Pass through filepath-based images directly. id and mime_type carry over:
-                # Image() mints a fresh uuid when id is None, and a media_storage backend keys
-                # objects off the id, so dropping it stores the same bytes again under a new key
-                # on every run.
+                # Pass through filepath-based images directly. id and mime_type carry over: Image() mints
+                # a fresh uuid when id is None, which re-stores identical bytes under a new key.
                 image_kwargs: Dict[str, Any] = {
                     "filepath": img_artifact.filepath,
                     "id": img_artifact.id,
@@ -3377,10 +3372,8 @@ class Step:
         videos = []
         for i, video_artifact in enumerate(video_artifacts):
             # Create Video object with proper data from VideoArtifact
-            # id, format and mime_type carry over for the same reason as in
-            # _convert_image_artifacts_to_images: a dropped id becomes a fresh uuid on offload,
-            # which re-stores identical bytes under a new key on every run. An offloaded video
-            # carries only its reference, so that is checked first for the same reason.
+            # id, format and mime_type carry over as in _convert_image_artifacts_to_images, and an
+            # offloaded video carries only its reference, so that is checked first.
             if video_artifact.media_reference is not None:
                 self._rehydrate(video_artifact, media_storage)
                 videos.append(

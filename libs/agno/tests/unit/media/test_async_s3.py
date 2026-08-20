@@ -80,7 +80,7 @@ class TestAsyncS3MediaStorage:
 
     @pytest.mark.asyncio
     async def test_download_missing_object_raises_filenotfound(self):
-        """S3 NoSuchKey must surface as FileNotFoundError so the router returns 404, not 502."""
+        """S3 NoSuchKey must surface as FileNotFoundError so the router returns 404, not 500."""
         client_error = pytest.importorskip("botocore.exceptions").ClientError
         client = MagicMock()
         client.get_object = AsyncMock(side_effect=client_error({"Error": {"Code": "NoSuchKey"}}, "GetObject"))

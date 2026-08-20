@@ -8,8 +8,7 @@ from agno.media.storage.base import MediaStorage
 from agno.media.storage.utils import build_storage_key
 from agno.utils.log import log_debug, log_warning
 
-# GCS caps all custom metadata keys and values at 8 KiB per object; the budget here leaves
-# room for the content-sha256 entry upload() adds outside the cap.
+# GCS caps custom metadata at 8 KiB per object; the budget leaves room for content-sha256.
 _GCS_METADATA_MAX_BYTES = 8000
 
 
@@ -111,8 +110,7 @@ class GCSMediaStorage(MediaStorage):
 
         gcs_metadata: Dict[str, str] = {"content-sha256": hashlib.sha256(content).hexdigest()}
         # original-filename first: the sanitizer stops at the size budget, so a large caller
-        # value would otherwise push the framework's own key out. A caller key of the same name
-        # still wins, because dict(metadata) overwrites it.
+        # value would otherwise push it out. A caller key of the same name still wins.
         extra: Dict[str, Any] = {"original-filename": filename} if filename else {}
         extra.update(dict(metadata) if metadata else {})
         gcs_metadata.update(_sanitize_gcs_metadata(extra))
@@ -126,16 +124,12 @@ class GCSMediaStorage(MediaStorage):
         try:
             return self._get_bucket().blob(storage_key).download_as_bytes()
         except Exception as e:
-            # Normalize a missing object to FileNotFoundError so callers (e.g. the media
-            # router) can distinguish "gone" (404) from a real fetch failure (502).
+            # Normalize a missing object to FileNotFoundError so the media router returns 404.
             from google.api_core.exceptions import NotFound  # type: ignore
 
-            # GCS answers NotFound for a missing bucket too, and only a missing object means
-            # "gone". NotFound carries no code to discriminate on, so match the object case
-            # positively: GCS names the bucket inside every missing-object message, so
-            # ruling the bucket case out by looking for the word turned every missing object in
-            # a bucket like "prod-bucket-eu" into a 502. Anything unrecognized still propagates,
-            # so a misconfiguration is never reported back as absent media.
+            # GCS answers NotFound for a missing bucket too, and NotFound carries no code to
+            # discriminate on. Match the object case positively — ruling the bucket out by name
+            # turned every missing object in a bucket like "prod-bucket-eu" into a 502.
             if isinstance(e, NotFound) and "no such object" in str(e).lower():
                 raise FileNotFoundError(storage_key) from e
             raise
@@ -157,13 +151,11 @@ class GCSMediaStorage(MediaStorage):
                 )
             )
         except AttributeError as e:
-            # What google-cloud-storage raises for a credential with no private key. Return no
-            # URL rather than break offload — the media router streams bytes via download().
+            # What google-cloud-storage raises for a credential with no private key.
             log_debug(f"Could not sign GCS URL for {storage_key} (non-signing credentials); will stream instead: {e}")
             return ""
         except Exception as e:
-            # Anything else is a misconfiguration, not a limitation of the credential — a
-            # presigned_url_expiry above GCS's V4 ceiling of seven days, say.
+            # Anything else is a misconfiguration, e.g. an expiry above the V4 seven-day ceiling.
             log_warning(f"Could not sign GCS URL for {storage_key}; will stream instead: {e}")
             return ""
 
@@ -175,17 +167,14 @@ class GCSMediaStorage(MediaStorage):
             # An object already gone counts as deleted, per delete()'s idempotency contract.
             from google.api_core.exceptions import NotFound  # type: ignore
 
-            # Same discriminator download() uses, and for the same reason: GCS answers NotFound
-            # for a missing bucket too, so accepting every NotFound reported a typo'd bucket as
-            # a successful delete forever.
+            # Same discriminator download() uses: a typo'd bucket also answers NotFound.
             if isinstance(e, NotFound) and "no such object" in str(e).lower():
                 return True
             log_warning(f"Failed to delete {storage_key}: {e}")
             return False
 
-    # delete_many is inherited, at one round trip per key: delete_blobs is itself a client-side
-    # loop, and Client.batch(), which does pipeline sub-requests into one HTTP call, raises on
-    # the first already-missing key and abandons the rest — losing delete()'s idempotency.
+    # delete_many is inherited, one round trip per key: delete_blobs is itself a client-side
+    # loop, and Client.batch() raises on the first missing key, losing delete()'s idempotency.
 
     def exists(self, storage_key: str) -> bool:
         try:

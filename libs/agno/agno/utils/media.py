@@ -271,10 +271,7 @@ def reconstruct_image_from_dict(img_data):
 
                     ref = MediaReference.from_dict(ref_data)
                     return Image(
-                        # The stored url is the fuller value: offload only falls back to the
-                        # reference's url when the media had none of its own, so reading the
-                        # reference first drops a persist_remote_urls image's origin. filepath
-                        # survives offload too and is a content source in its own right.
+                        # The media's own url is the fuller value: offload only falls back to the reference's.
                         url=img_data.get("url") or ref.url,
                         filepath=img_data.get("filepath"),
                         id=img_data.get("id"),
@@ -325,10 +322,7 @@ def reconstruct_video_from_dict(vid_data):
 
                     ref = MediaReference.from_dict(ref_data)
                     return Video(
-                        # The stored url is the fuller value: offload only falls back to the
-                        # reference's url when the media had none of its own, so reading the
-                        # reference first drops a persist_remote_urls video's origin. filepath
-                        # survives offload too and is a content source in its own right.
+                        # The media's own url is the fuller value: offload only falls back to the reference's.
                         url=vid_data.get("url") or ref.url,
                         filepath=vid_data.get("filepath"),
                         id=vid_data.get("id"),
@@ -378,10 +372,7 @@ def reconstruct_audio_from_dict(aud_data):
 
                     ref = MediaReference.from_dict(ref_data)
                     return Audio(
-                        # The stored url is the fuller value: offload only falls back to the
-                        # reference's url when the media had none of its own, so reading the
-                        # reference first drops a persist_remote_urls audio's origin. filepath
-                        # survives offload too and is a content source in its own right.
+                        # The media's own url is the fuller value: offload only falls back to the reference's.
                         url=aud_data.get("url") or ref.url,
                         filepath=aud_data.get("filepath"),
                         id=aud_data.get("id"),
@@ -432,10 +423,7 @@ def reconstruct_file_from_dict(file_data):
 
                     ref = MediaReference.from_dict(ref_data)
                     return File(
-                        # The stored url is the fuller value: offload only falls back to the
-                        # reference's url when the media had none of its own, so reading the
-                        # reference first drops a persist_remote_urls file's origin. filepath
-                        # survives offload too and is a content source in its own right.
+                        # The media's own url is the fuller value: offload only falls back to the reference's.
                         url=file_data.get("url") or ref.url,
                         filepath=file_data.get("filepath"),
                         id=file_data.get("id"),

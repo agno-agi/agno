@@ -244,9 +244,8 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
-    # If set, media content is uploaded to this storage backend before DB persistence when
-    # store_media is True; only references (not raw bytes) are stored. With store_media False,
-    # media is not offloaded.
+    # If set, media is uploaded here before DB persistence when store_media is True, and only
+    # references are stored. With store_media False, media is not offloaded.
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True

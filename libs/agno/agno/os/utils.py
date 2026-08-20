@@ -61,10 +61,8 @@ def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> 
     return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
-# Per-file metadata is persisted on the media object and again on its MediaReference, so a
-# caller's dict is stored twice for every file. The object stores cap their own copy (1800 bytes
-# on S3, 8000 on GCS) and nothing capped the database, so a megabyte of metadata turned a 2 KB
-# image into a multi-megabyte run row. Matched to the most generous backend budget.
+# Per-file metadata is persisted twice, on the media object and on its MediaReference, and
+# nothing capped the database. Matched to the most generous object-store budget.
 MAX_FILES_METADATA_BYTES = 8000
 
 

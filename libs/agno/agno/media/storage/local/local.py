@@ -28,9 +28,7 @@ class LocalMediaStorage(MediaStorage):
         base_url: Optional[str] = None,
         persist_remote_urls: bool = False,
     ):
-        # Resolved once: a relative base_path would otherwise be re-joined against the cwd on
-        # every call, so a chdir moves the store and delete() reports True for a file it never
-        # touched.
+        # Resolved once: a relative base_path would otherwise follow the cwd across a chdir.
         self.base_path = Path(base_path).resolve()
         self.base_url = base_url.rstrip("/") if base_url else None
         self.persist_remote_urls = persist_remote_urls
@@ -48,9 +46,8 @@ class LocalMediaStorage(MediaStorage):
         key = build_storage_key(media_id, filename=filename, mime_type=mime_type)
         file_path = safe_join_relative_path(self.base_path, key)
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        # Write then rename: content-addressed keys mean two runs can write the same object
-        # while a third reads it, and a truncating write serves a partial file. os.replace is
-        # atomic within a filesystem, so a reader sees the old bytes or the new ones.
+        # Write then rename: two runs can write the same object while a third reads it, and
+        # os.replace is atomic within a filesystem, so a reader never sees a partial file.
         tmp_fd, tmp_name = mkstemp(dir=str(file_path.parent), prefix=f".{file_path.name}.", suffix=".part")
         try:
             with os.fdopen(tmp_fd, "wb") as tmp:
@@ -64,8 +61,7 @@ class LocalMediaStorage(MediaStorage):
         if metadata or filename or mime_type:
             import json
 
-            # content-sha256 and original-filename use the shared metadata spelling. mime_type
-            # is recorded here because a plain filesystem has nowhere else to keep it.
+            # mime_type is recorded here because a filesystem has nowhere else to keep it.
             meta: Dict[str, Any] = {}
             if filename:
                 meta["original-filename"] = filename
@@ -86,8 +82,7 @@ class LocalMediaStorage(MediaStorage):
         return file_path.read_bytes()
 
     def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> str:
-        # Local URLs are a static path or a file:// URI; neither expires, so expires_in
-        # has nothing to apply to.
+        # Local URLs are a static path or a file:// URI; neither expires.
         if self.base_url:
             return f"{self.base_url}/{storage_key}"
         try:
@@ -99,8 +94,7 @@ class LocalMediaStorage(MediaStorage):
 
     def delete(self, storage_key: str) -> bool:
         try:
-            # Joined inside the try so a key that fails containment returns False like any other
-            # failed delete, rather than raising and stranding the rest of a delete_many batch.
+            # Joined inside the try so a key that fails containment is a failed delete.
             file_path = safe_join_relative_path(self.base_path, storage_key)
             file_path.unlink(missing_ok=True)
             # Also remove metadata sidecar if present
@@ -113,8 +107,7 @@ class LocalMediaStorage(MediaStorage):
 
     def exists(self, storage_key: str) -> bool:
         try:
-            # Joined inside the try for the same reason delete() does: a key this backend
-            # cannot address is "not there" as far as the caller is concerned.
+            # Joined inside the try as delete() does: an unaddressable key is "not there".
             return safe_join_relative_path(self.base_path, storage_key).exists()
         except Exception:
             return False

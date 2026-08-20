@@ -398,7 +398,7 @@ def test_video_and_audio_artifact_conversion_keeps_ids():
 
 
 def test_workflow_step_conversion_keeps_offloaded_media():
-    """An offloaded image has no url, filepath or content -- only its reference. The artifact
+    """An offloaded image has no url, filepath or content — only its reference. The artifact
     converters checked those three fields and dropped anything else, so a step handed media the
     backend was holding perfectly well passed nothing to its executor."""
     step = Step(name="s", executor=lambda step_input: "ok")
@@ -414,7 +414,7 @@ def test_workflow_step_conversion_keeps_offloaded_media():
 
 
 def test_step_media_storage_falls_back_to_the_workflow_but_never_overrides():
-    """A workflow's backend covers a step whose executor has none -- the same parent-covers-child
+    """A workflow's backend covers a step whose executor has none — the same parent-covers-child
     rule the write side already follows. An executor with its own backend keeps it: redirecting
     its objects to the parent's bucket would be worse than the gap this closes."""
     from agno.agent.agent import Agent

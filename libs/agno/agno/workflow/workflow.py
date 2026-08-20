@@ -449,9 +449,8 @@ class Workflow:
     store_events: bool = False
     # If True, store media in run output
     store_media: bool = True
-    # If set, media content is uploaded to this storage backend before DB persistence when
-    # store_media is True; only references (not raw bytes) are stored. With store_media False,
-    # media is not offloaded.
+    # If set, media is uploaded here before DB persistence when store_media is True, and only
+    # references are stored. With store_media False, media is not offloaded.
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # Events to skip when persisting the events on the run response
     events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None
@@ -1672,9 +1671,8 @@ class Workflow:
         new_runs = []
         for run in session.runs:
             try:
-                # Copy inside the guard: an uncopyable payload must not take the session save
-                # down with it. store_media=False is an explicit instruction, so the fallback
-                # scrubs the run in place rather than persisting media the caller excluded.
+                # Copy inside the guard: an uncopyable payload must not take the session save down.
+                # store_media=False is explicit, so the fallback scrubs rather than persists.
                 run_copy = copy.deepcopy(run)
             except Exception as e:
                 log_warning(f"Could not copy run for the media scrub, scrubbing in place: {e}")
@@ -1705,9 +1703,8 @@ class Workflow:
         if not isinstance(media_storage, (MediaStorage, AsyncMediaStorage)):
             log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
             return
-        # Raised outside the per-run guard below: an async backend on a sync run is a
-        # configuration error, not a storage failure, and falling back to inline would hide it
-        # for every run in the session.
+        # Raised outside the per-run guard below: an async backend on a sync run is a configuration
+        # error, and falling back to inline would hide it for every run in the session.
         if isinstance(media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
@@ -1759,9 +1756,8 @@ class Workflow:
                         run_copy, media_storage, session.session_id, run_id, cache=offload_cache_for(run)
                     )
                 else:
-                    # Sync storage in an async run — offload it in a worker thread, the same
-                    # way _aoffload_run_media_copy does. Calling it inline would hold the
-                    # event loop for the whole upload.
+                    # Sync storage in an async run — offload in a worker thread, as _aoffload_run_media_copy
+                    # does, rather than holding the event loop for the upload.
                     from agno.utils.media_offload import offload_cache_for, offload_workflow_media
 
                     await asyncio.to_thread(
@@ -1957,9 +1953,8 @@ class Workflow:
         from agno.utils.agent import scrub_workflow_media
 
         try:
-            # Copy inside the guard: an uncopyable payload must not take the run save down with
-            # it. store_media=False is an explicit instruction, so the fallback scrubs the run
-            # in place rather than persisting media the caller excluded.
+            # Copy inside the guard: an uncopyable payload must not take the run save down.
+            # store_media=False is explicit, so the fallback scrubs rather than persists.
             run_copy = copy.deepcopy(run)
         except Exception as e:
             log_warning(f"Could not copy run for the media scrub, scrubbing in place: {e}")
@@ -1985,7 +1980,7 @@ class Workflow:
             log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
             return run
         # Raised outside the guard below: an async backend on a sync run is a configuration
-        # error, not a storage failure, and falling back to inline would hide it.
+        # error, and falling back to inline would hide it for the life of the run.
         if isinstance(self.media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 

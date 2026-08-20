@@ -496,10 +496,8 @@ class File(BaseModel):
                 )
             if isinstance(data.get("media_reference"), dict):
                 data["media_reference"] = MediaReference.from_dict(data["media_reference"])
-            # Auto-generate ID if not provided, after the check above so it still decides on
-            # the caller's own fields. Image, Audio and Video already do this; without it a
-            # File is handed a fresh id on every persist, so the offload cache never hits and
-            # the same bytes land under a new key each time.
+            # Auto-generate after the check above. Without it a File is handed a fresh id on every
+            # persist, so the offload cache never hits and the same bytes land under a new key.
             if data.get("id") is None:
                 data["id"] = str(uuid4())
         return data

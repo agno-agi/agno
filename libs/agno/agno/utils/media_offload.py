@@ -15,10 +15,8 @@ if TYPE_CHECKING:
     from agno.run.team import TeamRunOutput
 
 
-# Query parameters that mark a URL as signed and short-lived. The list spans the schemes a
-# MediaStorage backend can hand back: SigV4 (S3, MinIO, R2, Spaces), GCS V2 and V4, Azure
-# Blob SAS, and Supabase. Erring towards "expiring" is the safe direction — a false positive
-# costs one re-sign on read, a false negative writes a credential into the database.
+# Query parameters that mark a URL as signed and short-lived, across SigV4, GCS V2 and V4,
+# Azure SAS and Supabase. Erring towards "expiring" only costs one re-sign on read.
 _EXPIRING_URL_PARAMS = frozenset(
     {
         "x-amz-signature",
@@ -44,10 +42,8 @@ def _is_expiring_url(url: Optional[str]) -> bool:
 def _persistable_url(url: Optional[str]) -> Optional[str]:
     """Return ``url`` if it is safe to write to the database, else None.
 
-    Three kinds are not: an empty one (GCS with non-signing credentials returns ``""``), a
-    presigned one (it expires and carries credentials), and a ``file://`` one (it resolves
-    only on the host that wrote it, so a shared database gets a link nothing else can
-    follow). The read path re-derives a URL from ``storage_key`` on demand.
+    Empty, presigned and ``file://`` URLs are not: they expire, carry credentials, or resolve
+    only on the host that wrote them. The read path re-derives one from ``storage_key``.
     """
     if not url or url.startswith("file://") or _is_expiring_url(url):
         return None
@@ -57,12 +53,8 @@ def _persistable_url(url: Optional[str]) -> Optional[str]:
 def offload_cache_for(run_response: Any) -> Dict[str, MediaReference]:
     """Per-run map of storage id to reference, kept on the live run across persists.
 
-    Offload runs on a fresh deep copy each time, so the ``media_reference`` it attaches is
-    thrown away with the copy and the next persist uploads the same bytes again — a HITL run
-    that pauses three times sent its media five times over. The cache survives because it
-    lives on the run the caller holds. It stores references, never media, so the promise that
-    offload does not mutate the caller's media objects is untouched, and it is not a declared
-    dataclass field so ``to_dict`` never sees it.
+    Offload runs on a fresh deep copy each time, so without this the next persist uploads the
+    same bytes again. It holds references only, and is not a field, so ``to_dict`` never sees it.
     """
     cache: Optional[Dict[str, MediaReference]] = getattr(run_response, "_offload_cache", None)
     if cache is None:
@@ -74,10 +66,8 @@ def offload_cache_for(run_response: Any) -> Dict[str, MediaReference]:
 def _cache_key(media_type: str, mime_type: Optional[str], filename: Optional[str], storage_media_id: str) -> str:
     """Identify a stored object, not just its bytes.
 
-    The storage key ends in an extension derived from the filename or the mime type, so the
-    same id and the same bytes can legitimately produce two different objects — an Image and a
-    File, say. Keying on the content-addressed id alone handed the second one the first one's
-    reference and skipped its upload, so its object was never written.
+    The key carries an extension derived from the filename or mime type, so the same bytes can
+    legitimately produce two objects — an Image and a File — that must not share a reference.
     """
     return f"{media_type}|{mime_type or ''}|{filename or ''}|{storage_media_id}"
 
@@ -154,18 +144,14 @@ def _offload_single_media(
 
     cache_key = _cache_key(media_type, mime_type, filename, storage_media_id)
     if cache is not None and cache_key in cache:
-        # Same object as an earlier persist of this run: it is already in the bucket. The
-        # media_reference skip above cannot catch this because every persist offloads a fresh
-        # deep copy, so a paused HITL run re-sent all of its media on every gate. Attach the
-        # reference the first upload produced instead.
+        # Same object as an earlier persist of this run. The media_reference skip cannot catch
+        # it because every persist offloads a fresh deep copy.
         _attach_reference(media, cache[cache_key])
         return
 
     backend_name = getattr(storage, "backend_name", None)
     if not backend_name:
-        # Checked before the upload, not after: building the reference is what needs this, and
-        # failing there would leave the object written to the bucket with nothing pointing at
-        # it while the row silently kept its base64.
+        # Checked before the upload so a written object is never left with nothing pointing at it.
         log_warning(f"media_storage has no backend_name; skipping offload of {media_type} {media_id}")
         return
 
@@ -364,18 +350,14 @@ async def _aoffload_single_media(
 
     cache_key = _cache_key(media_type, mime_type, filename, storage_media_id)
     if cache is not None and cache_key in cache:
-        # Same object as an earlier persist of this run: it is already in the bucket. The
-        # media_reference skip above cannot catch this because every persist offloads a fresh
-        # deep copy, so a paused HITL run re-sent all of its media on every gate. Attach the
-        # reference the first upload produced instead.
+        # Same object as an earlier persist of this run. The media_reference skip cannot catch
+        # it because every persist offloads a fresh deep copy.
         _attach_reference(media, cache[cache_key])
         return
 
     backend_name = getattr(storage, "backend_name", None)
     if not backend_name:
-        # Checked before the upload, not after: building the reference is what needs this, and
-        # failing there would leave the object written to the bucket with nothing pointing at
-        # it while the row silently kept its base64.
+        # Checked before the upload so a written object is never left with nothing pointing at it.
         log_warning(f"media_storage has no backend_name; skipping offload of {media_type} {media_id}")
         return
 
@@ -506,15 +488,9 @@ async def aoffload_run_media(
 def iter_step_outputs(run_response: Any) -> Iterator[Any]:
     """Yield every media-bearing step object on a workflow run.
 
-    A workflow run hangs media off three places, and a traversal that reaches only the
-    first leaves the rest inline:
-
-    - ``step_results``, one top-level entry per step;
-    - ``StepOutput.steps``, where Loop, Condition, Router, Steps and Parallel keep the
-      children they ran;
-    - ``step_requirements``, where a paused HITL run keeps the input it prepared and the
-      output awaiting review — a pause lasts as long as the human takes, so this is the
-      one that holds a fat row longest.
+    Media hangs off ``step_results``, off ``StepOutput.steps`` for the children Loop,
+    Condition, Router, Steps and Parallel ran, and off ``step_requirements`` while a HITL
+    run is paused. A traversal that reaches only the first leaves the rest inline.
     """
 
     def _walk(step_output: Any) -> Iterator[Any]:
