@@ -33,7 +33,7 @@ Only deployments that set namespace="user" on entity memory are affected; the
 default "global" namespace and custom namespaces keep their keys unchanged.
 """
 
-from typing import Any, Dict, List, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.learn.utils import _parse_json, build_learning_id, legacy_entity_learning_id
@@ -100,6 +100,24 @@ def _new_id_for(row: Dict[str, Any]) -> str:
             namespace="user",
         ),
     )
+
+
+def _fresh_source(row: Dict[str, Any], current: Optional[Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+    """Re-classify a source row from its current stored state.
+
+    The walk pages the whole table before it writes anything, so a row's paged
+    content is stale once a write lands on that row. The re-read carries the
+    row's current content, and the classifier runs again so a row that changed
+    owner or became contaminated under the walk leaves the "legacy" bucket.
+
+    This narrows the window between the read and the copy. It does not close
+    it: the db surface has no transaction or compare-and-set, so a write that
+    lands after the re-read is still lost. Run the migration with the
+    application offline.
+    """
+    if current is None:
+        return "vanished", {}
+    return _classify_row(current)
 
 
 def _delete_confirmed(db: BaseDb, learning_id: str) -> bool:
@@ -241,6 +259,11 @@ def rekey_user_entity_learnings(
             if dry_run:
                 buckets["rekeyed"].append(old_id)
                 continue
+            bucket, content = _fresh_source(row, db.get_learning_by_id(old_id))
+            if bucket != "legacy":
+                buckets["failed"].append(old_id)
+                log_warning(f"rekey_user_entity_learnings: {old_id} changed under the walk ({bucket}); left in place")
+                continue
             db.upsert_learning(
                 id=new_id,
                 learning_type=_ENTITY_LEARNING_TYPE,
@@ -320,6 +343,11 @@ async def arekey_user_entity_learnings(
                 continue
             if dry_run:
                 buckets["rekeyed"].append(old_id)
+                continue
+            bucket, content = _fresh_source(row, await db.get_learning_by_id(old_id))
+            if bucket != "legacy":
+                buckets["failed"].append(old_id)
+                log_warning(f"rekey_user_entity_learnings: {old_id} changed under the walk ({bucket}); left in place")
                 continue
             await db.upsert_learning(
                 id=new_id,

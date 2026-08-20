@@ -264,6 +264,17 @@ def _merge_legacy_into(entity: "EntityMemory", legacy: "EntityMemory") -> None:
         entity.created_at = legacy_created
 
 
+def _same_user(left: Any, right: Any) -> bool:
+    """Whether two user ids identify the same user.
+
+    The owner column is a string column, so a non-string user id reads back as
+    its ``str()``. The entity key applies the same coercion.
+    """
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
 def _blank_to_none(value: Optional[str]) -> Optional[str]:
     """Blank string in, ``None`` out.
 
@@ -1635,7 +1646,7 @@ class EntityMemoryStore(LearningStore):
         for rel in (getattr(entity_obj, "relationships", None) or [])[:max_repairs]:
             if not isinstance(rel, dict):
                 continue
-            far = self.get(
+            far = self._get_for_write(
                 entity_id=rel.get("entity_id", ""),
                 entity_type=rel.get("entity_type", ""),
                 user_id=user_id,
@@ -1668,7 +1679,7 @@ class EntityMemoryStore(LearningStore):
         for rel in (getattr(entity_obj, "relationships", None) or [])[:max_repairs]:
             if not isinstance(rel, dict):
                 continue
-            far = await self.aget(
+            far = await self._aget_for_write(
                 entity_id=rel.get("entity_id", ""),
                 entity_type=rel.get("entity_type", ""),
                 user_id=user_id,
@@ -2614,7 +2625,7 @@ class EntityMemoryStore(LearningStore):
         they are part of the far row's key, and a legacy row's content-recorded
         user can differ from the row's owner.
         """
-        far = self.get(
+        far = self._get_for_write(
             entity_id=str(edge.get("entity_id", "")),
             entity_type=str(edge.get("entity_type", "")),
             user_id=user_id,
@@ -2643,7 +2654,7 @@ class EntityMemoryStore(LearningStore):
         The sync helpers no-op against an AsyncBaseDb, which left the far end
         holding an edge the near end had already dropped.
         """
-        far = await self.aget(
+        far = await self._aget_for_write(
             entity_id=str(edge.get("entity_id", "")),
             entity_type=str(edge.get("entity_type", "")),
             user_id=user_id,
@@ -3064,13 +3075,13 @@ class EntityMemoryStore(LearningStore):
         # row. The columns disambiguate.
         if row.get("namespace") != "user" or row.get("entity_id") != entity_id or row.get("entity_type") != entity_type:
             return "foreign", None
-        if row.get("user_id") != user_id:
+        if not _same_user(row.get("user_id"), user_id):
             return "foreign", None
         content = _parse_json(row.get("content"))
         if content is None:
             return "blocked", None
         content_user = content.get("user_id")
-        if content_user is not None and content_user != user_id:
+        if content_user is not None and not _same_user(content_user, user_id):
             return "blocked", None
         parsed = self.schema.from_dict(content)
         if parsed is None:
@@ -3128,9 +3139,16 @@ class EntityMemoryStore(LearningStore):
             log_debug(f"EntityMemoryStore._read_user_row failed for {entity_type}/{entity_id}: {e}")
             return None, True
         self._legacy_probe_supported = True
-        return self._combine_user_rows(
-            row, legacy_row, entity_id, entity_type, user_id, legacy_id, record_snapshot
-        ), True
+        # The combine builds identity sets from content-supplied values, and
+        # content is arbitrary JSON over the REST create route. A row whose
+        # values cannot be keyed reads as absent.
+        try:
+            return self._combine_user_rows(
+                row, legacy_row, entity_id, entity_type, user_id, legacy_id, record_snapshot
+            ), True
+        except Exception as e:
+            log_debug(f"EntityMemoryStore: could not combine rows for {entity_type}/{entity_id}: {e}")
+            return None, True
 
     async def _aread_user_row(
         self,
@@ -3160,9 +3178,47 @@ class EntityMemoryStore(LearningStore):
             log_debug(f"EntityMemoryStore._aread_user_row failed for {entity_type}/{entity_id}: {e}")
             return None, True
         self._legacy_probe_supported = True
-        return self._combine_user_rows(
-            row, legacy_row, entity_id, entity_type, user_id, legacy_id, record_snapshot
-        ), True
+        # The combine builds identity sets from content-supplied values, and
+        # content is arbitrary JSON over the REST create route. A row whose
+        # values cannot be keyed reads as absent.
+        try:
+            return self._combine_user_rows(
+                row, legacy_row, entity_id, entity_type, user_id, legacy_id, record_snapshot
+            ), True
+        except Exception as e:
+            log_debug(f"EntityMemoryStore: could not combine rows for {entity_type}/{entity_id}: {e}")
+            return None, True
+
+    def _row_identity_matches(self, row: Dict[str, Any], entity_id: str, entity_type: str, user_id: str) -> bool:
+        """Whether a row read by primary key is this user's row for this entity.
+
+        The id alone does not establish ownership. The REST create route derives
+        the same id from a caller-supplied namespace, so a row at this key can
+        carry another owner, and serving it would disclose that owner's content.
+        """
+        return (
+            row.get("learning_type") == self.learning_type
+            and row.get("namespace") == "user"
+            and row.get("entity_id") == entity_id
+            and row.get("entity_type") == entity_type
+            and _same_user(row.get("user_id"), user_id)
+        )
+
+    def _warn_foreign_row_once(self, row_id: str, owner: Any) -> None:
+        """Report a row occupying this user's key under another owner.
+
+        The row is excluded from this user's reads, and this user's writes upsert
+        into it without reclaiming its identity columns, so their content stays
+        unreadable until the row is removed.
+        """
+        if row_id in self._legacy_warned:
+            return
+        self._legacy_warned.add(row_id)
+        log_warning(
+            f"EntityMemoryStore: row {row_id} sits on this user's entity key but its columns "
+            f"name another owner ({owner!r}); it is excluded from reads, and writes to this "
+            f"entity cannot be read back until the row is deleted"
+        )
 
     def _combine_user_rows(
         self,
@@ -3174,6 +3230,9 @@ class EntityMemoryStore(LearningStore):
         legacy_id: str,
         record_snapshot: bool,
     ) -> Optional[EntityMemory]:
+        if row is not None and not self._row_identity_matches(row, entity_id, entity_type, user_id):
+            self._warn_foreign_row_once(str(row.get("learning_id") or ""), row.get("user_id"))
+            row = None
         entity = self.schema.from_dict(row.get("content")) if row and row.get("content") else None
         legacy_entity: Optional[EntityMemory] = None
         if legacy_row is None:
@@ -3312,6 +3371,11 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.aget: namespace='user' requires user_id")
             return None
 
+        if effective_namespace == "user" and user_id:
+            entity, supported = await self._aread_user_row(entity_id, entity_type, user_id, record_snapshot=False)
+            if supported:
+                return entity
+
         try:
             if isinstance(self.db, AsyncBaseDb):
                 result = await self.db.get_learning(
@@ -3331,6 +3395,8 @@ class EntityMemoryStore(LearningStore):
                 )
 
             if result and result.get("content"):
+                if effective_namespace == "user" and user_id:
+                    return self._parse_column_read(result, entity_id, entity_type, user_id)
                 return self.schema.from_dict(result["content"])
 
             return None
@@ -4082,6 +4148,20 @@ class EntityMemoryStore(LearningStore):
             return "drop"
         return "skip"
 
+    @staticmethod
+    def _save_landed(saved_row: Optional[Dict[str, Any]], merged_into: Optional[EntityMemory]) -> bool:
+        """Whether the replacing row holds the content this write produced.
+
+        The adapters' upsert_learning swallows its failure, and a legacy row
+        coexisting with a user-scoped row leaves an older row at the same id, so
+        the row's presence alone does not establish that this write landed.
+        """
+        if saved_row is None:
+            return False
+        if merged_into is None:
+            return True
+        return _parse_json(saved_row.get("content")) == merged_into.to_dict()
+
     def _drop_legacy_user_row(
         self,
         db: "BaseDb",
@@ -4104,7 +4184,11 @@ class EntityMemoryStore(LearningStore):
         legacy_id = legacy_entity_learning_id(entity_id, entity_type, "user")
         if self._legacy_probe_supported is False:
             return False
-        if legacy_id in self._legacy_absent and legacy_id not in self._legacy_snapshots:
+        # merged_into is None only when the caller is erasing this entity.
+        # The absent set is a read optimisation and goes stale when another
+        # process writes a legacy row after this one cached its absence, so an
+        # erasure always re-probes.
+        if merged_into is not None and legacy_id in self._legacy_absent and legacy_id not in self._legacy_snapshots:
             return False
         try:
             row = db.get_learning_by_id(legacy_id)
@@ -4123,7 +4207,7 @@ class EntityMemoryStore(LearningStore):
                 if row is None:
                     self._legacy_absent.add(legacy_id)
                 return False
-            if saved_row_id is not None and db.get_learning_by_id(saved_row_id) is None:
+            if saved_row_id is not None and not self._save_landed(db.get_learning_by_id(saved_row_id), merged_into):
                 log_warning(f"EntityMemoryStore: save of {saved_row_id} did not land; keeping legacy row {legacy_id}")
                 return False
             dropped = bool(db.delete_learning(id=legacy_id))
@@ -4157,7 +4241,8 @@ class EntityMemoryStore(LearningStore):
         legacy_id = legacy_entity_learning_id(entity_id, entity_type, "user")
         if self._legacy_probe_supported is False:
             return False
-        if legacy_id in self._legacy_absent and legacy_id not in self._legacy_snapshots:
+        # See the sync twin: an erasure never trusts the absent set.
+        if merged_into is not None and legacy_id in self._legacy_absent and legacy_id not in self._legacy_snapshots:
             return False
         try:
             row = await db.get_learning_by_id(legacy_id)
@@ -4176,7 +4261,9 @@ class EntityMemoryStore(LearningStore):
                 if row is None:
                     self._legacy_absent.add(legacy_id)
                 return False
-            if saved_row_id is not None and await db.get_learning_by_id(saved_row_id) is None:
+            if saved_row_id is not None and not self._save_landed(
+                await db.get_learning_by_id(saved_row_id), merged_into
+            ):
                 log_warning(f"EntityMemoryStore: save of {saved_row_id} did not land; keeping legacy row {legacy_id}")
                 return False
             dropped = bool(await db.delete_learning(id=legacy_id))

@@ -36,10 +36,11 @@ logger = logging.getLogger(__name__)
 
 # The entity_memory key under namespace="user" is "entity_user_<16 hex>_<type>_<id>", where the
 # hex segment is a digest of the owning user. Any other namespace is interpolated verbatim into
-# "entity_<namespace>_<type>_<id>", so a namespace of exactly this shape reproduces some user's
-# key byte for byte. entity_memory creates reject it; the digest is lowercase hex of fixed width,
-# so no other namespace can collide.
-_RESERVED_ENTITY_NAMESPACE = re.compile(r"user_[0-9a-f]{16}")
+# "entity_<namespace>_<type>_<id>". A namespace opening on that digest reproduces some user's
+# key: the bare digest matches it directly, and a digest carrying further segments matches it
+# once the type and id segments shift right, which any underscore in the entity type or the
+# entity slug allows. entity_memory creates reject the whole family.
+_RESERVED_ENTITY_NAMESPACE = re.compile(r"user_[0-9a-f]{16}(_.*)?")
 
 
 def _duplicate_identity_detail(learning_type: str, learning_id: str) -> str:
