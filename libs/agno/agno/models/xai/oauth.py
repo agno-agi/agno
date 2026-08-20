@@ -161,13 +161,16 @@ class XAITokenManager:
     async_http_client: Optional[httpx.AsyncClient] = None
     now_fn: Callable[[], float] = time.time
 
-    _memory_row: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    # Keyed by user_id, like the row and the cache: this is the last-resort store
+    # and a shared manager serves every user through it, so a single slot would
+    # hand whoever saved last to everyone who has no row of their own.
+    _memory_rows: Dict[str, Dict[str, Any]] = field(default_factory=dict, repr=False)
 
-    # PR 1 uses the empty-string single-user slot; per-user resolution lands in a
-    # later PR.
+    # The empty string is the deployment slot - the single-user default and the
+    # fallback for a user who has not signed in personally.
     @staticmethod
-    def _store_key() -> Tuple[str, str, str]:
-        return ("xai", "", "supergrok")
+    def _store_key(user_id: str = "") -> Tuple[str, str, str]:
+        return ("xai", user_id, "supergrok")
 
     def _cache_scope(self) -> str:
         """Cache identity of THIS manager's store.
@@ -190,8 +193,8 @@ class XAITokenManager:
                     weakref.finalize(self.db, _evict_scope, scope)
         return scope
 
-    def _cache_key(self) -> Tuple[str, str, str, str]:
-        return (self._cache_scope(), *self._store_key())
+    def _cache_key(self, user_id: str = "") -> Tuple[str, str, str, str]:
+        return (self._cache_scope(), *self._store_key(user_id))
 
     # ------------------------------------------------------------------
     # Device flow (RFC 8628)
@@ -209,7 +212,7 @@ class XAITokenManager:
         )
         return self._parse_device_response(response)
 
-    def poll_once(self, device_code: str, interval: int = 5) -> DevicePollResult:
+    def poll_once(self, device_code: str, interval: int = 5, user_id: str = "") -> DevicePollResult:
         """One poll of the token endpoint (RFC 8628 section 3.5): no sleeping, no loop.
 
         The caller owns pacing and deadlines; result.interval is the wait
@@ -218,11 +221,11 @@ class XAITokenManager:
         response = self._post_form(XAI_TOKEN_URL, self._poll_form(device_code))
         if response.status_code == 200:
             token_data = self._build_envelope(response.json(), previous=None)
-            self._save(token_data)
+            self._save(token_data, user_id)
             return DevicePollResult(status=DevicePollStatus.success, interval=interval, token_data=token_data)
         return self._classify_poll_error(response, interval)
 
-    async def apoll_once(self, device_code: str, interval: int = 5) -> DevicePollResult:
+    async def apoll_once(self, device_code: str, interval: int = 5, user_id: str = "") -> DevicePollResult:
         """One poll of the token endpoint (RFC 8628 section 3.5): no sleeping, no loop.
 
         The caller owns pacing and deadlines; result.interval is the wait
@@ -231,17 +234,17 @@ class XAITokenManager:
         response = await self._apost_form(XAI_TOKEN_URL, self._poll_form(device_code))
         if response.status_code == 200:
             token_data = self._build_envelope(response.json(), previous=None)
-            await self._asave(token_data)
+            await self._asave(token_data, user_id)
             return DevicePollResult(status=DevicePollStatus.success, interval=interval, token_data=token_data)
         return self._classify_poll_error(response, interval)
 
-    def poll_for_token(self, device_code: str, interval: int, deadline: float) -> Dict[str, Any]:
+    def poll_for_token(self, device_code: str, interval: int, deadline: float, user_id: str = "") -> Dict[str, Any]:
         """Poll the token endpoint until the user approves, per RFC 8628 section 3.5."""
         current_interval = interval
         while True:
             if self.now_fn() > deadline:
                 raise ModelAuthenticationError(_EXPIRED_LOGIN_MESSAGE)
-            result = self.poll_once(device_code, current_interval)
+            result = self.poll_once(device_code, current_interval, user_id)
             if result.status == DevicePollStatus.success and result.token_data is not None:
                 return result.token_data
             if result.status in (DevicePollStatus.denied, DevicePollStatus.expired) and result.message is not None:
@@ -249,13 +252,15 @@ class XAITokenManager:
             current_interval = result.interval
             time.sleep(current_interval)
 
-    async def apoll_for_token(self, device_code: str, interval: int, deadline: float) -> Dict[str, Any]:
+    async def apoll_for_token(
+        self, device_code: str, interval: int, deadline: float, user_id: str = ""
+    ) -> Dict[str, Any]:
         """Poll the token endpoint until the user approves, per RFC 8628 section 3.5."""
         current_interval = interval
         while True:
             if self.now_fn() > deadline:
                 raise ModelAuthenticationError(_EXPIRED_LOGIN_MESSAGE)
-            result = await self.apoll_once(device_code, current_interval)
+            result = await self.apoll_once(device_code, current_interval, user_id)
             if result.status == DevicePollStatus.success and result.token_data is not None:
                 return result.token_data
             if result.status in (DevicePollStatus.denied, DevicePollStatus.expired) and result.message is not None:
@@ -319,51 +324,59 @@ class XAITokenManager:
     # Access tokens and refresh
     # ------------------------------------------------------------------
 
-    def get_access_token(self) -> str:
-        """The current access token, proactively refreshed inside the 300s margin."""
-        cached = self._cached_token()
+    def get_access_token(self, user_id: str = "") -> str:
+        """The current access token, proactively refreshed inside the 300s margin.
+
+        ``user_id`` selects the row and the cache entry; the empty string is the
+        deployment slot, which is what PR 1 and PR 2 callers get unchanged.
+        """
+        cached = self._cached_token(user_id)
         if cached is not None:
             return cached
         with _cache_lock:
-            cached = self._cached_token()
+            cached = self._cached_token(user_id)
             if cached is not None:
                 return cached
-            token_data = self._load()
+            token_data = self._load(user_id)
             if token_data is not None and self._is_fresh(token_data.get("expires_at")):
                 # Another process refreshed already: adopt the stored token
-                self._memory_row = token_data
-                self._cache_put(token_data)
+                self._memory_rows[user_id] = token_data
+                self._cache_put(token_data, user_id)
                 return token_data["access_token"]
-            return self._refresh_locked(token_data)
+            return self._refresh_locked(token_data, user_id)
 
-    async def aget_access_token(self) -> str:
-        """The current access token, proactively refreshed inside the 300s margin."""
-        cached = self._cached_token()
+    async def aget_access_token(self, user_id: str = "") -> str:
+        """The current access token, proactively refreshed inside the 300s margin.
+
+        ``user_id`` selects the row and the cache entry; the empty string is the
+        deployment slot, which is what PR 1 and PR 2 callers get unchanged.
+        """
+        cached = self._cached_token(user_id)
         if cached is not None:
             return cached
         async with _get_async_cache_lock():
-            cached = self._cached_token()
+            cached = self._cached_token(user_id)
             if cached is not None:
                 return cached
-            token_data = await self._aload()
+            token_data = await self._aload(user_id)
             if token_data is not None and self._is_fresh(token_data.get("expires_at")):
                 # Another process refreshed already: adopt the stored token
-                self._memory_row = token_data
-                self._cache_put(token_data)
+                self._memory_rows[user_id] = token_data
+                self._cache_put(token_data, user_id)
                 return token_data["access_token"]
-            return await self._arefresh_locked(token_data)
+            return await self._arefresh_locked(token_data, user_id)
 
-    def force_refresh(self) -> str:
+    def force_refresh(self, user_id: str = "") -> str:
         """Refresh immediately, skipping the freshness margin (the 401 one-shot leg)."""
         with _cache_lock:
-            return self._refresh_locked(self._load())
+            return self._refresh_locked(self._load(user_id), user_id)
 
-    async def aforce_refresh(self) -> str:
+    async def aforce_refresh(self, user_id: str = "") -> str:
         """Refresh immediately, skipping the freshness margin (the 401 one-shot leg)."""
         async with _get_async_cache_lock():
-            return await self._arefresh_locked(await self._aload())
+            return await self._arefresh_locked(await self._aload(user_id), user_id)
 
-    def _refresh_locked(self, previous: Optional[Dict[str, Any]]) -> str:
+    def _refresh_locked(self, previous: Optional[Dict[str, Any]], user_id: str = "") -> str:
         refresh_token = (previous or {}).get("refresh_token")
         if not refresh_token:
             raise ModelAuthenticationError(_NO_TOKEN_MESSAGE)
@@ -372,14 +385,14 @@ class XAITokenManager:
         if response.status_code == 200:
             token_data = self._build_envelope(response.json(), previous=previous)
             # Always persist the newest rotated refresh token immediately
-            self._save(token_data)
+            self._save(token_data, user_id)
             return token_data["access_token"]
         if self._error_code(response) == "invalid_grant":
-            self._delete_stored_token()
+            self._delete_stored_token(user_id)
             raise ModelAuthenticationError(_INVALID_GRANT_MESSAGE)
         raise ModelAuthenticationError(f"SuperGrok token refresh failed: {response.text}")
 
-    async def _arefresh_locked(self, previous: Optional[Dict[str, Any]]) -> str:
+    async def _arefresh_locked(self, previous: Optional[Dict[str, Any]], user_id: str = "") -> str:
         refresh_token = (previous or {}).get("refresh_token")
         if not refresh_token:
             raise ModelAuthenticationError(_NO_TOKEN_MESSAGE)
@@ -388,10 +401,10 @@ class XAITokenManager:
         if response.status_code == 200:
             token_data = self._build_envelope(response.json(), previous=previous)
             # Always persist the newest rotated refresh token immediately
-            await self._asave(token_data)
+            await self._asave(token_data, user_id)
             return token_data["access_token"]
         if self._error_code(response) == "invalid_grant":
-            await self._adelete_stored_token()
+            await self._adelete_stored_token(user_id)
             raise ModelAuthenticationError(_INVALID_GRANT_MESSAGE)
         raise ModelAuthenticationError(f"SuperGrok token refresh failed: {response.text}")
 
@@ -420,25 +433,28 @@ class XAITokenManager:
     def _is_fresh(self, expires_at: Any) -> bool:
         return float(expires_at or 0) - self.now_fn() > REFRESH_MARGIN_SECONDS
 
-    def _cached_token(self) -> Optional[str]:
-        cached = _token_cache.get(self._cache_key())
+    def _cached_token(self, user_id: str = "") -> Optional[str]:
+        cached = _token_cache.get(self._cache_key(user_id))
         if cached is not None:
             access_token, expires_at = cached
             if self._is_fresh(expires_at):
                 return access_token
         return None
 
-    def _cache_put(self, token_data: Dict[str, Any]) -> None:
+    def _cache_put(self, token_data: Dict[str, Any], user_id: str = "") -> None:
         with _cache_mutation_guard:
-            _token_cache[self._cache_key()] = (token_data["access_token"], float(token_data.get("expires_at") or 0))
+            _token_cache[self._cache_key(user_id)] = (
+                token_data["access_token"],
+                float(token_data.get("expires_at") or 0),
+            )
 
     # ------------------------------------------------------------------
     # Storage: db row (Google auth-token shape), 0600 file, or memory
     # ------------------------------------------------------------------
 
-    def _save(self, token_data: Dict[str, Any]) -> None:
-        self._memory_row = token_data
-        self._cache_put(token_data)
+    def _save(self, token_data: Dict[str, Any], user_id: str = "") -> None:
+        self._memory_rows[user_id] = token_data
+        self._cache_put(token_data, user_id)
         payload = self._encrypt_for_save(token_data)
         if payload is None:
             return
@@ -449,7 +465,7 @@ class XAITokenManager:
             else:
                 try:
                     # Adapters swallow their own errors and signal failure by returning None
-                    if self.db.upsert_auth_token(self._db_row(token_data, payload)) is None:
+                    if self.db.upsert_auth_token(self._db_row(token_data, payload, user_id)) is None:
                         log_warning("Could not persist SuperGrok token to the database; token kept in memory only")
                     return
                 except NotImplementedError:
@@ -459,18 +475,18 @@ class XAITokenManager:
                 except Exception as e:
                     log_debug(f"Could not save token to DB: {e}")
                     return
-        self._write_file(payload)
+        self._write_file_for(payload, user_id)
 
-    async def _asave(self, token_data: Dict[str, Any]) -> None:
-        self._memory_row = token_data
-        self._cache_put(token_data)
+    async def _asave(self, token_data: Dict[str, Any], user_id: str = "") -> None:
+        self._memory_rows[user_id] = token_data
+        self._cache_put(token_data, user_id)
         payload = self._encrypt_for_save(token_data)
         if payload is None:
             return
         if self.db is not None:
             try:
                 # Adapters swallow their own errors and signal failure by returning None
-                if await _maybe_await(self.db.upsert_auth_token(self._db_row(token_data, payload))) is None:
+                if await _maybe_await(self.db.upsert_auth_token(self._db_row(token_data, payload, user_id))) is None:
                     log_warning("Could not persist SuperGrok token to the database; token kept in memory only")
                 return
             except NotImplementedError:
@@ -478,46 +494,46 @@ class XAITokenManager:
             except Exception as e:
                 log_debug(f"Could not save token to DB: {e}")
                 return
-        self._write_file(payload)
+        self._write_file_for(payload, user_id)
 
-    def _load(self) -> Optional[Dict[str, Any]]:
-        payload = self._read_store()
+    def _load(self, user_id: str = "") -> Optional[Dict[str, Any]]:
+        payload = self._read_store(user_id)
         if payload is None:
-            return self._memory_row
+            return self._memory_rows.get(user_id)
         return self._decrypt_payload(payload)
 
-    async def _aload(self) -> Optional[Dict[str, Any]]:
-        payload = await self._aread_store()
+    async def _aload(self, user_id: str = "") -> Optional[Dict[str, Any]]:
+        payload = await self._aread_store(user_id)
         if payload is None:
-            return self._memory_row
+            return self._memory_rows.get(user_id)
         return self._decrypt_payload(payload)
 
-    def _read_store(self) -> Optional[Dict[str, Any]]:
+    def _read_store(self, user_id: str = "") -> Optional[Dict[str, Any]]:
         if self.db is not None:
             if iscoroutinefunction(self.db.get_auth_token):
                 log_warning(_SYNC_PATH_ASYNC_DB_WARNING)
             else:
                 try:
-                    row = self.db.get_auth_token(*self._store_key())
+                    row = self.db.get_auth_token(*self._store_key(user_id))
                     return row.get("token_data") if row else None
                 except NotImplementedError:
                     log_warning("Database does not support auth token storage")
                 except Exception as e:
                     log_debug(f"Could not load token from DB: {e}")
                     return None
-        return self._read_file()
+        return self._read_file_for(user_id)
 
-    async def _aread_store(self) -> Optional[Dict[str, Any]]:
+    async def _aread_store(self, user_id: str = "") -> Optional[Dict[str, Any]]:
         if self.db is not None:
             try:
-                row = await _maybe_await(self.db.get_auth_token(*self._store_key()))
+                row = await _maybe_await(self.db.get_auth_token(*self._store_key(user_id)))
                 return row.get("token_data") if row else None
             except NotImplementedError:
                 log_warning("Database does not support auth token storage")
             except Exception as e:
                 log_debug(f"Could not load token from DB: {e}")
                 return None
-        return self._read_file()
+        return self._read_file_for(user_id)
 
     def _decrypt_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         from agno.utils.encryption import decrypt_dict, is_encrypted
@@ -551,8 +567,8 @@ class XAITokenManager:
 
         return encrypt_dict(token_data, key=self.encryption_key)
 
-    def _db_row(self, token_data: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
-        provider, user_id, service = self._store_key()
+    def _db_row(self, token_data: Dict[str, Any], payload: Dict[str, Any], user_id: str = "") -> Dict[str, Any]:
+        provider, user_id, service = self._store_key(user_id)
         return {
             "provider": provider,
             "user_id": user_id,
@@ -563,6 +579,28 @@ class XAITokenManager:
 
     def _token_file(self) -> Path:
         return Path(self.token_path or "xai_token.json")
+
+    def _read_file_for(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """The file store, but only for the deployment slot.
+
+        One file holds one session, so serving it to an identified user would
+        hand them whoever signed in on this machine. An absent per-user token
+        is not an error - resolution falls through to the deployment slot.
+        """
+        if user_id:
+            log_debug("Per-user SuperGrok tokens need a database; the file store is single-user")
+            return None
+        return self._read_file()
+
+    def _write_file_for(self, payload: Dict[str, Any], user_id: str) -> None:
+        """Persist to the file store, or refuse when the token belongs to a user."""
+        if user_id:
+            log_warning(
+                "Per-user SuperGrok tokens need a database; this token is kept in memory "
+                "for this process only. Pass db= to persist it."
+            )
+            return
+        self._write_file(payload)
 
     def _read_file(self) -> Optional[Dict[str, Any]]:
         path = self._token_file()
@@ -585,7 +623,7 @@ class XAITokenManager:
         except OSError as e:
             log_warning(f"Could not persist SuperGrok token to {path}: {e}. Token kept in memory only.")
 
-    def sign_out(self) -> None:
+    def sign_out(self, user_id: str = "") -> None:
         """Forget the stored SuperGrok session on this machine.
 
         Wipes the stored row (db or file), the process cache entry, and the
@@ -593,9 +631,9 @@ class XAITokenManager:
         stored. Never calls the revocation endpoint: the grant lives on
         server-side until it expires or is revoked from the account page.
         """
-        self._delete_stored_token()
+        self._delete_stored_token(user_id)
 
-    async def asign_out(self) -> None:
+    async def asign_out(self, user_id: str = "") -> None:
         """Forget the stored SuperGrok session on this machine.
 
         Wipes the stored row (db or file), the process cache entry, and the
@@ -603,33 +641,33 @@ class XAITokenManager:
         stored. Never calls the revocation endpoint: the grant lives on
         server-side until it expires or is revoked from the account page.
         """
-        await self._adelete_stored_token()
+        await self._adelete_stored_token(user_id)
 
-    def _delete_stored_token(self) -> None:
+    def _delete_stored_token(self, user_id: str = "") -> None:
         # Durable copy first: the persisted row dies before the in-process
         # copies, so no later process can resurrect a session whose live
         # state is already gone
-        self._delete_stored_row()
+        self._delete_stored_row(user_id)
         with _cache_mutation_guard:
-            _token_cache.pop(self._cache_key(), None)
-        self._memory_row = None
+            _token_cache.pop(self._cache_key(user_id), None)
+        self._memory_rows.pop(user_id, None)
 
-    async def _adelete_stored_token(self) -> None:
+    async def _adelete_stored_token(self, user_id: str = "") -> None:
         # Durable copy first: the persisted row dies before the in-process
         # copies, so no later process can resurrect a session whose live
         # state is already gone
-        await self._adelete_stored_row()
+        await self._adelete_stored_row(user_id)
         with _cache_mutation_guard:
-            _token_cache.pop(self._cache_key(), None)
-        self._memory_row = None
+            _token_cache.pop(self._cache_key(user_id), None)
+        self._memory_rows.pop(user_id, None)
 
-    def _delete_stored_row(self) -> None:
+    def _delete_stored_row(self, user_id: str = "") -> None:
         if self.db is not None:
             if iscoroutinefunction(self.db.delete_auth_token):
                 log_warning(_SYNC_PATH_ASYNC_DB_WARNING)
             else:
                 try:
-                    if not self.db.delete_auth_token(*self._store_key()):
+                    if not self.db.delete_auth_token(*self._store_key(user_id)):
                         log_debug("No SuperGrok token row deleted")
                     return
                 except NotImplementedError:
@@ -642,10 +680,10 @@ class XAITokenManager:
         except OSError as e:
             log_debug(f"Could not delete SuperGrok token file: {e}")
 
-    async def _adelete_stored_row(self) -> None:
+    async def _adelete_stored_row(self, user_id: str = "") -> None:
         if self.db is not None:
             try:
-                if not await _maybe_await(self.db.delete_auth_token(*self._store_key())):
+                if not await _maybe_await(self.db.delete_auth_token(*self._store_key(user_id))):
                     log_debug("No SuperGrok token row deleted")
                 return
             except NotImplementedError:
