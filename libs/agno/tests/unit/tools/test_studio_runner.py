@@ -3444,6 +3444,60 @@ class TestNestedWorkflowIsolation:
         with pytest.raises(DispatchCopyError, match=r"instance of '\?'"):
             runner._require_isolated_steps(wf, "p5")
 
+    def test_a_leak_below_a_bare_step_names_the_leak_as_a_member_of_it(self):
+        """When the leak sits below the step rather than being the step, the
+        message has to say so. "instance of 'a_shared' below it" reads as if the
+        step itself were the singleton and something else were below it; the
+        step is fine and one of its members is not."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.workflow import Workflow
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        sticky = StickyAgent(id="a_shared", name="A")
+        registry = Registry(name="R")
+        registry.agents.append(sticky)
+        wf = Workflow(id="p6", name="P6", steps=[Team(id="t6", name="T6", members=[sticky])])
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError) as excinfo:
+            runner._require_isolated_steps(wf, "p6")
+
+        assert "instance of a member below it, 'a_shared'" in str(excinfo.value)
+
+    def test_an_unnamed_leaked_member_of_a_step_executor_reads_as_unknown(self):
+        """The executor branch spells the leaked member the same way the step
+        branch does: a component with neither id nor name is '?', not 'None'."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        class AnonymousStickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        anonymous = AnonymousStickyAgent(id=None, name=None)
+        registry = Registry(name="R")
+        registry.agents.append(anonymous)
+        team = Team(id="t7", name="T7", members=[anonymous])
+        wf = Workflow(id="p7", name="P7", steps=[Step(name="s", team=team)])
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError) as excinfo:
+            runner._require_isolated_steps(wf, "p7")
+
+        message = str(excinfo.value)
+        assert "a member of team 't7', '?'" in message
+        assert "'None'" not in message
+
 
 class TestNestedWorkflowIsolationSpellings:
     """A steps= value may be a list or a single container, and the check has to

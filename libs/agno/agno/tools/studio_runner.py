@@ -1888,7 +1888,9 @@ class StudioRunnerTools(Toolkit):
             leaked_item = shared_within(item)
             if leaked_item is not None:
                 label = getattr(leaked_item, "id", None) or getattr(leaked_item, "name", None) or "?"
-                where = f"'{label}'" if leaked_item is item else f"'{label}' below it"
+                # The walk descends through members only, so a leak found below
+                # the node is a member of it however deep the nesting goes.
+                where = f"'{label}'" if leaked_item is item else f"a member below it, '{label}'"
                 raise DispatchCopyError(
                     f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
                     f"registry instance of {where}; the runner dispatches only isolated copies. Give the "
@@ -1902,7 +1904,7 @@ class StudioRunnerTools(Toolkit):
                         f"{attr} '{getattr(executor, 'id', None)}'"
                         if leaked is executor
                         else f"a member of {attr} '{getattr(executor, 'id', None)}', "
-                        f"'{getattr(leaked, 'id', None) or getattr(leaked, 'name', None)}'"
+                        f"'{getattr(leaked, 'id', None) or getattr(leaked, 'name', None) or '?'}'"
                     )
                     raise DispatchCopyError(
                         f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
