@@ -3873,15 +3873,15 @@ class StudioTools(Toolkit):
             schedule = manager.update(schedule_id, user_id=actor, **updates)
             if schedule is None:
                 return error_result("schedule_not_found", f"Schedule not found: {schedule_id}")
-            if self.db is not None and _agno_run_context is not None:
-                try:
-                    self.db.stamp_schedule_provenance(
-                        schedule_id,
-                        updated_by_run_id=_agno_run_context.run_id,
-                        updated_by_session_id=_agno_run_context.session_id,
-                    )
-                except NotImplementedError:
-                    pass
+            if _agno_run_context is not None:
+                # Through the manager, not the adapter: on an async database the
+                # direct call builds a coroutine nobody awaits, so the stamp is
+                # dropped while the tool reports success.
+                manager.stamp_provenance(
+                    schedule_id,
+                    updated_by_run_id=_agno_run_context.run_id,
+                    updated_by_session_id=_agno_run_context.session_id,
+                )
             return ok_result(
                 "updated",
                 id=schedule.id,

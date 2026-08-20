@@ -23,6 +23,7 @@ SchedulerDbMethod = Literal[
     "update_schedule_run",
     "get_schedule_run",
     "get_schedule_runs",
+    "stamp_schedule_provenance",
 ]
 
 
@@ -64,6 +65,19 @@ class ScheduleManager:
                 # No running loop — safe to use asyncio.run directly
                 return asyncio.run(fn(*args, **kwargs))
         return fn(*args, **kwargs)
+
+    def stamp_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Stamp provenance columns on a schedule, over the sync/async bridge.
+
+        Callers reached the adapter directly and caught NotImplementedError,
+        which is invisible to an async adapter: the coroutine is built, never
+        awaited, and the write silently does not happen while the caller is
+        told it did.
+        """
+        try:
+            return bool(self._call("stamp_schedule_provenance", schedule_id, **provenance))
+        except NotImplementedError:
+            return False
 
     async def _acall(self, method_name: SchedulerDbMethod, *args: Any, **kwargs: Any) -> Any:
         """Async call a DB method."""
