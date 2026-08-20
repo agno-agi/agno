@@ -1,8 +1,10 @@
 """Tests for the background telemetry dispatcher (Api.post_in_background)."""
 
+import os
 import time
 
 import httpx
+import pytest
 
 from agno.api.agent import create_agent_run
 from agno.api.api import Api, api
@@ -113,3 +115,35 @@ def test_async_variant_is_paired_and_delegates():
 
     assert len(requests) == 1 and b"async-1" in requests[0].content
     assert len(constructed) == 1
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is not available on this platform")
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_forked_child_resets_dispatcher_state():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    instance, _ = make_api_with_mock_transport(handler)
+    instance.post_in_background(ApiRoutes.RUN_CREATE, {"session_id": "parent"})
+    wait_for_drain(instance)
+    assert instance._worker is not None and instance._worker.is_alive()
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # child: report whether the fork hook gave us fresh state
+        try:
+            fresh = (
+                instance._worker is None
+                and instance._client is None
+                and instance._queue.qsize() == 0
+                and instance._pid == os.getpid()
+            )
+            os.write(write_fd, b"1" if fresh else b"0")
+        finally:
+            os._exit(0)
+    os.close(write_fd)
+    try:
+        assert os.read(read_fd, 1) == b"1", "child must see reset dispatcher state"
+    finally:
+        os.close(read_fd)
+        os.waitpid(pid, 0)
