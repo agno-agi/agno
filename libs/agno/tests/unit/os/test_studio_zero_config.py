@@ -515,9 +515,9 @@ class TestASharedRegistryBindsPerOS:
             AgentOS(agents=[builder], registry=registry)
 
         assert studio.db is db_a
-        assert not any(
-            "component catalog" in r.message or "more than one" in r.message for r in caplog.records
-        ), [r.message for r in caplog.records]
+        assert not any("component catalog" in r.message or "more than one" in r.message for r in caplog.records), [
+            r.message for r in caplog.records
+        ]
 
     def test_two_os_pulling_one_toolkit_apart_warn(self, tmp_path, caplog):
         """When the same toolkit is served by two OS with different dbs there
