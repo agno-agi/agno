@@ -48,7 +48,7 @@ def build_result_store(
         store = setting.bound(db)
     else:
         raise TypeError(
-            "offload_tool_results must be True, False or a ResultStore; "
+            "offload_tool_results must be True, False, None or a ResultStore; "
             "set the threshold with ResultStore(threshold_chars=...)."
         )
 

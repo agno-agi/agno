@@ -970,7 +970,7 @@ def test_search_result_renders_context_blocks_with_their_own_line_numbers(db):
     result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
     search = agent.model.seen_functions["search_result"]
     rendered = search.entrypoint(result_id=result_id, pattern=r"^row 10:", context_lines=1)
-    assert "match at line 10:" in rendered
+    assert "match at line 10 (char 0):" in rendered
     assert "9: row 9:" in rendered and "10: row 10:" in rendered and "11: row 11:" in rendered
 
     capped = search.entrypoint(result_id=result_id, pattern=r"^row")
@@ -1070,3 +1070,14 @@ async def test_an_async_db_cascades_payloads_written_by_a_sync_store(tmp_path):
     await async_db.delete_sessions(session_ids=[session_id])
     assert store.get_row(result_id) is None
     assert store._fs_for_namespace(row["namespace"]).read(row["path"]) is None
+
+
+def test_an_explicit_false_round_trips_and_unset_is_omitted(db):
+    explicit = Agent(model=ScriptedToolModel(), db=db, offload_tool_results=False).to_dict()
+    assert explicit["offload_tool_results"] is False
+    explicit.pop("model", None)
+    assert Agent.from_dict(explicit).offload_tool_results is False
+    unset = Agent(model=ScriptedToolModel(), db=db).to_dict()
+    assert "offload_tool_results" not in unset
+    unset.pop("model", None)
+    assert Agent.from_dict(unset).offload_tool_results is None

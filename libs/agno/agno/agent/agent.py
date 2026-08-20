@@ -352,8 +352,10 @@ class Agent:
     # Store large tool results as files and leave a short envelope with a
     # result id in the message. True uses the defaults (results of 16000
     # characters or more). A ResultStore sets the threshold, the preview, the
-    # lifetime, and where payloads live.
-    offload_tool_results: Union[bool, "ResultStore"] = False
+    # lifetime, and where payloads live. Unset, the agent does not offload on
+    # its own and inherits a team's store when it is a member; False keeps
+    # offloading off inside a team too.
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -404,7 +406,7 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
-        offload_tool_results: Union[bool, "ResultStore"] = False,
+        offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,

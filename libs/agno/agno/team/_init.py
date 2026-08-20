@@ -155,7 +155,7 @@ def __init__(
     add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
-    offload_tool_results: Union[bool, "ResultStore"] = False,
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
@@ -602,7 +602,8 @@ def _bind_member_result_store(team: "Team", member: Union[Agent, "Team"]) -> Non
     ):
         return
     store: Optional[ResultStore] = None
-    if team._result_store is not None:
+    # An explicit False keeps the member out of the team's store.
+    if team._result_store is not None and member.offload_tool_results is not False:
         if declares_own_store:
             from agno.offload.setup import build_result_store
 

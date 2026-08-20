@@ -334,7 +334,7 @@ def test_member_inherits_the_teams_store(db):
     team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
     team.initialize_team()
     # The member's own declared setting is left alone; only the runtime store is shared.
-    assert member.offload_tool_results is False
+    assert member.offload_tool_results is None
     assert member._result_store is team._result_store
 
 
@@ -569,7 +569,7 @@ def test_a_member_moved_to_a_second_team_follows_that_team(db, tmp_path):
     second.initialize_team()
     assert member._result_store is second._result_store
     assert member._result_store.db is other_db
-    assert member.offload_tool_results is False
+    assert member.offload_tool_results is None
 
 
 def test_a_team_without_offloading_clears_an_inherited_store(db):
@@ -909,3 +909,15 @@ async def test_async_search_does_not_block_the_event_loop(db):
     gaps = [b - a for a, b in zip(ticks, ticks[1:])]
     # The loop kept ticking while the scans ran in worker threads.
     assert gaps and max(gaps) < 0.25
+
+
+def test_an_explicit_false_keeps_a_member_out_of_the_teams_store(db):
+    member = _member()
+    member.offload_tool_results = False
+    team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db, offload_tool_results=True)
+    team.initialize_team()
+    assert member._result_store is None
+    # The leader still offloads the member's answer; the member itself does not offload and gets no read-back tools.
+    output = team.run("go", session_id=_sid())
+    assert _tool_messages(output)[0].content.startswith('<result id="res_')
+    assert member.offload_tool_results is False

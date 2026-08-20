@@ -184,20 +184,22 @@ def resolve_memory_manager_reference(
 
 
 def _offload_to_config(value: Any) -> Union[bool, Dict[str, Any]]:
-    """The offload_tool_results setting as it is stored: True, or the ResultStore settings."""
+    """The offload_tool_results setting as it is stored: True, False, or the ResultStore settings."""
     from agno.offload.store import ResultStore
 
-    if value is True:
-        return True
+    if value is True or value is False:
+        return value
     if isinstance(value, ResultStore):
         return value.to_dict()
     raise TypeError(
-        "offload_tool_results must be True, False or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
+        "offload_tool_results must be True, False, None or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
     )
 
 
-def _offload_from_config(value: Any) -> Union[bool, "ResultStore"]:
-    """The offload_tool_results setting from a stored config: True, False, or a ResultStore."""
+def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
+    """The offload_tool_results setting from a stored config: unset, True, False, or a ResultStore."""
+    if value is None:
+        return None
     if isinstance(value, dict):
         from agno.offload.store import ResultStore
 
@@ -1085,7 +1087,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["compress_tool_results"] = agent.compress_tool_results
 
     # --- Result offloading settings ---
-    if agent.offload_tool_results:
+    if agent.offload_tool_results is not None:
         config["offload_tool_results"] = _offload_to_config(agent.offload_tool_results)
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
@@ -1394,7 +1396,7 @@ def from_dict(
         compress_tool_results=config.get("compress_tool_results", False),
         # compression_manager=config.get("compression_manager"),  # TODO
         # --- Result offloading settings ---
-        offload_tool_results=_offload_from_config(config.get("offload_tool_results", False)),
+        offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
         # --- Debug and telemetry settings ---
         debug_mode=config.get("debug_mode", False),
         debug_level=config.get("debug_level", 1),

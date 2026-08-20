@@ -335,8 +335,9 @@ class Team:
     # result id in the message. True uses the defaults (results of 16000
     # characters or more), for the leader's own tool results and for every
     # member answer. A ResultStore sets the threshold, the preview, the
-    # lifetime, and where payloads live.
-    offload_tool_results: Union[bool, "ResultStore"] = False
+    # lifetime, and where payloads live. Unset, a sub-team inherits the parent
+    # team's store; False keeps offloading off inside a parent team too.
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -539,7 +540,7 @@ class Team:
         add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
-        offload_tool_results: Union[bool, "ResultStore"] = False,
+        offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
