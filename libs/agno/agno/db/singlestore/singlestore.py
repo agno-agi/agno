@@ -499,7 +499,7 @@ class SingleStoreDb(BaseDb):
             db_schema=self.db_schema,
         ):
             table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
-            raise table_schema_mismatch_error(table_ref)
+            raise table_schema_mismatch_error(table_ref, table_type=table_type)
 
         try:
             return self._create_table_structure_only(table_name=table_name, table_type=table_type)

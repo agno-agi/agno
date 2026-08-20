@@ -561,7 +561,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table_type=table_type,
             db_schema=self.db_schema,
         ):
-            raise table_schema_mismatch_error(f"{self.db_schema}.{table_name}")
+            raise table_schema_mismatch_error(f"{self.db_schema}.{table_name}", table_type=table_type)
 
         try:
             async with self.db_engine.connect() as conn:

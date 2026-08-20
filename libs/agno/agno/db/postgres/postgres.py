@@ -745,7 +745,7 @@ class PostgresDb(BaseDb):
             table_type=table_type,
             db_schema=self.db_schema,
         ):
-            raise table_schema_mismatch_error(f"{self.db_schema}.{table_name}")
+            raise table_schema_mismatch_error(f"{self.db_schema}.{table_name}", table_type=table_type)
 
         try:
             table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)

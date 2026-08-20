@@ -512,7 +512,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         # SQLite version of table validation (no schema)
         if not await ais_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
-            raise table_schema_mismatch_error(table_name)
+            raise table_schema_mismatch_error(table_name, table_type=table_type)
 
         try:
             async with self.db_engine.connect() as conn:
