@@ -219,7 +219,7 @@ def test_sign_out_wipes_db_row_cache_and_memory(sqlite_db, encryption_key, token
 
     assert sqlite_db.get_auth_token("xai", "", "supergrok") is None
     assert manager._cache_key() not in oauth._token_cache
-    assert manager._memory_row is None
+    assert manager._memory_rows.get("") is None
     with pytest.raises(ModelAuthenticationError):
         manager.get_access_token()
 
@@ -241,7 +241,7 @@ def test_sign_out_wipes_file_store(tmp_path, encryption_key, token_endpoint, fak
 
     assert not token_file.exists()
     assert manager._cache_key() not in oauth._token_cache
-    assert manager._memory_row is None
+    assert manager._memory_rows.get("") is None
     manager.sign_out()  # idempotent with nothing stored
 
 
@@ -262,7 +262,7 @@ async def test_asign_out_wipes_db_row_cache_and_memory(async_sqlite_db, encrypti
 
         assert await async_sqlite_db.get_auth_token("xai", "", "supergrok") is None
         assert manager._cache_key() not in oauth._token_cache
-        assert manager._memory_row is None
+        assert manager._memory_rows.get("") is None
         with pytest.raises(ModelAuthenticationError):
             await manager.aget_access_token()
 
@@ -289,7 +289,7 @@ async def test_asign_out_wipes_file_store(tmp_path, encryption_key, token_endpoi
 
         assert not token_file.exists()
         assert manager._cache_key() not in oauth._token_cache
-        assert manager._memory_row is None
+        assert manager._memory_rows.get("") is None
         await manager.asign_out()  # idempotent with nothing stored
 
 
