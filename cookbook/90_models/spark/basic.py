@@ -22,7 +22,7 @@ from agno.models.spark import Spark
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=Spark(id="generalv3.5"), markdown=True)
+agent = Agent(model=Spark(id="4.0Ultra"), markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent

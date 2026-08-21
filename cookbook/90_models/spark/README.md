@@ -4,7 +4,7 @@
 models through an
 [OpenAI-compatible HTTP API](https://www.xfyun.cn/doc/spark/HTTP%E8%B0%83%E7%94%A8%E6%96%87%E6%A1%A3.html),
 so you can drive them through Agno the same way you'd drive any OpenAI-compatible
-provider. The Agno `Spark` class defaults to `generalv3.5` (Spark Max) and points
+provider. The Agno `Spark` class defaults to `4.0Ultra` (Spark 4.0 Ultra) and points
 at `https://spark-api-open.xf-yun.com/v1`.
 
 ## Models

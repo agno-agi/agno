@@ -39,7 +39,7 @@ def test_spark_client_params():
 
 def test_spark_default_values():
     model = Spark(api_key="test-api-key")
-    assert model.id == "generalv3.5"
+    assert model.id == "4.0Ultra"
     assert model.name == "Spark"
     assert model.provider == "iFLYTEK Spark"
 

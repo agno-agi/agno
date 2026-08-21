@@ -14,18 +14,18 @@ class Spark(OpenAILike):
     Spark exposes an OpenAI-compatible HTTP endpoint at
     https://spark-api-open.xf-yun.com/v1 that authenticates with a single Bearer
     API Password, so it is a thin wrapper over OpenAILike. The default id is
-    ``generalv3.5`` (Spark Max); other public model ids include ``4.0Ultra``,
-    ``max-32k``, ``generalv3`` (Spark Pro), ``pro-128k`` and ``lite``.
+    ``4.0Ultra`` (Spark 4.0 Ultra); other public model ids include ``generalv3.5``
+    (Spark Max), ``max-32k``, ``generalv3`` (Spark Pro), ``pro-128k`` and ``lite``.
 
     Attributes:
-        id (str): The model id. Defaults to "generalv3.5".
+        id (str): The model id. Defaults to "4.0Ultra".
         name (str): The model name. Defaults to "Spark".
         provider (str): The provider name. Defaults to "iFLYTEK Spark".
         api_key (Optional[str]): The API Password for the Spark HTTP service.
         base_url (str): The base URL. Defaults to "https://spark-api-open.xf-yun.com/v1".
     """
 
-    id: str = "generalv3.5"
+    id: str = "4.0Ultra"
     name: str = "Spark"
     provider: str = "iFLYTEK Spark"
 

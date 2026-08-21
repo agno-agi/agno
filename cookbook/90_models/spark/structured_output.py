@@ -43,7 +43,7 @@ class MovieScript(BaseModel):
 
 # Spark does not support native json_schema structured outputs, so use JSON mode.
 agent = Agent(
-    model=Spark(id="generalv3.5"),
+    model=Spark(id="4.0Ultra"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,
