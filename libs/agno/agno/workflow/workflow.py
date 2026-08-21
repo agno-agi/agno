@@ -23,10 +23,11 @@ from typing import (
 )
 from uuid import uuid4
 
-from fastapi import WebSocket
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    from fastapi import WebSocket
+
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
@@ -8451,7 +8452,7 @@ class Workflow:
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         enable_websocket: bool = False,
     ) -> WorkflowRunOutput: ...
 
@@ -8466,7 +8467,7 @@ class Workflow:
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         enable_websocket: bool = False,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
@@ -8480,7 +8481,7 @@ class Workflow:
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         enable_websocket: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
@@ -10574,7 +10575,7 @@ class Workflow:
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -10599,7 +10600,7 @@ class Workflow:
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -10623,7 +10624,7 @@ class Workflow:
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,

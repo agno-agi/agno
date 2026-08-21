@@ -1,7 +1,6 @@
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Tuple, Union, overload
 
-from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
@@ -12,6 +11,8 @@ from agno.utils.agent import validate_input
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
+    from fastapi import WebSocket
+
     from agno.os.routers.workflows.schema import WorkflowResponse
 
 
@@ -150,7 +151,7 @@ class RemoteWorkflow(BaseRemote):
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         background_tasks: Optional[Any] = None,
         auth_token: Optional[str] = None,
     ) -> WorkflowRunOutput: ...
@@ -172,7 +173,7 @@ class RemoteWorkflow(BaseRemote):
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         background_tasks: Optional[Any] = None,
         auth_token: Optional[str] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
@@ -192,7 +193,7 @@ class RemoteWorkflow(BaseRemote):
         stream: bool = False,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional[WebSocket] = None,
+        websocket: Optional["WebSocket"] = None,
         background_tasks: Optional[Any] = None,
         auth_token: Optional[str] = None,
         **kwargs: Any,
