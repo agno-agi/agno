@@ -859,9 +859,7 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
     # Offloading and tool-result compression cannot run together: compression
     # rewrites the tool messages that hold stored-result envelopes. Refuse the
     # combination loudly instead of silently favouring one of them.
-    # Resolved when a setting is present, and also when a store exists and the
-    # setting is gone, so a cleared setting drops its store. With neither,
-    # the default, nothing runs.
+    # Resolved when a setting is present or when a store exists.
     if team.offload_tool_results or team._result_store is not None:
         if team.compress_tool_results:
             raise ValueError(

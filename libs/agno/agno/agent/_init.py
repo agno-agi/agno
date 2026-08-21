@@ -295,9 +295,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
-    # Resolved when a setting is present, and also when a store exists and the
-    # setting is gone, so a cleared setting drops its store. With neither,
-    # the default, nothing runs.
+    # Resolved when a setting is present or when a store exists.
     if agent.offload_tool_results or agent._result_store is not None:
         set_result_store(agent)
     if agent.learning is not None and agent.learning is not False:
