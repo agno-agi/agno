@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from fastapi import WebSocket
 
     from agno.os.routers.workflows.schema import WorkflowResponse
+else:
+    # fastapi only ships with the "os" extra; a loose binding keeps the
+    # websocket annotations resolvable by get_type_hints() without it.
+    WebSocket = Any
 
 
 class RemoteWorkflow(BaseRemote):
@@ -151,7 +155,7 @@ class RemoteWorkflow(BaseRemote):
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional["WebSocket"] = None,
+        websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         auth_token: Optional[str] = None,
     ) -> WorkflowRunOutput: ...
@@ -173,7 +177,7 @@ class RemoteWorkflow(BaseRemote):
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional["WebSocket"] = None,
+        websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         auth_token: Optional[str] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
@@ -193,7 +197,7 @@ class RemoteWorkflow(BaseRemote):
         stream: bool = False,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional["WebSocket"] = None,
+        websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
         auth_token: Optional[str] = None,
         **kwargs: Any,

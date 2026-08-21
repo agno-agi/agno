@@ -50,6 +50,7 @@ def __getattr__(name: str) -> Any:
     if name == "RemoteWorkflow":
         from agno.workflow.remote import RemoteWorkflow
 
+        globals()[name] = RemoteWorkflow
         return RemoteWorkflow
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
