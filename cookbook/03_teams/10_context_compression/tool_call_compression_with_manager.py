@@ -49,8 +49,8 @@ compression_prompt = """
 
 compaction_manager = CompactionManager(
     model=OpenAIResponses(id="gpt-5.2"),
-    compact_tool_results_limit=2,  # Keep only last 2 tool call results uncompressed
-    tool_instructions=compression_prompt,
+    compact_tools_limit=2,  # Keep only last 2 tool call results uncompressed
+    compact_tools_instructions=compression_prompt,
 )
 
 # ---------------------------------------------------------------------------

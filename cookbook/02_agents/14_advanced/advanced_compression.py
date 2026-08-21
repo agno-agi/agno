@@ -43,8 +43,8 @@ compression_prompt = """
 
 compaction_manager = CompactionManager(
     model=OpenAIResponses(id="gpt-5-mini"),
-    tool_token_limit=5000,
-    tool_instructions=compression_prompt,
+    compact_tools_token_limit=5000,
+    compact_tools_instructions=compression_prompt,
 )
 
 # ---------------------------------------------------------------------------
