@@ -492,19 +492,38 @@ def parse_response_with_parser_model_stream(
             for model_response_event in agent.parser_model.response_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
-                stream_model_response=False,
+                stream_model_response=True,
                 run_response=run_response,
             ):
-                yield from handle_model_response_chunk(
+                for event in handle_model_response_chunk(
                     agent,
                     session=session,
                     run_response=run_response,
                     model_response=parser_model_response,
                     model_response_event=model_response_event,
-                    parse_structured_output=True,
                     stream_events=stream_events,
                     run_context=run_context,
-                )
+                ):
+                    # Skip reasoning-only chunks; the caller only needs the answer text
+                    if event.event == RunEvent.run_content.value and event.content is None:
+                        continue
+                    yield event
+
+            # Parse the accumulated content once streaming finishes, not per chunk
+            convert_response_to_structured_format(agent, parser_model_response, run_context=run_context)
+            content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+            run_response.content = parser_model_response.content
+            run_response.content_type = content_type
+            yield handle_event(
+                create_run_output_content_event(
+                    from_run_response=run_response,
+                    content=run_response.content,
+                    content_type=content_type,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
 
             parser_model_response_message: Optional[Message] = None
             for message in reversed(messages_for_parser_model):
@@ -560,7 +579,7 @@ async def aparse_response_with_parser_model_stream(
             model_response_stream = agent.parser_model.aresponse_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
-                stream_model_response=False,
+                stream_model_response=True,
                 run_response=run_response,
             )
             async for model_response_event in model_response_stream:  # type: ignore
@@ -570,11 +589,29 @@ async def aparse_response_with_parser_model_stream(
                     run_response=run_response,
                     model_response=parser_model_response,
                     model_response_event=model_response_event,
-                    parse_structured_output=True,
                     stream_events=stream_events,
                     run_context=run_context,
                 ):
+                    # Skip reasoning-only chunks; the caller only needs the answer text
+                    if event.event == RunEvent.run_content.value and event.content is None:
+                        continue
                     yield event
+
+            # Parse the accumulated content once streaming finishes, not per chunk
+            convert_response_to_structured_format(agent, parser_model_response, run_context=run_context)
+            content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+            run_response.content = parser_model_response.content
+            run_response.content_type = content_type
+            yield handle_event(
+                create_run_output_content_event(
+                    from_run_response=run_response,
+                    content=run_response.content,
+                    content_type=content_type,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
 
             parser_model_response_message: Optional[Message] = None
             for message in reversed(messages_for_parser_model):
