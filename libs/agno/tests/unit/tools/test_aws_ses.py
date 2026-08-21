@@ -56,7 +56,9 @@ class TestAWSSESTool:
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender", region_name="us-west-2")
 
         # Act
-        result = tool.send_email(subject="Test Subject", body="Test Body", receiver_email="receiver@example.com")
+        result = tool.send_aws_ses_email(
+            subject="Test Subject", body="Test Body", receiver_email="receiver@example.com"
+        )
 
         # Assert
         assert result == "Email sent successfully!"
@@ -89,7 +91,7 @@ class TestAWSSESTool:
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
 
         # Act
-        result = tool.send_email(subject="", body="Test Body", receiver_email="receiver@example.com")
+        result = tool.send_aws_ses_email(subject="", body="Test Body", receiver_email="receiver@example.com")
 
         # Assert
         assert result == "Email subject cannot be empty."
@@ -105,7 +107,7 @@ class TestAWSSESTool:
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
 
         # Act
-        result = tool.send_email(subject="Test Subject", body="", receiver_email="receiver@example.com")
+        result = tool.send_aws_ses_email(subject="Test Subject", body="", receiver_email="receiver@example.com")
 
         # Assert
         assert result == "Email body cannot be empty."
@@ -124,7 +126,7 @@ class TestAWSSESTool:
 
         # Act & Assert
         with pytest.raises(Exception) as exc_info:
-            tool.send_email(subject="Test Subject", body="Test Body", receiver_email="invalidemailformat")
+            tool.send_aws_ses_email(subject="Test Subject", body="Test Body", receiver_email="invalidemailformat")
 
         assert "Failed to send email" in str(exc_info.value)
         assert "Missing final '@domain'" in str(exc_info.value)
@@ -142,7 +144,7 @@ class TestAWSSESTool:
 
         # Act & Assert
         with pytest.raises(Exception) as exc_info:
-            tool.send_email(subject="Test Subject", body="Test Body", receiver_email="unverified@example.com")
+            tool.send_aws_ses_email(subject="Test Subject", body="Test Body", receiver_email="unverified@example.com")
 
         assert "Failed to send email" in str(exc_info.value)
         assert "Email address is not verified" in str(exc_info.value)
@@ -156,7 +158,7 @@ class TestAWSSESTool:
 
         # Act & Assert
         with pytest.raises(Exception) as exc_info:
-            tool.send_email(subject="Test Subject", body="Test Body", receiver_email="receiver@example.com")
+            tool.send_aws_ses_email(subject="Test Subject", body="Test Body", receiver_email="receiver@example.com")
 
         assert "AWS SES client not initialized" in str(exc_info.value)
 
@@ -172,7 +174,7 @@ class TestAWSSESTool:
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
 
         # Act
-        result = tool.send_email(
+        result = tool.send_aws_ses_email(
             subject="Test Subject with émojis 🎉",
             body="Body with special chars: ñ, ü, é, 中文, 日本語",
             receiver_email="receiver@example.com",
@@ -196,8 +198,12 @@ class TestAWSSESTool:
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
 
         # Act
-        result1 = tool.send_email(subject="First Email", body="First Body", receiver_email="receiver1@example.com")
-        result2 = tool.send_email(subject="Second Email", body="Second Body", receiver_email="receiver2@example.com")
+        result1 = tool.send_aws_ses_email(
+            subject="First Email", body="First Body", receiver_email="receiver1@example.com"
+        )
+        result2 = tool.send_aws_ses_email(
+            subject="Second Email", body="Second Body", receiver_email="receiver2@example.com"
+        )
 
         # Assert
         assert result1 == "Email sent successfully!"
@@ -226,7 +232,7 @@ class TestAWSSESTool:
 
         # Act
         with patch("agno.tools.aws_ses.log_debug") as mock_log:
-            result = tool.send_email(subject="Test", body="Test", receiver_email="test@example.com")
+            result = tool.send_aws_ses_email(subject="Test", body="Test", receiver_email="test@example.com")
 
             # Assert
             assert result == "Email sent successfully!"
