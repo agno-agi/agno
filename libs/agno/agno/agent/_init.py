@@ -18,7 +18,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb
 from agno.learn.machine import LearningMachine
@@ -197,20 +197,20 @@ def set_session_summary_manager(agent: Agent) -> None:
         )
 
 
-def set_compression_manager(agent: Agent) -> None:
-    """Initialize compression_manager, handling both tool compression and history compaction.
+def set_compaction_manager(agent: Agent) -> None:
+    """Initialize compaction_manager, handling both tool compaction and history compaction.
 
-    Unifies the old separate context_compaction_manager into the compression_manager.
-    If user sets context_compaction_manager directly, we wire it into compression_manager.
+    Unifies the old separate context_compaction_manager into the compaction_manager.
+    If user sets context_compaction_manager directly, we wire it into compaction_manager.
     """
-    # If user set context_compaction_manager directly (deprecated), wire it into compression_manager
+    # If user set context_compaction_manager directly (deprecated), wire it into compaction_manager
     if agent.context_compaction_manager is not None:
-        if agent.compression_manager is None:
-            # Create compression_manager with history compaction from the standalone compactor
-            agent.compression_manager = CompressionManager(
+        if agent.compaction_manager is None:
+            # Create compaction_manager with history compaction from the standalone compactor
+            agent.compaction_manager = CompactionManager(
                 model=agent.model,
-                compress_tool_results=agent.compress_tool_results,
-                compress_history=True,
+                compact_tool_results=agent.compact_tool_results,
+                compact_history=True,
                 history_message_limit=agent.context_compaction_manager.message_limit,
                 history_token_limit=agent.context_compaction_manager.token_limit,
                 history_keep_recent=agent.context_compaction_manager.keep_recent,
@@ -218,19 +218,19 @@ def set_compression_manager(agent: Agent) -> None:
                 history_instructions=agent.context_compaction_manager.instructions,
             )
         # Point the field to the unified manager's internal compactor
-        agent.context_compaction_manager = agent.compression_manager.context_compaction_manager
+        agent.context_compaction_manager = agent.compaction_manager.context_compaction_manager
 
-    # Auto-create if compress_tool_results flag is set
-    if agent.compress_tool_results and agent.compression_manager is None:
-        agent.compression_manager = CompressionManager(model=agent.model)
+    # Auto-create if compact_tool_results flag is set
+    if agent.compact_tool_results and agent.compaction_manager is None:
+        agent.compaction_manager = CompactionManager(model=agent.model)
 
     # Ensure model is set
-    if agent.compression_manager is not None and agent.compression_manager.model is None:
-        agent.compression_manager.model = agent.model
+    if agent.compaction_manager is not None and agent.compaction_manager.model is None:
+        agent.compaction_manager.model = agent.model
 
     # Sync flag
-    if agent.compression_manager is not None and agent.compression_manager.compress_tool_results:
-        agent.compress_tool_results = True
+    if agent.compaction_manager is not None and agent.compaction_manager.compact_tool_results:
+        agent.compact_tool_results = True
 
 
 def _initialize_session_state(
@@ -282,8 +282,8 @@ def get_models(agent: Agent) -> None:
     if agent.fallback_config is not None:
         agent.fallback_config.resolve_models()
 
-    if agent.compression_manager is not None and agent.compression_manager.model is None:
-        agent.compression_manager.model = agent.model
+    if agent.compaction_manager is not None and agent.compaction_manager.model is None:
+        agent.compaction_manager.model = agent.model
 
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
@@ -304,11 +304,11 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
     if (
-        agent.compress_tool_results
-        or agent.compression_manager is not None
+        agent.compact_tool_results
+        or agent.compaction_manager is not None
         or agent.context_compaction_manager is not None
     ):
-        set_compression_manager(agent)
+        set_compaction_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 

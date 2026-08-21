@@ -1,7 +1,7 @@
 import pytest
 
 from agno.agent import Agent
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.models.openai import OpenAIChat
 
 
@@ -22,8 +22,8 @@ def compression_agent(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[search_tool, get_data],
         db=shared_db,
-        compress_tool_results=True,
-        compression_manager=CompressionManager(compress_tool_results_limit=1),
+        compact_tool_results=True,
+        compaction_manager=CompactionManager(tool_result_limit=1),
         instructions="Use the tools as requested. Make multiple tool calls when asked.",
         telemetry=False,
     )
@@ -64,8 +64,8 @@ async def test_compression_async(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[search_tool, get_data],
         db=shared_db,
-        compress_tool_results=True,
-        compression_manager=CompressionManager(compress_tool_results_limit=1),
+        compact_tool_results=True,
+        compaction_manager=CompactionManager(tool_result_limit=1),
         instructions="Use the tools as requested. Make multiple tool calls when asked.",
         telemetry=False,
     )
@@ -87,7 +87,7 @@ def test_no_compression_when_disabled(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[search_tool],
         db=shared_db,
-        compress_tool_results=False,
+        compact_tool_results=False,
         instructions="Use the search tool.",
         telemetry=False,
     )
@@ -105,8 +105,8 @@ def test_no_compression_below_threshold(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[search_tool],
         db=shared_db,
-        compress_tool_results=True,
-        compression_manager=CompressionManager(compress_tool_results_limit=10),
+        compact_tool_results=True,
+        compaction_manager=CompactionManager(tool_result_limit=10),
         instructions="Use the search tool once.",
         telemetry=False,
     )

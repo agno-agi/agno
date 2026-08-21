@@ -1110,7 +1110,7 @@ async def test_error_storm_detected_by_error_type_on_real_agent():
 
 
 async def test_hermetic_real_agent_full_override_set(tmp_path):
-    from agno.compression.manager import CompressionManager
+    from agno.compression.manager import CompactionManager
     from agno.culture.manager import CultureManager
     from agno.session import SessionSummaryManager
     from agno.skills.agent_skills import Skills
@@ -1128,7 +1128,7 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     caller_db = InMemoryDb()
     reasoning_db = InMemoryDb()
     summary_manager = SessionSummaryManager()
-    compression_manager = CompressionManager()
+    compaction_manager = CompactionManager()
     culture_manager = CultureManager(db=InMemoryDb())
     skills = Skills(loaders=[])
     save_path = tmp_path / "response.txt"
@@ -1139,7 +1139,7 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         followup_model=followup_model,
         fallback_models=[fallback_model],
         session_summary_manager=summary_manager,
-        compression_manager=compression_manager,
+        compaction_manager=compaction_manager,
         culture_manager=culture_manager,
         skills=skills,
         reasoning_agent=Agent(model=sub_model, db=reasoning_db, telemetry=False),
@@ -1177,9 +1177,9 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         assert attempt_agent.add_memories_to_context is None
         assert attempt_agent.add_session_summary_to_context is True
         assert attempt_agent.add_culture_to_context is True
-        assert attempt_agent.compression_manager is not compression_manager
-        assert attempt_agent.compression_manager.stats == {}
-        assert attempt_agent.compression_manager.stats is not compression_manager.stats
+        assert attempt_agent.compaction_manager is not compaction_manager
+        assert attempt_agent.compaction_manager.stats == {}
+        assert attempt_agent.compaction_manager.stats is not compaction_manager.stats
         assert attempt_agent.culture_manager is not culture_manager
         assert attempt_agent.culture_manager.db is culture_manager.db
         assert attempt_agent.reasoning_agent is not caller.reasoning_agent
@@ -1805,7 +1805,7 @@ async def test_write_isolation_deep_freeze(tmp_path):
     # learning machine over a shared store, reasoning agent, fallback models,
     # warm caches, save file. Snapshot the caller's reachable graph before and
     # after; zero caller-side mutations, no save file, no cache replay.
-    from agno.compression.manager import CompressionManager
+    from agno.compression.manager import CompactionManager
     from agno.culture.manager import CultureManager
     from agno.db.schemas.culture import CulturalKnowledge
     from agno.learn import LearningMachine
@@ -1839,7 +1839,7 @@ async def test_write_isolation_deep_freeze(tmp_path):
         memory_manager=MemoryManager(),
         session_summary_manager=SessionSummaryManager(),
         culture_manager=CultureManager(db=culture_db),
-        compression_manager=CompressionManager(),
+        compaction_manager=CompactionManager(),
         learning=LearningMachine(
             learned_knowledge=LearnedKnowledgeConfig(knowledge=learned_store, mode=LearningMode.ALWAYS)
         ),

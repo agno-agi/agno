@@ -403,7 +403,7 @@ def _run_tasks(
                 tool_call_limit=team.tool_call_limit,
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compression_manager if team.compress_tool_results else None,
+                compaction_manager=team.compaction_manager if team.compact_tool_results else None,
                 after_tool_results=build_team_after_tool_results_callback(
                     team, run_response, session, run_messages, run_context
                 ),
@@ -1261,7 +1261,7 @@ def _run(
                     tool_call_limit=team.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    compaction_manager=team.compaction_manager if team.compact_tool_results else None,
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
@@ -2294,7 +2294,7 @@ async def _arun_tasks(
                 tool_call_limit=team.tool_call_limit,
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compression_manager if team.compress_tool_results else None,
+                compaction_manager=team.compaction_manager if team.compact_tool_results else None,
                 after_tool_results=abuild_team_after_tool_results_callback(
                     team, run_response, team_session, run_messages, run_context
                 ),
@@ -3242,7 +3242,7 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    compaction_manager=team.compaction_manager if team.compact_tool_results else None,
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
                     ),
@@ -6359,7 +6359,7 @@ async def _ahandle_model_response_for_continue(
         tool_call_limit=team.tool_call_limit,
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
+        compaction_manager=team.compaction_manager if team.compact_tool_results else None,
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, team_session, run_messages, run_context
         ),
@@ -7611,7 +7611,7 @@ def _continue_run(
                     tool_call_limit=team.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    compaction_manager=team.compaction_manager if team.compact_tool_results else None,
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),

@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
     from agno.run.agent import RunOutput
 
-DEFAULT_COMPRESSION_PROMPT = dedent("""\
-    You are compressing tool call results to save context space while preserving critical information.
+DEFAULT_TOOL_COMPACTION_PROMPT = dedent("""\
+    You are compacting tool call results to save context space while preserving critical information.
 
     Your goal: Extract only the essential information from the tool output.
 
@@ -52,35 +52,35 @@ DEFAULT_COMPRESSION_PROMPT = dedent("""\
 
 
 @dataclass
-class CompressionManager:
-    """Unified compression manager for tool results and message history.
+class CompactionManager:
+    """Unified compaction manager for tool results and message history.
 
     Handles two types of compression:
-    1. Tool compression (mid-loop): Compresses individual tool results
+    1. Tool compaction (mid-loop): Compresses individual tool results
     2. History compaction (pre-loop): Summarizes old conversation history
 
     Usage:
-        # Tool compression only (default)
-        compression_manager = CompressionManager(model=OpenAI(id="gpt-4o-mini"))
+        # Tool compaction only (default)
+        compaction_manager = CompactionManager(model=OpenAI(id="gpt-4o-mini"))
 
-        # Both tool compression and history compaction
-        compression_manager = CompressionManager(
+        # Both tool compaction and history compaction
+        compaction_manager = CompactionManager(
             model=OpenAI(id="gpt-4o-mini"),
-            compress_history=True,
+            compact_history=True,
             history_token_limit=50_000,
         )
     """
 
     model: Optional[Model] = None
 
-    # Tool compression settings
-    compress_tool_results: bool = True
-    compress_tool_results_limit: Optional[int] = None
-    compress_token_limit: Optional[int] = None
-    compress_tool_call_instructions: Optional[str] = None
+    # Tool compaction settings
+    compact_tool_results: bool = True
+    tool_result_limit: Optional[int] = None
+    tool_token_limit: Optional[int] = None
+    tool_instructions: Optional[str] = None
 
     # History compaction settings
-    compress_history: bool = False
+    compact_history: bool = False
     history_message_limit: Optional[int] = None
     history_token_limit: Optional[int] = None
     history_keep_recent: int = 10
@@ -93,11 +93,11 @@ class CompressionManager:
     _compactor: Optional["ContextCompactionManager"] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        if self.compress_tool_results_limit is None and self.compress_token_limit is None:
-            self.compress_tool_results_limit = 3
+        if self.tool_result_limit is None and self.tool_token_limit is None:
+            self.tool_result_limit = 3
 
         # Create internal compactor if history compression enabled
-        if self.compress_history:
+        if self.compact_history:
             from agno.compression.context import ContextCompactionManager
 
             self._compactor = ContextCompactionManager(
@@ -116,12 +116,12 @@ class CompressionManager:
         """Access the internal compactor for backward compatibility."""
         return self._compactor
 
-    # --- Tool compression methods (existing) ---
+    # --- Tool compaction methods (existing) ---
 
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
 
-    def should_compress(
+    def should_compact_tools(
         self,
         messages: List[Message],
         tools: Optional[List] = None,
@@ -129,28 +129,28 @@ class CompressionManager:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         """Check if tool results should be compressed."""
-        if not self.compress_tool_results:
+        if not self.compact_tool_results:
             return False
 
         # Token-based threshold check
-        if self.compress_token_limit is not None and model is not None:
+        if self.tool_token_limit is not None and model is not None:
             tokens = model.count_tokens(messages, tools, response_format)
-            if tokens >= self.compress_token_limit:
-                log_info(f"Token limit hit: {tokens} >= {self.compress_token_limit}")
+            if tokens >= self.tool_token_limit:
+                log_info(f"Token limit hit: {tokens} >= {self.tool_token_limit}")
                 return True
 
         # Count-based threshold check
-        if self.compress_tool_results_limit is not None:
+        if self.tool_result_limit is not None:
             uncompressed_tools_count = len(
                 [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
             )
-            if uncompressed_tools_count >= self.compress_tool_results_limit:
-                log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
+            if uncompressed_tools_count >= self.tool_result_limit:
+                log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.tool_result_limit}")
                 return True
 
         return False
 
-    def _compress_tool_result(
+    def _compact_tool_result(
         self,
         tool_result: Message,
         run_metrics: Optional["RunMetrics"] = None,
@@ -162,10 +162,10 @@ class CompressionManager:
 
         self.model = get_model(self.model)
         if not self.model:
-            log_warning("No compression model available")
+            log_warning("No compaction model available")
             return None
 
-        compression_prompt = self.compress_tool_call_instructions or DEFAULT_COMPRESSION_PROMPT
+        compression_prompt = self.tool_instructions or DEFAULT_TOOL_COMPACTION_PROMPT
         compression_message = "Tool Results to Compress: " + tool_content + "\n"
 
         try:
@@ -183,16 +183,16 @@ class CompressionManager:
 
             return response.content
         except Exception as e:
-            log_error(f"Error compressing tool result: {str(e)}")
+            log_error(f"Error compacting tool result: {str(e)}")
             return tool_content
 
-    def compress(
+    def compact_tools(
         self,
         messages: List[Message],
         run_metrics: Optional["RunMetrics"] = None,
     ) -> None:
         """Compress uncompressed tool results."""
-        if not self.compress_tool_results:
+        if not self.compact_tool_results:
             return
 
         uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
@@ -202,7 +202,7 @@ class CompressionManager:
 
         for tool_msg in uncompressed_tools:
             original_len = len(str(tool_msg.content)) if tool_msg.content else 0
-            compressed = self._compress_tool_result(tool_msg, run_metrics=run_metrics)
+            compressed = self._compact_tool_result(tool_msg, run_metrics=run_metrics)
             if compressed:
                 tool_msg.compressed_content = compressed
                 tool_results_count = len(tool_msg.tool_calls) if tool_msg.tool_calls else 1
@@ -212,7 +212,7 @@ class CompressionManager:
                 self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
                 self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
             else:
-                log_warning(f"Compression failed for {tool_msg.tool_name}")
+                log_warning(f"Compaction failed for {tool_msg.tool_name}")
 
     # --- History compaction methods (new) ---
 
@@ -270,9 +270,9 @@ class CompressionManager:
                 for key, value in compactor_stats.items():
                     self.stats[f"history_{key}"] = value
 
-    # --- Async tool compression methods ---
+    # --- Async tool compaction methods ---
 
-    async def ashould_compress(
+    async def ashould_compact_tools(
         self,
         messages: List[Message],
         tools: Optional[List] = None,
@@ -280,26 +280,26 @@ class CompressionManager:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         """Async check if tool results should be compressed."""
-        if not self.compress_tool_results:
+        if not self.compact_tool_results:
             return False
 
-        if self.compress_token_limit is not None and model is not None:
+        if self.tool_token_limit is not None and model is not None:
             tokens = await model.acount_tokens(messages, tools, response_format)
-            if tokens >= self.compress_token_limit:
-                log_info(f"Token limit hit: {tokens} >= {self.compress_token_limit}")
+            if tokens >= self.tool_token_limit:
+                log_info(f"Token limit hit: {tokens} >= {self.tool_token_limit}")
                 return True
 
-        if self.compress_tool_results_limit is not None:
+        if self.tool_result_limit is not None:
             uncompressed_tools_count = len(
                 [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
             )
-            if uncompressed_tools_count >= self.compress_tool_results_limit:
-                log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
+            if uncompressed_tools_count >= self.tool_result_limit:
+                log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.tool_result_limit}")
                 return True
 
         return False
 
-    async def _acompress_tool_result(
+    async def _acompact_tool_result(
         self,
         tool_result: Message,
         run_metrics: Optional["RunMetrics"] = None,
@@ -312,10 +312,10 @@ class CompressionManager:
 
         self.model = get_model(self.model)
         if not self.model:
-            log_warning("No compression model available")
+            log_warning("No compaction model available")
             return None
 
-        compression_prompt = self.compress_tool_call_instructions or DEFAULT_COMPRESSION_PROMPT
+        compression_prompt = self.tool_instructions or DEFAULT_TOOL_COMPACTION_PROMPT
         compression_message = "Tool Results to Compress: " + tool_content + "\n"
 
         try:
@@ -333,16 +333,16 @@ class CompressionManager:
 
             return response.content
         except Exception as e:
-            log_error(f"Error compressing tool result: {str(e)}")
+            log_error(f"Error compacting tool result: {str(e)}")
             return tool_content
 
-    async def acompress(
+    async def acompact_tools(
         self,
         messages: List[Message],
         run_metrics: Optional["RunMetrics"] = None,
     ) -> None:
         """Async compress uncompressed tool results."""
-        if not self.compress_tool_results:
+        if not self.compact_tool_results:
             return
 
         uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
@@ -352,7 +352,7 @@ class CompressionManager:
 
         original_sizes = [len(str(msg.content)) if msg.content else 0 for msg in uncompressed_tools]
 
-        tasks = [self._acompress_tool_result(msg, run_metrics=run_metrics) for msg in uncompressed_tools]
+        tasks = [self._acompact_tool_result(msg, run_metrics=run_metrics) for msg in uncompressed_tools]
         results = await asyncio.gather(*tasks)
 
         for msg, compressed, original_len in zip(uncompressed_tools, results, original_sizes):
@@ -365,4 +365,4 @@ class CompressionManager:
                 self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
                 self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
             else:
-                log_warning(f"Compression failed for {msg.tool_name}")
+                log_warning(f"Compaction failed for {msg.tool_name}")

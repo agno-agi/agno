@@ -744,11 +744,11 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["store_history_messages"] = team.store_history_messages
 
     # --- Compression settings ---
-    if team.compress_tool_results:
-        config["compress_tool_results"] = team.compress_tool_results
-    # TODO: implement compression manager serialization
-    # if team.compression_manager is not None:
-    #     config["compression_manager"] = team.compression_manager.to_dict()
+    if team.compact_tool_results:
+        config["compact_tool_results"] = team.compact_tool_results
+    # TODO: implement compaction manager serialization
+    # if team.compaction_manager is not None:
+    #     config["compaction_manager"] = team.compaction_manager.to_dict()
 
     # --- Reasoning settings ---
     if team.reasoning:
@@ -967,11 +967,11 @@ def from_dict(
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
             del config["knowledge"]
 
-    # --- Handle CompressionManager reconstruction ---
-    # TODO: implement compression manager deserialization
-    # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
-    #     from agno.compression.manager import CompressionManager
-    #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+    # --- Handle CompactionManager reconstruction ---
+    # TODO: implement compaction manager deserialization
+    # if "compaction_manager" in config and isinstance(config["compaction_manager"], dict):
+    #     from agno.compression.manager import CompactionManager
+    #     config["compaction_manager"] = CompactionManager.from_dict(config["compaction_manager"])
 
     if "search_session_history" in config:
         log_debug("'search_session_history' has been deprecated. Use 'search_past_sessions' instead.")
@@ -1085,8 +1085,8 @@ def from_dict(
             num_history_messages=config.get("num_history_messages"),
             max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
             # --- Compression settings ---
-            compress_tool_results=config.get("compress_tool_results", False),
-            # compression_manager=config.get("compression_manager"),  # TODO
+            compact_tool_results=config.get("compact_tool_results", False),
+            # compaction_manager=config.get("compaction_manager"),  # TODO
             # --- Reasoning settings ---
             reasoning=config.get("reasoning", False),
             # reasoning_model=config.get("reasoning_model"),  # TODO

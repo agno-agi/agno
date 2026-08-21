@@ -84,8 +84,8 @@ class MiMo(OpenAILike):
 
         return request_params
 
-    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
-        message_dict = super()._format_message(message, compress_tool_results)
+    def _format_message(self, message: Message, compact_tool_results: bool = False) -> Dict[str, Any]:
+        message_dict = super()._format_message(message, compact_tool_results)
 
         if message.reasoning_content is not None:
             message_dict["reasoning_content"] = message.reasoning_content

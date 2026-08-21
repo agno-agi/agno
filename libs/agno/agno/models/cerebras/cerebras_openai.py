@@ -78,7 +78,7 @@ class CerebrasOpenAI(OpenAILike):
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
-    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compact_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by the Cerebras API.
 
@@ -118,7 +118,7 @@ class CerebrasOpenAI(OpenAILike):
 
         # Handle tool responses
         if message.role == "tool" and message.tool_call_id:
-            content = message.get_content(use_compressed_content=compress_tool_results)
+            content = message.get_content(use_compressed_content=compact_tool_results)
             message_dict = {
                 "role": "tool",
                 "tool_call_id": message.tool_call_id,

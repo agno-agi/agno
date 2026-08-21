@@ -278,14 +278,14 @@ class AwsBedrock(Model):
         return {k: v for k, v in request_kwargs.items() if v is not None}
 
     def _format_messages(
-        self, messages: List[Message], compress_tool_results: bool = False
+        self, messages: List[Message], compact_tool_results: bool = False
     ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         """
         Format the messages for the request.
 
         Args:
             messages: List of messages to format
-            compress_tool_results: Whether to compress tool results
+            compact_tool_results: Whether to compress tool results
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]: The formatted messages.
@@ -301,7 +301,7 @@ class AwsBedrock(Model):
             if message.role == "system":
                 system_message = [{"text": message.content}]
             elif message.role == "tool":
-                content = message.get_content(use_compressed_content=compress_tool_results)
+                content = message.get_content(use_compressed_content=compact_tool_results)
                 tool_result = {
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
@@ -442,7 +442,7 @@ class AwsBedrock(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
-            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            formatted_messages, system_message = self._format_messages(messages, compact_tool_results=True)
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
                 converse_input["system"] = system_message
@@ -471,7 +471,7 @@ class AwsBedrock(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
-            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            formatted_messages, system_message = self._format_messages(messages, compact_tool_results=True)
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
                 converse_input["system"] = system_message
@@ -502,13 +502,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
+            formatted_messages, system_message = self._format_messages(messages, compact_tool_results)
 
             tool_config = None
             if tools:
@@ -548,13 +548,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
+            formatted_messages, system_message = self._format_messages(messages, compact_tool_results)
 
             tool_config = None
             if tools:
@@ -598,13 +598,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Async invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
+            formatted_messages, system_message = self._format_messages(messages, compact_tool_results)
 
             tool_config = None
             if tools:
@@ -647,13 +647,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Async invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
+            formatted_messages, system_message = self._format_messages(messages, compact_tool_results)
 
             tool_config = None
             if tools:
@@ -694,17 +694,17 @@ class AwsBedrock(Model):
         self,
         messages: List[Message],
         function_call_results: List[Message],
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
         **kwargs,
     ) -> None:
         """
         Handle the results of function calls for Bedrock.
-        Uses compressed_content if compress_tool_results is True.
+        Uses compressed_content if compact_tool_results is True.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            compress_tool_results: Whether to compress tool results.
+            compact_tool_results: Whether to compress tool results.
             **kwargs: Additional arguments including tool_ids.
         """
 

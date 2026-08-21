@@ -33,7 +33,7 @@ from agno.agent import (
     _utils,
 )
 from agno.compression.context import ContextCompactionManager
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -360,9 +360,9 @@ class Agent:
 
     # --- Context Compression ---
     # If True, compress tool call results to save context
-    compress_tool_results: bool = False
-    # Compression manager for compressing tool call results
-    compression_manager: Optional[CompressionManager] = None
+    compact_tool_results: bool = False
+    # Compaction manager for compacting tool call results
+    compaction_manager: Optional[CompactionManager] = None
     # Context compaction manager for summarizing old conversation history
     context_compaction_manager: Optional[ContextCompactionManager] = None
 
@@ -413,8 +413,8 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        compress_tool_results: bool = False,
-        compression_manager: Optional[CompressionManager] = None,
+        compact_tool_results: bool = False,
+        compaction_manager: Optional[CompactionManager] = None,
         context_compaction_manager: Optional[ContextCompactionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
@@ -547,8 +547,8 @@ class Agent:
         self.add_session_summary_to_context = add_session_summary_to_context
 
         # Context compression settings
-        self.compress_tool_results = compress_tool_results
-        self.compression_manager = compression_manager
+        self.compact_tool_results = compact_tool_results
+        self.compaction_manager = compaction_manager
         self.context_compaction_manager = context_compaction_manager
 
         self.add_history_to_context = add_history_to_context

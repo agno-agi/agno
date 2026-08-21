@@ -19,7 +19,7 @@ agent = Agent(
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
     db=SqliteDb(db_file="tmp/dbs/tool_call_compression.db"),
-    compress_tool_results=True,  # Enable tool call compression
+    compact_tool_results=True,  # Enable tool call compression
 )
 
 # ---------------------------------------------------------------------------

@@ -5,10 +5,10 @@ from agno.compression.context import (
     ContextCompactionManager,
     create_summary_message,
 )
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 
 __all__ = [
-    "CompressionManager",
+    "CompactionManager",
     "ContextCompactionManager",
     "CompactionState",
     "CompactionResult",

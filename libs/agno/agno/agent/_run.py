@@ -565,7 +565,7 @@ def _run(
                     response_format=response_format,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tool_results else None,
                     compaction_callback=build_compaction_callback(
                         agent,
                         run_messages=run_messages,
@@ -1732,7 +1732,7 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tool_results else None,
                     compaction_callback=await abuild_compaction_callback(
                         agent,
                         run_messages=run_messages,
@@ -3774,7 +3774,7 @@ def _continue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tool_results else None,
                     compaction_callback=build_compaction_callback(
                         agent,
                         run_messages=run_messages,
@@ -4953,7 +4953,7 @@ async def _acontinue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tool_results else None,
                     compaction_callback=await abuild_compaction_callback(
                         agent,
                         run_messages=run_messages,

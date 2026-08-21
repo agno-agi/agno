@@ -1267,7 +1267,7 @@ class GeminiInteractions(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
         retry_with_guidance: bool = False,
     ) -> ModelResponse:
         """Invoke the model using the Interactions API."""
@@ -1296,7 +1296,7 @@ class GeminiInteractions(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
         retry_with_guidance: bool = False,
     ) -> Iterator[ModelResponse]:
         """Invoke the model with streaming using the Interactions API."""
@@ -1369,7 +1369,7 @@ class GeminiInteractions(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
         retry_with_guidance: bool = False,
     ) -> ModelResponse:
         """Async invoke the model using the Interactions API."""
@@ -1398,7 +1398,7 @@ class GeminiInteractions(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
         retry_with_guidance: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """Async streaming invoke using the Interactions API."""

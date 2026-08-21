@@ -123,7 +123,7 @@ SHARED_BY_REFERENCE_FIELDS = (
     "output_model",
     "session_summary_manager",
     "culture_manager",
-    "compression_manager",
+    "compaction_manager",
     "learning",
     "skills",
 )
