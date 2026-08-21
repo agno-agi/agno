@@ -6,9 +6,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Uni
 
 from pydantic import BaseModel
 
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -126,7 +126,7 @@ class LiteLLM(Model):
 
         return result
 
-    def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
+    def _format_messages(self, messages: List[Message], compact_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
         from agno.utils.message import normalize_tool_messages
 
@@ -137,7 +137,7 @@ class LiteLLM(Model):
         for m in messages:
             # Use compressed content for tool messages if compression is active
             if m.role == "tool":
-                content = m.get_content(use_compressed_content=compress_tool_results)
+                content = m.get_content(use_compressed_content=compact_tool_results)
             else:
                 content = m.content if m.content is not None else ""
 
@@ -263,11 +263,11 @@ class LiteLLM(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
-        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+        completion_kwargs["messages"] = self._format_messages(messages, compact_tool_results)
 
         assistant_message.metrics.start_timer()
 
@@ -286,11 +286,11 @@ class LiteLLM(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """Sends a streaming chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
-        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+        completion_kwargs["messages"] = self._format_messages(messages, compact_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
@@ -309,11 +309,11 @@ class LiteLLM(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
-        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+        completion_kwargs["messages"] = self._format_messages(messages, compact_tool_results)
 
         assistant_message.metrics.start_timer()
 
@@ -332,11 +332,11 @@ class LiteLLM(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
-        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+        completion_kwargs["messages"] = self._format_messages(messages, compact_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
@@ -562,7 +562,7 @@ class LiteLLM(Model):
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        formatted_messages = self._format_messages(messages, compress_tool_results=True)
+        formatted_messages = self._format_messages(messages, compact_tool_results=True)
         formatted_tools = self._format_tools(tools) if tools else None
         tokens = litellm.token_counter(
             model=self.id,

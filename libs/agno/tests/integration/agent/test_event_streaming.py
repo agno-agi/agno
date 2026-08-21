@@ -1326,7 +1326,7 @@ def test_compression_events(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
         tools=[get_large_data],
-        compress_tool_results=True,
+        compact_tool_results=True,
         store_events=True,
         telemetry=False,
     )
@@ -1371,7 +1371,7 @@ async def test_async_compression_events(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
         tools=[get_large_data],
-        compress_tool_results=True,
+        compact_tool_results=True,
         store_events=True,
         telemetry=False,
     )

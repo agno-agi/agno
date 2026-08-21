@@ -26,8 +26,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.compression.context import ContextCompactionManager
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -64,6 +63,7 @@ from agno.utils.string import generate_id_from_name
 def __init__(
     team: "Team",
     members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
+    *,
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
     fallback_config: Optional[FallbackConfig] = None,
@@ -152,15 +152,15 @@ def __init__(
     add_session_summary_to_context: Optional[bool] = None,
     learning: Optional[Union[bool, LearningMachine]] = None,
     add_learnings_to_context: bool = True,
-    compress_tool_results: bool = False,
-    compression_manager: Optional["CompressionManager"] = None,
-    context_compaction_manager: Optional["ContextCompactionManager"] = None,
+    compact_tool_results: bool = False,
+    compact_context: bool = False,
+    compaction_manager: Optional["CompactionManager"] = None,
+    # Deprecated aliases (use compact_tool_results and compaction_manager)
+    compress_tool_results: Optional[bool] = None,
+    compression_manager: Optional["CompactionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    reasoning: bool = False,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
-    reasoning_min_steps: int = 1,
-    reasoning_max_steps: int = 10,
     followups: bool = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
@@ -334,18 +334,25 @@ def __init__(
     team.learning = learning
     team.add_learnings_to_context = add_learnings_to_context
 
-    # Context compression settings
-    team.compress_tool_results = compress_tool_results
-    team.compression_manager = compression_manager
-    team.context_compaction_manager = context_compaction_manager
+    # Context compaction settings (with backward compat for old names)
+    if compress_tool_results is not None:
+        log_debug("compress_tool_results is deprecated, use compact_tool_results")
+        team.compact_tool_results = compress_tool_results
+    else:
+        team.compact_tool_results = compact_tool_results
+
+    team.compact_context = compact_context
+
+    if compression_manager is not None:
+        log_debug("compression_manager is deprecated, use compaction_manager")
+        team.compaction_manager = compression_manager
+    else:
+        team.compaction_manager = compaction_manager
 
     team.metadata = metadata
 
-    team.reasoning = reasoning
     team.reasoning_model = reasoning_model  # type: ignore[assignment]
     team.reasoning_agent = reasoning_agent
-    team.reasoning_min_steps = reasoning_min_steps
-    team.reasoning_max_steps = reasoning_max_steps
 
     team.followups = followups
     if num_followups < 1:
@@ -408,7 +415,7 @@ def __init__(
     # Internal resolved LearningMachine instance
     team._learning = None
 
-    # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+    # Lazy-initialized shared thread pool executor for background tasks (memory, learning, etc.)
     team._background_executor = None
 
     # Callable factory settings
@@ -428,7 +435,7 @@ def __init__(
 def background_executor(team: "Team") -> Any:
     """Lazy initialization of shared thread pool executor for background tasks.
 
-    Handles both memory creation and cultural knowledge updates concurrently.
+    Handles memory creation and learning updates concurrently.
     Initialized only on first use (runtime, not instantiation) and reused across runs.
     """
     if team._background_executor is None:
@@ -575,26 +582,29 @@ def _set_session_summary_manager(team: "Team") -> None:
         team.add_session_summary_to_context = team.enable_session_summaries or team.session_summary_manager is not None
 
 
-def _set_compression_manager(team: "Team") -> None:
-    if team.compress_tool_results and team.compression_manager is None:
-        team.compression_manager = CompressionManager(
+def _set_compaction_manager(team: "Team") -> None:
+    # Auto-create if either compaction flag is set
+    if (team.compact_tool_results or team.compact_context) and team.compaction_manager is None:
+        team.compaction_manager = CompactionManager(
             model=team.model,
+            compact_tool_results=team.compact_tool_results,
+            compact_history=team.compact_context,
         )
-    elif team.compression_manager is not None and team.compression_manager.model is None:
-        # If compression manager exists but has no model, use the team's model
-        team.compression_manager.model = team.model
 
-    if team.compression_manager is not None:
-        if team.compression_manager.model is None:
-            team.compression_manager.model = team.model
-        if team.compression_manager.compress_tool_results:
-            team.compress_tool_results = True
+    # If manager exists, sync the compact_context flag to compact_history
+    if team.compaction_manager is not None and team.compact_context:
+        team.compaction_manager.compact_history = True
 
+    # Ensure model is set
+    if team.compaction_manager is not None and team.compaction_manager.model is None:
+        team.compaction_manager.model = team.model
 
-def _set_context_compaction_manager(team: "Team") -> None:
-    """Ensure context_compaction_manager has a model if one is configured."""
-    if team.context_compaction_manager is not None and team.context_compaction_manager.model is None:
-        team.context_compaction_manager.model = team.model
+    # Sync flags from manager back to team
+    if team.compaction_manager is not None:
+        if team.compaction_manager.compact_tool_results:
+            team.compact_tool_results = True
+        if team.compaction_manager.compact_history:
+            team.compact_context = True
 
 
 def _set_learning_machine(team: "Team") -> None:
@@ -747,10 +757,10 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_memory_manager(team)
     if team.enable_session_summaries or team.session_summary_manager is not None:
         _set_session_summary_manager(team)
-    if team.compress_tool_results or team.compression_manager is not None:
-        _set_compression_manager(team)
-    if team.context_compaction_manager is not None:
-        _set_context_compaction_manager(team)
+    if team.compact_tool_results or team.compact_context or team.compaction_manager is not None:
+        _set_compaction_manager(team)
+    if team.compaction_manager is not None:
+        _set_compaction_manager(team)
     if team.learning is not None and team.learning is not False:
         _set_learning_machine(team)
 
@@ -792,10 +802,10 @@ async def _connect_mcp_tools(team: "Team") -> None:
     """Connect the MCP tools to the agent."""
     if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             if (
                 hasattr(type(tool), "__mro__")
-                and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
                 and not tool.initialized  # type: ignore
             ):
                 try:

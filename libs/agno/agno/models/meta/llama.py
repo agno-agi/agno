@@ -7,9 +7,9 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -211,7 +211,7 @@ class Llama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Llama API.
@@ -221,7 +221,7 @@ class Llama(Model):
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
             messages=[
-                format_message(m, tool_calls=bool(tools), compress_tool_results=compress_tool_results)  # type: ignore
+                format_message(m, tool_calls=bool(tools), compact_tool_results=compact_tool_results)  # type: ignore
                 for m in messages
             ],
             **self.get_request_params(tools=tools, response_format=response_format),
@@ -240,7 +240,7 @@ class Llama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Llama API.
@@ -250,7 +250,7 @@ class Llama(Model):
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[
-                format_message(m, tool_calls=bool(tools), compress_tool_results=compress_tool_results)  # type: ignore
+                format_message(m, tool_calls=bool(tools), compact_tool_results=compact_tool_results)  # type: ignore
                 for m in messages
             ],
             **self.get_request_params(tools=tools, response_format=response_format),
@@ -269,7 +269,7 @@ class Llama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Llama API.
@@ -280,7 +280,7 @@ class Llama(Model):
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[
-                    format_message(m, tool_calls=bool(tools), compress_tool_results=compress_tool_results)  # type: ignore
+                    format_message(m, tool_calls=bool(tools), compact_tool_results=compact_tool_results)  # type: ignore
                     for m in messages
                 ],
                 stream=True,
@@ -302,7 +302,7 @@ class Llama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Llama API.
@@ -313,7 +313,7 @@ class Llama(Model):
             async for chunk in await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[
-                    format_message(m, tool_calls=bool(tools), compress_tool_results=compress_tool_results)  # type: ignore
+                    format_message(m, tool_calls=bool(tools), compact_tool_results=compact_tool_results)  # type: ignore
                     for m in messages
                 ],
                 stream=True,

@@ -228,7 +228,7 @@ class ContextCompactionManager:
 
         # 5. Compress large tool results if still over token limit
         if self.token_limit and self.model.count_tokens(compacted_messages) > self.token_limit:
-            self._compress_tool_results(recent_messages, run_metrics)
+            self._compact_tool_results(recent_messages, run_metrics)
             compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
             log_info(f"[COMPACTION] Compressed tool results, now {self.model.count_tokens(compacted_messages)} tokens")
 
@@ -338,12 +338,12 @@ class ContextCompactionManager:
             log_error(f"Compaction LLM call failed: {e}")
             return None
 
-    def _compress_tool_results(self, messages: List[Message], run_metrics: Optional["RunMetrics"]) -> None:
-        """Compress large tool results using CompressionManager."""
-        from agno.compression.manager import CompressionManager
+    def _compact_tool_results(self, messages: List[Message], run_metrics: Optional["RunMetrics"]) -> None:
+        """Compress large tool results using CompactionManager."""
+        from agno.compression.manager import CompactionManager
 
-        cm = CompressionManager(model=self.model)
-        cm.compress(messages, run_metrics)
+        cm = CompactionManager(model=self.model)
+        cm.compact_tools(messages, run_metrics)
 
     def _update_compaction_state(
         self,
@@ -446,7 +446,7 @@ class ContextCompactionManager:
 
         # 5. Compress large tool results if still over token limit
         if self.token_limit and await self.model.acount_tokens(compacted_messages) > self.token_limit:
-            await self._acompress_tool_results(recent_messages, run_metrics)
+            await self._acompact_tool_results(recent_messages, run_metrics)
             compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
             log_info(
                 f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens"
@@ -487,9 +487,9 @@ class ContextCompactionManager:
             log_error(f"Compaction LLM call failed: {e}")
             return None
 
-    async def _acompress_tool_results(self, messages: List[Message], run_metrics: Optional["RunMetrics"]) -> None:
-        """Async version of _compress_tool_results()."""
-        from agno.compression.manager import CompressionManager
+    async def _acompact_tool_results(self, messages: List[Message], run_metrics: Optional["RunMetrics"]) -> None:
+        """Async version of _compact_tool_results()."""
+        from agno.compression.manager import CompactionManager
 
-        cm = CompressionManager(model=self.model)
-        await cm.acompress(messages, run_metrics)
+        cm = CompactionManager(model=self.model)
+        await cm.acompact_tools(messages, run_metrics)

@@ -41,6 +41,7 @@ from agno.utils.agent import (
     execute_system_message,
 )
 from agno.utils.common import is_typed_dict
+from agno.utils.knowledge import get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -514,9 +515,12 @@ def get_system_message(
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=team.enable_agentic_knowledge_filters,
+            # Filter keys rendered into the prompt come from stored content, so scope them like retrieval
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": team.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(
+                get_user_id_kwarg(build_context_fn, run_context.user_id if run_context else team.user_id)
             )
+            knowledge_context = build_context_fn(**build_context_kwargs)
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
@@ -753,11 +757,20 @@ async def aget_system_message(
 
     # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        # Prefer async version if available for async databases
+        abuild_context_fn = getattr(team.knowledge, "abuild_context", None)
         build_context_fn = getattr(team.knowledge, "build_context", None)
-        if callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=team.enable_agentic_knowledge_filters,
-            )
+        scope_uid = run_context.user_id if run_context else team.user_id
+        if callable(abuild_context_fn):
+            abuild_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": team.enable_agentic_knowledge_filters}
+            abuild_context_kwargs.update(get_user_id_kwarg(abuild_context_fn, scope_uid))
+            knowledge_context = await abuild_context_fn(**abuild_context_kwargs)
+            if knowledge_context:
+                system_message_content += knowledge_context + "\n"
+        elif callable(build_context_fn):
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": team.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(get_user_id_kwarg(build_context_fn, scope_uid))
+            knowledge_context = build_context_fn(**build_context_kwargs)
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 

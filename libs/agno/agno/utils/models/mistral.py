@@ -3,14 +3,18 @@ from typing import Any, List, Optional, Union
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
-from agno.utils.models._mistral_compat import (
-    AssistantMessage,
-    ImageURLChunk,
-    SystemMessage,
-    TextChunk,
-    ToolMessage,
-    UserMessage,
-)
+
+try:
+    from mistralai.client.models import (
+        AssistantMessage,
+        ImageURLChunk,
+        SystemMessage,
+        TextChunk,
+        ToolMessage,
+        UserMessage,
+    )
+except ImportError:
+    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
 
 MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
@@ -42,7 +46,7 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
     return None
 
 
-def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[MistralMessage]:
+def format_messages(messages: List[Message], compact_tool_results: bool = False) -> List[MistralMessage]:
     from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
     # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
@@ -86,7 +90,7 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
             mistral_message = SystemMessage(role="system", content=message.content)
         elif message.role == "tool":
             # Get compressed content if compression is active
-            tool_content = message.get_content(use_compressed_content=compress_tool_results)
+            tool_content = message.get_content(use_compressed_content=compact_tool_results)
             mistral_message = ToolMessage(name="tool", content=tool_content, tool_call_id=message.tool_call_id)
         else:
             raise ValueError(f"Unknown role: {message.role}")

@@ -8,7 +8,7 @@ from agno.learn.stores.entity_memory import EntityMemoryStore
 from agno.learn.stores.session_context import SessionContextStore
 from agno.learn.stores.user_memory import UserMemoryStore
 from agno.learn.stores.user_profile import UserProfileStore
-from agno.learn.utils import IDENTITY_KEYED_LEARNING_TYPES, build_learning_id
+from agno.learn.utils import IDENTITY_KEYED_LEARNING_TYPES, build_learning_id, legacy_entity_learning_id
 
 
 class TestBuildLearningId:
@@ -18,10 +18,6 @@ class TestBuildLearningId:
         assert build_learning_id("session_context", session_id="s1") == "session_context_s1"
         assert (
             build_learning_id("entity_memory", entity_id="acme", entity_type="company") == "entity_global_company_acme"
-        )
-        assert (
-            build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user")
-            == "entity_user_company_acme"
         )
 
     def test_missing_identity_fields_returns_none(self):
@@ -33,6 +29,71 @@ class TestBuildLearningId:
     def test_non_identity_types_return_none(self):
         assert build_learning_id("decision_log", user_id="u1") is None
         assert build_learning_id("something_custom", user_id="u1") is None
+
+
+class TestUserNamespaceEntityKey:
+    """Under namespace="user" the entity key embeds the user, so same-named
+    entities belong to distinct rows per user. The user segment is a fixed-width
+    digest: the raw id could shift the underscore-joined segment boundary into
+    entity_type and collide two users' keys."""
+
+    def test_distinct_users_get_distinct_keys(self):
+        alice = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice"
+        )
+        bob = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="bob"
+        )
+        assert alice is not None and bob is not None
+        assert alice != bob
+
+    def test_same_user_key_is_deterministic(self):
+        first = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice"
+        )
+        second = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice"
+        )
+        assert first == second
+
+    def test_user_namespace_without_user_id_returns_none(self):
+        assert build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user") is None
+
+    def test_raw_user_id_not_embedded(self):
+        key = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice@corp.com"
+        )
+        assert key is not None
+        assert "alice@corp.com" not in key
+
+    def test_crafted_boundary_does_not_collide(self):
+        # A user id ending in an underscore-joined suffix must not collide with
+        # another user's key whose entity_type begins with that suffix.
+        a = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice_smith"
+        )
+        b = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="smith_company", namespace="user", user_id="alice"
+        )
+        assert a != b
+
+    def test_global_and_custom_namespaces_unchanged(self):
+        # Only the "user" namespace re-keys; every other namespace must keep the
+        # exact pre-fix format so existing rows keep resolving.
+        assert (
+            build_learning_id(
+                "entity_memory", entity_id="acme", entity_type="company", namespace="global", user_id="u1"
+            )
+            == "entity_global_company_acme"
+        )
+        assert (
+            build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="sales_team")
+            == "entity_sales_team_company_acme"
+        )
+
+    def test_legacy_helper_matches_pre_fix_user_format(self):
+        assert legacy_entity_learning_id("acme", "company", "user") == "entity_user_company_acme"
+        assert legacy_entity_learning_id("acme", "company") == "entity_global_company_acme"
 
     def test_identity_keyed_set_matches_helper(self):
         # Every type in the set must be derivable when its fields are present, and the
@@ -67,3 +128,10 @@ class TestStoresDelegateToHelper:
         assert store._build_entity_db_id("acme", "company", "global") == build_learning_id(
             "entity_memory", entity_id="acme", entity_type="company", namespace="global"
         )
+
+    def test_entity_memory_store_user_namespace(self):
+        store = EntityMemoryStore.__new__(EntityMemoryStore)
+        assert store._build_entity_db_id("acme", "company", "user", user_id="u1") == build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="u1"
+        )
+        assert store._build_entity_db_id("acme", "company", "user") is None

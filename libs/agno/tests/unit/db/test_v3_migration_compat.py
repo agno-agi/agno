@@ -52,13 +52,23 @@ def _add_legacy_runs_column(db_file: str) -> None:
         conn.close()
 
 
-def _insert_legacy_session(db_file: str, session_id: str, runs: list[dict]) -> None:
+def _insert_legacy_session(db_file: str, session_id: str, runs: list[dict], double_encoded: bool = False) -> None:
+    """Insert a v2-shaped session row.
+
+    ``double_encoded`` reproduces what v2 SQLite actually wrote: the adapter
+    dumped `runs` to a string and handed it to a JSON column, which dumped it
+    again. Postgres never did this, which is why the migration only loses runs
+    on SQLite.
+    """
+    blob = json.dumps(runs)
+    if double_encoded:
+        blob = json.dumps(blob)
     conn = sqlite3.connect(db_file)
     try:
         conn.execute(
             "INSERT INTO agno_sessions (session_id, session_type, agent_id, user_id, runs, created_at) "
             "VALUES (?, 'agent', 'agent-1', 'u1', ?, 1700000000)",
-            (session_id, json.dumps(runs)),
+            (session_id, blob),
         )
         conn.commit()
     finally:
@@ -305,6 +315,36 @@ def test_v3_migration_is_non_destructive():
         conn.close()
 
 
+def test_v3_migration_reads_the_double_encoded_v2_blob():
+    """The blob v2 SQLite really wrote must migrate, not silently copy zero runs.
+
+    A single json.loads leaves a str, which is truthy, so the row loop iterates
+    characters and every one is skipped as "not a dict" — no rows, no error.
+    """
+    db, db_file = _new_db()
+    db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
+    _add_legacy_runs_column(db_file)
+
+    runs = [_make_run(f"r{i}", "s8", f"c{i}").to_dict() for i in range(2)]
+    _insert_legacy_session(db_file, "s8", runs, double_encoded=True)
+
+    db = SqliteDb(db_file=db_file)
+    asyncio.run(MigrationManager(db).up())
+
+    conn = sqlite3.connect(db_file)
+    try:
+        run_ids = [r[0] for r in conn.execute("SELECT run_id FROM agno_runs WHERE session_id='s8'").fetchall()]
+        assert sorted(run_ids) == ["r0", "r1"]
+
+        # Stored as a real object, so json_extract-based queries (metrics) can read into it
+        extracted = conn.execute(
+            "SELECT json_extract(run_data, '$.run_id') FROM agno_runs WHERE session_id='s8'"
+        ).fetchall()
+        assert sorted(e[0] for e in extracted) == ["r0", "r1"], "run_data must be a JSON object, not a JSON string"
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Case 6 + 7: cleanup_legacy_runs_column safety + happy path
 # ---------------------------------------------------------------------------
@@ -379,3 +419,25 @@ def test_cleanup_is_idempotent_when_no_legacy_column():
     db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
 
     assert db.cleanup_legacy_runs_column() is False
+
+
+def test_down_then_up_in_the_same_process():
+    """A revert drops agno_runs; a later up() in the same process must rebuild it despite stale db.metadata."""
+    db, db_file = _new_db()
+    db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
+    _add_legacy_runs_column(db_file)
+
+    runs = [_make_run(f"r{i}", "s8", f"c{i}").to_dict() for i in range(2)]
+    _insert_legacy_session(db_file, "s8", runs)
+
+    db = SqliteDb(db_file=db_file)
+    asyncio.run(MigrationManager(db).up())
+    asyncio.run(MigrationManager(db).down(target_version="2.5.6"))
+    asyncio.run(MigrationManager(db).up())
+
+    conn = sqlite3.connect(db_file)
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM agno_runs WHERE session_id='s8'").fetchone()[0]
+        assert count == 2
+    finally:
+        conn.close()

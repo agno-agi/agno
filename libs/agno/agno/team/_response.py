@@ -664,7 +664,7 @@ def handle_reasoning_event(
 def handle_reasoning(
     team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reasoning_generator = reason(
             team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
         )
@@ -680,7 +680,7 @@ def handle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
 ) -> Iterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reasoning_generator = reason(
             team,
             run_response=run_response,
@@ -694,7 +694,7 @@ def handle_reasoning_stream(
 async def ahandle_reasoning(
     team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reason_generator = areason(
             team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
         )
@@ -710,7 +710,7 @@ async def ahandle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
 ) -> AsyncIterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reason_generator = areason(
             team,
             run_response=run_response,
@@ -732,28 +732,18 @@ def reason(
     """
     Run reasoning using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-    # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
@@ -777,28 +767,18 @@ async def areason(
     """
     Run reasoning asynchronously using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-    # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
@@ -1034,9 +1014,9 @@ def _handle_model_response_stream(
     from agno.team._run import build_team_after_tool_results_callback, build_team_compaction_callback
 
     # Pre-loop compaction: compress history BEFORE first model call
-    if team.context_compaction_manager is not None:
+    if team.compaction_manager is not None:
         log_debug(f"[TEAM-STREAM-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-        compaction_result = team.context_compaction_manager.compact(
+        compaction_result = team.compaction_manager.compact(
             run_messages.messages,
             run_response=run_response,
             run_metrics=run_response.metrics,
@@ -1059,7 +1039,7 @@ def _handle_model_response_stream(
         stream_model_response=stream_model_response,
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
+        compaction_manager=team.compaction_manager if team.compact_tool_results else None,
         after_tool_results=build_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
         ),
@@ -1210,9 +1190,9 @@ async def _ahandle_model_response_stream(
     from agno.team._run import abuild_team_after_tool_results_callback, abuild_team_compaction_callback
 
     # Pre-loop compaction: compress history BEFORE first model call
-    if team.context_compaction_manager is not None:
+    if team.compaction_manager is not None:
         log_debug(f"[TEAM-STREAM-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-        compaction_result = await team.context_compaction_manager.acompact(
+        compaction_result = await team.compaction_manager.acompact(
             run_messages.messages,
             run_response=run_response,
             run_metrics=run_response.metrics,
@@ -1235,7 +1215,7 @@ async def _ahandle_model_response_stream(
         stream_model_response=stream_model_response,
         send_media_to_model=team.send_media_to_model,
         run_response=run_response,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
+        compaction_manager=team.compaction_manager if team.compact_tool_results else None,
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
         ),

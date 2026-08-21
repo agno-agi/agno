@@ -9,9 +9,9 @@ from pydantic import BaseModel
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -310,18 +310,18 @@ class OpenAIChat(Model):
         """
         return cls(**data)
 
-    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compact_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
 
         Args:
             message (Message): The message to format.
-            compress_tool_results: Whether to compress tool results.
+            compact_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        tool_result = message.get_content(use_compressed_content=compress_tool_results)
+        tool_result = message.get_content(use_compressed_content=compact_tool_results)
 
         message_dict: Dict[str, Any] = {
             "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],
@@ -377,16 +377,14 @@ class OpenAIChat(Model):
             message_dict["content"] = ""
         return message_dict
 
-    def _format_all_messages(
-        self, messages: List[Message], compress_tool_results: bool = False
-    ) -> List[Dict[str, Any]]:
+    def _format_all_messages(self, messages: List[Message], compact_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format all messages, remapping foreign tool call IDs to call_ prefix first."""
         from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
         # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
         messages = normalize_tool_messages(messages)
         normalized = reformat_tool_call_ids(messages, provider="openai_chat")
-        return [self._format_message(m, compress_tool_results) for m in normalized]
+        return [self._format_message(m, compact_tool_results) for m in normalized]
 
     def invoke(
         self,
@@ -396,7 +394,7 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the OpenAI API and parse the response.
@@ -407,7 +405,7 @@ class OpenAIChat(Model):
             response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
             tools (Optional[List[Dict[str, Any]]]): The tools to use.
             tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
-            compress_tool_results: Whether to compress tool results.
+            compact_tool_results: Whether to compress tool results.
 
         Returns:
             ModelResponse: The chat completion response from the API.
@@ -417,7 +415,7 @@ class OpenAIChat(Model):
 
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
+                messages=self._format_all_messages(messages, compact_tool_results),  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -487,7 +485,7 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
@@ -498,7 +496,7 @@ class OpenAIChat(Model):
             response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
             tools (Optional[List[Dict[str, Any]]]): The tools to use.
             tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
-            compress_tool_results: Whether to compress tool results.
+            compact_tool_results: Whether to compress tool results.
 
         Returns:
             ModelResponse: The chat completion response from the API.
@@ -507,7 +505,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
+                messages=self._format_all_messages(messages, compact_tool_results),  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -577,14 +575,14 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
-            compress_tool_results: Whether to compress tool results.
+            compact_tool_results: Whether to compress tool results.
 
         Returns:
             Iterator[ModelResponse]: An iterator of model responses.
@@ -595,7 +593,7 @@ class OpenAIChat(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
+                messages=self._format_all_messages(messages, compact_tool_results),  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -664,14 +662,14 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
-            compress_tool_results: Whether to compress tool results.
+            compact_tool_results: Whether to compress tool results.
 
         Returns:
             Any: An asynchronous iterator of model responses.
@@ -682,7 +680,7 @@ class OpenAIChat(Model):
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
+                messages=self._format_all_messages(messages, compact_tool_results),  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
