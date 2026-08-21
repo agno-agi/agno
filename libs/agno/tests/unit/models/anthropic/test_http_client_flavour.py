@@ -12,7 +12,6 @@ import pytest
 from anthropic import DefaultAsyncHttpxClient, DefaultHttpxClient
 
 from agno.models.anthropic.claude import Claude
-from agno.models.azure.claude import Claude as AzureClaude
 from agno.utils.models.claude import resolve_http_client, sdk_http_client_type
 
 
@@ -49,9 +48,18 @@ def test_a_fallback_is_only_used_when_the_sdk_would_take_it():
         usable.close()
 
 
+def _azure_claude(**kwargs):
+    """Imported here, not at module scope: importing agno.models.azure registers the
+    installed `azure` namespace package, and tests/unit/models/azure/ is itself
+    collected as `azure.<module>`, which that import would then shadow."""
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    return AzureClaude(api_key="test", base_url="https://example.invalid", **kwargs)
+
+
 MODELS = {
     "anthropic": lambda **kwargs: Claude(api_key="test", **kwargs),
-    "azure": lambda **kwargs: AzureClaude(api_key="test", base_url="https://example.invalid", **kwargs),
+    "azure": _azure_claude,
 }
 
 
@@ -67,6 +75,4 @@ def test_the_client_builds_whatever_flavour_the_caller_brings(provider):
 
 def test_azure_builds_a_client_with_no_custom_http_client():
     """Azure defaults to agno's shared httpx client, which an httpx2 SDK will not take."""
-    model = AzureClaude(api_key="test", base_url="https://example.invalid")
-
-    assert model.get_client() is not None
+    assert _azure_claude().get_client() is not None

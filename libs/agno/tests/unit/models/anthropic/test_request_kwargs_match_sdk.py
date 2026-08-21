@@ -17,6 +17,7 @@ Two things follow, and both are what these tests pin:
 """
 
 import inspect
+from importlib import import_module
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
@@ -24,9 +25,6 @@ from anthropic import Anthropic, AnthropicBedrock, AnthropicFoundry, AnthropicVe
 from pydantic import BaseModel
 
 from agno.models.anthropic.claude import Claude
-from agno.models.aws.claude import Claude as AwsClaude
-from agno.models.azure.claude import Claude as AzureClaude
-from agno.models.vertexai.claude import Claude as VertexClaude
 from agno.utils.models.claude import SAMPLING_PARAMS
 
 
@@ -34,14 +32,27 @@ class _Schema(BaseModel):
     answer: str
 
 
-# Each provider's model class next to the client its requests are actually made on: the
+# Each provider's model module next to the client its requests are actually made on: the
 # four clients are separate generated classes and drift apart from one another.
+#
+# The model classes are imported inside the tests rather than here, because importing
+# agno.models.azure pulls in azure-ai-inference and so registers the installed `azure`
+# namespace package. tests/unit/models/azure/ is itself collected as `azure.<module>`,
+# which that import makes unresolvable for every test module collected after this one.
 PROVIDERS = {
-    "anthropic": (Claude, lambda: Anthropic(api_key="test")),
-    "aws": (AwsClaude, lambda: AnthropicBedrock(aws_region="us-east-1", aws_access_key="k", aws_secret_key="s")),
-    "azure": (AzureClaude, lambda: AnthropicFoundry(api_key="test", base_url="https://example.invalid")),
-    "vertexai": (VertexClaude, lambda: AnthropicVertex(region="us-east5", project_id="test")),
+    "anthropic": ("agno.models.anthropic.claude", lambda: Anthropic(api_key="test")),
+    "aws": (
+        "agno.models.aws.claude",
+        lambda: AnthropicBedrock(aws_region="us-east-1", aws_access_key="k", aws_secret_key="s"),
+    ),
+    "azure": ("agno.models.azure.claude", lambda: AnthropicFoundry(api_key="test", base_url="https://example.invalid")),
+    "vertexai": ("agno.models.vertexai.claude", lambda: AnthropicVertex(region="us-east5", project_id="test")),
 }
+
+
+def _model_class(provider: str) -> type:
+    return import_module(PROVIDERS[provider][0]).Claude
+
 
 # Fields a caller can set that add or change a request parameter. `temperature` and
 # `top_p` are kept apart because the API rejects the pair for a single request.
@@ -105,8 +116,7 @@ def test_the_bind_check_can_actually_fail(clients, provider):
 @pytest.mark.parametrize("configuration", list(CONFIGURATIONS))
 @pytest.mark.parametrize("response_format", [None, _Schema], ids=["plain", "structured_output"])
 def test_every_configuration_is_accepted(clients, provider, configuration, response_format):
-    model_class, _ = PROVIDERS[provider]
-    model = model_class(**CONFIGURATIONS[configuration])
+    model = _model_class(provider)(**CONFIGURATIONS[configuration])
 
     kwargs = model._prepare_request_kwargs("sys", response_format=response_format)
 
@@ -117,8 +127,7 @@ def test_every_configuration_is_accepted(clients, provider, configuration, respo
 @pytest.mark.parametrize("provider", list(PROVIDERS))
 def test_sampling_params_travel_in_extra_body(provider):
     """The SDK stopped declaring them in 1.0.0; the API still reads them from the body."""
-    model_class, _ = PROVIDERS[provider]
-    model = model_class(temperature=0.2, top_k=5)
+    model = _model_class(provider)(temperature=0.2, top_k=5)
 
     kwargs = model._prepare_request_kwargs("sys")
 
