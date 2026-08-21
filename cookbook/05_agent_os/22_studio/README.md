@@ -131,10 +131,13 @@ author learning the deployer did not declare; an undeclared name returns
 
 Without a declared machine, `enable_learning=True` is the zero-config path: the
 config carries `learning: True` and the framework builds the default machine
-(user profile and user memory on the component's own db and model) at init;
-`enable_learning=False` turns learning off, and `learning_name` takes
-precedence when both are given. Either way the legacy memory pair is cleared
-on that component.
+(user profile and user memory on the component's own db and model) at init.
+On a component already wired to a machine, `enable_learning=True` keeps that
+machine and says so in `warnings`; `learning_name=""` in the same call drops
+the reference first, so the pair switches it to the default machine.
+`enable_learning=False` turns learning off whatever shape it had, and a
+non-empty `learning_name` takes precedence when both are given. The legacy
+memory pair is cleared whenever the call ends with learning wired.
 
 Every component wired to a machine reads and writes that machine's namespace,
 so `list_learning` shows the namespace (machine-level and per store) first,
@@ -158,6 +161,14 @@ The legacy `memory_manager_id` / `enable_agentic_memory` pair is gone from the
 Studio forms. Wiring `learning_name` onto a component stored with them clears
 both, and `get_component` still shows `enable_agentic_memory` on a component
 that carries it, so the real state stays visible.
+
+Upgrade note (3.0.0a3): `learned_knowledge` enabled by a bool or by a bound
+knowledge now follows the machine's `namespace`, the way `entity_memory`
+already did. A deployment that ran `LearningMachine(namespace="team_west",
+knowledge=kb)` on 2.8.4 through 3.0.0a2 saved its learnings under `global`;
+recall filters on the exact namespace, so those rows are not returned until
+their namespace is updated to `team_west` (or the machine is left on the
+default namespace).
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/22_studio/registry_learning.py

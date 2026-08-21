@@ -114,3 +114,48 @@ def test_lazy_initialization_and_model_backfill_are_preserved() -> None:
 
     machine.model = OpenAIResponses(id="gpt-5.5")
     assert all(store.config.model is machine.model for store in machine.stores.values())  # type: ignore[attr-defined]
+
+
+def test_db_and_knowledge_bound_after_the_stores_were_built_are_backfilled() -> None:
+    """A registry machine is built by whichever sharer runs first. One that
+    lacks knowledge builds the learned_knowledge store with knowledge=None; a
+    later sharer that binds a knowledge must reach that store, or its
+    search/save tools mount and silently no-op for every sharer."""
+
+    class _Knowledge:
+        pass
+
+    machine = LearningMachine(name="shared-brain", db=_Db(), learned_knowledge=True, entity_memory=True)  # type: ignore[arg-type]
+    store = machine.stores["learned_knowledge"]
+    assert store.config.knowledge is None  # type: ignore[attr-defined]
+    assert store.knowledge is None  # type: ignore[attr-defined]
+
+    knowledge = _Knowledge()
+    machine.knowledge = knowledge
+    assert machine.stores["learned_knowledge"] is store
+    assert store.config.knowledge is knowledge  # type: ignore[attr-defined]
+    assert store.knowledge is knowledge  # type: ignore[attr-defined]
+
+    # db the same way, for a store built before the machine had one.
+    bare = LearningMachine(name="late-db", entity_memory=True)
+    entity = bare.stores["entity_memory"]
+    assert entity.config.db is None  # type: ignore[attr-defined]
+    db = _Db()
+    bare.db = db
+    assert bare.stores["entity_memory"].config.db is db  # type: ignore[attr-defined]
+
+
+def test_machine_can_be_deep_copied_and_pickled() -> None:
+    """The init lock is per instance and never travels with a copy."""
+    import copy
+    import pickle
+
+    machine = LearningMachine(name="shared-brain", user_memory=True, entity_memory=True)
+    copied = copy.deepcopy(machine)
+    assert copied.name == "shared-brain" and copied.user_memory is True
+    assert copied._init_lock is not machine._init_lock
+
+    restored = pickle.loads(pickle.dumps(machine))
+    assert restored.name == "shared-brain" and restored.entity_memory is True
+    assert restored._init_lock is not machine._init_lock
+    assert set(restored.stores) == {"user_memory", "entity_memory"}

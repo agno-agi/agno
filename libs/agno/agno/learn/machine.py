@@ -155,6 +155,16 @@ class LearningMachine:
     # set and the loser's objects would be discarded mid-use.
     _init_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
 
+    def __getstate__(self) -> Dict[str, Any]:
+        # Locks cannot be copied or pickled; a copy gets a lock of its own.
+        state = self.__dict__.copy()
+        state.pop("_init_lock", None)
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._init_lock = threading.Lock()
+
     # =========================================================================
     # Initialization (Lazy)
     # =========================================================================
@@ -163,23 +173,28 @@ class LearningMachine:
     def stores(self) -> Dict[str, LearningStore]:
         """All registered stores, keyed by name. Lazily initialized.
 
-        Stores take the machine's model at construction, but the model usually
-        arrives *after* them: ``learning=`` hands over the agent's model during
-        Agent init, which is later than any earlier read of this property — a
-        test, an inspection, or the manual door. Backfill on access so a store
-        built before the model was bound picks it up, instead of keeping
-        ``model=None`` for the life of the process and silently declining to
-        capture.
+        Stores take the machine's model, db and knowledge at construction, but
+        those usually arrive *after* them: ``learning=`` hands over the agent's
+        model during Agent init, which is later than any earlier read of this
+        property — a test, an inspection, or the manual door — and a registry
+        machine shared by several components is built by whichever runs first,
+        which may lack the knowledge a later sharer brings. Backfill on access
+        so a store built before a dependency was bound picks it up, instead of
+        keeping ``None`` for the life of the process and silently declining to
+        capture or search.
         """
         if self._stores is None:
             with self._init_lock:
                 if self._stores is None:
                     self._initialize_stores()
-        if self.model is not None:
-            for store in self._stores.values():  # type: ignore[union-attr]
-                config = getattr(store, "config", None)
-                if config is not None and getattr(config, "model", "unused") is None:
-                    config.model = self.model
+        for store in self._stores.values():  # type: ignore[union-attr]
+            config = getattr(store, "config", None)
+            if config is None:
+                continue
+            for attr in ("model", "db", "knowledge"):
+                value = getattr(self, attr)
+                if value is not None and getattr(config, attr, "unused") is None:
+                    setattr(config, attr, value)
         return self._stores  # type: ignore
 
     def _initialize_stores(self) -> None:

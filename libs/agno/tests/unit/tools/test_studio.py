@@ -1906,6 +1906,69 @@ class TestLearningSurface:
         out = _loads(studio_learning.edit_agent("rememberer", enable_learning=False))
         assert "learning" not in db.get_config(component_id="rememberer", version=_edit_version(out))["config"]
 
+    def test_enable_learning_keeps_a_wired_machine_and_says_so(self, studio_learning, db):
+        """enable_learning=True on a component already wired to a registry
+        machine keeps the machine: replacing it would silently move the
+        component off the shared namespace. The caller is told, and
+        learning_name="" in the same call is the explicit way to switch."""
+        _data(
+            studio_learning.create_agent(
+                name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain", publish=True
+            )
+        )
+        out = _loads(studio_learning.edit_agent("learner", enable_learning=True))
+        assert out["ok"] is True
+        assert any("already wired to learning machine 'shared-brain'" in w for w in out["warnings"])
+        assert db.get_config(component_id="learner", version=_edit_version(out))["config"]["learning"] == {
+            "name": "shared-brain"
+        }
+
+        out = _loads(studio_learning.edit_agent("learner", learning_name="", enable_learning=True))
+        assert out["warnings"] == []
+        assert db.get_config(component_id="learner", version=_edit_version(out))["config"]["learning"] is True
+
+    def test_empty_learning_name_drops_the_reference_and_enable_learning_decides(self, studio_learning, db):
+        """learning_name="" means no registry reference, not "no learning":
+        with enable_learning=True the default machine is wired, on create too.
+        The legacy pair is dropped only when the call ends with learning wired."""
+        from agno.memory.manager import MemoryManager
+
+        out = _loads(
+            studio_learning.create_agent(
+                name="filler",
+                instructions="i",
+                model_id="gpt-5.4",
+                enable_learning=True,
+                learning_name="",
+                publish=True,
+            )
+        )
+        assert out["ok"] is True
+        assert db.get_config(component_id="filler", version=1)["config"]["learning"] is True
+
+        Agent(
+            id="legacy-keep",
+            name="Legacy",
+            model=OpenAIResponses(id="gpt-5.5"),
+            memory_manager=MemoryManager(id="mm-keep"),
+            enable_agentic_memory=True,
+        ).save(db=db)
+        # Detach with nothing to detach: no learning, and the legacy pair stays.
+        out = _loads(studio_learning.edit_agent("legacy-keep", learning_name=""))
+        after = db.get_config(component_id="legacy-keep", version=_edit_version(out))["config"]
+        assert "learning" not in after
+        assert after["enable_agentic_memory"] is True
+        assert after["memory_manager"] == {"registry_id": "mm-keep"}
+        # Off stays off and also leaves the pair alone.
+        out = _loads(studio_learning.edit_agent("legacy-keep", enable_learning=False, learning_name=""))
+        after = db.get_config(component_id="legacy-keep", version=_edit_version(out))["config"]
+        assert "learning" not in after and after["enable_agentic_memory"] is True
+        # The default machine replaces the pair.
+        out = _loads(studio_learning.edit_agent("legacy-keep", enable_learning=True, learning_name=""))
+        after = db.get_config(component_id="legacy-keep", version=_edit_version(out))["config"]
+        assert after["learning"] is True
+        assert "enable_agentic_memory" not in after and "memory_manager" not in after
+
     def test_enable_learning_clears_the_legacy_memory_pair(self, registry, db):
         from agno.memory.manager import MemoryManager
 

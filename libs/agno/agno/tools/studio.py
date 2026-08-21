@@ -1976,32 +1976,22 @@ class StudioTools(Toolkit):
                     return err
                 component.reasoning_model = model
             replaced_keys.add("reasoning_model")
-        if enable_learning is not None:
-            # The zero-config path: learning=True makes the framework build the
-            # default machine (user profile + user memory on the component's own
-            # db and model) at init. A registry reference in the same call
-            # wins below.
-            component.learning = True if enable_learning else None
-            if enable_learning:
-                component.enable_agentic_memory = False
-                component.memory_manager = None
-                replaced_keys.add("memory_manager")
-            replaced_keys.add("learning")
-        if learning_name is not None:
+        if enable_learning is not None or learning_name is not None:
+            from agno.learn.machine import LearningMachine
+
+            # Studio authors learning only. learning_name wires a registry
+            # machine (the reference wins when both are given); the empty string
+            # drops the reference, after which enable_learning decides between
+            # the default machine and off. enable_learning=True on a component
+            # already wired to a machine keeps that machine: replacing it would
+            # silently move the component off the shared namespace.
             if learning_name == "":
                 component.learning = None
-            else:
+            if learning_name:
                 machine, err = self._resolve_registry_ref("learning", learning_name)
                 if err is not None:
                     return err
                 component.learning = machine
-                # Studio authors learning only. A component wired to a
-                # learning machine drops the legacy user-memory pair: both
-                # register a tool named update_user_memory and the legacy one
-                # would shadow the store's.
-                component.enable_agentic_memory = False
-                component.memory_manager = None
-                replaced_keys.add("memory_manager")
                 # A registry machine is one instance shared by every component
                 # that references it, and the framework injects db / model /
                 # knowledge into it only when unset: the first component to run
@@ -2011,7 +2001,35 @@ class StudioTools(Toolkit):
                     log_warning(disclosure)
                     if warnings is not None:
                         warnings.append(disclosure)
+            elif enable_learning:
+                wired = component.learning
+                if isinstance(wired, LearningMachine):
+                    wired_name = getattr(wired, "name", None)
+                    label = f"learning machine '{wired_name}'" if wired_name else "an inline learning machine"
+                    kept = (
+                        f"'{getattr(component, 'id', None)}' is already wired to {label}; enable_learning=True "
+                        "kept it. Pass learning_name='' together with enable_learning=True to switch to the "
+                        "default machine."
+                    )
+                    log_warning(kept)
+                    if warnings is not None:
+                        warnings.append(kept)
+                else:
+                    # The zero-config path: learning=True makes the framework
+                    # build the default machine (user profile + user memory on
+                    # the component's own db and model) at init.
+                    component.learning = True
+            elif enable_learning is False:
+                component.learning = None
             replaced_keys.add("learning")
+            if component.learning is not None:
+                # A component wired to learning drops the legacy user-memory
+                # pair: both register a tool named update_user_memory and the
+                # legacy one would shadow the store's. Keyed on the outcome, so
+                # a call that ends with no learning leaves the pair alone.
+                component.enable_agentic_memory = False
+                component.memory_manager = None
+                replaced_keys.add("memory_manager")
         if metadata is not None:
             existing = getattr(component, "metadata", None) or {}
             studio_meta = existing.get("studio")
@@ -2102,7 +2120,7 @@ class StudioTools(Toolkit):
                 agent to that shared learning machine.
             enable_learning (Optional[bool]): Give the agent the default learning
                 machine (user profile and user memory on its own db and model).
-                learning_name takes precedence.
+                A non-empty learning_name takes precedence.
             metadata (Optional[Dict]): Arbitrary metadata stored on the component.
 
         Returns:
@@ -2218,7 +2236,7 @@ class StudioTools(Toolkit):
                 team to that shared learning machine.
             enable_learning (Optional[bool]): Give the team the default learning
                 machine (user profile and user memory on its own db and model).
-                learning_name takes precedence.
+                A non-empty learning_name takes precedence.
             metadata (Optional[Dict]): Arbitrary metadata stored on the component.
 
         Returns:
@@ -2712,8 +2730,11 @@ class StudioTools(Toolkit):
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
             reasoning_model_id (Optional[str]): Reasoning model id; "" detaches.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
-            enable_learning (Optional[bool]): Default learning machine on or off;
-                learning_name takes precedence.
+            enable_learning (Optional[bool]): True gives the default learning machine
+                unless one is already wired (kept, with a warning); False turns
+                learning off whatever shape it has. A non-empty learning_name takes
+                precedence; learning_name="" with enable_learning=True switches a
+                wired component to the default machine.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard against the
                 latest version you read; a conflict means someone else edited.
@@ -2804,8 +2825,11 @@ class StudioTools(Toolkit):
             knowledge_name (Optional[str]): Exact name from list_knowledge; "" detaches.
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
-            enable_learning (Optional[bool]): Default learning machine on or off;
-                learning_name takes precedence.
+            enable_learning (Optional[bool]): True gives the default learning machine
+                unless one is already wired (kept, with a warning); False turns
+                learning off whatever shape it has. A non-empty learning_name takes
+                precedence; learning_name="" with enable_learning=True switches a
+                wired component to the default machine.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard.
             publish (bool): True publishes this edit immediately, replacing the
