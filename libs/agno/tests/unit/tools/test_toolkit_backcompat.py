@@ -39,7 +39,7 @@ class TestRealToolkits:
         from agno.tools.file import FileTools
 
         warnings: List[str] = []
-        with patch("agno.tools.toolkit.log_warning", lambda msg: warnings.append(msg)):
+        with patch("agno.tools.toolkit.log_debug", lambda msg: warnings.append(msg)):
             toolkit = FileTools(enable_save_file=False)
 
         tool_names = [f.name for f in toolkit.functions.values()]
@@ -51,7 +51,7 @@ class TestRealToolkits:
         from agno.tools.file import FileTools
 
         warnings: List[str] = []
-        with patch("agno.tools.toolkit.log_warning", lambda msg: warnings.append(msg)):
+        with patch("agno.tools.toolkit.log_debug", lambda msg: warnings.append(msg)):
             toolkit = FileTools(save_file=False)
 
         tool_names = [f.name for f in toolkit.functions.values()]
@@ -63,7 +63,7 @@ class TestRealToolkits:
         from agno.tools.file import FileTools
 
         warnings: List[str] = []
-        with patch("agno.tools.toolkit.log_warning", lambda msg: warnings.append(msg)):
+        with patch("agno.tools.toolkit.log_debug", lambda msg: warnings.append(msg)):
             toolkit = FileTools(enable_save_file=True, save_file=False)
 
         tool_names = [f.name for f in toolkit.functions.values()]
@@ -80,7 +80,7 @@ class TestCustomAliases:
             return  # Skip if seltz not installed
 
         warnings: List[str] = []
-        with patch("agno.tools.toolkit.log_warning", lambda msg: warnings.append(msg)):
+        with patch("agno.tools.toolkit.log_debug", lambda msg: warnings.append(msg)):
             # No API key so it will log error, but we just test param remapping
             with patch("agno.tools.seltz.log_error"):
                 toolkit = SeltzTools(max_documents=20)

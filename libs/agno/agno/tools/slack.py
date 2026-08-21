@@ -172,20 +172,20 @@ class SlackTools(Toolkit):
             markdown (bool): Whether to enable Slack markdown formatting. Defaults to True.
             output_directory (str): Directory for saving downloaded files. Only used when save_downloads=True.
             save_downloads (bool): Whether to save downloaded files to disk. Defaults to False (base64 only).
-            enable_send_message (bool): Whether to enable the send_message tool. Defaults to True.
-            enable_send_message_thread (bool): Whether to enable the send_message_thread tool. Defaults to True.
-            enable_list_channels (bool): Whether to enable the list_channels tool. Defaults to True.
-            enable_get_channel_history (bool): Whether to enable the get_channel_history tool. Defaults to True.
-            enable_upload_file (bool): Whether to enable the upload_file tool. Defaults to True.
-            enable_download_file (bool): Whether to enable the download_file tool. Defaults to True.
-            enable_search_messages (bool): Whether to enable the search_messages tool (legacy API). Defaults to False.
-            enable_search_workspace (bool): Whether to enable the search_workspace tool (assistant.search.context API).
+            send_message: Enable send_slack_message tool. Defaults to True.
+            send_message_thread: Enable send_slack_message_thread tool. Defaults to True.
+            list_channels: Enable list_slack_channels tool. Defaults to True.
+            get_channel_history: Enable get_slack_channel_history tool. Defaults to True.
+            upload_file: Enable upload_slack_file tool. Defaults to True.
+            download_file: Enable download_slack_file tool. Defaults to True.
+            search_messages: Enable search_slack_messages tool (legacy API). Defaults to False.
+            search_workspace: Enable search_slack_workspace tool (assistant.search.context API).
                 Requires search:read.public, search:read.files, and search:read.users bot scopes.
                 The action_token is read from run_context.metadata at call time. Defaults to False.
-            enable_get_thread (bool): Whether to enable the get_thread tool. Defaults to False.
-            enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
-            enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
-            enable_get_channel_info (bool): Whether to enable the get_channel_info tool. Defaults to False.
+            get_thread: Enable get_slack_thread tool. Defaults to False.
+            list_users: Enable list_slack_users tool. Defaults to False.
+            get_user_info: Enable get_slack_user_info tool. Defaults to False.
+            get_channel_info: Enable get_slack_channel_info tool. Defaults to False.
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
