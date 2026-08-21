@@ -33,6 +33,9 @@ def _remap_legacy_kwargs(cls: type, valid_params: frozenset, kwargs: Dict[str, A
                 continue
         elif key.startswith("enable_"):
             target = key.removeprefix("enable_")
+            # Only remap if target is a valid param - otherwise let the original error surface
+            if target not in valid_params:
+                continue
         else:
             continue
 
