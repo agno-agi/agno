@@ -1019,6 +1019,7 @@ def _handle_model_response_stream(
     reasoning_state = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
+        "native_reasoning_streamed": False,
     }
 
     # Get output_schema from run_context
@@ -1162,6 +1163,20 @@ def _handle_model_response_stream(
                 store_events=team.store_events,
             )
 
+    # Also close native model reasoning (reasoning_content streamed via
+    # ReasoningContentDeltaEvent without going through ReasoningManager).
+    if stream_events and reasoning_state.get("native_reasoning_streamed"):
+        yield handle_event(  # type: ignore
+            create_team_reasoning_completed_event(
+                from_run_response=run_response,
+                content=run_response.reasoning_content or "",
+                content_type="str",
+            ),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
+
 
 async def _ahandle_model_response_stream(
     team: "Team",
@@ -1179,6 +1194,7 @@ async def _ahandle_model_response_stream(
     reasoning_state = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
+        "native_reasoning_streamed": False,
     }
 
     # Get output_schema from run_context
@@ -1324,6 +1340,20 @@ async def _ahandle_model_response_stream(
                 store_events=team.store_events,
             )
 
+    # Also close native model reasoning (reasoning_content streamed via
+    # ReasoningContentDeltaEvent without going through ReasoningManager).
+    if stream_events and reasoning_state.get("native_reasoning_streamed"):
+        yield handle_event(  # type: ignore
+            create_team_reasoning_completed_event(
+                from_run_response=run_response,
+                content=run_response.reasoning_content or "",
+                content_type="str",
+            ),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
+
 
 def _handle_model_response_chunk(
     team: "Team",
@@ -1426,6 +1456,22 @@ def _handle_model_response_chunk(
                 ) + model_response_event.reasoning_content
                 run_response.reasoning_content = full_model_response.reasoning_content
                 should_yield = True
+                # Mirror the agent fix: emit a dedicated team reasoning
+                # delta so AGUI / AgentOS light up the reasoning panel
+                # for models that stream reasoning from the main call
+                # instead of via the explicit ReasoningManager pre-call.
+                if stream_events and model_response_event.reasoning_content:
+                    yield handle_event(  # type: ignore
+                        create_team_reasoning_content_delta_event(
+                            from_run_response=run_response,
+                            reasoning_content=model_response_event.reasoning_content,
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
+                    )
+                    if reasoning_state is not None:
+                        reasoning_state["native_reasoning_streamed"] = True
 
             if model_response_event.redacted_reasoning_content is not None:
                 if not full_model_response.reasoning_content:
