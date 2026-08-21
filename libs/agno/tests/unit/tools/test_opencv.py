@@ -78,23 +78,29 @@ class TestOpenCVToolsInitialization:
     """Test OpenCVTools initialization and configuration."""
 
     def test_init_with_preview_enabled(self, mock_cv2):
-        """Test initialization with preview enabled."""
-        tools = OpenCVTools(show_preview=True)
+        """Test initialization with preview enabled and all tools."""
+        tools = OpenCVTools(show_preview=True, all=True)
         assert tools.show_preview is True
         assert tools.name == "opencv_tools"
         assert len(tools.tools) == 2
 
     def test_init_with_preview_disabled(self, mock_cv2):
-        """Test initialization with preview disabled."""
-        tools = OpenCVTools(show_preview=False)
+        """Test initialization with preview disabled and all tools."""
+        tools = OpenCVTools(show_preview=False, all=True)
         assert tools.show_preview is False
         assert tools.name == "opencv_tools"
         assert len(tools.tools) == 2
 
-    def test_init_default_preview(self, mock_cv2):
-        """Test default initialization (preview disabled by default)."""
+    def test_init_default_no_tools(self, mock_cv2):
+        """Test default initialization (no tools registered by default)."""
         tools = OpenCVTools()
         assert tools.show_preview is False
+        assert len(tools.tools) == 0
+
+    def test_init_explicit_tool_registration(self, mock_cv2):
+        """Test explicit tool registration."""
+        tools = OpenCVTools(capture_image=True, capture_video=True)
+        assert len(tools.tools) == 2
 
 
 class TestImageCapture:
