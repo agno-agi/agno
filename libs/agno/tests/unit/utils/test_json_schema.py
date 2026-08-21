@@ -452,3 +452,56 @@ def test_get_json_schema_with_mixed_nested_structures():
     assert "contact_info" in dataclass_schema["properties"]
     assert "address" in pydantic_schema["properties"]["contact_info"]["properties"]
     assert "address" in dataclass_schema["properties"]["contact_info"]["properties"]
+
+
+def test_dataclass_fields_with_defaults_are_not_required():
+    """Dataclass fields carrying a default must not be listed as required."""
+
+    @dataclass
+    class SearchParams:
+        query: str
+        max_results: int = 10
+        include_archived: bool = False
+        tags: List[str] = field(default_factory=list)
+        tag: Optional[str] = None
+
+    schema = get_json_schema_for_arg(SearchParams)
+
+    # Every field is still advertised to the model...
+    assert set(schema["properties"]) == {"query", "max_results", "include_archived", "tags", "tag"}
+    # ...but only the one the caller genuinely has to supply is required.
+    assert schema["required"] == ["query"]
+
+
+def test_dataclass_required_matches_pydantic_for_the_same_fields():
+    """The dataclass branch and the pydantic branch must agree on required-ness."""
+
+    @dataclass
+    class AsDataclass:
+        query: str
+        max_results: int = 10
+        tag: Optional[str] = None
+
+    class AsModel(BaseModel):
+        query: str
+        max_results: int = 10
+        tag: Optional[str] = None
+
+    dataclass_schema = get_json_schema_for_arg(AsDataclass)
+    model_schema = get_json_schema_for_arg(AsModel)
+
+    assert dataclass_schema["required"] == model_schema["required"] == ["query"]
+
+
+def test_dataclass_with_only_defaulted_fields_omits_required():
+    """A dataclass whose fields all have defaults must not emit a required key at all."""
+
+    @dataclass
+    class AllOptional:
+        limit: int = 5
+        verbose: bool = False
+
+    schema = get_json_schema_for_arg(AllOptional)
+
+    assert set(schema["properties"]) == {"limit", "verbose"}
+    assert "required" not in schema
