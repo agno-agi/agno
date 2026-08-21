@@ -14,7 +14,6 @@ from typing import (
     Type,
     Union,
     cast,
-    get_args,
 )
 from uuid import uuid4
 
@@ -32,10 +31,10 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import Followups, RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, Followups, RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
-from agno.run.team import TeamRunOutputEvent
+from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutputEvent
 from agno.session import AgentSession
 from agno.tools.function import Function
 from agno.utils.events import (
@@ -1362,12 +1361,12 @@ def handle_model_response_chunk(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> Iterator[RunOutputEvent]:
-    from agno.run.workflow import WorkflowRunOutputEvent
+    from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 
     if (
-        isinstance(model_response_event, tuple(get_args(RunOutputEvent)))
-        or isinstance(model_response_event, tuple(get_args(TeamRunOutputEvent)))
-        or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent)))
+        isinstance(model_response_event, RUN_OUTPUT_EVENT_TYPES)
+        or isinstance(model_response_event, TEAM_RUN_OUTPUT_EVENT_TYPES)
+        or isinstance(model_response_event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES)
     ):
         if model_response_event.event == RunEvent.custom_event:  # type: ignore
             model_response_event.agent_id = agent.id  # type: ignore

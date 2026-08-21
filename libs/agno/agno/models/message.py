@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+import agno.utils.log
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -373,6 +374,13 @@ class Message(BaseModel):
                 Defaults to debug.
             use_compressed_content (bool): Whether to use compressed content.
         """
+        # Everything below builds strings for the sink to discard when debug is
+        # off (the default level logs via log_debug, which checks the same
+        # flag), including a terminal-size syscall. Read the flag off the
+        # module so runtime toggles are honored.
+        if level is None and not agno.utils.log.debug_on:
+            return
+
         _logger = log_debug
         if level == "info":
             _logger = log_info

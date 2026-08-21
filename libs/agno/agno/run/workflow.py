@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, get_args
 
 from pydantic import BaseModel
 
@@ -660,6 +660,11 @@ WorkflowRunOutputEvent = Union[
     StepOutputEvent,
     CustomEvent,
 ]
+
+# Cached union members for isinstance checks: rebuilding
+# tuple(get_args(WorkflowRunOutputEvent)) per streamed chunk is measurable on
+# the hot event-dispatch path.
+WORKFLOW_RUN_OUTPUT_EVENT_TYPES = get_args(WorkflowRunOutputEvent)
 
 # Map event string to dataclass for workflow events
 WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
