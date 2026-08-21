@@ -3136,10 +3136,14 @@ def _bind_run_context_to_run(run_context: RunContext, run_response: RunOutput) -
         return
     run_context.run_id = run_id
     if isinstance(run_context.session_state, dict):
+        # The owner and session ids are stripped before session_state is persisted, so a
+        # continuation that reloaded its state has lost them and they are restored here. Both
+        # are passed as `or None` so an empty value can never overwrite a good one - the
+        # session_id guard downstream is `is not None`, which "" would satisfy.
         _initialize_session_state(
             run_context.session_state,
-            user_id=run_context.user_id,
-            session_id=run_context.session_id,
+            user_id=run_context.user_id or None,
+            session_id=run_context.session_id or None,
             run_id=run_id,
         )
 

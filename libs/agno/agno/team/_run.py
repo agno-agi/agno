@@ -7076,11 +7076,13 @@ def _bind_run_context_to_team_run(team: "Team", run_context: RunContext, run_res
         return
     run_context.run_id = run_id
     if isinstance(run_context.session_state, dict):
+        # See the agent twin: restored because persistence strips them, `or None` so an
+        # empty value cannot overwrite a good one.
         _initialize_session_state(
             team,
             run_context.session_state,
-            user_id=run_context.user_id,
-            session_id=run_context.session_id,
+            user_id=run_context.user_id or None,
+            session_id=run_context.session_id or None,
             run_id=run_id,
         )
 

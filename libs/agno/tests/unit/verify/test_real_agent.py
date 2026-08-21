@@ -290,3 +290,58 @@ def test_each_attempt_reports_its_own_run_id_not_the_parents(mode, tmp_path):
     assert seen[0]["context"] == first
     assert seen[1]["context"] == second, f"the continuation's tool saw the parent run_id: {seen[1]}"
     assert seen[1]["state"] == second, f"session_state carried a stale current_run_id: {seen[1]}"
+
+
+def test_the_rebind_leaves_the_owner_and_session_alone(tmp_path):
+    """Re-pointing the context at the forked run must not rewrite current_user_id or
+    current_session_id: those are already right on a continuation, and overwriting them from
+    whatever the context happens to carry can only lose information."""
+    seen: List[dict] = []
+
+    def probe_state(run_context: Optional[RunContext] = None) -> str:
+        """Record the identity keys."""
+        state = (run_context.session_state or {}) if run_context else {}
+        seen.append({k: state.get(k) for k in ("current_user_id", "current_session_id", "current_run_id")})
+        return "probed"
+
+    agent = Agent(
+        model=ScriptedModel(_probe_script()),
+        tools=[probe_state],
+        db=SqliteDb(db_file=str(tmp_path / "ids.db")),
+    )
+    result = run_verified(
+        agent,
+        "probe twice",
+        [_fail_once()],
+        limits=VerifierLimits(max_continuations=1),
+        session_id="ids-1",
+        user_id="owner-1",
+    )
+    assert len(seen) == 2
+    # Whatever the identity keys hold, the continuation must hold the same: the rebind's job is
+    # the run_id and nothing else.
+    assert seen[0]["current_user_id"] == seen[1]["current_user_id"]
+    assert seen[0]["current_session_id"] == seen[1]["current_session_id"]
+    # ... and the run_id is the one thing it does move.
+    assert seen[0]["current_run_id"] == result.attempts[0].run_id
+    assert seen[1]["current_run_id"] == result.attempts[1].run_id
+    assert seen[0]["current_run_id"] != seen[1]["current_run_id"]
+
+
+def test_the_rebind_cannot_blank_the_session_id():
+    """`_initialize_session_state` guards session_id with `is not None`, which an empty string
+    satisfies, so a context carrying "" would overwrite a good value with nothing."""
+    from agno.agent._run import _bind_run_context_to_run
+    from agno.run.agent import RunOutput
+
+    context = RunContext(
+        run_id="old",
+        session_id="",
+        user_id=None,
+        session_state={"current_session_id": "GOOD", "current_user_id": "OWNER"},
+    )
+    _bind_run_context_to_run(context, RunOutput(run_id="new", session_id="s"))
+    assert context.session_state["current_session_id"] == "GOOD"
+    assert context.session_state["current_user_id"] == "OWNER"
+    assert context.session_state["current_run_id"] == "new"
+    assert context.run_id == "new"
