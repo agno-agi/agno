@@ -165,7 +165,29 @@ class TeamSession:
 
         # Filter by team_id and member_ids
         if team_id:
-            session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+            filtered_team_runs = []
+            seen_team_run_ids: set[str] = set()
+            visited_team_runs: set[int] = set()
+            pending_team_runs = list(reversed(session_runs))
+
+            while pending_team_runs:
+                run = pending_team_runs.pop()
+                run_identity = id(run)
+                if run_identity in visited_team_runs:
+                    continue
+                visited_team_runs.add(run_identity)
+
+                if getattr(run, "team_id", None) == team_id:
+                    run_id = getattr(run, "run_id", None)
+                    if not run_id or run_id not in seen_team_run_ids:
+                        filtered_team_runs.append(run)
+                        if run_id:
+                            seen_team_run_ids.add(run_id)
+
+                member_responses = getattr(run, "member_responses", None) or []
+                pending_team_runs.extend(reversed(member_responses))
+
+            session_runs = filtered_team_runs
         if member_ids:
             filtered_runs = []
             seen_run_ids: set[str] = set()
