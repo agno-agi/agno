@@ -39,9 +39,9 @@ def _remap_legacy_kwargs(cls: type, valid_params: frozenset, kwargs: Dict[str, A
         # 2. Remap: pop old key, set new key (unless new key already exists)
         value = result.pop(key)
         if target in result:
-            log_warning(f"Both `{key}` and `{target}` passed; using `{target}`.")
+            log_debug(f"Both `{key}` and `{target}` passed; using `{target}`.")
         else:
-            log_warning(f"`{key}` is deprecated; use `{target}` instead.")
+            log_debug(f"`{key}` is deprecated; use `{target}` instead.")
             result[target] = value
 
     return result
