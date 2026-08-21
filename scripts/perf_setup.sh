@@ -1,40 +1,95 @@
 #!/bin/bash
 
 ############################################################################
-# Performance Testing Setup
-# - Create a virtual environment and install libraries in editable mode.
-# - Please install uv before running this script.
-# - Please deactivate the existing virtual environment before running.
-# Usage: ./scripts/perf_setup.sh
+#
+#    Agno Performance Environment Setup
+#
+#    Usage: ./scripts/perf_setup.sh
+#    Run:   python cookbook/performance/run_all.py --all
+#
 ############################################################################
+
+set -e
 
 CURR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "${CURR_DIR}")"
 AGNO_DIR="${REPO_ROOT}/libs/agno"
-source "${CURR_DIR}/_utils.sh"
-
 VENV_DIR="${REPO_ROOT}/.venvs/perfenv"
-PYTHON_VERSION=$(python3 --version)
 
-print_heading "Performance Testing setup..."
+# Colors
+ORANGE='\033[38;5;208m'
+DIM='\033[2m'
+BOLD='\033[1m'
+NC='\033[0m'
 
-print_heading "Removing virtual env"
-print_info "rm -rf ${VENV_DIR}"
-rm -rf ${VENV_DIR}
+echo ""
+echo -e "${ORANGE}"
+cat << 'BANNER'
+     █████╗  ██████╗ ███╗   ██╗ ██████╗
+    ██╔══██╗██╔════╝ ████╗  ██║██╔═══██╗
+    ███████║██║  ███╗██╔██╗ ██║██║   ██║
+    ██╔══██║██║   ██║██║╚██╗██║██║   ██║
+    ██║  ██║╚██████╔╝██║ ╚████║╚██████╔╝
+    ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝
+BANNER
+echo -e "${NC}"
+echo -e "    ${DIM}Performance Setup${NC}"
+echo ""
 
-print_heading "Creating virtual env"
-print_info "uv venv --python 3.12 ${VENV_DIR}"
-uv venv --python 3.12 ${VENV_DIR}
+# Preflight
+if [[ -n "$VIRTUAL_ENV" ]]; then
+    echo "    Deactivate your current venv first."
+    exit 1
+fi
 
-print_heading "Installing libraries"
-# agno installs editable from this checkout: the benchmarks measure the local
+if ! command -v uv &> /dev/null; then
+    echo "    uv not found. Install: https://docs.astral.sh/uv/"
+    exit 1
+fi
+
+# Setup
+echo -e "    ${DIM}Removing old environment...${NC}"
+echo -e "    ${DIM}> rm -rf ${VENV_DIR}${NC}"
+rm -rf "${VENV_DIR}"
+
+echo ""
+echo -e "    ${DIM}Creating Python 3.12 venv...${NC}"
+echo -e "    ${DIM}> uv venv ${VENV_DIR} --python 3.12${NC}"
+uv venv "${VENV_DIR}" --python 3.12 --quiet
+
+# agno installs editable from this checkout so benchmarks measure the local
 # tree, not the last release. The os extra is required because agno.workflow
 # imports fastapi. The other frameworks are the comparison set for
 # cookbook/performance/comparison and cookbook/09_evals/performance/comparison.
-VIRTUAL_ENV=${VENV_DIR} uv pip install -e "${AGNO_DIR}[os]" langgraph langchain_openai openai-agents crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]"
+echo ""
+echo -e "    ${DIM}Installing agno[os] (editable) and the comparison frameworks...${NC}"
+echo -e "    ${DIM}> uv pip install -e libs/agno[os] langgraph langchain_openai crewai pydantic_ai openai-agents smolagents autogen-agentchat autogen-ext[openai]${NC}"
+VIRTUAL_ENV="${VENV_DIR}" uv pip install -e "${AGNO_DIR}[os]" langgraph langchain_openai openai-agents crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]" --quiet
 
-print_heading "uv pip list"
-VIRTUAL_ENV=${VENV_DIR} uv pip list
+# Copy activation command to clipboard
+ACTIVATE_CMD="source .venvs/perfenv/bin/activate"
+if command -v pbcopy &> /dev/null; then
+    echo -n "${ACTIVATE_CMD}" | pbcopy
+    CLIPBOARD_MSG="(Copied to clipboard. Just paste and hit enter.)"
+elif command -v xclip &> /dev/null; then
+    echo -n "${ACTIVATE_CMD}" | xclip -selection clipboard
+    CLIPBOARD_MSG="(Copied to clipboard. Just paste and hit enter.)"
+else
+    CLIPBOARD_MSG=""
+fi
 
-print_heading "Performance Testing setup complete"
-print_heading "Activate venv using: source ${VENV_DIR}/bin/activate"
+echo ""
+echo -e "    ${BOLD}Done.${NC}"
+echo ""
+echo -e "    ${DIM}Activate:${NC}       ${ACTIVATE_CMD}"
+echo -e "    ${DIM}Run everything:${NC} python cookbook/performance/run_all.py --all"
+echo -e "    ${DIM}Agno only:${NC}      python cookbook/performance/run_all.py"
+echo -e "    ${DIM}Quick smoke:${NC}    python cookbook/performance/run_all.py --all --quick"
+echo ""
+echo -e "    ${DIM}Benchmarks print rich summary tables; --all also renders the${NC}"
+echo -e "    ${DIM}HTML report to cookbook/performance/report/agno-performance.html${NC}"
+echo ""
+if [[ -n "$CLIPBOARD_MSG" ]]; then
+    echo -e "    ${DIM}${CLIPBOARD_MSG}${NC}"
+    echo ""
+fi

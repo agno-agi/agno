@@ -1,72 +1,68 @@
 # Agno Performance Benchmarks
 
-The canonical performance benchmark suite for Agno. Every number here measures
-**framework overhead only**: the suite uses in-process mock models, so no
-benchmark depends on a provider, an API key or the network. Results are
-reproducible on any machine.
+Agno is the fastest way to run agents in production — and this folder proves
+it on your machine, in about five minutes, with no API keys and no network.
 
-For examples of the `PerformanceEval` API itself (including benchmarks that
-call real models), see `cookbook/09_evals/performance/`.
+Reference numbers (Apple M4 Max, medians, all frameworks in one environment):
 
-Cross-framework comparisons (Agno vs LangGraph, PydanticAI, CrewAI: cold
-import, agent construction, and a mocked single-turn run) live in
-`comparison/`. Results feed the same report.
+| | **Agno** | LangGraph | PydanticAI | CrewAI |
+|---|---|---|---|---|
+| Single-turn agent run | **65 us** | 310 us (4.8x) | 2,258 us (35x) | 6,283 us (97x) |
+| Agent construction (1 tool) | **4.7 us** | 1,440 us (306x) | 10,303 us (2,192x) | 20,792 us (4,424x) |
+| Memory per run | **16.6 KiB** | 55 KiB | 105 KiB | 96 KiB |
+| Cold import | **254 ms** | 383 ms | 515 ms | 986 ms |
 
-## 1. Create the environment
+Every number is framework overhead only: in-process mock models drive each
+framework's complete run loop, so nothing depends on a provider or your
+network connection, and results reproduce anywhere.
 
-One script builds everything the suite needs — agno installed editable from
-this checkout (so benchmarks measure your local tree, not the last release)
-plus the comparison frameworks:
+## Run it yourself
+
+Two commands from the repo root:
 
 ```bash
 ./scripts/perf_setup.sh
 ```
 
-This creates `.venvs/perfenv`. Rebuilding after switching branches is not
-required (the install is editable), but re-run the script whenever
-dependencies change.
-
-## 2. Run the benchmarks
-
 ```bash
-# Full agno suite (a few minutes); results written to results/
-.venvs/perfenv/bin/python cookbook/performance/run_all.py
-
-# Cross-framework comparison (about a minute)
-.venvs/perfenv/bin/python cookbook/performance/comparison/run_all.py
+.venvs/perfenv/bin/python cookbook/performance/run_all.py --all
 ```
 
-Both runners execute each benchmark in a fresh Python process, one at a
-time, and finish with a rich summary table of every benchmark's median, p95
-and memory. Close CPU-heavy applications first and never run benchmarks
-concurrently: contention skews timings.
-
-Variations:
+That is the whole flow. The first command builds `.venvs/perfenv` (agno
+installed editable from your checkout, plus LangGraph, PydanticAI and
+CrewAI). The second runs the full agno suite and the cross-framework
+comparison — each benchmark in its own fresh process — prints rich summary
+tables in the terminal, and renders a self-contained HTML report:
 
 ```bash
-# Quick smoke (about 30 seconds; results isolated in results/quick/)
-.venvs/perfenv/bin/python cookbook/performance/run_all.py --quick
+open cookbook/performance/report/agno-performance.html
+```
 
-# A single benchmark, with rich per-run tables
+Close CPU-heavy applications first and let it run alone: contention skews
+timings.
+
+## Useful variations
+
+```bash
+# Agno suite only, no comparison (this is the regression-tracking set)
+.venvs/perfenv/bin/python cookbook/performance/run_all.py
+
+# 30-second smoke of everything (results isolated in results/quick/)
+.venvs/perfenv/bin/python cookbook/performance/run_all.py --all --quick
+
+# One benchmark, with rich per-run tables
 .venvs/perfenv/bin/python cookbook/performance/run_agent.py
 
 # Custom iteration count
 AGNO_BENCH_ITERATIONS=1000 .venvs/perfenv/bin/python cookbook/performance/run_agent.py
 ```
 
-## 3. Generate the report
-
-```bash
-.venvs/perfenv/bin/python cookbook/performance/report.py
-open cookbook/performance/report/agno-performance.html
-```
-
-The report is a self-contained HTML page (light and dark themes) rendering
-whatever `results/` holds: the agno sections always, and the cross-framework
-sections whenever `results/comparison/summary.json` exists. Local run output
-(`results/`, `report/`) is gitignored; reference runs are checked in under
+The agno-only benchmarks need nothing beyond core agno, so any environment
+with `agno[os]` installed runs them (including the dev `.venv`); the
+comparison needs `.venvs/perfenv`. Reference runs are checked in under
 `baselines/` as `<date>-<machine>.json` and any of them renders with
-`report.py --results baselines/<file>`.
+`report.py --results baselines/<file>`; local run output (`results/`,
+`report/`) is gitignored.
 
 ## What is measured
 
@@ -83,9 +79,11 @@ sections whenever `results/comparison/summary.json` exists. Local run output
 | `run_agent_with_storage`, `arun_agent_with_storage` | `run_agent_with_storage.py` | One run with an in-memory db and history enabled: session persistence overhead. |
 | `memory_per_agent`, `memory_per_agent_with_tools` | `memory_footprint.py` | Net resident memory per live agent, measured over batches of 1000. |
 
-The agno-only benchmarks need nothing beyond core agno, so any environment
-with `agno` installed also works for them (including the dev `.venv`); the
-comparison suite needs `.venvs/perfenv`.
+Cross-framework benchmarks live in `comparison/` (cold import, one-tool
+construction, mocked single-turn run) with fairness notes on exactly where
+each framework's mock cuts. For examples of the `PerformanceEval` API itself
+(including benchmarks that call real models), see
+`cookbook/09_evals/performance/`.
 
 ## Methodology notes
 
@@ -94,7 +92,8 @@ comparison suite needs `.venvs/perfenv`.
   streaming, run output construction and session bookkeeping. The provider
   adapter is replaced entirely, so provider-specific work that real
   integrations do inside agno (wire-format message conversion, provider
-  response parsing) is excluded. Numbers are a floor on per-run overhead.
+  response parsing) is excluded. Numbers are a floor on per-run overhead —
+  and the same is true for every compared framework.
 - **Streaming benchmarks stream a single chunk**, so they measure the fixed
   cost of the streaming machinery, not per-chunk cost over a long delta
   stream.
@@ -107,7 +106,9 @@ comparison suite needs `.venvs/perfenv`.
 - **Import time is measured in fresh subprocesses** because a module import
   only happens once per process; the median interpreter startup time is
   subtracted from every sample. Process-spawn variance stays in the samples,
-  so read the median and treat sub-millisecond differences as noise.
+  so read the median and treat sub-millisecond differences as noise. Absolute
+  import times scale with how many packages the environment carries; compare
+  ratios across environments, absolutes only within one.
 - **Memory footprint keeps agents alive** and reports the net allocation delta
   per agent, which is what capacity planning needs. The instantiation
   benchmarks report the transient allocation peak of creating one agent,
