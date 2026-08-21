@@ -195,3 +195,63 @@ def test_agent_save_load_keeps_the_tool_surface(tmp_path) -> None:
     names = {t.__name__ for t in tools}
     assert "update_user_memory" in names
     assert "remember_about" in names
+
+
+def test_name_round_trips_and_leads_repr() -> None:
+    """A registry name is identity: it survives the config round-trip and is
+    the first thing the repr shows."""
+    machine = LearningMachine(name="shared-brain", user_memory=True)
+    payload = machine.to_dict()
+    assert payload["name"] == "shared-brain"
+
+    rebuilt = LearningMachine.from_dict(payload)
+    assert rebuilt.name == "shared-brain"
+    assert rebuilt.user_memory is True
+    assert repr(rebuilt).startswith("LearningMachine(name='shared-brain', ")
+
+
+def test_unnamed_machine_writes_no_name_and_legacy_dicts_load_unnamed() -> None:
+    """Configs written before the name existed carry no name key, and an
+    unnamed machine must not start writing one: the serializer keys a
+    registry reference on ``{"name": ...}`` alone, so ``{}`` and every
+    store-carrying dict have to stay inline machines."""
+    assert "name" not in LearningMachine(user_memory=True).to_dict()
+    assert LearningMachine().to_dict() == {}
+
+    legacy = LearningMachine.from_dict({"user_profile": True, "user_memory": True})
+    assert legacy.name is None
+    assert legacy.user_memory is True
+
+    empty = LearningMachine.from_dict({})
+    assert empty.name is None
+    assert empty.to_dict() == {}
+
+    # A blank name is no name.
+    assert LearningMachine.from_dict({"name": "", "user_memory": True}).name is None
+
+
+def test_bool_learned_knowledge_inherits_machine_namespace() -> None:
+    """The machine namespace is the default for BOTH namespaced stores. A
+    bool-enabled learned_knowledge used to stay on "global" while
+    entity_memory followed the machine, so a deployer who set one namespace
+    got two."""
+    from agno.learn.config import LearnedKnowledgeConfig
+
+    machine = LearningMachine(
+        db=RecordingLearningDb(),  # type: ignore[arg-type]
+        namespace="team_west",
+        entity_memory=True,
+        learned_knowledge=True,
+        knowledge=object(),
+    )
+    assert machine.stores["entity_memory"].config.namespace == "team_west"  # type: ignore[attr-defined]
+    assert machine.stores["learned_knowledge"].config.namespace == "team_west"  # type: ignore[attr-defined]
+
+    # An explicit store namespace still wins over the machine's.
+    explicit = LearningMachine(
+        db=RecordingLearningDb(),  # type: ignore[arg-type]
+        namespace="team_west",
+        learned_knowledge=LearnedKnowledgeConfig(namespace="ops"),
+        knowledge=object(),
+    )
+    assert explicit.stores["learned_knowledge"].config.namespace == "ops"  # type: ignore[attr-defined]

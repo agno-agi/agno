@@ -85,6 +85,11 @@ class LearningMachine:
     for recall, processing, tool generation, and maintenance.
 
     Args:
+        name: Registry name. A named machine is a shared, deployer-declared
+            resource: a component that carries one serializes a reference to
+            the name and resolves the live machine from the Registry on load,
+            the same way knowledge does. Leave it None for a machine that
+            belongs to one component and should be stored inline.
         db: Database backend for persistence.
         model: Model for learning extraction.
         knowledge: Knowledge base for learned knowledge store.
@@ -99,6 +104,10 @@ class LearningMachine:
         custom_stores: Additional stores implementing LearningStore protocol.
         debug_mode: Enable debug logging.
     """
+
+    # Identity: set for a machine declared on a Registry, None for one that
+    # is stored inline with its component.
+    name: Optional[str] = None
 
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
@@ -362,6 +371,7 @@ class LearningMachine:
             config = LearnedKnowledgeConfig(
                 model=self.model,
                 knowledge=self.knowledge,
+                namespace=self.namespace,
                 mode=LearningMode.AGENTIC,
                 max_updates_per_run=self.max_updates_per_run,
             )
@@ -1020,6 +1030,8 @@ class LearningMachine:
         instances cannot be rebuilt from a dict).
         """
         d: Dict[str, Any] = {}
+        if self.name is not None:
+            d["name"] = self.name
         for store_name in self._STORE_CONFIG_CLASSES:
             value = getattr(self, store_name)
             if not value:
@@ -1110,7 +1122,9 @@ class LearningMachine:
                 f"rebuilt from a serialized config; re-attach them programmatically."
             )
 
+        name = data.get("name")
         return cls(
+            name=name if isinstance(name, str) and name else None,
             namespace=data.get("namespace", "global"),
             max_updates_per_run=data.get("max_updates_per_run", 10),
             debug_mode=data.get("debug_mode", False),
@@ -1198,6 +1212,7 @@ class LearningMachine:
 
         return (
             f"LearningMachine("
+            f"name={self.name!r}, "
             f"stores={store_names}, "
             f"db={db_name}, "
             f"model={model_name}, "
