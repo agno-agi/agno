@@ -21,17 +21,17 @@ def stream_agno_response_as_agui_events(
     if run_state is not None:
         state.set_state_snapshot(run_state)
 
-    completion_chunk = None
+    terminal_chunk = None
 
     for chunk in response_stream:
         if is_completion_event(chunk):
-            completion_chunk = chunk
+            terminal_chunk = chunk
         else:
             for event in process_event(chunk, state):
                 yield event
 
     # Process completion (or synthesize one if stream ended naturally)
-    final_chunk = completion_chunk or RunCompletedEvent()
+    final_chunk = terminal_chunk or RunCompletedEvent()
     for event in process_completion(final_chunk, state):
         yield event
 
@@ -48,16 +48,16 @@ async def async_stream_agno_response_as_agui_events(
     if run_state is not None:
         state.set_state_snapshot(run_state)
 
-    completion_chunk = None
+    terminal_chunk = None
 
     async for chunk in response_stream:
         if is_completion_event(chunk):
-            completion_chunk = chunk
+            terminal_chunk = chunk
         else:
             for event in process_event(chunk, state):
                 yield event
 
     # Process completion (or synthesize one if stream ended naturally)
-    final_chunk = completion_chunk or RunCompletedEvent()
+    final_chunk = terminal_chunk or RunCompletedEvent()
     for event in process_completion(final_chunk, state):
         yield event

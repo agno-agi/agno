@@ -13,6 +13,7 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    RunErrorEvent as AGUIRunErrorEvent,
     RunFinishedEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
@@ -314,6 +315,26 @@ def on_unknown_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     return [RawEvent(type=EventType.RAW, event=raw_dict, source="agno")]
 
 
+def on_run_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Convert an Agno run error into a terminal AG-UI error event."""
+    try:
+        raw_event: Any = chunk.to_dict()
+    except Exception:
+        raw_event = {"event": str(getattr(chunk, "event", "RunError"))}
+
+    message = getattr(chunk, "content", None) or "Run failed"
+    error_type = getattr(chunk, "error_type", None)
+
+    return [
+        AGUIRunErrorEvent(
+            type=EventType.RUN_ERROR,
+            message=str(message),
+            code=error_type,
+            rawEvent=raw_event,
+        )
+    ]
+
+
 def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
     events: List[BaseEvent] = []
 
@@ -427,12 +448,14 @@ HANDLERS: Dict[str, EventHandler] = {
     RunEvent.custom_event.value: on_custom_event,
 }
 
-# Terminal events that trigger completion handling
+# Terminal events that trigger terminal handling
 _COMPLETION_EVENTS = frozenset(
     {
         RunEvent.run_completed.value,
+        RunEvent.run_error.value,
         RunEvent.run_paused.value,
         TeamRunEvent.run_completed.value,
+        TeamRunEvent.run_error.value,
         TeamRunEvent.run_paused.value,
     }
 )
@@ -464,5 +487,9 @@ def process_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEve
 
 
 def process_completion(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    """Process completion event (run_completed/run_paused) and return cleanup events."""
+    """Process a terminal event and return the corresponding AG-UI events."""
+    event = getattr(chunk, "event", None)
+    event_value = event.value if event is not None and hasattr(event, "value") else str(event)
+    if _normalize_event(event_value) == RunEvent.run_error.value:
+        return on_run_error(chunk, state)
     return on_run_completed(chunk, state)

@@ -19,7 +19,8 @@ from agno.os.interfaces.agui.input import extract_context, extract_media, extrac
 from agno.os.interfaces.agui.router import run_entity
 from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
-from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.agent import RunContentEvent, RunErrorEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 
 
 def test_event_buffer_initial_state():
@@ -177,6 +178,30 @@ async def test_stream_basic():
     assert events[1].delta == "Hello world"
     assert events[2].type == EventType.TEXT_MESSAGE_END
     assert events[3].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.parametrize(
+    "error_event",
+    [
+        RunErrorEvent(content="Invalid API key", error_type="AuthenticationError"),
+        TeamRunErrorEvent(content="Invalid API key", error_type="AuthenticationError"),
+    ],
+    ids=["agent", "team"],
+)
+@pytest.mark.asyncio
+async def test_stream_error_emits_run_error_without_run_finished(error_event):
+    """An in-stream run error should be visible to the AG-UI client."""
+
+    async def mock_error_stream():
+        yield error_event
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_error_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    assert [event.type for event in events] == [EventType.RUN_ERROR]
+    assert events[0].message == "Invalid API key"
+    assert events[0].code == "AuthenticationError"
 
 
 @pytest.mark.asyncio
