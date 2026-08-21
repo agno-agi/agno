@@ -96,3 +96,10 @@ so every number is that framework's floor. CrewAI builds a fresh `Task` and
   which compiles a state graph per call. LangGraph 1.x deprecates this
   entrypoint in favor of the separate langchain package's `create_agent`;
   it remains the canonical langgraph-only API.
+- PydanticAI is installed as `pydantic-ai-slim[openai]`, its documented
+  minimal install. The full `pydantic-ai` bundle hard-requires the logfire
+  SDK, whose pydantic plugin loads whenever the first pydantic model class
+  is defined — in a shared environment that inflates the measured cold
+  import of every framework here, not just PydanticAI's. All benchmarked
+  code paths (`TestModel`, the agent, message history) live in the slim
+  package; only the observability bundle is omitted.

@@ -171,8 +171,11 @@ call real models, see `cookbook/09_evals/performance/`.
   absolute values should only be compared within one. Packages that
   register pydantic plugins are a specific hazard: pydantic imports every
   registered plugin when the first model class is defined, which taxes the
-  import time of every framework here. Benchmark in an environment created
-  by `perf_setup.sh`, not one that has accumulated extra packages.
+  import time of every framework here. This is why `perf_setup.sh`
+  installs `pydantic-ai-slim` rather than the full `pydantic-ai` bundle,
+  which hard-requires the plugin-registering logfire SDK (see
+  `comparison/README.md`). Benchmark in an environment created by
+  `perf_setup.sh`, not one that has accumulated extra packages.
 - Mocked-run numbers are per-framework floors, not full provider-path
   costs. A comparison at the HTTP boundary — a canned response beneath each
   framework's real provider adapter — would include client-side provider
