@@ -1546,10 +1546,6 @@ class TestCoverageFields:
         _data(studio_refs.edit_agent("thinker", reasoning_model_id=""))
         assert "reasoning_model_id" not in _data(studio_refs.get_component("thinker"))
 
-    def test_enable_agentic_memory_round_trips(self, studio_refs):
-        _data(studio_refs.create_agent(name="mem", instructions="i", model_id="gpt-5.4", enable_agentic_memory=True))
-        assert _data(studio_refs.get_component("mem"))["enable_agentic_memory"] is True
-
     def test_metadata_round_trips(self, studio_refs):
         _data(studio_refs.create_agent(name="meta", instructions="i", model_id="gpt-5.4", metadata={"team": "growth"}))
         assert _data(studio_refs.get_component("meta"))["metadata"] == {"team": "growth"}
@@ -1563,12 +1559,6 @@ class TestCoverageFields:
             studio_refs.create_agent(name="x", instructions="i", model_id="gpt-5.4", output_schema_name="Ghost")
         )
         assert error["code"] == "schema_not_found"
-
-    def test_unknown_memory_manager_returns_memory_manager_not_found(self, studio_refs):
-        error = _error(
-            studio_refs.create_agent(name="x", instructions="i", model_id="gpt-5.4", memory_manager_id="ghost")
-        )
-        assert error["code"] == "memory_manager_not_found"
 
     def test_unknown_reasoning_model_returns_model_not_found(self, studio_refs):
         error = _error(

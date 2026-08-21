@@ -1123,7 +1123,7 @@ class StudioTools(Toolkit):
         return None
 
     def _resolve_registry_ref(self, kind: str, name: Optional[str]) -> tuple:
-        """(value, error) for knowledge / schema / memory manager / learning / model refs."""
+        """(value, error) for knowledge / schema / learning / model refs."""
         if name is None:
             return None, None
         if kind == "knowledge":
@@ -1132,9 +1132,6 @@ class StudioTools(Toolkit):
         elif kind == "schema":
             value = self.registry.get_schema(name)
             code = "schema_not_found"
-        elif kind == "memory_manager":
-            value = self.registry.get_memory_manager(name)
-            code = "memory_manager_not_found"
         elif kind == "learning":
             value = self.registry.get_learning(name)
             code = "learning_not_found"
@@ -1717,8 +1714,6 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
-        memory_manager_id: Optional[str] = None,
-        enable_agentic_memory: Optional[bool] = None,
         learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
@@ -1789,17 +1784,6 @@ class StudioTools(Toolkit):
                     return err
                 component.reasoning_model = model
             replaced_keys.add("reasoning_model")
-        if memory_manager_id is not None:
-            if memory_manager_id == "":
-                component.memory_manager = None
-            else:
-                manager, err = self._resolve_registry_ref("memory_manager", memory_manager_id)
-                if err is not None:
-                    return err
-                component.memory_manager = manager
-            replaced_keys.add("memory_manager")
-        if enable_agentic_memory is not None:
-            component.enable_agentic_memory = enable_agentic_memory
         if learning_name is not None:
             if learning_name == "":
                 component.learning = None
@@ -1866,8 +1850,6 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
-        memory_manager_id: Optional[str] = None,
-        enable_agentic_memory: Optional[bool] = None,
         learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
@@ -1900,8 +1882,6 @@ class StudioTools(Toolkit):
             knowledge_name (Optional[str]): Exact name from list_knowledge.
             output_schema_name (Optional[str]): Exact name from list_schemas.
             reasoning_model_id (Optional[str]): Exact model id used for reasoning.
-            memory_manager_id (Optional[str]): Registered memory manager id.
-            enable_agentic_memory (Optional[bool]): Give the agent user-memory tools.
             learning_name (Optional[str]): Exact name from list_learning; wires the
                 agent to that shared learning machine.
             metadata (Optional[Dict]): Arbitrary metadata stored on the component.
@@ -1948,8 +1928,6 @@ class StudioTools(Toolkit):
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
                 reasoning_model_id=reasoning_model_id,
-                memory_manager_id=memory_manager_id,
-                enable_agentic_memory=enable_agentic_memory,
                 learning_name=learning_name,
                 metadata=metadata,
             )
@@ -2467,8 +2445,6 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
-        memory_manager_id: Optional[str] = None,
-        enable_agentic_memory: Optional[bool] = None,
         learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
@@ -2502,8 +2478,6 @@ class StudioTools(Toolkit):
             knowledge_name (Optional[str]): Exact name from list_knowledge; "" detaches.
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
             reasoning_model_id (Optional[str]): Reasoning model id; "" detaches.
-            memory_manager_id (Optional[str]): Memory manager id; "" detaches.
-            enable_agentic_memory (Optional[bool]): User-memory tools on or off.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard against the
@@ -2537,8 +2511,6 @@ class StudioTools(Toolkit):
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
                 reasoning_model_id=reasoning_model_id,
-                memory_manager_id=memory_manager_id,
-                enable_agentic_memory=enable_agentic_memory,
                 learning_name=learning_name,
                 metadata=metadata,
             )
@@ -3435,8 +3407,6 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
-        memory_manager_id: Optional[str] = None,
-        enable_agentic_memory: Optional[bool] = None,
         learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
@@ -3462,8 +3432,6 @@ class StudioTools(Toolkit):
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
             reasoning_model_id=reasoning_model_id,
-            memory_manager_id=memory_manager_id,
-            enable_agentic_memory=enable_agentic_memory,
             learning_name=learning_name,
             metadata=metadata,
             _agno_run_context=_agno_run_context,
@@ -3556,8 +3524,6 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
-        memory_manager_id: Optional[str] = None,
-        enable_agentic_memory: Optional[bool] = None,
         learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
@@ -3584,8 +3550,6 @@ class StudioTools(Toolkit):
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
             reasoning_model_id=reasoning_model_id,
-            memory_manager_id=memory_manager_id,
-            enable_agentic_memory=enable_agentic_memory,
             learning_name=learning_name,
             metadata=metadata,
             expected_version=expected_version,
