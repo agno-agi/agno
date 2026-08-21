@@ -38,6 +38,8 @@ def nested_model_dump(value):
     Handles nested structures: dicts, lists, tuples, sets.
     Also handles plain classes with __dict__ (e.g. Todoist SDK).
     """
+    from enum import Enum
+
     from pydantic import BaseModel
 
     if isinstance(value, BaseModel):
@@ -49,6 +51,10 @@ def nested_model_dump(value):
         return {k: nested_model_dump(v) for k, v in value.items()}
     elif isinstance(value, (list, tuple, set)):
         return [nested_model_dump(item) for item in value]
+    # Enums - extract value before __dict__ check (enums have __dict__ but it's not useful)
+    elif isinstance(value, Enum):
+        v = value.value
+        return v if isinstance(v, (str, int, float, bool, type(None))) else value.name
     # Plain objects with __dict__ (e.g. Todoist SDK)
     elif hasattr(value, "__dict__") and not isinstance(value, type):
         return {k: nested_model_dump(v) for k, v in value.__dict__.items() if not k.startswith("_")}
