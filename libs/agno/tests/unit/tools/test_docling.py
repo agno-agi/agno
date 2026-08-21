@@ -196,7 +196,7 @@ class TestDoclingToolsConversion:
     def test_convert_empty_source(self, mock_converter):
         tools = DoclingTools()
         result = tools.convert_to_markdown("")
-        assert result == "Error: No source provided"
+        assert json.loads(result) == {"error": "No source provided"}
 
     def test_convert_exception(self, mock_converter):
         tools = DoclingTools()
@@ -204,7 +204,7 @@ class TestDoclingToolsConversion:
 
         result = tools.convert_to_markdown("/tmp/doc.pdf")
 
-        assert result == "Error converting document: boom"
+        assert json.loads(result) == {"error": "Error converting document: boom"}
 
     def test_convert_to_json_truncation_keeps_valid_json(self, mock_converter):
         tools = DoclingTools(max_chars=8)
@@ -233,7 +233,9 @@ class TestDoclingToolsConversion:
 
         result = tools.convert_string_content("something", source_format="pdf", output_format="markdown")
 
-        assert "Error converting string content" in result
+        parsed = json.loads(result)
+        assert "error" in parsed
+        assert "Error converting string content" in parsed["error"]
 
     def test_list_supported_parsers_returns_json(self, mock_converter):
         tools = DoclingTools()
