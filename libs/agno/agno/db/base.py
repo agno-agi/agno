@@ -46,6 +46,50 @@ DELETED_CONFIG_STAGE = "_deleted"
 PIN_LINK_KINDS = ("member", "step_agent", "step_team", "step_workflow")
 
 
+def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
+    """The catalog-row fields a config version owns, for projecting onto the
+    component row whenever that version is (or becomes) the live one.
+
+    This is the single statement of the projection rule; the adapters' publish
+    transaction, the REST pointer-move path and the StudioTools row sync all
+    apply it. A key in the result must be written to the row; a key it omits
+    must be left alone. ``description`` and ``metadata`` are also first-class
+    columns set through the component routes and never written into a config,
+    so writing an empty value for a key the config does not carry would
+    destroy row-only data no version can restore.
+
+    * ``name``: owned when it is not None.
+    * ``description``: owned on key PRESENCE. Writers that go through
+      ``upsert_component`` read None as "leave the column alone", so a
+      present-but-empty description is returned as ``""`` to actually clear.
+    * ``metadata``: owned when it is a mapping, UNLESS its only content is the
+      platform's provenance stamp (the ``"studio"`` key) and the version does
+      not carry the ``metadata_authored`` marker. The stamp is written into
+      every config a scoped actor saves, so stamp-only metadata says nothing
+      about whether this version authored the metadata field; treating it as
+      owned would overwrite row-only metadata on every scoped publish. An
+      explicit empty dict is a deliberate clear and IS owned. A metadata value
+      that is not a mapping is SKIPPED, neither raising nor claiming the
+      column: such a value cannot be a row's metadata, so the projection does
+      not own it and the column is left alone exactly as it is for every other
+      key this projection omits. Probing an arbitrary value for keys must
+      never turn a write into an error, and a value that cannot be stored must
+      never reach the column - it would make the component, and every listing
+      that includes it, unreadable. The config keeps whatever the caller sent.
+    """
+    projection: Dict[str, Any] = {}
+    if config.get("name") is not None:
+        projection["name"] = config["name"]
+    if "description" in config:
+        projection["description"] = config.get("description") or ""
+    metadata = config.get("metadata")
+    if isinstance(metadata, dict):
+        stamp_only = bool(metadata) and all(key == "studio" for key in metadata)
+        if config.get("metadata_authored") or not stamp_only:
+            projection["metadata"] = metadata
+    return projection
+
+
 class ComponentVersionConflictError(ValueError):
     """A compare-and-set guard did not match the stored version state.
 
@@ -277,6 +321,7 @@ class BaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
+        self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -1003,7 +1048,7 @@ class BaseDb(ABC):
         Args:
             component_id: The component ID.
             component_type: Optional filter by type (agent|team|workflow).
-            user_id: If set, only return the component if owned by this user or shared.
+            user_id: If set, only return the component if owned by this user, unowned (shared), or published.
             include_deleted: Also return an archived (soft-deleted) row. Archived
                 ids are reserved, so an existence check must pass True.
 
@@ -1120,7 +1165,7 @@ class BaseDb(ABC):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
-            user_id: If set, only list components owned by this user or shared.
+            user_id: If set, only list components owned by this user, unowned (shared), or published.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 
@@ -1782,6 +1827,31 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Tool Results (Optional) ---
+    # Optional: the index table for result offloading (agno_tool_results).
+    # Implemented by PostgreSQL and SQLite; on any other backend the agent
+    # runs with offloading off.
+
+    def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        """Insert or replace one tool-result index row."""
+        raise NotImplementedError
+
+    def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        """Get one tool-result index row by id."""
+        raise NotImplementedError
+
+    def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's tool-result rows, newest first."""
+        raise NotImplementedError
+
+    def delete_tool_results(self, result_ids: List[str]) -> int:
+        """Delete index rows by id. Returns the number deleted."""
+        raise NotImplementedError
+
+    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        """Rows whose expires_at has passed."""
+        raise NotImplementedError
+
     # --- Approvals (Optional) ---
     # These methods are optional. Override in subclasses to enable approval persistence.
 
@@ -2031,6 +2101,7 @@ class AsyncBaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
+        self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -3120,6 +3191,31 @@ class AsyncBaseDb(ABC):
         Returns:
             Tuple of (runs, total_count)
         """
+        raise NotImplementedError
+
+    # --- Tool Results (Optional) ---
+    # Optional: the index table for result offloading (agno_tool_results).
+    # Implemented by PostgreSQL and SQLite; on any other backend the agent
+    # runs with offloading off.
+
+    async def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        """Insert or replace one tool-result index row."""
+        raise NotImplementedError
+
+    async def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        """Get one tool-result index row by id."""
+        raise NotImplementedError
+
+    async def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's tool-result rows, newest first."""
+        raise NotImplementedError
+
+    async def delete_tool_results(self, result_ids: List[str]) -> int:
+        """Delete index rows by id. Returns the number deleted."""
+        raise NotImplementedError
+
+    async def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        """Rows whose expires_at has passed."""
         raise NotImplementedError
 
     # --- Approvals (Optional) ---

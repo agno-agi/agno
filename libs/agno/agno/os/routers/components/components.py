@@ -14,9 +14,11 @@ from agno.db.base import (
     ComponentDraftRequiredError,
     ComponentLastConfigError,
     ComponentVersionConflictError,
+    project_config_identity,
 )
 from agno.db.base import ComponentType as DbComponentType
 from agno.db.utils import DB_TABLE_NAME_KEYS
+from agno.exceptions import AgnoError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.schema import (
@@ -38,7 +40,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import draft_preview_identity, may_read_draft_configs
+from agno.os.utils import AgnoHTTPException, draft_preview_identity, may_read_draft_configs
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_component_id_from_name, hash_string_sha256, validate_component_id
@@ -355,9 +357,18 @@ def _validate_pinned_versions_readable(
     draft into its own component and read it back through the detail routes --
     the disclosure ``GET /components/{id}/configs/{version}`` refuses.
 
-    The refusal is that route's, verbatim, so the two agree and neither
-    becomes an oracle for the other. A version that does not exist is left
-    alone: the adapter's own pin validation answers that.
+    The refusal is that route's, verbatim, and covers everything that route
+    refuses: to a caller who may not read this child's drafts, a draft
+    version, a tombstoned version, and a version that was never created all
+    answer with the same 404. Any split between those cases -- such as
+    allowing the write when no config row exists -- turns the write path into
+    an oracle for which version numbers hold the owner's unpublished work.
+
+    A child with no component row at all (code-defined) is out of scope. For
+    a caller who may read the child's drafts -- its owner, an unowned shared
+    row, or a privileged caller -- a version with no config row is left
+    alone: whether a pin may dangle on your own component is the adapter's
+    business, not this rule's.
     """
     if not links:
         return
@@ -380,10 +391,18 @@ def _validate_pinned_versions_readable(
             child_config = db.get_config(component_id=child_id, version=child_version)
         except NotImplementedError:
             return
-        if not isinstance(child_config, dict):
+        if isinstance(child_config, dict) and child_config.get("stage") == "published":
             continue
-        if child_config.get("stage") != "published" and not may_read_draft_configs(child_row, actor, privileged):
-            raise HTTPException(status_code=404, detail=f"Config {child_id} v{child_version} not found")
+        if may_read_draft_configs(child_row, actor, privileged):
+            # The caller may read this child at draft depth, so nothing here
+            # is withheld from it; a pin at a version with no config row yet
+            # is the adapter's business, not this rule's.
+            continue
+        # Draft, tombstoned, or never created: the direct read answers this
+        # caller with one 404 for all three, and the refusal here must be the
+        # same single answer -- a write that succeeds exactly when the version
+        # is absent would enumerate the owner's unpublished version numbers.
+        raise HTTPException(status_code=404, detail=f"Config {child_id} v{child_version} not found")
 
 
 def _redact_db_connection(value: Any) -> Any:
@@ -642,27 +661,13 @@ def _project_live_version(
     config = row.get("config") if isinstance(row, dict) else None
     if not isinstance(config, dict):
         return {}
-    # Present-but-empty is a CLEARED field and must be projected explicitly,
-    # because the adapters read None as "leave this column alone" - otherwise
-    # the row keeps describing the version that used to be live. Absent is
-    # different: description and metadata are also first-class columns set
-    # through POST/PATCH /components and never written into a config, so
-    # projecting an empty value for a key the config does not carry would
-    # destroy row data no version can restore.
-    # The adapter's own publish projection is the contract to mirror: name when
-    # it is not None, description on key PRESENCE, metadata when it is not
-    # None. The one difference is the mechanism - this projection is applied
-    # through upsert_component, which reads None as "leave the column alone",
-    # so a present-but-empty description is projected as "" to actually clear.
-    projection: Dict[str, Any] = {}
-    if config.get("name") is not None:
-        projection["name"] = config["name"]
-    elif component.get("name") is not None:
+    # One shared statement of which row fields the live version owns; a key
+    # the projection omits is row-only and must be left alone. This path
+    # writes through upsert_component, which reads None as "leave the column
+    # alone", so the helper returns a present-but-empty description as "".
+    projection = project_config_identity(config)
+    if "name" not in projection and component.get("name") is not None:
         projection["name"] = component["name"]
-    if "description" in config:
-        projection["description"] = config.get("description") or ""
-    if config.get("metadata") is not None:
-        projection["metadata"] = config["metadata"]
     return projection
 
 
@@ -716,8 +721,29 @@ def attach_routes(
             start_time_ms = time.time() * 1000
             offset = (page - 1) * limit
 
-            # Exclude components whose IDs are owned by the registry
-            exclude_ids = registry.get_all_component_ids() if registry else None
+            # Exclude components whose IDs are owned by the registry. The
+            # exclusion is keyed on id alone, so it must be narrowed to the
+            # type being listed: ids are unique per type, not across types,
+            # and the untyped union would let a code-defined workflow hide a
+            # stored agent row that merely shares its id.
+            if registry is None:
+                exclude_ids = None
+            elif component_type == ComponentType.AGENT:
+                exclude_ids = registry.get_agent_ids()
+            elif component_type == ComponentType.TEAM:
+                exclude_ids = registry.get_team_ids()
+            elif component_type == ComponentType.WORKFLOW:
+                exclude_ids = registry.get_workflow_ids()
+            else:
+                # No type filter, so the exclusion is one flat set of ids and
+                # cannot tell same-type shadowing (intended: the code object
+                # is what /agents|/teams|/workflows renders, so the stored row
+                # is dead weight) from cross-type collision (not intended: a
+                # code workflow hiding a stored AGENT row that the typed
+                # listing above returns). Both are in this set. Narrowing it
+                # needs type-aware exclusion pushed through list_components,
+                # which is a change to the adapters, not to this route.
+                exclude_ids = registry.get_all_component_ids()
 
             components, total_count = db.list_components(
                 component_type=DbComponentType(component_type.value) if component_type else None,
@@ -742,6 +768,8 @@ def attach_routes(
             )
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error listing components: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -844,6 +872,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error creating component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -873,6 +903,8 @@ def attach_routes(
             return ComponentResponse(**component)
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error getting component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -926,6 +958,10 @@ def attach_routes(
                 update_kwargs["metadata"] = body.metadata
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
+            # Whether this request changes anything of its own decides how a
+            # failed write below is reported, so it is read before the
+            # projection adds its fields.
+            sets_own_fields = len(update_kwargs) > 1
 
             # Pointer moves go through set_current_version, never through
             # upsert_component: it enforces the published-only dispatch
@@ -945,11 +981,34 @@ def attach_routes(
                         detail=f"Config {component_id} v{body.current_version} not found",
                     )
                 # The row's identity follows the version that is now live,
-                # except where this request sets those fields itself.
-                for field, value in _project_live_version(db, component_id, scoped_user_id).items():
-                    update_kwargs.setdefault(field, value)
+                # except where this request sets those fields itself. The
+                # pointer move above is already committed, so a failure to read
+                # the live version back leaves the row stale rather than failing
+                # a request that already succeeded.
+                try:
+                    for field, value in _project_live_version(db, component_id, scoped_user_id).items():
+                        update_kwargs.setdefault(field, value)
+                except Exception as e:
+                    log_warning(
+                        f"Moved {component_id} to v{body.current_version} but could not re-project its row: {e}"
+                    )
 
-            component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
+            # A body that carries nothing but current_version leaves this write
+            # holding the projection alone, so it IS the re-projection of a
+            # pointer move that has already committed and must not fail the
+            # request any more than the set-current route's does. A body that
+            # also sets fields of its own is a real update, and a failure there
+            # is the caller's to hear.
+            try:
+                component = db.upsert_component(**update_kwargs, user_id=scoped_user_id)
+            except Exception as e:
+                if sets_own_fields or body.current_version is None:
+                    raise
+                log_warning(f"Moved {component_id} to v{body.current_version} but could not re-project its row: {e}")
+                moved_row = db.get_component(component_id, user_id=scoped_user_id)
+                if moved_row is None:
+                    raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+                component = moved_row
             return ComponentResponse(**component)
         except HTTPException:
             raise
@@ -962,6 +1021,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error updating component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1020,6 +1081,8 @@ def attach_routes(
             raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error deleting component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1062,6 +1125,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error restoring component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1092,6 +1157,8 @@ def attach_routes(
             return [_config_response(c, component_row, scoped_user_id) for c in configs]
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error listing configs: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1155,6 +1222,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error creating config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1222,6 +1291,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error updating config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1250,6 +1321,8 @@ def attach_routes(
             return _config_response(config, component_row, scoped_user_id)
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error getting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1289,6 +1362,8 @@ def attach_routes(
             return _config_response(config, component_row, scoped_user_id)
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error getting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1326,6 +1401,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error deleting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1366,13 +1443,15 @@ def attach_routes(
 
             # The pointer moved, so the row's name/description/metadata must
             # follow it. The rollback itself is committed either way: a failure
-            # here leaves the row stale, which must not fail the request.
-            projection = _project_live_version(db, component_id, scoped_user_id)
-            if projection:
-                try:
+            # here leaves the row stale, which must not fail the request - which
+            # means reading the live version back has to be inside the guard
+            # too, not only the write it feeds.
+            try:
+                projection = _project_live_version(db, component_id, scoped_user_id)
+                if projection:
                     db.upsert_component(component_id=component_id, **projection, user_id=scoped_user_id)
-                except Exception as e:
-                    log_warning(f"Rolled back {component_id} to v{version} but could not re-project its row: {e}")
+            except Exception as e:
+                log_warning(f"Rolled back {component_id} to v{version} but could not re-project its row: {e}")
 
             # Fetch and return updated component
             component = db.get_component(component_id, user_id=scoped_user_id)
@@ -1390,6 +1469,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error setting current config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")

@@ -14,7 +14,6 @@ from typing import (
     Type,
     Union,
     cast,
-    get_args,
 )
 from uuid import uuid4
 
@@ -25,16 +24,17 @@ if TYPE_CHECKING:
 
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
+from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import Followups, RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, Followups, RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
-from agno.run.team import TeamRunOutputEvent
+from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutputEvent
 from agno.session import AgentSession
 from agno.tools.function import Function
 from agno.utils.events import (
@@ -1067,6 +1067,7 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        **result_store_kwargs(agent),
         after_tool_results=build_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1227,6 +1228,7 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        **result_store_kwargs(agent),
         after_tool_results=abuild_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1359,12 +1361,12 @@ def handle_model_response_chunk(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> Iterator[RunOutputEvent]:
-    from agno.run.workflow import WorkflowRunOutputEvent
+    from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 
     if (
-        isinstance(model_response_event, tuple(get_args(RunOutputEvent)))
-        or isinstance(model_response_event, tuple(get_args(TeamRunOutputEvent)))
-        or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent)))
+        isinstance(model_response_event, RUN_OUTPUT_EVENT_TYPES)
+        or isinstance(model_response_event, TEAM_RUN_OUTPUT_EVENT_TYPES)
+        or isinstance(model_response_event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES)
     ):
         if model_response_event.event == RunEvent.custom_event:  # type: ignore
             model_response_event.agent_id = agent.id  # type: ignore

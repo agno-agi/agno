@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.agent.agent import Agent, get_agent_by_id, get_agents
+from agno.agent.agent import _COMPONENT_LIST_PAGE, Agent, get_agent_by_id, get_agents
 from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
 
@@ -967,7 +967,7 @@ class TestGetAgents:
                 {"component_id": "agent-1"},
                 {"component_id": "agent-2"},
             ],
-            None,
+            2,
         )
         mock_db.get_config.side_effect = [
             {"config": {"id": "agent-1", "name": "Agent 1"}},
@@ -987,14 +987,18 @@ class TestGetAgents:
         get_agents(db=mock_db)
 
         mock_db.list_components.assert_called_once_with(
-            component_type=ComponentType.AGENT, exclude_component_ids=None, user_id=None
+            component_type=ComponentType.AGENT,
+            exclude_component_ids=None,
+            user_id=None,
+            limit=_COMPONENT_LIST_PAGE,
+            offset=0,
         )
 
     def test_get_agents_with_registry(self, mock_db):
         """Test get_agents passes registry to from_dict."""
         mock_db.list_components.return_value = (
             [{"component_id": "tools-agent"}],
-            None,
+            1,
         )
         mock_db.get_config.return_value = {"config": {"id": "tools-agent", "tools": [{"name": "search"}]}}
 
@@ -1020,7 +1024,7 @@ class TestGetAgents:
                 {"component_id": "valid-agent"},
                 {"component_id": "invalid-agent"},
             ],
-            None,
+            2,
         )
         mock_db.get_config.side_effect = [
             {"config": {"id": "valid-agent", "name": "Valid"}},
@@ -1038,7 +1042,7 @@ class TestGetAgents:
         mock_db.id = "test-db"
         mock_db.list_components.return_value = (
             [{"component_id": "agent-1"}],
-            None,
+            1,
         )
         mock_db.get_config.return_value = {
             "config": {
@@ -1629,3 +1633,104 @@ class TestMemoryManagerReferenceShapes:
         warnings = " ".join(str(c) for c in mock_warn.call_args_list)
         assert "mm-1" in warnings
         assert "mm-2" in warnings
+
+
+# =============================================================================
+# get_agents() Pagination Tests
+# =============================================================================
+
+
+class TestGetAgentsPagination:
+    """get_agents must page past the DB's default list_components limit.
+
+    Published components from other users share the catalog, so without
+    paging they crowd a user's own agents out of the first page.
+    """
+
+    @pytest.fixture
+    def sqlite_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        return SqliteDb(db_file=str(tmp_path / "agents_pagination.db"))
+
+    def _create(self, db, component_id, user_id):
+        db.create_component_with_config(
+            component_id=component_id,
+            component_type=ComponentType.AGENT,
+            name=component_id,
+            config={"name": component_id},
+            stage="published",
+            user_id=user_id,
+        )
+
+    def test_returns_all_own_agents_beyond_default_page(self, sqlite_db):
+        for i in range(25):
+            self._create(sqlite_db, f"own-agent-{i:02d}", "owner")
+
+        agents = get_agents(db=sqlite_db, user_id="owner")
+
+        assert {a.id for a in agents} == {f"own-agent-{i:02d}" for i in range(25)}
+
+    def test_own_agents_not_crowded_out_by_foreign_published(self, sqlite_db):
+        # Own rows first (older), foreign rows second (newer): the listing
+        # orders created_at DESC with component_id ASC ties, so the foreign
+        # rows fill the first page either way.
+        for i in range(5):
+            self._create(sqlite_db, f"z-own-agent-{i}", "owner")
+        for i in range(25):
+            self._create(sqlite_db, f"a-pub-agent-{i:02d}", "someone-else")
+
+        agents = get_agents(db=sqlite_db, user_id="owner")
+
+        ids = {a.id for a in agents}
+        assert {f"z-own-agent-{i}" for i in range(5)} <= ids
+        assert len(agents) == 30
+
+    def test_cap_truncates_with_single_warning(self, mock_db, monkeypatch):
+        import agno.agent.agent as agent_module
+
+        monkeypatch.setattr(agent_module, "_COMPONENT_LIST_PAGE", 5)
+        monkeypatch.setattr(agent_module, "_COMPONENT_LIST_CAP", 10)
+        mock_warn = MagicMock()
+        monkeypatch.setattr(agent_module, "log_warning", mock_warn)
+
+        def fake_list_components(**kwargs):
+            rows = [{"component_id": f"agent-{kwargs['offset'] + i:03d}"} for i in range(kwargs["limit"])]
+            return rows, 50
+
+        mock_db.list_components.side_effect = fake_list_components
+        mock_db.get_config.side_effect = lambda component_id: {"config": {"name": component_id}}
+
+        agents = get_agents(db=mock_db, user_id="owner")
+
+        assert len(agents) == 10
+        mock_warn.assert_called_once()
+        assert "10 of 50" in mock_warn.call_args[0][0]
+
+    def test_a_total_that_is_not_a_count_returns_the_page_it_read(self, mock_db):
+        """BaseDb documents an int total, but nothing enforces it and the
+        baseline discarded the value entirely, so an adapter that reports no
+        total worked. Comparing the scan against it raises instead, and the
+        caller's own error handler turns that into an EMPTY listing -- the
+        silent-truncation failure the paging was added to remove."""
+        mock_db.list_components.return_value = (
+            [{"component_id": "agent-1"}, {"component_id": "agent-2"}],
+            None,
+        )
+        mock_db.get_config.side_effect = lambda component_id: {"config": {"id": component_id, "name": component_id}}
+
+        agents = get_agents(db=mock_db)
+
+        assert [a.id for a in agents] == ["agent-1", "agent-2"]
+
+    def test_paging_advances_the_offset_past_the_first_block(self, sqlite_db):
+        # A loop stuck at offset=0 still terminates (len >= total after two
+        # identical pages) but returns duplicates and misses the tail; unique
+        # recovery of 120 rows requires the offset to actually advance.
+        for i in range(120):
+            self._create(sqlite_db, f"own-agent-{i:03d}", "owner")
+
+        loaded = get_agents(db=sqlite_db, user_id="owner")
+
+        assert len(loaded) == 120
+        assert {item.id for item in loaded} == {f"own-agent-{i:03d}" for i in range(120)}

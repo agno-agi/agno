@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import event, text
 
 from agno.db.sqlite import SqliteDb
+from agno.exceptions import SchemaMismatchError
 
 
 @pytest.fixture
@@ -232,7 +233,7 @@ def test_same_physical_name_for_two_types_fails_loudly():
     tmp = tempfile.mkdtemp()
     shared = SqliteDb(db_file=f"{tmp}/t.db", session_table="agno_shared", memory_table="agno_shared")
     shared._get_table(table_type="sessions", create_table_if_not_found=True)
-    with pytest.raises(ValueError, match="invalid schema"):
+    with pytest.raises(SchemaMismatchError, match="invalid schema"):
         shared._get_table(table_type="memories", create_table_if_not_found=True)
 
 

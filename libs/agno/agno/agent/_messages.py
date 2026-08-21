@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import string
+from collections import ChainMap
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -60,12 +63,13 @@ def format_message_with_state_variables(
     run_context: Optional[RunContext] = None,
 ) -> Any:
     """Format a message with the session state variables from run_context."""
-    import re
-    import string
-    from collections import ChainMap
-    from copy import deepcopy
-
     if not isinstance(message, str):
+        return message
+
+    # A message without "{" cannot contain a {var} placeholder, and without "$"
+    # Template.safe_substitute is an identity transform - skip the regex and
+    # template machinery entirely for the common plain-text case.
+    if "{" not in message and "$" not in message:
         return message
 
     # Extract values from run_context
@@ -82,7 +86,7 @@ def format_message_with_state_variables(
         {"user_id": user_id} if user_id is not None else {},
     )
 
-    converted_msg = deepcopy(message)
+    converted_msg = message
     for var_name in format_variables.keys():
         # Only convert standalone {var_name} patterns, not nested ones
         pattern = r"\{" + re.escape(var_name) + r"\}"
@@ -258,6 +262,11 @@ def get_system_message(
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
+    # Tell the model what a result envelope is and how to read the rest
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
@@ -559,6 +568,11 @@ async def aget_system_message(
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
+    # Tell the model what a result envelope is and how to read the rest
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
@@ -1083,6 +1097,15 @@ async def aget_user_message(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_media_storage(agent: Agent) -> Optional[Any]:
+    """The agent's own media storage, falling back to the team's.
+
+    A member reads its history out of the shared team session, whose rows were written through
+    the team's backend, so a member with no backend of its own cannot resolve those references.
+    """
+    return agent.media_storage or getattr(getattr(agent, "_team", None), "media_storage", None)
+
+
 def get_run_messages(
     agent: Agent,
     *,
@@ -1282,6 +1305,13 @@ def get_run_messages(
     if user_message is not None:
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
+
+    # Read offloaded media back on every message headed for the model: a member's history arrives as input.
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, media_storage)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1489,13 +1519,20 @@ async def aget_run_messages(
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
 
+    # Read offloaded media back on every message headed for the model: a member's history arrives as input.
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, media_storage)
+
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
 
     return run_messages
 
 
-def get_continue_run_messages(
+def _build_continue_run_messages(
     agent: Agent,
     input: List[Message],
     session: Optional[AgentSession] = None,
@@ -1588,6 +1625,43 @@ def get_continue_run_messages(
     if run_context is not None:
         run_context.messages = run_messages.messages
 
+    return run_messages
+
+
+def get_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Build the messages that resume a paused run, reading offloaded media back first.
+
+    The paused run's own messages come off the database carrying a reference and no bytes.
+    """
+    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, media_storage)
+    return run_messages
+
+
+async def aget_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Async variant of :func:`get_continue_run_messages`."""
+    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, media_storage)
     return run_messages
 
 
@@ -1702,6 +1776,7 @@ def get_relevant_docs_from_knowledge(
 
     if num_documents is None and resolved_knowledge is not None:
         num_documents = getattr(resolved_knowledge, "max_results", None)
+
     # Validate the filters against known valid filter keys
     if resolved_knowledge is not None and filters is not None:
         if validate_filters:

@@ -86,7 +86,10 @@ arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-pr
 langfuse = ["langfuse"]
 
 # Dependencies for Models
-anthropic = ["anthropic"]
+# >=0.77.0: the first release accepting output_config on the stable messages endpoint
+# as well as the beta one. Structured output rides inside it, and anthropic 1.0.0
+# dropped the output_format parameter that carried it before.
+anthropic = ["anthropic>=0.77.0"]
 aws-bedrock = ["boto3", "aioboto3"]
 azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
@@ -116,6 +119,14 @@ arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
+# ipykernel 7.3 and jupyter_client 8.9 require Python >= 3.10; the markers keep
+# `pip install agno[code]` (and the tools/tests chains) resolvable on 3.9,
+# where importing agno.tools.code then raises its readable ImportError.
+code = [
+  "ipykernel>=7.3.0; python_version >= '3.10'",
+  "jupyter_client>=8.9.1; python_version >= '3.10'",
+  "dill>=0.4.1",
+]
 # Pinned below 5.0: that release split Confluence into Cloud and Server classes and left the
 # base ``Confluence`` with no space or page methods, so ConfluenceTools raises AttributeError.
 # Lift once the tools are ported to the split classes.
@@ -177,6 +188,7 @@ gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
 postgres = ["sqlalchemy", "psycopg[binary]"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
+s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]
@@ -270,6 +282,7 @@ tools = [
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
   "agno[browserbase]",
   "agno[cartesia]",
+  "agno[code]",
   "agno[confluence]",
   # "agno[crawl4ai]",  # Excluded: depends on litellm, which was compromised on PyPI (March 24, 2026)
   "agno[daytona]",
@@ -327,10 +340,11 @@ storage = [
   "agno[async-mongo]",
   "agno[async-postgres]",
   "agno[firestore]",
-  "agno[gcs]",
+  "agno[gcs]",  # also used by GCS media storage (gcs serves both roles)
   "agno[mysql]",
   "agno[postgres]",
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
+  "agno[s3]",
   "agno[sql]",
   "agno[sqlite]",
   "agno[valkey]",  # also listed under vectordbs (valkey serves both roles)
@@ -473,6 +487,9 @@ include = ["LICENSE"]
 log_cli = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "integration: tests that need live services (kernels, databases)",
+]
 
 [tool.ruff]
 line-length = 120
@@ -522,6 +539,7 @@ module = [
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",
+  "dill.*",
   "superserve.*",
   "discord.*",
   "docker.*",
@@ -532,6 +550,8 @@ module = [
   "ddgs.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
+  "ipykernel.*",
+  "jupyter_client.*",
   "eth_account.*",
   "exa_py.*",
   "seltz.*",

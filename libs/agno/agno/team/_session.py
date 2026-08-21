@@ -274,12 +274,12 @@ def _storage_view_of_spared_run(
     if member is None:
         member = _resolve_spared_member(team, member_response)
     if member is None:
-        # The owning member cannot be resolved (e.g. callable Team.members).
-        # Store the strictest view: every storage flag treated as off, with the
-        # paused-aware tool scrub so the pending call stays resumable.
+        # The owning member cannot be resolved (e.g. callable Team.members). Store the strictest
+        # view: every storage flag treated as off, with the paused-aware tool scrub so the pending
+        # call stays resumable. References to uploaded objects stay so they remain deletable.
         view = copy(member_response)
         isolate_media_scrub_targets(view)
-        scrub_media_from_run_output(view)
+        scrub_media_from_run_output(view, keep_references=team.media_storage is not None and team.store_media)
         _scrub_tool_results_keeping_unresolved(view)
         scrub_history_messages_from_run_output(view)
         return view
@@ -783,8 +783,11 @@ def _accumulate_member_metrics(
 # ---------------------------------------------------------------------------
 
 
-def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Delete the current session and save to storage.
+
+    ``delete_media`` deletes the session's offloaded objects along with it.
+    """
     from agno.team._init import _has_async_db
 
     if _has_async_db(team):
@@ -793,19 +796,75 @@ def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None)
     if team.db is None:
         return
 
+    keys: List[str] = []
+    storage = team.media_storage
+    if delete_media:
+        from agno.media.storage.base import AsyncMediaStorage
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured, skipping media deletion")
+        else:
+            # Refused before the row is deleted: afterwards nothing would be left pointing at the object.
+            if isinstance(storage, AsyncMediaStorage):
+                raise ValueError(
+                    "Cannot use sync delete_session() with an AsyncMediaStorage. Use adelete_session() instead."
+                )
+            try:
+                session = team.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+    elif storage is not None:
+        log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
     team.db.delete_session(session_id=session_id, user_id=user_id)
 
+    if keys and storage is not None:
+        from agno.utils.media_offload import delete_media_keys
 
-async def adelete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+        delete_media_keys(keys, storage)  # type: ignore[arg-type]
+
+
+async def adelete_session(team: "Team", session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Async variant of :func:`delete_session`."""
     from agno.team._init import _has_async_db
 
     if team.db is None:
         return
+
+    keys: List[str] = []
+    storage = team.media_storage
+    if delete_media:
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured, skipping media deletion")
+        else:
+            try:
+                if _has_async_db(team):
+                    session = await team.db.get_session(session_id=session_id, user_id=user_id)  # type: ignore
+                else:
+                    session = team.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+    elif storage is not None:
+        log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
     if _has_async_db(team):
         await team.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
     else:
         team.db.delete_session(session_id=session_id, user_id=user_id)
+
+    if keys and storage is not None:
+        from agno.utils.media_offload import adelete_media_keys
+
+        await adelete_media_keys(keys, storage)
 
 
 # ---------------------------------------------------------------------------

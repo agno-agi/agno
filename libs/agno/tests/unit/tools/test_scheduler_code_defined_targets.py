@@ -389,7 +389,10 @@ class TestTheDeploymentActuallyWiresTheProbe:
             schedules=True,
         )
         assert studio._scheduler_tools is not None
-        assert studio._scheduler_tools.include_agents is studio.include_agents
+        # The embedded scheduler sees the same set the run tools resolve from,
+        # through live views (explicit lists, else the registry) - raw-list
+        # identity would go stale the moment the registry fills in later.
+        assert list(studio._scheduler_tools.include_agents) == list(studio.include_agents or [])
         _draft_only(db, "news-agent")
         probe = code_defined_probe(
             studio._scheduler_tools.include_agents,
