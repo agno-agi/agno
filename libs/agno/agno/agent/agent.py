@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -45,7 +46,9 @@ from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
-from agno.offload.store import ResultStore
+
+if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (

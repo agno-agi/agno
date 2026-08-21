@@ -130,15 +130,4 @@ def _storage_key(backend: Any) -> Tuple[Any, ...]:
     )
 
 
-def result_store_kwargs(owner: Any) -> dict:
-    """The ``result_store=`` kwarg for a model call, or nothing at all.
-
-    With offloading off the kwarg is omitted entirely, so a Model subclass
-    that overrides ``response`` with an older parameter list keeps working
-    until its owner actually opts into offloading.
-    """
-    store = getattr(owner, "_result_store", None)
-    return {"result_store": store} if store is not None else {}
-
-
-__all__ = ["build_result_store", "result_store_kwargs"]
+__all__ = ["build_result_store"]

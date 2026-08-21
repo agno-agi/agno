@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.mode import TeamMode
     from agno.team.team import Team
+    from agno.offload.store import ResultStore
 
 from os import getenv
 from typing import (
@@ -38,7 +39,6 @@ from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.utils import get_model
-from agno.offload.store import ResultStore
 from agno.run.agent import RunEvent
 from agno.run.team import (
     TeamRunEvent,
@@ -591,6 +591,8 @@ def _set_session_summary_manager(team: "Team") -> None:
 
 def _bind_member_result_store(team: "Team", member: Union[Agent, "Team"]) -> None:
     """Give ``member`` the store it runs with inside ``team``."""
+    from agno.offload.store import ResultStore
+
     inherited = member._inherited_result_store
     declares_own_store = isinstance(member.offload_tool_results, ResultStore)
     if not (
@@ -857,13 +859,17 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
     # Offloading and tool-result compression cannot run together: compression
     # rewrites the tool messages that hold stored-result envelopes. Refuse the
     # combination loudly instead of silently favouring one of them.
-    if team.compress_tool_results and (team.offload_tool_results or team._result_store is not None):
-        raise ValueError(
-            "offload_tool_results and compress_tool_results cannot be enabled together: "
-            "compression rewrites the tool messages that hold stored-result envelopes. "
-            "Disable one of the two."
-        )
-    _ensure_result_store(team)
+    # Resolved when a setting is present, and also when a store exists and the
+    # setting is gone, so a cleared setting drops its store. With neither,
+    # the default, nothing runs.
+    if team.offload_tool_results or team._result_store is not None:
+        if team.compress_tool_results:
+            raise ValueError(
+                "offload_tool_results and compress_tool_results cannot be enabled together: "
+                "compression rewrites the tool messages that hold stored-result envelopes. "
+                "Disable one of the two."
+            )
+        _ensure_result_store(team)
     if team.learning is not None and team.learning is not False:
         _set_learning_machine(team)
 

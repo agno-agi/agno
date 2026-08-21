@@ -58,6 +58,17 @@ def _active_result_store(owner: Any) -> Optional["ResultStore"]:
     return getattr(owner, "_result_store", None)
 
 
+def result_store_kwargs(owner: Any) -> Dict[str, Any]:
+    """The ``result_store=`` kwarg for a model call, or nothing at all.
+
+    With offloading off the kwarg is omitted entirely, so a Model subclass
+    that overrides ``response`` with an older parameter list keeps working
+    until its owner actually opts into offloading.
+    """
+    store = getattr(owner, "_result_store", None)
+    return {"result_store": store} if store is not None else {}
+
+
 def raise_if_async_tools(agent: Agent) -> None:
     """Raise an exception if any tools contain async functions."""
     if agent.tools is None:

@@ -37,8 +37,8 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics, merge_background_metrics
+from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
-from agno.offload.setup import result_store_kwargs
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution

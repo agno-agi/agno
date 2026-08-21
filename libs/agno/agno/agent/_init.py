@@ -197,8 +197,6 @@ def set_result_store(agent: Agent) -> None:
     A None store means offloading is off. The public setting keeps whatever
     the caller passed, so a failure never rewrites their configuration.
     """
-    from agno.offload.setup import build_result_store
-
     # Offloading and tool-result compression cannot run together: compression
     # sends tool messages to a model and rewrites them, which would replace a
     # stored-result envelope with text whose result id may be gone, while the
@@ -224,6 +222,8 @@ def set_result_store(agent: Agent) -> None:
         and agent._result_store.db is agent.db
     ):
         return
+    from agno.offload.setup import build_result_store
+
     agent._result_store = build_result_store(
         setting=agent.offload_tool_results, db=agent.db, owner=agent, owner_kind="agent"
     )
@@ -295,7 +295,11 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
-    set_result_store(agent)
+    # Resolved when a setting is present, and also when a store exists and the
+    # setting is gone, so a cleared setting drops its store. With neither,
+    # the default, nothing runs.
+    if agent.offload_tool_results or agent._result_store is not None:
+        set_result_store(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 
