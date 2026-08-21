@@ -1293,6 +1293,32 @@ class TestStudioEmbedding:
         assert result["status"] == "COMPLETED"
         assert "CHILD RAN" in result["content"]
 
+    def test_the_ignored_child_version_pin_is_said_out_loud(self, db, registry, caplog):
+        """A save records the version its child was bound at, and the agent and
+        team tiers load exactly that version. This tier resolves from the
+        registry instead, so what runs is whatever the process defines under
+        that id today -- which may be neither the pinned version nor the latest
+        stored one. The pin is right there in the row, so the divergence must
+        not be silent.
+
+        A refusal is not the alternative it looks like: a save always writes
+        this pin, so refusing on its presence refuses every stored nested
+        workflow and takes the feature back to where it started.
+        """
+        import logging
+
+        registry.functions = [_nested_child_step]
+        registry.workflows = [_nested_child_workflow()]
+        _save_nested_parent(db)
+
+        with caplog.at_level(logging.WARNING):
+            result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+
+        assert result["status"] == "COMPLETED"
+        messages = " ".join(r.getMessage() for r in caplog.records)
+        assert "pins workflow" in messages, messages
+        assert "resolves from the registry only" in messages, messages
+
     @pytest.mark.asyncio
     async def test_a_saved_nested_workflow_dispatches_on_the_async_path(self, db, registry):
         registry.functions = [_nested_child_step]

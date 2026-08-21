@@ -611,6 +611,22 @@ class Step:
             if registry and workflow_id:
                 registry_workflow = registry.get_workflow(workflow_id)
                 if registry_workflow is not None:
+                    # A saved parent records the version its child was bound at,
+                    # and the agent and team tiers above load exactly that
+                    # version. This tier cannot: a nested workflow resolves from
+                    # the registry only, so what runs is whatever the process
+                    # defines under that id today. Say so, because the pin is
+                    # right there in the row and the divergence is otherwise
+                    # invisible. Refusing instead is not the alternative it
+                    # looks like - a save always writes this pin, so refusing on
+                    # its presence refuses every stored nested workflow.
+                    pinned_workflow_version = _pinned_version(workflow_id, "step_workflow")
+                    if pinned_workflow_version is not None:
+                        log_warning(
+                            f"Step '{config.get('name')}' pins workflow '{workflow_id}' at version "
+                            f"{pinned_workflow_version}, but a nested workflow resolves from the registry "
+                            "only; running the registered workflow instead of the pinned version."
+                        )
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         workflow = registry_workflow.deep_copy()
