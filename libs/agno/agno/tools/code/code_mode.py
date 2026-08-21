@@ -586,7 +586,14 @@ class CodeMode(Toolkit):
         if self._bridge is not None and self._bridge.has_bindings:
             bootstrap_ok = await self._bridge.bootstrap(session)
             if not bootstrap_ok:
-                return None
+                # A notice claiming restored state must never outlive a failed
+                # bootstrap. The no-persist notice claims the opposite - that
+                # nothing was restored and nothing will be saved - and staying
+                # silent about that would leave the model working on state it
+                # wrongly believes durable, so it survives.
+                from agno.tools.code.snapshot import NO_PERSIST_NOTICE
+
+                return NO_PERSIST_NOTICE if restore_notice == NO_PERSIST_NOTICE else None
         return restore_notice
 
     def _rejects_shell(self, code: str) -> bool:

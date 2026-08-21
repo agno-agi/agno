@@ -406,6 +406,70 @@ def _get_task_management_tools(
         if member_run_response is not None:
             _update_team_media(team, member_run_response)
 
+    async def _apost_process_member_run(
+        member_run_response: Optional[Union[TeamRunOutput, RunOutput]],
+        member_agent: Union[Agent, "Team"],
+        delegated_task: Any,
+        member_session_state_copy: Optional[Dict[str, Any]],
+        tool_name: str = "execute_task",
+        skip_session_merge: bool = False,
+    ) -> None:
+        """Async twin of the sync post-processor above.
+
+        Shared team state (the run context interactions, the session's runs,
+        the team media, the session-state merge) is mutated on the event loop,
+        so concurrent member fan-outs stay serialized the way the sync path's
+        single thread serializes them. Only the storage step, which may write
+        an offloaded payload, runs off the loop, inside the a-variant of the
+        storage helper.
+        """
+        """Post-process a member run: update parent IDs, interactions, session state."""
+        if member_run_response is not None:
+            member_run_response.parent_run_id = run_response.run_id
+
+        # Update tool child_run_id
+        if run_response.tools is not None and member_run_response is not None:
+            for tool in run_response.tools:
+                if tool.tool_name and tool.tool_name.lower() == tool_name and tool.child_run_id is None:
+                    tool.child_run_id = member_run_response.run_id
+                    break
+
+        member_name = member_agent.name or (member_agent.id if member_agent.id else "Unknown")
+        # The task as given, never the prompt assembled from it. That prompt
+        # already contains every earlier interaction, so recording it here
+        # would nest each block inside the next one.
+        normalized_task = (
+            str(delegated_task) if not hasattr(delegated_task, "content") else str(delegated_task.content or "")
+        )
+        add_interaction_to_team_run_context(
+            team_run_context=team_run_context,
+            member_name=member_name,
+            task=normalized_task,
+            run_response=member_run_response,
+        )
+
+        if run_response and member_run_response:
+            run_response.add_member_run(member_run_response)
+
+        if member_run_response:
+            if (
+                not member_agent.store_media
+                or not member_agent.store_tool_messages
+                or not member_agent.store_history_messages
+            ):
+                from agno.agent._run import scrub_run_output_for_storage
+
+                scrub_run_output_for_storage(member_agent, run_response=member_run_response)  # type: ignore[arg-type]
+            from agno.team._run import _amember_run_for_storage
+
+            session.upsert_run(await _amember_run_for_storage(team, session, member_run_response))
+
+        if run_context.session_state is not None and member_session_state_copy is not None and not skip_session_merge:
+            merge_dictionaries(run_context.session_state, member_session_state_copy)
+
+        if member_run_response is not None:
+            _update_team_media(team, member_run_response)
+
     # ------------------------------------------------------------------
     # Tool: execute_task (sync)
     # ------------------------------------------------------------------
@@ -715,9 +779,7 @@ def _get_task_management_tools(
                     await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             use_team_logger()
-            # The member-run storage step may offload a large payload; the write must not run on the event loop.
-            await asyncio.to_thread(
-                _post_process_member_run,
+            await _apost_process_member_run(
                 member_run_response,
                 member_agent,
                 member_task_description,
@@ -741,9 +803,7 @@ def _get_task_management_tools(
             task.status = TaskStatus.pending
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
-            # The member-run storage step may offload a large payload; the write must not run on the event loop.
-            await asyncio.to_thread(
-                _post_process_member_run,
+            await _apost_process_member_run(
                 member_run_response,
                 member_agent,
                 member_task_description,
@@ -753,9 +813,7 @@ def _get_task_management_tools(
             return
 
         use_team_logger()
-        # The member-run storage step may offload a large payload; the write must not run on the event loop.
-        await asyncio.to_thread(
-            _post_process_member_run,
+        await _apost_process_member_run(
             member_run_response,
             member_agent,
             member_task_description,
@@ -1003,7 +1061,6 @@ def _get_task_management_tools(
         Returns:
             str: Aggregated results from all task executions.
         """
-        import asyncio
 
         # Validate all tasks
         tasks_to_run = []
@@ -1123,9 +1180,7 @@ def _get_task_management_tools(
             if member_run is not None and member_run.is_paused:
                 _propagate_member_pause(run_response, member_agent, member_run)
                 task_obj.status = TaskStatus.pending
-                # The member-run storage step may offload a large payload; the write must not run on the event loop.
-                await asyncio.to_thread(
-                    _post_process_member_run,
+                await _apost_process_member_run(
                     member_run,
                     member_agent,
                     member_task,
@@ -1137,9 +1192,7 @@ def _get_task_management_tools(
             elif member_run is not None and member_run.status == RunStatus.error:
                 task_obj.status = TaskStatus.failed
                 task_obj.result = str(member_run.content) if member_run.content else "Task failed"
-                # The member-run storage step may offload a large payload; the write must not run on the event loop.
-                await asyncio.to_thread(
-                    _post_process_member_run,
+                await _apost_process_member_run(
                     member_run,
                     member_agent,
                     member_task,
@@ -1154,9 +1207,7 @@ def _get_task_management_tools(
                 content = str(member_run.content)
                 task_obj.status = TaskStatus.completed
                 task_obj.result = content
-                # The member-run storage step may offload a large payload; the write must not run on the event loop.
-                await asyncio.to_thread(
-                    _post_process_member_run,
+                await _apost_process_member_run(
                     member_run,
                     member_agent,
                     member_task,
@@ -1170,9 +1221,7 @@ def _get_task_management_tools(
             else:
                 task_obj.status = TaskStatus.completed
                 task_obj.result = "No content returned"
-                # The member-run storage step may offload a large payload; the write must not run on the event loop.
-                await asyncio.to_thread(
-                    _post_process_member_run,
+                await _apost_process_member_run(
                     member_run,
                     member_agent,
                     member_task,

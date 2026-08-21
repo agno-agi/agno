@@ -1034,7 +1034,7 @@ def test_two_postgres_schemas_do_not_share_or_delete_each_others_payloads(db):
     db_a = PostgresDb(db_url=PG_URL, db_schema=schema_a)
     db_b = PostgresDb(db_url=PG_URL, db_schema=schema_b)
     try:
-        session_id = "shared-session-id"
+        session_id = "offload-agent-shared-session-id"
         ids = {}
         for key, tenant_db in (("a", db_a), ("b", db_b)):
             agent = Agent(model=ScriptedToolModel(), db=tenant_db, tools=[fetch_page], offload_tool_results=True)

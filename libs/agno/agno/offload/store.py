@@ -110,26 +110,42 @@ def _clip_around(line: str, char_offset: int, match_len: int = 1) -> str:
     return f"{head}{line[start : start + width]}{tail}"
 
 
-def _scan_for_matches(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
-    """The search scan itself: at most 20 matches, one read_result page in total."""
-    compiled = re.compile(pattern)
-    lines = content.split("\n")
-    context_lines = max(0, min(int(context_lines or 0), SEARCH_MAX_CONTEXT_LINES))
-    matches: List[ResultMatch] = []
-    # The whole reply stays within one read_result page, whatever the
-    # context asked for, so a search can never put back what offloading
-    # took out.
-    budget = SEARCH_MAX_CHARS
+def _find_match_positions(
+    lines: List[str], compiled: "re.Pattern[str]", limit: int
+) -> Tuple[List[Tuple[int, int, int]], bool]:
+    """(1-indexed line number, char offset, match length) for each matching
+    line, capped at ``limit``; the flag is True when one more match exists."""
+    positions: List[Tuple[int, int, int]] = []
     for index, line in enumerate(lines):
         found = compiled.search(line)
         if found is None:
             continue
-        if len(matches) >= SEARCH_MAX_MATCHES or budget <= _MATCH_HEADER_CHARS:
-            # Another match exists past the cap or the budget.
-            matches[-1].more = True
+        if len(positions) >= limit:
+            return positions, True
+        positions.append((index + 1, found.start(), found.end() - found.start()))
+    return positions, False
+
+
+def _render_matches(
+    lines: List[str], positions: List[Tuple[int, int, int]], more: bool, context_lines: int
+) -> List[ResultMatch]:
+    """Match positions become the clipped, budgeted reply.
+
+    One renderer serves the in-process and the subprocess scans, so the reply
+    is the same whichever lane found the positions. The whole reply stays
+    within one read_result page, whatever the context asked for, so a search
+    can never put back what offloading took out.
+    """
+    context_lines = max(0, min(int(context_lines or 0), SEARCH_MAX_CONTEXT_LINES))
+    matches: List[ResultMatch] = []
+    budget = SEARCH_MAX_CHARS
+    stopped_early = False
+    for line_number, char_offset, match_len in positions:
+        if matches and budget <= _MATCH_HEADER_CHARS:
+            # This match exists but no longer fits the reply budget.
+            stopped_early = True
             break
-        char_offset = found.start()
-        match_len = found.end() - found.start()
+        index = line_number - 1
         if context_lines > 0:
             start = max(0, index - context_lines)
             end = min(len(lines), index + context_lines + 1)
@@ -140,62 +156,91 @@ def _scan_for_matches(content: str, pattern: str, context_lines: int) -> List[Re
                 for offset, context_line in enumerate(lines[start:end])
             )
         else:
-            text = _clip_around(line, char_offset, match_len)
+            text = _clip_around(lines[index], char_offset, match_len)
         # Each match is rendered with a short header line; reserve room
         # for it so the reply the model sees stays within one page.
         budget -= _MATCH_HEADER_CHARS
         if len(text) > budget:
             text = text[:budget]
         budget -= len(text) + 1
-        matches.append(ResultMatch(line_number=index + 1, line=text, char_offset=char_offset))
+        matches.append(ResultMatch(line_number=line_number, line=text, char_offset=char_offset))
+    if matches and (more or stopped_early):
+        matches[-1].more = True
     return matches
 
 
-def _scan_entry(conn: Any, content: str, pattern: str, context_lines: int) -> None:
-    """Subprocess entry for the guarded scan. Sends ("ok", rows) or ("error", text)."""
-    try:
-        matches = _scan_for_matches(content, pattern, context_lines)
-        conn.send(("ok", [(m.line_number, m.line, m.char_offset, m.more) for m in matches]))
-    except BaseException as e:  # noqa: BLE001 - the parent needs the reason, whatever it is
-        try:
-            conn.send(("error", f"{type(e).__name__}: {e}"))
-        except Exception:
-            pass
-    finally:
-        conn.close()
+def _scan_for_matches(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
+    """The search scan itself: at most 20 matches, one read_result page in total."""
+    lines = content.split("\n")
+    positions, more = _find_match_positions(lines, re.compile(pattern), SEARCH_MAX_MATCHES)
+    return _render_matches(lines, positions, more, context_lines)
+
+
+# The scan child is a bare interpreter: python -I imports nothing of the
+# caller, so a user script with no __main__ guard is never re-executed the
+# way a spawned multiprocessing worker would re-execute it. It reads one JSON
+# document from stdin and prints match positions; the reply text is rendered
+# by the parent, with the same code the in-process lane uses.
+_SCAN_CHILD_SOURCE = (
+    "import json, re, sys\n"
+    "data = json.loads(sys.stdin.buffer.read().decode('utf-8'))\n"
+    "compiled = re.compile(data['pattern'])\n"
+    "positions = []\n"
+    "more = False\n"
+    "for index, line in enumerate(data['content'].split('\\n')):\n"
+    "    found = compiled.search(line)\n"
+    "    if found is None:\n"
+    "        continue\n"
+    "    if len(positions) >= data['limit']:\n"
+    "        more = True\n"
+    "        break\n"
+    "    positions.append([index + 1, found.start(), found.end() - found.start()])\n"
+    "print(json.dumps({'positions': positions, 'more': more}))\n"
+)
 
 
 def _scan_in_subprocess(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
-    """Run the scan in a subprocess killed at ``SEARCH_TIMEOUT_SECONDS``.
+    """Run the match scan in a fresh interpreter killed at ``SEARCH_TIMEOUT_SECONDS``.
 
-    ``spawn`` rather than ``fork``: the caller may be any worker thread of a
-    threaded server, where forking is unsafe.
+    A thread stuck inside the regex engine cannot be interrupted, so a
+    pattern that can backtrack runs where a deadline can actually kill it.
+    ``communicate`` owns the pipes, so the deadline covers the whole exchange
+    - including a payload larger than one pipe buffer - and a dead child
+    surfaces as its stderr, not as a hang or an empty error.
     """
-    import multiprocessing
+    import subprocess
+    import sys
 
-    ctx = multiprocessing.get_context("spawn")
-    parent_conn, child_conn = ctx.Pipe(duplex=False)
-    process = ctx.Process(target=_scan_entry, args=(child_conn, content, pattern, context_lines), daemon=True)
-    process.start()
-    child_conn.close()
+    payload = json.dumps({"pattern": pattern, "content": content, "limit": SEARCH_MAX_MATCHES})
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-c", _SCAN_CHILD_SOURCE],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
-        if not parent_conn.poll(SEARCH_TIMEOUT_SECONDS):
-            raise TimeoutError(
-                f"the search did not finish within {int(SEARCH_TIMEOUT_SECONDS)}s; the pattern "
-                "backtracks too much on this result - simplify it or search with a plainer pattern"
-            )
-        kind, payload = parent_conn.recv()
-    finally:
-        if process.is_alive():
-            process.terminate()
-        process.join(1.0)
-        parent_conn.close()
-    if kind == "error":
-        raise RuntimeError(payload)
-    return [
-        ResultMatch(line_number=line_number, line=line, char_offset=char_offset, more=more)
-        for line_number, line, char_offset, more in payload
+        stdout, stderr = process.communicate(payload, timeout=SEARCH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise TimeoutError(
+            f"the search did not finish within {int(SEARCH_TIMEOUT_SECONDS)}s; the pattern "
+            "backtracks too much on this result - simplify it or search with a plainer pattern"
+        )
+    detail = (stderr or "").strip()[:300]
+    if process.returncode != 0:
+        raise RuntimeError(f"the search scan failed: {detail or f'exit code {process.returncode}'}")
+    try:
+        data = json.loads(stdout)
+    except ValueError:
+        raise RuntimeError(f"the search scan returned no result: {detail or 'empty reply'}")
+    lines = content.split("\n")
+    positions = [
+        (int(line_number), int(char_offset), int(match_len))
+        for line_number, char_offset, match_len in data["positions"]
     ]
+    return _render_matches(lines, positions, bool(data["more"]), context_lines)
 
 
 def _head_preview(output: str, preview_lines: int, preview_chars: int) -> str:

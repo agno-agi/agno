@@ -469,13 +469,13 @@ def test_a_paused_member_run_is_stored_whole(db):
 
     paused = RunOutput(run_id="r-paused", messages=list(messages), status=RunStatus.paused)
     assert paused.is_paused
-    same = offload_run_for_storage(team._result_store, paused, session_id="s1")
+    same = offload_run_for_storage(team._result_store, paused, session_id="offload-team-s1")
     assert same is paused
     assert same.messages[0].content == BIG
 
     # The same run, not paused, is offloaded.
     running = RunOutput(run_id="r-done", messages=list(messages), status=RunStatus.completed)
-    stored = offload_run_for_storage(team._result_store, running, session_id="s1")
+    stored = offload_run_for_storage(team._result_store, running, session_id="offload-team-s1")
     assert stored is not running
     assert stored.messages[0].content.startswith('<result id="res_')
     assert running.messages[0].content == BIG
@@ -766,10 +766,10 @@ def test_storing_the_same_member_run_twice_keeps_one_payload(db):
     team = _team(db)
     team.initialize_team()
     run = RunOutput(run_id="r-twice", messages=[Message(role="assistant", content=BIG)], status=RunStatus.completed)
-    first = offload_run_for_storage(team._result_store, run, session_id="s-twice")
-    second = offload_run_for_storage(team._result_store, run, session_id="s-twice")
+    first = offload_run_for_storage(team._result_store, run, session_id="offload-team-s-twice")
+    second = offload_run_for_storage(team._result_store, run, session_id="offload-team-s-twice")
     assert first.messages[0].content == second.messages[0].content
-    assert len(db.get_tool_results_for_session("s-twice")) == 1
+    assert len(db.get_tool_results_for_session("offload-team-s-twice")) == 1
 
     # Different content under the same run and message index is a new payload.
     changed = RunOutput(
@@ -777,8 +777,8 @@ def test_storing_the_same_member_run_twice_keeps_one_payload(db):
         messages=[Message(role="assistant", content=BIG.replace("d", "e"))],
         status=RunStatus.completed,
     )
-    offload_run_for_storage(team._result_store, changed, session_id="s-twice")
-    assert len(db.get_tool_results_for_session("s-twice")) == 2
+    offload_run_for_storage(team._result_store, changed, session_id="offload-team-s-twice")
+    assert len(db.get_tool_results_for_session("offload-team-s-twice")) == 2
 
 
 def test_the_team_row_embeds_envelopes_when_member_responses_are_stored(db):
@@ -862,11 +862,11 @@ async def test_async_run_storage_matches_the_sync_copy(db):
     team = _team(db)
     team.initialize_team()
     run = RunOutput(run_id="r-async", messages=[Message(role="assistant", content=BIG)], status=RunStatus.completed)
-    via_async = await aoffload_run_for_storage(team._result_store, run, session_id="s-async")
-    via_sync = offload_run_for_storage(team._result_store, run, session_id="s-async")
+    via_async = await aoffload_run_for_storage(team._result_store, run, session_id="offload-team-s-async")
+    via_sync = offload_run_for_storage(team._result_store, run, session_id="offload-team-s-async")
     assert via_async.messages[0].content == via_sync.messages[0].content
     assert via_async.messages[0].content.startswith('<result id="res_')
-    assert len(db.get_tool_results_for_session("s-async")) == 1
+    assert len(db.get_tool_results_for_session("offload-team-s-async")) == 1
 
 
 async def test_async_search_does_not_block_the_event_loop(db):

@@ -676,3 +676,34 @@ def test_a_plain_pattern_stays_in_process(store, monkeypatch):
     ref = _offload(store, "alpha\nbeta needle gamma\n" + "x" * 200)
     matches = store.search(ref.result_id, "needle")
     assert [m.line_number for m in matches] == [2]
+
+
+def test_search_never_reexecutes_a_guardless_caller_script(tmp_path):
+    # The scan child must be a bare interpreter: a multiprocessing spawn
+    # worker re-imports the parent's __main__, so a user script without an
+    # import guard would run twice - duplicate side effects included.
+    import subprocess
+    import sys
+
+    sentinel = tmp_path / "executions.log"
+    script = tmp_path / "guardless.py"
+    script.write_text(
+        "import os, sys\n"
+        f"open({str(sentinel)!r}, 'a').write('ran\\n')\n"
+        "sys.path.insert(0, os.environ['AGNO_PATH'])\n"
+        "from agno.db.sqlite import SqliteDb\n"
+        "from agno.fs import FileSystem\n"
+        "from agno.offload.store import ResultStore\n"
+        f"db = SqliteDb(db_file=os.path.join({str(tmp_path)!r}, 'g.db'))\n"
+        "store = ResultStore(db=db, fs=FileSystem(backend=db, namespace='tool-results'), threshold_chars=10)\n"
+        "ref = store.offload(session_id='s', run_id='r', tool_call_id='c', tool_name='t', tool_args={}, output='alpha\\nneedle-42\\nomega')\n"
+        "matches = store.search(ref.result_id, r'needle-\\d+')\n"
+        "print('MATCHES', len(matches))\n"
+    )
+    import os
+
+    env = dict(os.environ, AGNO_PATH=str(next(p for p in sys.path if p.endswith("libs/agno"))))
+    completed = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120, env=env)
+    assert completed.returncode == 0, completed.stderr
+    assert "MATCHES 1" in completed.stdout
+    assert sentinel.read_text() == "ran\n", "the caller script was executed more than once"
