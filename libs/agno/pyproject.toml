@@ -28,7 +28,9 @@ dependencies = [
   "docstring-parser",
   # Prevent the request-smuggling CVE in h11 < 0.16
   "h11>=0.16.0",
-  "httpx[http2]",
+  # Floor keeps pre-release resolvers from picking httpx 1.0 dev builds, which drop
+  # HTTPStatusError and break fastmcp 4 (see mcp 2.x migration notes).
+  "httpx[http2]>=0.28.1",
   "packaging",
   "pydantic-settings",
   "pydantic",
@@ -72,7 +74,9 @@ dev = [
 
 # AgentOS server bundle
 os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
-mcp = ["mcp>=1.9.2,<2", "fastmcp>=3.4.3,<4"]
+# NOTE: fastmcp>=4.0.0b1 is a pre-release pulled in for mcp 2.x support. Pin to the
+# stable fastmcp 4.x release once it ships.
+mcp = ["mcp>=2.0.0,<3.0.0", "fastmcp>=4.0.0b1,<5"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -546,6 +550,7 @@ module = [
   "httplib2.*",
   "groq.*",
   "hexbytes.*",
+  "httpx2.*",
   "huggingface_hub.*",
   "ibm_watsonx_ai.*",
   "imghdr.*",
