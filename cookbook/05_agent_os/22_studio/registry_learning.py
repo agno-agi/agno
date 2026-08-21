@@ -25,7 +25,6 @@ import json
 import os
 from pathlib import Path
 
-from agno.agent._init import initialize_agent
 from agno.db.sqlite import SqliteDb
 from agno.learn import LearningMachine
 from agno.learn.config import LearningMode, UserMemoryConfig
@@ -116,13 +115,13 @@ refused = json.loads(
 print(refused["error"]["code"], "-", refused["error"]["message"])
 
 # ---------------------------------------------------------------------------
-# Rehydrate the way AgentOS does: same machine, db and model injected
+# Rehydrate the way AgentOS does: same machine, db injected, model as declared
 # ---------------------------------------------------------------------------
 
 print("--- rehydrate ---")
 agent = get_agent_by_id("profile-coach", agents=None, db=db, registry=registry)
 print("agent.learning is shared_brain:", agent.learning is shared_brain)
-initialize_agent(agent)
+agent.initialize_agent()
 print(
     "machine db:",
     type(shared_brain.db).__name__,
@@ -171,7 +170,7 @@ print(
     db.get_config(component_id="note-taker", version=1)["config"]["learning"],
 )
 note_taker = get_agent_by_id("note-taker", agents=None, db=db, registry=registry)
-initialize_agent(note_taker)
+note_taker.initialize_agent()
 machine = note_taker.learning_machine
 print(
     "default machine:",

@@ -1347,6 +1347,26 @@ class TestLearningReferenceRoundTrip:
             loaded = Agent.from_dict(config, registry=Registry(), strict=True)
             assert isinstance(loaded.learning, LearningMachine), payload
 
+    def test_named_inline_config_rebuilds_unnamed_and_keeps_round_tripping_inline(self):
+        """A dict carrying a name PLUS store keys (what LearningMachine.to_dict()
+        writes for a named machine, authorable by hand) is an inline config.
+        The rebuilt machine drops the name, so the next to_dict writes the
+        stores again instead of a bare reference no registry resolves."""
+        from agno.learn import LearningMachine
+
+        payload = {"name": "brain", "user_memory": True, "entity_memory": True, "namespace": "west"}
+        loaded = Agent.from_dict(
+            {"id": "learn-agent", "name": "Learn Agent", "learning": payload}, registry=Registry(), strict=True
+        )
+        assert isinstance(loaded.learning, LearningMachine)
+        assert loaded.learning.name is None
+        assert loaded.learning.user_memory is True and loaded.learning.namespace == "west"
+
+        resaved = loaded.to_dict()["learning"]
+        assert resaved == {"user_memory": True, "entity_memory": True, "namespace": "west"}
+        again = Agent.from_dict({"id": "learn-agent", "learning": resaved}, registry=Registry(), strict=True)
+        assert again.learning.user_memory is True
+
     def test_missing_reference_raises_strict_and_drops_lenient(self):
         from agno.exceptions import ComponentRehydrationError
 

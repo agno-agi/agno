@@ -1830,6 +1830,19 @@ class TestTeamLearningReferenceRoundTrip:
         assert loaded.learning.name is None
         assert loaded.learning.user_memory is True
 
+    def test_inline_shapes_rebuild_and_a_named_inline_config_drops_its_name(self):
+        """``{}`` and a dict carrying a name plus store keys are inline configs
+        on the team path too: rebuilt unnamed, re-saved inline."""
+        from agno.learn import LearningMachine
+
+        for payload in ({}, {"name": "brain", "user_memory": True, "namespace": "west"}):
+            config = {"id": "learn-team", "name": "Learn Team", "members": [], "learning": payload}
+            loaded = Team.from_dict(config, registry=Registry(), strict=True)
+            assert isinstance(loaded.learning, LearningMachine), payload
+            assert loaded.learning.name is None, payload
+        assert loaded.learning.user_memory is True
+        assert loaded.to_dict()["learning"] == {"user_memory": True, "namespace": "west"}
+
     def test_missing_reference_raises_strict_and_drops_lenient(self):
         from agno.exceptions import ComponentRehydrationError
 

@@ -94,8 +94,10 @@ def test_two_built_components_share_one_machine_instance(tmp_path):
     assert second.learning is machine
 
 
-def test_pre_a3_configs_with_legacy_fields_and_inlined_machine_still_load(tmp_path):
-    """Studio no longer authors these shapes; AgentOS must keep loading them."""
+def test_configs_stored_before_reference_learning_still_load(tmp_path):
+    """A config stored before Studio authored learning by reference can carry
+    the legacy memory pair and an inlined machine; Studio no longer authors
+    these shapes, and AgentOS must keep loading them."""
     from agno.memory.manager import MemoryManager
 
     db = SqliteDb(db_file=str(tmp_path / "learning_legacy.db"))

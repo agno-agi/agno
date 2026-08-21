@@ -140,7 +140,7 @@ namespaces; the stored config carried `{'name': 'shared-brain'}` (a reference,
 not the machine); `get_component` showed `learning_name: shared-brain`;
 `my-own-brain` was refused with `learning_not_found`; the rehydrated agent held
 the same machine object (`agent.learning is shared_brain: True`) with
-`SqliteDb` and `gpt-5.5` injected; the tool list for user `ash` included
+`SqliteDb` injected and `gpt-5.5` as declared on the machine; the tool list for user `ash` included
 `update_user_memory` plus the entity tools, and without a user only the entity
 tools. The live run called `update_user_memory(task=User's name is Ash.)` and
 answered "Got it, Ash."; the detach wrote a version with no `learning` key.

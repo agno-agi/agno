@@ -1293,6 +1293,15 @@ class StudioTools(Toolkit):
             value = self.registry.get_schema(name)
             code = "schema_not_found"
         elif kind == "learning":
+            if self.registry.learning_name_is_ambiguous(name):
+                # Two distinct machines under one name: binding the first would
+                # publish a component that strict dispatch then refuses.
+                return None, error_result(
+                    "ambiguous_reference",
+                    f"learning machine name '{name}' matches more than one registered machine; "
+                    "give the machines distinct names",
+                    name=name,
+                )
             value = self.registry.get_learning(name)
             code = "learning_not_found"
         elif kind == "model":
@@ -1618,10 +1627,11 @@ class StudioTools(Toolkit):
 
         Returns:
             str: StudioResult JSON; data.learning is a list of {name, namespace,
-            stores: {store: {mode, namespace}}, model_id, db, knowledge}. Every
-            component wired to a machine reads and writes its namespace, so pick
-            by namespace; a machine with model_id null captures with the model
-            of the first component that runs it.
+            stores: {store: {mode[, namespace]}}, model_id, db, knowledge[,
+            custom_stores]}; namespace is per store for entity_memory and
+            learned_knowledge. Every component wired to a machine reads and
+            writes its namespace, so pick by namespace; model_id or knowledge
+            null means the first component that runs binds its own.
         """
         rows = _learning_rows(self.registry.learning)
         return ok_result("listed", learning=rows, count=len(rows))
@@ -1987,11 +1997,17 @@ class StudioTools(Toolkit):
                 component.enable_agentic_memory = False
                 component.memory_manager = None
                 replaced_keys.add("memory_manager")
-                if getattr(machine, "model", None) is None:
+                # The framework injects model / knowledge into a shared machine
+                # only when unset, so the first component to run binds them for
+                # every sharer. Say so at wiring time.
+                unbound = ["model"] if getattr(machine, "model", None) is None else []
+                if getattr(machine, "learned_knowledge", False) and getattr(machine, "knowledge", None) is None:
+                    unbound.append("knowledge")
+                if unbound:
                     log_warning(
-                        f"Learning machine '{learning_name}' declares no model: the first component to run "
-                        "binds its own model into it for every component sharing it. Give the machine a "
-                        "model on the Registry if it should capture with one of its own."
+                        f"Learning machine '{learning_name}' declares no {' or '.join(unbound)}: the first "
+                        "component to run binds its own into it for every component sharing it. Declare "
+                        "them on the machine if the deployer, not the first component, should decide."
                     )
             replaced_keys.add("learning")
         if metadata is not None:
@@ -5199,54 +5215,16 @@ _UNRECONSTRUCTED_KEYS = ("reasoning_model", "parser_model", "output_model")
 
 
 def _learning_rows(machines: List[Any]) -> List[Dict[str, Any]]:
-    """One list_learning row per registered machine, read from its declared
-    fields. The machine's ``stores`` property is never touched: it lazily
-    builds and caches the store objects, and a store built before the machine
-    has a db keeps db=None for the life of the process."""
-    import dataclasses
-
-    from agno.learn.machine import LearningMachine
+    """One list_learning row per NAMED registered machine, read from its
+    declared fields (describe_learning_machine never builds the stores)."""
+    from agno.learn.machine import describe_learning_machine
 
     rows: List[Dict[str, Any]] = []
     for machine in machines:
         name = getattr(machine, "name", None)
-        if not name:
+        if not isinstance(name, str) or not name:
             continue
-        machine_namespace = getattr(machine, "namespace", "global")
-        stores: Dict[str, Dict[str, Any]] = {}
-        for store_name, config_cls in LearningMachine._STORE_CONFIG_CLASSES.items():
-            value = getattr(machine, store_name, False)
-            # learned_knowledge is auto-enabled when the machine binds a knowledge.
-            if store_name == "learned_knowledge" and not value and getattr(machine, "knowledge", None) is not None:
-                value = True
-            if not value:
-                continue
-            # bool -> the config class defaults; Store instance -> its config;
-            # Config instance -> itself.
-            config = getattr(value, "config", None)
-            if config is None and dataclasses.is_dataclass(value) and not isinstance(value, type):
-                config = value
-            mode = getattr(config, "mode", None) if config is not None else getattr(config_cls, "mode", None)
-            row: Dict[str, Any] = {"mode": getattr(mode, "value", mode)}
-            if store_name in ("entity_memory", "learned_knowledge"):
-                # An explicit store namespace wins; a store left on the class
-                # default inherits the machine namespace.
-                store_namespace = getattr(config, "namespace", None) if config is not None else None
-                row["namespace"] = (
-                    store_namespace if store_namespace and store_namespace != "global" else machine_namespace
-                )
-            stores[store_name] = row
-        model = getattr(machine, "model", None)
-        rows.append(
-            {
-                "name": name,
-                "namespace": machine_namespace,
-                "stores": stores,
-                "model_id": getattr(model, "id", None) if model is not None else None,
-                "db": getattr(machine, "db", None) is not None,
-                "knowledge": getattr(machine, "knowledge", None) is not None,
-            }
-        )
+        rows.append(describe_learning_machine(machine))
     return rows
 
 

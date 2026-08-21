@@ -1355,7 +1355,11 @@ def from_dict(
     if "learning" in config and isinstance(config["learning"], dict):
         from agno.learn.machine import LearningMachine
 
-        config["learning"] = LearningMachine.from_dict(config["learning"])
+        # An inline machine belongs to this component: a name on it is dropped
+        # so the rebuilt machine keeps round-tripping inline instead of being
+        # re-saved as a reference to a machine no registry declares.
+        inline = {key: value for key, value in config["learning"].items() if key != "name"}
+        config["learning"] = LearningMachine.from_dict(inline)
 
     # Remove keys that aren't constructor parameters
     config.pop("team_id", None)

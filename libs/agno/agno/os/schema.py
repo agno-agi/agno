@@ -924,6 +924,7 @@ class RegistryResourceType(str, Enum):
     KNOWLEDGE = "knowledge"
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
+    LEARNING = "learning"
 
 
 class CallableMetadata(BaseModel):

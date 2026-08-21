@@ -1638,6 +1638,32 @@ class TestLearningSurface:
         # learned_knowledge is auto-enabled by a bound knowledge and inherits the machine namespace.
         assert rows["auto-kb"]["stores"] == {"learned_knowledge": {"mode": "agentic", "namespace": "global"}}
 
+    def test_list_learning_reports_a_store_instance_namespace_verbatim_and_custom_stores(self, registry, db):
+        """A pre-built Store instance keeps its own config namespace at run
+        time (the machine only rewrites Config inputs), so the row must say
+        what the store will actually use, not the machine namespace."""
+        from agno.learn import LearningMachine
+        from agno.learn.config import EntityMemoryConfig
+        from agno.learn.stores.entity_memory import EntityMemoryStore
+
+        class TinyStore:
+            def recall(self, **kwargs):
+                return None
+
+        machine = LearningMachine(
+            name="instances",
+            namespace="team_west",
+            entity_memory=EntityMemoryStore(config=EntityMemoryConfig()),
+            custom_stores={"tiny": TinyStore()},  # type: ignore[dict-item]
+        )
+        registry.add_learning(machine)
+        studio = StudioTools(registry=registry, db=db)
+
+        row = {r["name"]: r for r in _data(studio.list_learning())["learning"]}["instances"]
+        assert row["stores"]["entity_memory"]["namespace"] == "global"
+        assert row["stores"]["entity_memory"]["namespace"] == machine.stores["entity_memory"].config.namespace  # type: ignore[attr-defined]
+        assert row["custom_stores"] == ["tiny"]
+
     @pytest.mark.asyncio
     async def test_alist_learning_matches_sync(self, studio_learning):
         assert _loads(await studio_learning.alist_learning()) == _loads(studio_learning.list_learning())
@@ -1653,7 +1679,6 @@ class TestLearningSurface:
         assert db.get_config(component_id="learner", version=1)["config"]["learning"] == {"name": "shared-brain"}
         view = _data(studio_learning.get_component("learner"))
         assert view["learning_name"] == "shared-brain"
-        assert view.get("enable_agentic_memory") is None
 
     def test_edit_agent_empty_string_detaches(self, studio_learning, db):
         _data(
@@ -1679,6 +1704,22 @@ class TestLearningSurface:
         assert error["code"] == "learning_not_found"
         error = _error(studio_learning.edit_agent("member", learning_name="ghost"))
         assert error["code"] == "learning_not_found"
+        _data(studio_learning.create_team(name="crew", instructions="i", member_ids=["member"]))
+        error = _error(studio_learning.edit_team("crew", learning_name="ghost"))
+        assert error["code"] == "learning_not_found"
+
+    def test_ambiguous_learning_name_is_refused_not_bound_to_the_first(self, registry, db):
+        """Two distinct machines under one name: binding the first would
+        publish a component that strict dispatch then refuses."""
+        from agno.learn import LearningMachine
+
+        registry.add_learning(LearningMachine(name="dup", namespace="alpha", user_memory=True))
+        registry.add_learning(LearningMachine(name="dup", namespace="beta", user_memory=True))
+        studio = StudioTools(registry=registry, db=db)
+
+        error = _error(studio.create_agent(name="x", instructions="i", model_id="gpt-5.4", learning_name="dup"))
+        assert error["code"] == "ambiguous_reference"
+        assert error["details"]["name"] == "dup"
 
     def test_team_forms_take_learning_name(self, studio_learning, db):
         _data(studio_learning.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True))
@@ -1818,11 +1859,12 @@ class TestLearningSurface:
     # -- learning only -----------------------------------------------------
 
     def test_wiring_learning_clears_the_legacy_memory_pair(self, registry, db, brain):
-        """A pre-a3 component can carry enable_agentic_memory and a memory
-        manager. Wiring learning drops both - registered or not - so the two
-        update_user_memory tools can never coexist on a Studio-edited
-        component, and the lenient-edit preserve step must not bring the
-        unresolvable manager back."""
+        """A component stored before Studio authored learning by reference can
+        carry enable_agentic_memory and a memory manager, and get_component
+        keeps showing the flag. Wiring learning drops both - registered or not
+        - so the two update_user_memory tools can never coexist on a
+        Studio-edited component, and the lenient-edit preserve step must not
+        bring the unresolvable manager back."""
         from agno.memory.manager import MemoryManager
 
         registry.add_learning(brain)
@@ -1847,12 +1889,15 @@ class TestLearningSurface:
         assert before["memory_manager"] == {"registry_id": "mm-stable"}
 
         studio = StudioTools(registry=registry, db=db)
+        # Read-only visibility of the legacy flag survives its removal from the forms.
+        assert _data(studio.get_component("legacy"))["enable_agentic_memory"] is True
         for component_id in ("legacy", "legacy-unresolvable"):
             out = _loads(studio.edit_agent(component_id, learning_name="shared-brain"))
             after = db.get_config(component_id=component_id, version=_edit_version(out))["config"]
             assert after["learning"] == {"name": "shared-brain"}, component_id
             assert "enable_agentic_memory" not in after, component_id
             assert "memory_manager" not in after, component_id
+        assert _data(studio.get_component("legacy")).get("enable_agentic_memory") is None
 
     # -- edit preservation -------------------------------------------------
 
@@ -1916,6 +1961,38 @@ class TestLearningSurface:
         assert _data(studio.get_component("inline-learn"))["learning"] == "inline"
         assert _data(studio.get_component("default-learn"))["learning"] is True
         assert "learning_name" not in _data(studio.get_component("inline-learn"))
+
+    def test_named_inline_config_stays_inline_across_an_edit(self, registry, db):
+        """A stored learning dict that carries a name PLUS store keys (the shape
+        LearningMachine.to_dict() writes for a named machine, authorable over
+        REST) is an inline machine, not a reference: the view says so, and an
+        unrelated edit re-saves the stores instead of collapsing them to a
+        bare reference no registry resolves."""
+        from agno.db.base import ComponentType
+
+        db.create_component_with_config(
+            component_id="named-inline",
+            component_type=ComponentType.AGENT,
+            name="named-inline",
+            config={
+                "id": "named-inline",
+                "name": "named-inline",
+                "model": {"provider": "OpenAI", "id": "gpt-5.5"},
+                "learning": {"name": "brain", "user_memory": True, "entity_memory": True, "namespace": "west"},
+            },
+            stage="published",
+        )
+        studio = StudioTools(registry=registry, db=db)
+        assert _data(studio.get_component("named-inline"))["learning"] == "inline"
+
+        out = _loads(studio.edit_agent("named-inline", description="edited", publish=True))
+        after = db.get_config(component_id="named-inline", version=_edit_version(out))["config"]["learning"]
+        assert after == {"user_memory": True, "entity_memory": True, "namespace": "west"}
+        # and the new version still dispatches with no registry machine of that name
+        from agno.os.utils import get_agent_by_id
+
+        agent = get_agent_by_id("named-inline", agents=None, db=db, registry=registry)
+        assert agent.learning.user_memory is True and agent.learning.name is None
 
 
 # ----------------------------------------------------------------------

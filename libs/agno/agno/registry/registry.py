@@ -663,7 +663,7 @@ class Registry:
         same-named machine is reported, since it would be shadowed.
         """
         name = getattr(machine, "name", None)
-        if machine is None or not name:
+        if machine is None or not isinstance(name, str) or not name:
             return
         existing = self.get_learning(name)
         if existing is not None:
@@ -823,7 +823,7 @@ class Registry:
     def get_learning_names(self) -> Set[str]:
         """Get the set of all learning machine names in this registry."""
         if self.learning:
-            return {mn for m in self.learning if (mn := getattr(m, "name", None))}
+            return {mn for m in self.learning if isinstance((mn := getattr(m, "name", None)), str) and mn}
         return set()
 
     def get_memory_manager(self, manager_id: str) -> Optional[Any]:

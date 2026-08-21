@@ -105,10 +105,6 @@ class LearningMachine:
         debug_mode: Enable debug logging.
     """
 
-    # Identity: set for a machine declared on a Registry, None for one that
-    # is stored inline with its component.
-    name: Optional[str] = None
-
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
     knowledge: Optional[Any] = None
@@ -132,6 +128,12 @@ class LearningMachine:
 
     # Debug mode
     debug_mode: bool = False
+
+    # Identity: set for a machine declared on a Registry, None for one that
+    # is stored inline with its component. Declared after the fields above so
+    # their positional order (db, model, knowledge, the stores, ...) is
+    # unchanged.
+    name: Optional[str] = None
 
     # Internal state (lazy initialization)
     _stores: Optional[Dict[str, LearningStore]] = field(default=None, init=False)
@@ -1030,7 +1032,7 @@ class LearningMachine:
         instances cannot be rebuilt from a dict).
         """
         d: Dict[str, Any] = {}
-        if self.name is not None:
+        if isinstance(self.name, str) and self.name:
             d["name"] = self.name
         for store_name in self._STORE_CONFIG_CLASSES:
             value = getattr(self, store_name)
@@ -1219,3 +1221,58 @@ class LearningMachine:
             f"knowledge={has_knowledge}, "
             f"namespace={self.namespace!r})"
         )
+
+
+def describe_learning_machine(machine: Any) -> Dict[str, Any]:
+    """Summarize a machine from its declared fields, for listings.
+
+    Reads the declared fields only and never touches ``machine.stores``: that
+    property lazily builds and caches the store objects, and a store built
+    before the machine has a db keeps db=None for the life of the process.
+    Per store: the mode, and for entity_memory / learned_knowledge the
+    namespace the store will use at run time - a store given as a bool or a
+    Config inherits the machine namespace when it is on the "global" default,
+    while a pre-built Store instance keeps its own config namespace, which is
+    what the machine does when it resolves the stores.
+    """
+    import dataclasses
+
+    machine_namespace = getattr(machine, "namespace", "global")
+    stores: Dict[str, Dict[str, Any]] = {}
+    for store_name, config_cls in LearningMachine._STORE_CONFIG_CLASSES.items():
+        value = getattr(machine, store_name, False)
+        # learned_knowledge is auto-enabled when the machine binds a knowledge.
+        if store_name == "learned_knowledge" and not value and getattr(machine, "knowledge", None) is not None:
+            value = True
+        if not value:
+            continue
+        # bool -> the config class defaults; Store instance -> its config;
+        # Config instance -> itself.
+        is_store_instance = getattr(value, "config", None) is not None
+        config = getattr(value, "config", None) if is_store_instance else None
+        if config is None and dataclasses.is_dataclass(value) and not isinstance(value, type):
+            config = value
+        mode = getattr(config, "mode", None) if config is not None else getattr(config_cls, "mode", None)
+        row: Dict[str, Any] = {"mode": getattr(mode, "value", mode)}
+        if store_name in ("entity_memory", "learned_knowledge"):
+            store_namespace = getattr(config, "namespace", None) if config is not None else None
+            if is_store_instance:
+                row["namespace"] = store_namespace or "global"
+            else:
+                row["namespace"] = (
+                    store_namespace if store_namespace and store_namespace != "global" else machine_namespace
+                )
+        stores[store_name] = row
+    model = getattr(machine, "model", None)
+    summary: Dict[str, Any] = {
+        "name": getattr(machine, "name", None),
+        "namespace": machine_namespace,
+        "stores": stores,
+        "model_id": getattr(model, "id", None) if model is not None else None,
+        "db": getattr(machine, "db", None) is not None,
+        "knowledge": getattr(machine, "knowledge", None) is not None,
+    }
+    custom_stores = getattr(machine, "custom_stores", None)
+    if custom_stores:
+        summary["custom_stores"] = sorted(custom_stores)
+    return summary

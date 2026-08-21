@@ -871,7 +871,10 @@ def _deserialize_learning(value: Any) -> Any:
     if isinstance(value, dict):
         from agno.learn.machine import LearningMachine
 
-        return LearningMachine.from_dict(value)
+        # An inline machine belongs to this component: a name on it is dropped
+        # so the rebuilt machine keeps round-tripping inline instead of being
+        # re-saved as a reference to a machine no registry declares.
+        return LearningMachine.from_dict({key: item for key, item in value.items() if key != "name"})
     return value
 
 

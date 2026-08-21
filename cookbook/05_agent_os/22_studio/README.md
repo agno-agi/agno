@@ -145,6 +145,12 @@ the model on the machine if the deployer, not the first component that runs,
 should decide what it captures with. Namespaces are literal strings; there is
 no per-component templating of a learning namespace.
 
+A named machine on a code-defined Agent or Team is folded into the Registry the
+way its knowledge is, so the stored reference resolves and `list_learning`
+shows it; `GET /registry` lists declared machines under `type: learning` with
+the same summary. Two distinct machines under one name are refused at wiring
+time (`ambiguous_reference`).
+
 The legacy `memory_manager_id` / `enable_agentic_memory` pair is gone from the
 Studio forms. Wiring `learning_name` onto a component stored with them clears
 both, and `get_component` still shows `enable_agentic_memory` on a component
@@ -286,7 +292,7 @@ Run its live lifecycle client:
 The two surfaces have different ownership:
 
 - `GET /registry` describes live, code-defined tools, models, databases,
-  schemas, functions, and reusable components. It is read-only and supports
+  schemas, functions, learning machines, and reusable components. It is read-only and supports
   `resource_type`, partial `name`, `page`, and `limit` filters.
 - `/components` owns persisted component metadata and versioned configuration.
   The demo executes `POST /components` (a draft), a refused
