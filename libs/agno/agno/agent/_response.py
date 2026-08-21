@@ -1087,6 +1087,8 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        add_tool_result_boundaries=agent.add_tool_result_boundaries,
+        tool_result_max_length=agent.tool_result_max_length,
         after_tool_results=build_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1247,6 +1249,8 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        add_tool_result_boundaries=agent.add_tool_result_boundaries,
+        tool_result_max_length=agent.tool_result_max_length,
         after_tool_results=abuild_after_tool_results_callback(
             agent,
             run_response=run_response,
