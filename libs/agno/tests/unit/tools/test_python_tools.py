@@ -15,6 +15,7 @@ def temp_dir():
 
 @pytest.fixture
 def python_tools(temp_dir):
+    # include_tools auto-enables the specified tools
     return PythonTools(
         base_dir=temp_dir,
         include_tools=[

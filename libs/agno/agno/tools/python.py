@@ -51,20 +51,23 @@ class PythonTools(Toolkit):
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 
+        # Auto-enable tools specified in include_tools
+        include = set(kwargs.get("include_tools") or [])
+
         tools: List[Callable] = []
-        if all or run_python_code:
+        if all or run_python_code or "run_python_code" in include:
             tools.append(self.run_python_code)
-        if all or save_to_file_and_run:
+        if all or save_to_file_and_run or "save_to_file_and_run" in include:
             tools.append(self.save_to_file_and_run)
-        if all or run_python_file_return_variable:
+        if all or run_python_file_return_variable or "run_python_file_return_variable" in include:
             tools.append(self.run_python_file_return_variable)
-        if all or pip_install_package:
+        if all or pip_install_package or "pip_install_package" in include:
             tools.append(self.pip_install_package)
-        if all or uv_pip_install_package:
+        if all or uv_pip_install_package or "uv_pip_install_package" in include:
             tools.append(self.uv_pip_install_package)
-        if all or read_file:
+        if all or read_file or "read_file" in include:
             tools.append(self.read_file)
-        if all or list_files:
+        if all or list_files or "list_files" in include:
             tools.append(self.list_files)
 
         super().__init__(name="python_tools", tools=tools, **kwargs)
