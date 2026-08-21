@@ -22,7 +22,8 @@ DEFAULT_INSTRUCTIONS = dedent(
     """\
     You have access to a Superserve sandbox: an isolated cloud environment (Firecracker microVM) for running code.
     The sandbox persists across tool calls, so files you write and packages you install remain available.
-    Available tools:
+    Tools are opt-in: the list below is the full toolkit surface; only use the tools actually available to you.
+    Full toolkit surface:
     - `run_python_code`: Execute Python code and return its output
     - `run_command`: Execute a shell command (bash)
     - `create_file`: Create or overwrite a file
