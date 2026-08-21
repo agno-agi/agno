@@ -65,6 +65,7 @@ class FirestoreDb(BaseDb):
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a Firestore database.
@@ -81,6 +82,7 @@ class FirestoreDb(BaseDb):
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
 
         Raises:
             ValueError: If neither project_id nor db_client is provided.
@@ -99,6 +101,7 @@ class FirestoreDb(BaseDb):
             knowledge_table=knowledge_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            auto_migrate=auto_migrate,
         )
 
         _client: Optional[Client] = db_client

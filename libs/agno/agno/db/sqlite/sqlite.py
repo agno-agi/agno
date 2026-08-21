@@ -113,6 +113,7 @@ class SqliteDb(BaseDb):
         mcp_oauth_refresh_tokens_table: Optional[str] = None,
         mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a SQLite database.
@@ -148,6 +149,7 @@ class SqliteDb(BaseDb):
             mcp_oauth_refresh_tokens_table (Optional[str]): Name of the table to store MCP OAuth refresh tokens.
             mcp_oauth_keys_table (Optional[str]): Name of the table to store MCP OAuth signing keys.
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
 
         Raises:
             ValueError: If none of the tables are provided.
@@ -181,6 +183,7 @@ class SqliteDb(BaseDb):
             mcp_oauth_codes_table=mcp_oauth_codes_table,
             mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
             mcp_oauth_keys_table=mcp_oauth_keys_table,
+            auto_migrate=auto_migrate,
         )
 
         _engine: Optional[Engine] = db_engine

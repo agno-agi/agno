@@ -88,6 +88,7 @@ class ValkeyDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a Valkey database using valkey-glide.
@@ -99,6 +100,7 @@ class ValkeyDb(BaseDb):
 
         Args:
             id (Optional[str]): The ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
             valkey_client (Optional[Union[GlideClient, GlideClusterClient]]): Valkey GLIDE client instance to use.
                 If not provided a new client will be created.
             host (str): Valkey server host. Defaults to "localhost".
@@ -144,6 +146,7 @@ class ValkeyDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             learnings_table=learnings_table,
+            auto_migrate=auto_migrate,
         )
 
         self.db_prefix = db_prefix

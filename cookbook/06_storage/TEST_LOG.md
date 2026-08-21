@@ -26,3 +26,16 @@
 
 ---
 
+### 05_schema_migrations.py
+
+**Status:** PASS
+
+**Description:** Constructed `SqliteDb(auto_migrate=True)`, ran a one-turn
+agent with history enabled, then printed `MigrationManager(db).pending()`.
+
+**Result:** Startup logged "auto_migrate: applying pending schema migrations
+for SqliteDb", the agent responded normally, and the pending check printed
+"Pending migrations: none". The db-level hook applied migrations on the first
+table resolution and stamped every migratable table at the latest version.
+
+---

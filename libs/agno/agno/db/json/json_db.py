@@ -51,6 +51,7 @@ class JsonDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with JSON files as database.
@@ -66,6 +67,7 @@ class JsonDb(BaseDb):
             traces_table (Optional[str]): Name of the JSON file to store run traces.
             spans_table (Optional[str]): Name of the JSON file to store span events.
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
         """
         if id is None:
             seed = db_path or "agno_json_db"
@@ -81,6 +83,7 @@ class JsonDb(BaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            auto_migrate=auto_migrate,
         )
 
         # Create the directory where the JSON files will be stored, if it doesn't exist

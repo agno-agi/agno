@@ -77,6 +77,7 @@ class DynamoDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a DynamoDB database.
@@ -109,6 +110,7 @@ class DynamoDb(BaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            auto_migrate=auto_migrate,
         )
 
         if db_client is not None:

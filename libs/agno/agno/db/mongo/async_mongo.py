@@ -170,6 +170,7 @@ class AsyncMongoDb(AsyncBaseDb):
         schedules_collection: Optional[str] = None,
         schedule_runs_collection: Optional[str] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Async interface for interacting with a MongoDB database.
@@ -195,6 +196,7 @@ class AsyncMongoDb(AsyncBaseDb):
             schedules_collection (Optional[str]): Name of the collection to store schedules.
             schedule_runs_collection (Optional[str]): Name of the collection to store schedule runs.
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
 
         Raises:
             ValueError: If neither db_url nor db_client is provided, or if db_client type is unsupported.
@@ -219,6 +221,7 @@ class AsyncMongoDb(AsyncBaseDb):
             learnings_table=learnings_collection,
             schedules_table=schedules_collection,
             schedule_runs_table=schedule_runs_collection,
+            auto_migrate=auto_migrate,
         )
 
         # Detect client type if provided

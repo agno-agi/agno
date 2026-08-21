@@ -148,10 +148,17 @@ async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
 
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initializes databases in the event loop and closes them on shutdown."""
+    """Provisions databases at startup, reports pending migrations, and closes them on shutdown.
+
+    Provisioning runs first: a database constructed with auto_migrate=True migrates
+    on its first table resolution, which provisioning triggers, so by the time the
+    pending check runs such a database reports nothing. Without opt-in the pending
+    list is only reported, never applied.
+    """
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
+    await agent_os._warn_pending_migrations()
 
     yield
 
@@ -1664,11 +1671,13 @@ class AgentOS:
         if self.auto_provision_dbs:
             self._pending_async_db_init = True
 
-    def _initialize_sync_databases(self) -> None:
-        """Initialize sync databases."""
+    def _unique_dbs(self) -> List[Union[BaseDb, AsyncBaseDb, RemoteDb]]:
+        """Every configured database (agent/team/workflow and knowledge), deduplicated by identity."""
         from itertools import chain
 
-        unique_dbs = list(
+        if not hasattr(self, "dbs") or not hasattr(self, "knowledge_dbs"):
+            return []
+        return list(
             {
                 id(db): db
                 for db in chain(
@@ -1676,6 +1685,40 @@ class AgentOS:
                 )
             }.values()
         )
+
+    async def _warn_pending_migrations(self) -> None:
+        """Log one warning listing every table with a pending schema migration.
+
+        Read-only. Remote databases are owned elsewhere and skipped; a database that
+        cannot be inspected is skipped quietly: this is a courtesy check at startup,
+        not a health check.
+        """
+        from agno.db.migrations.manager import MIGRATION_HINT, MigrationManager
+
+        lines: List[str] = []
+        for db in self._unique_dbs():
+            if not isinstance(db, (BaseDb, AsyncBaseDb)):
+                continue
+            try:
+                pending = await MigrationManager(db).pending()
+            except Exception as e:
+                log_debug(f"Could not check pending migrations for {db.__class__.__name__} (id: {db.id}): {str(e)}")
+                continue
+            for item in pending:
+                lines.append(
+                    f"  - {db.__class__.__name__} (id: {db.id}) table {item.table_name} [{item.table_type}]: "
+                    f"{item.current_version} -> {item.target_version}"
+                )
+        if lines:
+            log_warning(
+                "Pending database migrations found. Features backed by these tables will fail until "
+                "they are applied:\n" + "\n".join(lines) + f"\n{MIGRATION_HINT} "
+                "Or construct the database with auto_migrate=True to apply them on first use."
+            )
+
+    def _initialize_sync_databases(self) -> None:
+        """Initialize sync databases."""
+        unique_dbs = self._unique_dbs()
 
         for db in unique_dbs:
             if isinstance(db, AsyncBaseDb):
@@ -1690,16 +1733,7 @@ class AgentOS:
     async def _initialize_async_databases(self) -> None:
         """Initialize async databases."""
 
-        from itertools import chain
-
-        unique_dbs = list(
-            {
-                id(db): db
-                for db in chain(
-                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
-                )
-            }.values()
-        )
+        unique_dbs = self._unique_dbs()
 
         for db in unique_dbs:
             if not isinstance(db, AsyncBaseDb):
@@ -1713,19 +1747,7 @@ class AgentOS:
 
     async def _close_databases(self) -> None:
         """Close all database connections and release connection pools."""
-        from itertools import chain
-
-        if not hasattr(self, "dbs") or not hasattr(self, "knowledge_dbs"):
-            return
-
-        unique_dbs = list(
-            {
-                id(db): db
-                for db in chain(
-                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
-                )
-            }.values()
-        )
+        unique_dbs = self._unique_dbs()
 
         for db in unique_dbs:
             try:

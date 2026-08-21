@@ -84,6 +84,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Async interface for interacting with a SQLite database.
@@ -112,6 +113,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
 
         Raises:
             ValueError: If none of the tables are provided.
@@ -138,6 +140,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
+            auto_migrate=auto_migrate,
         )
 
         _engine: Optional[AsyncEngine] = db_engine

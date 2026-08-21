@@ -78,6 +78,7 @@ class ClickhouseDb(BaseDb):
         versions_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
+        auto_migrate: bool = False,
     ):
         """
         Args:
@@ -105,6 +106,7 @@ class ClickhouseDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            auto_migrate=auto_migrate,
         )
 
         self.host = host

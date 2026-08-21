@@ -54,3 +54,22 @@ agent = Agent(
 - [`01_persistent_session_storage.py`](01_persistent_session_storage.py) - Database persistence
 - [`02_session_summary.py`](02_session_summary.py) - Session summarization
 - [`03_chat_history.py`](03_chat_history.py) - Chat history management
+
+## Schema migrations
+
+Upgrading Agno with an existing database can leave some tables at an older
+schema version; the features backed by them fail on first touch until the
+pending migrations are applied. Migrations are explicit by default:
+
+```python
+import asyncio
+from agno.db.migrations.manager import MigrationManager
+
+print(asyncio.run(MigrationManager(db).pending()))  # read-only
+asyncio.run(MigrationManager(db).up())              # apply
+```
+
+AgentOS logs a warning at startup listing pending migrations and exposes
+`POST /databases/all/migrate`. To apply them on first use instead, construct
+the database with `auto_migrate=True` (see `05_schema_migrations.py`); keep it
+off in production and run the migrate step explicitly in your deploy.

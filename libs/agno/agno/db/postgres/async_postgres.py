@@ -117,6 +117,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
         create_schema: bool = True,
+        auto_migrate: bool = False,
     ):
         """
         Async interface for interacting with a PostgreSQL database.
@@ -137,6 +138,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             id (Optional[str]): The ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
             db_url (Optional[str]): The database URL to connect to.
             db_engine (Optional[AsyncEngine]): The SQLAlchemy async database engine to use.
             db_schema (Optional[str]): The database schema to use.
@@ -180,6 +182,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
+            auto_migrate=auto_migrate,
         )
 
         _engine: Optional[AsyncEngine] = db_engine

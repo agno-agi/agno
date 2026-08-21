@@ -29,9 +29,13 @@ if TYPE_CHECKING:
 
 
 class InMemoryDb(BaseDb):
-    def __init__(self):
-        """Interface for in-memory storage."""
-        super().__init__()
+    def __init__(self, auto_migrate: bool = False):
+        """Interface for in-memory storage.
+
+        Args:
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
+        """
+        super().__init__(auto_migrate=auto_migrate)
 
         # Initialize in-memory storage dictionaries
         self._sessions: List[Dict[str, Any]] = []
