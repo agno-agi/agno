@@ -1437,32 +1437,44 @@ class Function(BaseModel):
 
         Both injection channels ("run_context" and "_agno_run_context", the
         latter used by internal wrappers such as the MCP entrypoints)
-        contribute the same fields. Only user_id and session_id are
-        contributed: run_id stays out so a result cached for a user and session
-        is reusable across their runs. Returns None when the entrypoint takes
-        no run context, so key composition for run-context-free tools is
-        unchanged.
+        contribute user_id and session_id. For the "run_context" spelling,
+        run_id stays out so a result cached for a user and session is reusable
+        across their runs. For the "_agno_run_context" spelling (MCP tools),
+        run_id is part of the identity: MCP entries stay scoped to their run
+        because a header provider may read the agent, the team or run-context
+        metadata, and one run's result must never be served to another (see
+        #9380). Returns None when the entrypoint takes no run context, so key
+        composition for run-context-free tools is unchanged.
 
-        Only those two fields enter the key. A run context also carries
-        metadata, dependencies, session_state and knowledge_filters, and none of
-        them scope an entry, so two calls that differ only there share one. A
-        tool that reads them, rather than taking the same information as an
-        argument the model supplies, is not safely cacheable.
+        Only those identity fields enter the key. A run context also carries
+        metadata, dependencies, session_state, knowledge_filters and the run's
+        live message list, and none of them scope an entry: two calls that
+        differ only there share one. A tool that reads them, rather than taking
+        the same information as an argument the model supplies, is not safely
+        cacheable.
 
-        Reuse across runs holds for the "run_context" spelling alone.
-        _get_cache_key removes only FRAMEWORK_INJECTED_PARAMS from the key
-        material, so an injected "_agno_run_context" object is also serialized
-        into the key with run_id and every other live field. Entries on that
-        channel are therefore scoped to one run context, not to a user and
-        session, until those channels are removed from the key material too.
+        The injected objects themselves never enter the key material:
+        _get_cache_key drops every framework-injected channel ("run_context",
+        "agent", "team", media and the "_agno_" spellings) before serializing.
+        The run context is a live object whose repr() carries run_id and the
+        run's current message list, so serializing it would change the key
+        after every model turn and the cache would never hit (see #9570).
         """
         run_context = entrypoint_args.get("run_context") or entrypoint_args.get("_agno_run_context")
         if run_context is None:
             return None
-        return {
+        identity = {
             "user_id": getattr(run_context, "user_id", None),
             "session_id": getattr(run_context, "session_id", None),
         }
+        # The run context reached the entrypoint through the `_agno_` channel
+        # when the plain "run_context" spelling is absent. MCP entrypoints are
+        # deliberately scoped to their run (#9380): the identity keeps run_id
+        # so a later run of the same user and session is not served the earlier
+        # run's cached result.
+        if entrypoint_args.get("run_context") is None and entrypoint_args.get("_agno_run_context") is not None:
+            identity["run_id"] = getattr(run_context, "run_id", None)
+        return identity
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name, caller identity and arguments."""
@@ -1477,7 +1489,7 @@ class Function(BaseModel):
         # injected agent or team contributes none, so a cache_results tool that
         # reads agent.user_id still shares entries across users. Tracked as a
         # follow-up.
-        for param_name in FRAMEWORK_INJECTED_PARAMS:
+        for param_name in (*FRAMEWORK_INJECTED_PARAMS, *AGNO_INJECTED_PARAMS):
             copy_entrypoint_args.pop(param_name, None)
         # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
         args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
@@ -1663,8 +1675,39 @@ class Function(BaseModel):
             except Exception:
                 os.unlink(tmp_path)
                 raise
+            self._evict_expired_entries(cache_file)
         except Exception:
             log_exception("Error writing cache")
+
+    def _evict_expired_entries(self, cache_file: str) -> None:
+        """Remove expired entries from this function's cache directory.
+
+        A stale entry is normally removed when a read finds it expired. Entries
+        whose key is never produced again are never read: a per-run key (the
+        MCP channel keeps run_id in the identity) stops being produced once the
+        run ends, so without this sweep every run would leave files behind that
+        nothing ever removes. Sweep on write, so the directory stays bounded by
+        the entries written within one TTL.
+        """
+        import os
+        from pathlib import Path
+        from time import time
+
+        try:
+            cache_dir = Path(os.path.dirname(cache_file))
+            cutoff = time() - self.cache_ttl
+            for entry in cache_dir.glob("*.json"):
+                if entry.name == Path(cache_file).name:
+                    continue  # The entry just written is never expired
+                try:
+                    # stat is enough: the file is written atomically right
+                    # before, so its mtime is the moment it was stored.
+                    if entry.stat().st_mtime < cutoff:
+                        entry.unlink()
+                except FileNotFoundError:
+                    pass  # Another caller removed it first
+        except Exception:
+            log_exception("Error evicting expired cache entries")
 
 
 class FunctionExecutionResult(BaseModel):

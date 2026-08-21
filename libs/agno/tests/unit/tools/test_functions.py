@@ -445,6 +445,39 @@ def test_function_cache_ttl(tmp_path):
     assert func._get_cached_result(cache_file) is None
 
 
+def test_save_sweeps_expired_entries_never_read_again(tmp_path):
+    """Writing a new entry removes stale ones from the same function dir.
+
+    Entries whose key is never produced again are never read, so without the
+    sweep they would accumulate forever: the MCP channel keeps run_id in the
+    identity, so every past run leaves entries no future key will ever match
+    (see #9570).
+    """
+    import os
+    import time
+
+    func = Function(
+        name="test_func",
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        cache_ttl=3600,
+    )
+
+    # An entry written long ago, under a key nothing will ever read again
+    stale_file = func._get_cache_file_path("never-produced-again")
+    func._save_to_cache(stale_file, {"result": "old"})
+    old_mtime = time.time() - 7200  # two hours ago, past the 1h TTL
+    os.utime(stale_file, (old_mtime, old_mtime))
+    assert os.path.exists(stale_file)
+
+    # A fresh write to the same function dir sweeps the stale entry away
+    fresh_file = func._get_cache_file_path("fresh")
+    func._save_to_cache(fresh_file, {"result": "new"})
+
+    assert os.path.exists(fresh_file)
+    assert not os.path.exists(stale_file)
+
+
 def test_function_call_initialization():
     """Test FunctionCall initialization."""
     func = Function(name="test_func")
@@ -2801,6 +2834,109 @@ async def test_cache_hits_across_runs_for_same_user_and_session_async(tmp_path):
 
     assert result.result == "secret for alice"
     assert executions == ["alice"]
+
+
+# =============================================================================
+# _agno_ run-context channel cache identity tests
+#
+# MCP entrypoints (get_entrypoint_for_tool) declare `_agno_run_context` instead
+# of `run_context`. The cache key must treat the two channels identically: the
+# injected RunContext carries a live reference to the run's message list, so
+# serializing the object itself into the key made it change on every model turn
+# and the cache never hit (see #9570).
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_agno_run_context_channel_hits_cache_within_a_run(tmp_path):
+    """An MCP-style tool (`_agno_run_context`) must hit the cache on a second
+    call in the same run when only the run's message list has grown: the live
+    RunContext object is not part of the cache key."""
+    executions = []
+
+    async def echo(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        executions.append(1)
+        return f"echo:{query}"
+
+    func = Function(name="mcp_echo", entrypoint=echo, cache_results=True, cache_dir=str(tmp_path))
+
+    # Turn 1 of a run: one user message in context
+    func._run_context = RunContext(
+        run_id="run-1", session_id="s1", user_id="alice", messages=[Message(role="user", content="hi")]
+    )
+    first = await FunctionCall(function=func, arguments={"query": "hello"}).aexecute()
+
+    # Turn 2 of the same run: the message list has grown, run_id unchanged
+    func._run_context = RunContext(
+        run_id="run-1",
+        session_id="s1",
+        user_id="alice",
+        messages=[
+            Message(role="user", content="hi"),
+            Message(role="assistant", content="hello there"),
+            Message(role="user", content="what is the weather"),
+        ],
+    )
+    second = await FunctionCall(function=func, arguments={"query": "hello"}).aexecute()
+
+    assert first.status == "success"
+    assert second.status == "success"
+    assert second.result == "echo:hello"
+    # The second call must be served from cache: the tool body ran exactly once
+    assert executions == [1]
+
+    # And only one cache entry exists for the two identical calls
+    from pathlib import Path
+
+    cache_files = sorted(Path(str(tmp_path)).glob("functions/**/*.json"))
+    assert len(cache_files) == 1
+
+
+@pytest.mark.asyncio
+async def test_agno_run_context_channel_stays_scoped_per_run(tmp_path):
+    """run_id stays in the cache key on the `_agno_` channel: MCP entries are
+    deliberately scoped to their run (#9380), so a new run for the same user
+    and session must not be served the previous run's result."""
+    executions = []
+
+    async def whoami(_agno_run_context: Optional[RunContext] = None) -> str:
+        executions.append(_agno_run_context.run_id)
+        return f"secret for {_agno_run_context.user_id}"
+
+    func = Function(name="whoami", entrypoint=whoami, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+    await FunctionCall(function=func).aexecute()
+
+    func._run_context = RunContext(run_id="r2", session_id="s1", user_id="alice")
+    result = await FunctionCall(function=func).aexecute()
+
+    assert result.result == "secret for alice"
+    # A new run executes again: per-run scoping is deliberate for MCP tools
+    assert executions == ["r1", "r2"]
+
+
+@pytest.mark.asyncio
+async def test_agno_run_context_channel_does_not_leak_across_users(tmp_path):
+    """Per-user scoping holds on the `_agno_` channel: one user's cached result
+    must never be served to another user."""
+    executions = []
+
+    async def whoami(_agno_run_context: Optional[RunContext] = None) -> str:
+        executions.append(_agno_run_context.user_id)
+        return f"secret for {_agno_run_context.user_id}"
+
+    func = Function(name="whoami", entrypoint=whoami, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="s-alice", user_id="alice")
+    result_alice = await FunctionCall(function=func).aexecute()
+
+    func._run_context = RunContext(run_id="r2", session_id="s-bob", user_id="bob")
+    result_bob = await FunctionCall(function=func).aexecute()
+
+    assert result_alice.result == "secret for alice"
+    assert result_bob.result == "secret for bob"
+    assert executions == ["alice", "bob"]
 
 
 # =============================================================================
