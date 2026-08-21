@@ -238,6 +238,33 @@ def _head_preview(output: str, preview_lines: int, preview_chars: int) -> str:
     return head
 
 
+def _preview_block(output: str, preview_lines: int, preview_chars: int) -> str:
+    """The preview an envelope shows: the head, and the tail when lines were cut.
+
+    Errors, totals and summaries live at the end of a result, so a head-only
+    preview hides exactly the lines a model most often needs. The tail is
+    capped like the head, and the omitted count says what sits between them.
+    """
+    lines = output.split("\n")
+    head = _head_preview(output, preview_lines, preview_chars)
+    lines_omitted = len(lines) - len(head.split("\n")) - _TAIL_LINES
+    # The head can also be cut mid-stream by the character cap, on a payload
+    # of a few very long lines - the common oversized single-line JSON case -
+    # where no whole line was dropped but most of the bytes were.
+    chars_omitted = len(output) - len(head) - min(len(output), preview_chars)
+    if lines_omitted <= 0 and chars_omitted <= 0:
+        return head
+    if lines_omitted > 0:
+        tail = "\n".join(lines[-_TAIL_LINES:])
+        marker = f"[... {lines_omitted} lines omitted ...]"
+    else:
+        tail = output[-min(len(output), preview_chars) :]
+        marker = "[... omitted ...]"
+    if len(tail) > preview_chars:
+        tail = "..." + tail[-preview_chars:]
+    return f"{head}\n{marker}\n{tail}"
+
+
 def render_stored_envelope(ref: ResultRef, preview: str) -> str:
     return (
         f'<result id="{ref.result_id}" tool="{ref.tool_name}" lines="{ref.line_count}" '
@@ -476,7 +503,7 @@ class ResultStore:
             "content_type": content_type,
             "size_bytes": len(output.encode("utf-8")),
             "line_count": len(output.split("\n")),
-            "preview": _head_preview(output, self.preview_lines, self.preview_chars),
+            "preview": _preview_block(output, self.preview_lines, self.preview_chars),
             "user_id": user_id,
             "created_at": created_at,
             "expires_at": created_at + self.ttl_seconds if self.ttl_seconds else None,
@@ -667,7 +694,7 @@ class ResultStore:
                 user_id=user_id,
                 shared=shared,
             )
-            return render_stored_envelope(ref, _head_preview(output, self.preview_lines, self.preview_chars))
+            return render_stored_envelope(ref, _preview_block(output, self.preview_lines, self.preview_chars))
         except QuotaExceededError as e:
             reason = self._quota_reason(e)
         except Exception as e:
@@ -706,7 +733,7 @@ class ResultStore:
                 user_id=user_id,
                 shared=shared,
             )
-            return render_stored_envelope(ref, _head_preview(output, self.preview_lines, self.preview_chars))
+            return render_stored_envelope(ref, _preview_block(output, self.preview_lines, self.preview_chars))
         except QuotaExceededError as e:
             reason = self._quota_reason(e)
         except Exception as e:
@@ -795,6 +822,26 @@ class ResultStore:
         if content is None:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
+
+    def payload(self, result_id: str) -> str:
+        """The full stored text of a result. For code, not for a transcript.
+
+        The read-back TOOLS stay capped - a page can never put back what
+        offloading took out of the model's context - but code computing over
+        a result (a CodeMode cell binding it to a variable) needs the whole
+        text, bounded only by the per-result store limit.
+        """
+        row = self.get_row(result_id)
+        if row is None:
+            raise KeyError(f"unknown result id {result_id}")
+        return self._read_payload(row)
+
+    async def apayload(self, result_id: str) -> str:
+        """Async variant of ``payload``."""
+        row = await self.aget_row(result_id)
+        if row is None:
+            raise KeyError(f"unknown result id {result_id}")
+        return await self._aread_payload(row)
 
     def read(
         self, result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0

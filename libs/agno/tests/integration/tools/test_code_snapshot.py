@@ -590,3 +590,19 @@ async def test_a_failed_manifest_read_tells_the_model_nothing_will_persist():
     assert notice is not None
     assert "code_mode_not_persisted" in notice
     assert session.snapshot_writable is False
+
+
+def test_a_user_variable_named_results_survives_a_restart(snapshot_fs, make_code_mode):
+    # The built-in handle is result_store, not results, so a user variable
+    # named results is ordinary state: listed, snapshotted, restored.
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    sid = _sid("user-results")
+    cm.execute(_ctx(sid), "results = [1, 2, 3]")
+    variables = cm.variables(sid)
+    assert "results" in variables
+    assert "result_store" not in variables
+    assert "ResultTooLarge" not in variables
+    cm.close()
+    cm.shutdown(sid)
+    revived = cm.execute(_ctx(sid), "print(results)")
+    assert "[1, 2, 3]" in revived.content

@@ -203,8 +203,11 @@ def test_output_caps_apply_per_stream_with_markers(make_code_mode):
     result = cm.run(sid, "import sys\nprint('o' * 50_000)\nprint('e' * 50_000, file=sys.stderr)")
     assert "stdout" in result.truncated
     assert "stderr" in result.truncated
-    assert "[... output truncated at 1000 chars ...]" in result.stdout
-    assert "[... output truncated at 1000 chars ...]" in result.stderr
+    # The budget keeps a head and a tail; the marker names what fell between.
+    assert "chars omitted; output capped at 1000" in result.stdout
+    assert "chars omitted; output capped at 1000" in result.stderr
+    assert result.stdout.startswith("o" * 100)
+    assert "o" in result.stdout.rsplit("...]", 1)[-1]
     assert len(result.stdout) < 1_200
     assert len(result.stderr) < 1_200
 
@@ -213,7 +216,7 @@ def test_result_stream_has_its_own_budget(make_code_mode):
     cm = make_code_mode(max_output_chars=500)
     result = cm.run(_sid("result-cap"), "'r' * 50_000")
     assert "result" in result.truncated
-    assert result.result is not None and "[... output truncated at 500 chars ...]" in result.result
+    assert result.result is not None and "chars omitted; output capped at 500" in result.result
 
 
 def test_display_data_png_is_promoted_to_images(make_code_mode):
@@ -483,3 +486,102 @@ async def test_kernel_death_cancels_the_in_flight_bridged_call(make_code_mode):
     assert "napped:new" in revived.content
     assert "old" not in revived.content
     assert session.generation > generation_before
+
+
+# ------------------------------------------------------------------
+# Interpreter selection, stderr on failure, cwd/env, image caps, max_kernels
+# ------------------------------------------------------------------
+
+
+def test_python_argument_launches_that_exact_interpreter(tmp_path):
+    import stat
+    import sys
+
+    # A wrapper that stamps the environment and execs the real interpreter:
+    # the stamp can only appear in the kernel if OUR argv[0] actually ran.
+    wrapper = tmp_path / "agno-test-python"
+    wrapper.write_text(f'#!/bin/sh\nAGNO_WRAPPER_MARK=used exec "{sys.executable}" "$@"\n')
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC)
+    cm = CodeMode(python=str(wrapper), snapshot=False, allow_restart=False)
+    try:
+        result = cm.run("kernel-python-arg", "import os; print(os.environ.get('AGNO_WRAPPER_MARK'))")
+        assert result.stdout.strip() == "used"
+    finally:
+        cm.shutdown()
+
+
+def test_a_broken_interpreter_fails_with_its_stderr_in_the_error(tmp_path):
+    import stat
+
+    fake = tmp_path / "broken-python"
+    fake.write_text("#!/bin/sh\necho 'this interpreter is broken on purpose' >&2\nexit 3\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    cm = CodeMode(python=str(fake), snapshot=False, allow_restart=False, timeout=30)
+    try:
+        with pytest.raises(Exception) as excinfo:
+            cm.run("kernel-broken-python", "print('never runs')")
+        assert "broken on purpose" in str(excinfo.value)
+    finally:
+        cm.shutdown()
+
+
+def test_cwd_and_env_reach_the_kernel(tmp_path):
+    import os
+
+    cm = CodeMode(cwd=str(tmp_path), env={"AGNO_KERNEL_PROBE": "present"}, snapshot=False)
+    try:
+        result = cm.run("kernel-cwd-env", "import os; print(os.getcwd()); print(os.environ['AGNO_KERNEL_PROBE'])")
+        lines = result.stdout.strip().split("\n")
+        assert os.path.realpath(lines[0]) == os.path.realpath(str(tmp_path))
+        assert lines[1] == "present"
+    finally:
+        cm.shutdown()
+
+
+_TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+
+def test_images_per_cell_are_capped_with_a_note():
+    cm = CodeMode(max_images_per_cell=2, snapshot=False)
+    try:
+        cell = (
+            "import base64\n"
+            "from IPython.display import display, Image\n"
+            f"png = base64.b64decode('{_TINY_PNG}')\n"
+            "for _ in range(5): display(Image(data=png))\n"
+        )
+        result = cm.run("kernel-image-cap", cell)
+        assert len(result.images) == 2
+        assert "image dropped" in result.stderr
+    finally:
+        cm.shutdown()
+
+
+def test_an_oversized_image_is_dropped_by_name_not_silently():
+    cm = CodeMode(max_image_bytes=10, snapshot=False)
+    try:
+        cell = (
+            "import base64\n"
+            "from IPython.display import display, Image\n"
+            f"display(Image(data=base64.b64decode('{_TINY_PNG}')))\n"
+        )
+        result = cm.run("kernel-image-size", cell)
+        assert result.images == []
+        assert "over the 10-byte limit" in result.stderr
+    finally:
+        cm.shutdown()
+
+
+def test_max_kernels_evicts_the_least_recent_idle_session():
+    cm = CodeMode(max_kernels=2, snapshot=False)
+    try:
+        for i in range(1, 4):
+            cm.run(f"kernel-cap-{i}", f"marker = {i}")
+        assert len(cm._sessions) == 2
+        assert "kernel-cap-1" not in cm._sessions
+        assert "kernel-cap-1" in cm._evicted
+        # The evicted id comes back as a fresh kernel with the reset notice.
+        out = cm.execute(RunContext(run_id="r", session_id="kernel-cap-1"), "print('back')")
+        assert "code_mode_reset" in (out.content or "")
+    finally:
+        cm.shutdown()
