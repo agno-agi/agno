@@ -86,7 +86,10 @@ arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-pr
 langfuse = ["langfuse"]
 
 # Dependencies for Models
-anthropic = ["anthropic"]
+# >=0.77.0: the first release accepting output_config on the stable messages endpoint
+# as well as the beta one. Structured output rides inside it, and anthropic 1.0.0
+# dropped the output_format parameter that carried it before.
+anthropic = ["anthropic>=0.77.0"]
 aws-bedrock = ["boto3", "aioboto3"]
 azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
