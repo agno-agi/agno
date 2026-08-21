@@ -269,3 +269,91 @@ def test_api_key_mode_never_touches_token_store():
 
     model.get_client()
     assert manager.method_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Per-user isolation of the last-resort memory slot
+#
+# _memory_row is the third store, under the db row and the file. The cache is
+# already keyed (provider, user_id, service) and the row key follows _store_key,
+# so this slot is the only one with no key - and _load falls back to it whenever
+# the store misses, which is what an absent per-user row looks like.
+# ---------------------------------------------------------------------------
+
+
+def test_the_memory_slot_does_not_serve_one_users_token_to_another(
+    sqlite_db, encryption_key, token_endpoint, fake_clock
+):
+    manager = _sync_manager(token_endpoint, db=sqlite_db, encryption_key=encryption_key, now_fn=fake_clock)
+
+    manager._save({"access_token": "user-a-token", "expires_at": fake_clock() + 21600}, user_id="u1")
+
+    # u1's row really is in the store, so this is not a "no backend" degrade:
+    # u2 simply has no row, which is the ordinary case for a second user.
+    assert sqlite_db.get_auth_token("xai", "u1", "supergrok") is not None
+    assert manager._load(user_id="u2") is None
+
+
+async def test_the_memory_slot_does_not_serve_one_users_token_to_another_async(
+    sqlite_db, encryption_key, token_endpoint, fake_clock
+):
+    manager = XAITokenManager(
+        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(token_endpoint)),
+        db=sqlite_db,
+        encryption_key=encryption_key,
+        now_fn=fake_clock,
+    )
+
+    await manager._asave({"access_token": "user-a-token", "expires_at": fake_clock() + 21600}, user_id="u1")
+
+    assert sqlite_db.get_auth_token("xai", "u1", "supergrok") is not None
+    assert await manager._aload(user_id="u2") is None
+
+
+def test_signing_one_user_out_leaves_another_users_memory_token(token_endpoint, fake_clock, tmp_path):
+    """sign_out pops one user's entry; it must never clear the whole slot.
+
+    No db on purpose: the file store refuses an identified user, so memory is
+    the only place these two tokens live and the assertion is about the slot.
+    """
+    manager = _sync_manager(
+        token_endpoint, token_path=str(tmp_path / "token.json"), encrypt_tokens=False, now_fn=fake_clock
+    )
+    manager._save({"access_token": "user-a-token", "expires_at": fake_clock() + 21600}, user_id="u1")
+    manager._save({"access_token": "user-b-token", "expires_at": fake_clock() + 21600}, user_id="u2")
+
+    manager.sign_out(user_id="u1")
+
+    assert manager._load(user_id="u1") is None
+    assert (manager._load(user_id="u2") or {})["access_token"] == "user-b-token"
+
+
+def test_signing_a_user_out_leaves_the_deployment_token_file_alone(token_endpoint, fake_clock, tmp_path):
+    """The file store holds ONE session - the deployment's. A user cannot delete it.
+
+    The read and write paths already refuse an identified user; the delete path
+    is the one that did not, so an identified sign_out unlinked the shared file.
+    """
+    path = tmp_path / "token.json"
+    manager = _sync_manager(token_endpoint, token_path=str(path), encrypt_tokens=False, now_fn=fake_clock)
+    manager._save({"access_token": "deployment-token", "expires_at": fake_clock() + 21600}, user_id="")
+
+    manager.sign_out(user_id="u1")
+
+    assert path.exists()
+    assert (manager._load() or {})["access_token"] == "deployment-token"
+
+
+@pytest.mark.asyncio
+async def test_signing_a_user_out_asynchronously_leaves_the_deployment_token_file_alone(
+    token_endpoint, fake_clock, tmp_path
+):
+    """The async twin carries the same guard - it is a byte-duplicate of the sync one."""
+    path = tmp_path / "token.json"
+    manager = _sync_manager(token_endpoint, token_path=str(path), encrypt_tokens=False, now_fn=fake_clock)
+    manager._save({"access_token": "deployment-token", "expires_at": fake_clock() + 21600}, user_id="")
+
+    await manager.asign_out(user_id="u1")
+
+    assert path.exists()
+    assert (manager._load() or {})["access_token"] == "deployment-token"
