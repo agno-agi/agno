@@ -21,13 +21,12 @@ This example runs one agent, then opens each place and shows what it holds.
 
 from typing import Any, Callable, Dict
 
-from sqlalchemy import text
-
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.models.openai import OpenAIResponses
+from sqlalchemy import text
 
 db = SqliteDb(db_file="tmp/where_results_live.db")
 

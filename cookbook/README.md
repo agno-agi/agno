@@ -86,6 +86,9 @@ Hundreds of examples. Copy, paste, run.
 ### Observability
 [observability](./observability) — Trace and monitor agents, teams, and workflows: Langfuse, Arize Phoenix, AgentOps, LangSmith, MLflow, Weave, Logfire, and more (via OpenInference, OpenLIT, and autolog).
 
+### Performance
+[performance](./performance) — The canonical framework-overhead benchmark suite: instantiation, run loop, cold imports and memory footprint, measured with in-process mock models (no network, no keys), plus cross-framework comparisons (LangGraph, PydanticAI, CrewAI) and an HTML report generator. For `PerformanceEval` API examples see [09_evals](./09_evals).
+
 ## Quality Standard
 
 Every folder of runnable examples carries a `TEST_LOG.md` recording what was run and what
