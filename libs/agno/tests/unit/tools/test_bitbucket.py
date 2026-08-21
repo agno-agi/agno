@@ -326,7 +326,9 @@ class TestBitbucketTools:
 
         result = bitbucket_tools.get_pull_request_changes(pull_request_id=123)
 
-        assert result == mock_diff
+        # v3.0: toolkit returns JSON string
+        result_data = json.loads(result)
+        assert result_data["diff"] == mock_diff
         mock_request.assert_called_once_with("GET", "/repositories/test_workspace/test_repo/pullrequests/123/diff")
 
     @patch.object(BitbucketTools, "_make_request")
@@ -381,7 +383,7 @@ class TestBitbucketTools:
         assert hasattr(bitbucket_tools, "list_all_pull_requests")
         assert hasattr(bitbucket_tools, "get_pull_request_details")
         assert hasattr(bitbucket_tools, "get_pull_request_changes")
-        assert hasattr(bitbucket_tools, "list_issues")
+        assert hasattr(bitbucket_tools, "bitbucket_list_issues")
 
     @patch.object(BitbucketTools, "_make_request")
     def test_error_handling_returns_json_error(self, mock_request, bitbucket_tools):
