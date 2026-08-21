@@ -21,8 +21,8 @@ from agno.os.config import (
     SessionConfig,
     TracesConfig,
 )
+from agno.os.schema_utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.os.scopes import split_scope
-from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam

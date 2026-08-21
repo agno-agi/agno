@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, time, timezone
+from datetime import datetime
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
@@ -22,15 +22,23 @@ from agno.factory import (
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.os.schema_utils import (  # noqa: F401  (re-exported)
+    extract_input_media,
+    format_duration_ms,
+    format_team_tools,
+    format_tools,
+    get_run_input,
+    get_session_name,
+    stringify_input_content,
+    to_utc_datetime,
+)
 from agno.registry import Registry, ToolSource
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
-from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
@@ -50,32 +58,6 @@ class AgnoHTTPException(HTTPException):
         super().__init__(status_code=error.status_code, detail=detail if detail is not None else str(error))
         self.error_id: Optional[str] = getattr(error, "error_id", None)
         self.error_type: Optional[str] = getattr(error, "type", None)
-
-
-def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> Optional[datetime]:
-    """Convert a timestamp, ISO 8601 string, date, or datetime to a UTC datetime."""
-    if value is None:
-        return None
-
-    if isinstance(value, datetime):
-        # If already a datetime, make sure the timezone is UTC
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value
-
-    # datetime is a subclass of date, so this must come after the datetime check
-    if isinstance(value, date):
-        return datetime.combine(value, time.min, tzinfo=timezone.utc)
-
-    if isinstance(value, str):
-        try:
-            if value.endswith("Z"):
-                value = value[:-1] + "+00:00"
-            return datetime.fromisoformat(value)
-        except (ValueError, TypeError):
-            return None
-
-    return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
 # Matched to the most generous object-store metadata budget.
@@ -878,108 +860,6 @@ def get_knowledge_instance(
         detail=f"db_id or knowledge_id query parameter is required when using multiple knowledge bases. "
         f"Available IDs: {knowledge_ids}",
     )
-
-
-def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
-    """Get the run input from the given run dictionary
-
-    Uses the RunInput/TeamRunInput object which stores the original user input.
-    """
-
-    # For agent or team runs, use the stored input_content
-    if not is_workflow_run and run_dict.get("input") is not None:
-        input_data = run_dict.get("input")
-        if isinstance(input_data, dict) and input_data.get("input_content") is not None:
-            return stringify_input_content(input_data["input_content"])
-
-    if is_workflow_run:
-        # Check the input field directly
-        input_value = run_dict.get("input")
-        if input_value is not None:
-            return stringify_input_content(input_value)
-
-        # Check the step executor runs for fallback
-        step_executor_runs = run_dict.get("step_executor_runs", [])
-        if step_executor_runs:
-            for message in reversed(step_executor_runs[0].get("messages", [])):
-                if message.get("role") == "user":
-                    return message.get("content", "")
-
-    # Final fallback: scan messages
-    if run_dict.get("messages") is not None:
-        for message in reversed(run_dict["messages"]):
-            if message.get("role") == "user":
-                return message.get("content", "")
-
-    return ""
-
-
-def get_session_name(session: Dict[str, Any]) -> str:
-    """Get the session name from the given session dictionary"""
-
-    # If session_data.session_name is set, return that
-    session_data = session.get("session_data")
-    if session_data is not None and session_data.get("session_name") is not None:
-        return session_data["session_name"]
-
-    runs = session.get("runs", []) or []
-    session_type = session.get("session_type")
-
-    # Handle workflows separately
-    if session_type == "workflow":
-        if not runs:
-            return ""
-        workflow_run = runs[0]
-        workflow_input = workflow_run.get("input")
-        if isinstance(workflow_input, str):
-            return workflow_input
-        elif isinstance(workflow_input, dict):
-            try:
-                return json.dumps(workflow_input)
-            except (TypeError, ValueError):
-                pass
-        workflow_name = session.get("workflow_data", {}).get("name")
-        return f"New {workflow_name} Session" if workflow_name else ""
-
-    # For team, filter to team runs (runs without agent_id); for agents, use all runs
-    if session_type == "team":
-        runs_to_check = [r for r in runs if not r.get("agent_id")]
-    else:
-        runs_to_check = runs
-
-    # Find the first user message across runs
-    for r in runs_to_check:
-        if r is None:
-            continue
-        run_dict = r if isinstance(r, dict) else r.to_dict()
-
-        for message in run_dict.get("messages") or []:
-            if message.get("role") == "user" and message.get("content"):
-                return message["content"]
-
-        run_input = r.get("input")
-        if run_input is not None:
-            return stringify_input_content(run_input)
-
-    return ""
-
-
-def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
-    input_media: Dict[str, List[Any]] = {
-        "images": [],
-        "videos": [],
-        "audios": [],
-        "files": [],
-    }
-
-    input_data = run_dict.get("input", {})
-    if isinstance(input_data, dict):
-        input_media["images"].extend(input_data.get("images", []))
-        input_media["videos"].extend(input_data.get("videos", []))
-        input_media["audios"].extend(input_data.get("audios", []))
-        input_media["files"].extend(input_data.get("files", []))
-
-    return input_media
 
 
 # Supported MIME types per media category, used to route uploaded files to the
@@ -2567,20 +2447,6 @@ def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
         log_warning(f"Failed to enable tracing: {str(e)}")
 
 
-def format_duration_ms(duration_ms: Optional[int]) -> str:
-    """Format a duration in milliseconds to a human-readable string.
-
-    Args:
-        duration_ms: Duration in milliseconds
-
-    Returns:
-        Formatted string like "150ms" or "1.50s"
-    """
-    if duration_ms is None or duration_ms < 1000:
-        return f"{duration_ms or 0}ms"
-    return f"{duration_ms / 1000:.2f}s"
-
-
 def timestamp_to_datetime(datetime_str: str, param_name: str = "datetime") -> "datetime":
     """Parse an ISO 8601 datetime string and convert to UTC.
 
@@ -2603,62 +2469,6 @@ def timestamp_to_datetime(datetime_str: str, param_name: str = "datetime") -> "d
             status_code=400,
             detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
         )
-
-
-def format_team_tools(team_tools: List[Union[Function, dict]]):
-    formatted_tools: List[Dict] = []
-    if team_tools is not None:
-        for tool in team_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-    return formatted_tools
-
-
-def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
-    formatted_tools: List[Dict] = []
-    if agent_tools is not None:
-        for tool in agent_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Toolkit):
-                for _, f in tool.functions.items():
-                    formatted_tools.append(f.to_dict())
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-            elif callable(tool):
-                func = Function.from_callable(tool)
-                formatted_tools.append(func.to_dict())
-            else:
-                logger.warning(f"Unknown tool type: {type(tool)}")
-    return formatted_tools
-
-
-def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
-    """Convert any given input_content into its string representation.
-
-    This handles both serialized (dict) and live (object) input_content formats.
-    """
-    import json
-
-    if isinstance(input_content, str):
-        return input_content
-    elif isinstance(input_content, Message):
-        return json.dumps(input_content.to_dict())
-    elif isinstance(input_content, dict):
-        return json.dumps(input_content, indent=2, default=str)
-    elif isinstance(input_content, list):
-        if input_content:
-            # Handle live Message objects
-            if isinstance(input_content[0], Message):
-                return json.dumps([m.to_dict() for m in input_content])
-            # Handle serialized Message dicts
-            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
-                return input_content[0].get("content", str(input_content))
-        return str(input_content)
-    else:
-        return str(input_content)
 
 
 # ---------------------------------------------------------------------------

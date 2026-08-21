@@ -1,9 +1,15 @@
 import json
 from datetime import date
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
 
-from fastapi import UploadFile
 from httpx import ConnectError, ConnectTimeout, TimeoutException
+
+if TYPE_CHECKING:
+    from fastapi import UploadFile
+else:
+    # fastapi only ships with the "os" extra; a loose binding keeps the
+    # upload annotations resolvable by get_type_hints() without it.
+    UploadFile = Any
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
@@ -2426,14 +2432,16 @@ class AgentOSClient:
             form_data["chunk_overlap"] = str(chunk_overlap)
 
         if file:
-            # Handle both agno.media.File and FastAPI UploadFile
-            if isinstance(file, UploadFile):
+            # Handle both agno.media.File and FastAPI UploadFile; the check runs
+            # against agno's type because fastapi may not be installed.
+            if isinstance(file, MediaFile):
+                if file.content:
+                    files = {
+                        "file": (file.filename or "upload", file.content, file.mime_type or "application/octet-stream")
+                    }
+            else:
                 files = {
                     "file": (file.filename or "upload", file.file, file.content_type or "application/octet-stream")
-                }
-            elif file.content:
-                files = {
-                    "file": (file.filename or "upload", file.content, file.mime_type or "application/octet-stream")
                 }
 
         data = await self._apost_multipart("/knowledge/content", form_data, files=files, params=params, headers=headers)

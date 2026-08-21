@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from agno.os.utils import to_utc_datetime
+from agno.os.schema_utils import to_utc_datetime
 
 
 class DeleteMemoriesRequest(BaseModel):

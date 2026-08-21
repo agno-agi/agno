@@ -11,9 +11,7 @@ if TYPE_CHECKING:
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.os.schema import ModelResponse
-from agno.os.utils import (
-    format_tools,
-)
+from agno.os.schema_utils import format_tools
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession

@@ -11,9 +11,7 @@ if TYPE_CHECKING:
 from agno.agent import Agent
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import ModelResponse
-from agno.os.utils import (
-    format_team_tools,
-)
+from agno.os.schema_utils import format_team_tools
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession

@@ -10,7 +10,7 @@ from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
-from agno.os.utils import to_utc_datetime
+from agno.os.schema_utils import to_utc_datetime
 
 
 class EvalRunInput(BaseModel):

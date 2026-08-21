@@ -46,6 +46,10 @@ if TYPE_CHECKING:
         WorkflowRunSchema,
         WorkflowSessionDetailSchema,
     )
+else:
+    # fastapi only ships with the "os" extra; a loose binding keeps the
+    # upload annotations resolvable by get_type_hints() without it.
+    UploadFile = Any
 
 
 @dataclass

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from agno.os.utils import format_duration_ms
+from agno.os.schema_utils import format_duration_ms
 
 
 class TraceSearchGroupBy(str, Enum):
