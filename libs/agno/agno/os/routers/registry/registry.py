@@ -445,7 +445,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         if resource_type is None or resource_type == RegistryResourceType.AGENT:
             for agent in getattr(registry, "agents", []) or []:
                 agent_id = getattr(agent, "id", None)
-                agent_name = getattr(agent, "name", None) or agent_id
+                agent_name = getattr(agent, "name", None) or agent_id or agent.__class__.__name__
                 resources.append(
                     RegistryContentResponse(
                         name=agent_name,
@@ -463,7 +463,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         if resource_type is None or resource_type == RegistryResourceType.TEAM:
             for team in getattr(registry, "teams", []) or []:
                 team_id = getattr(team, "id", None)
-                team_name = getattr(team, "name", None) or team_id
+                team_name = getattr(team, "name", None) or team_id or team.__class__.__name__
                 resources.append(
                     RegistryContentResponse(
                         name=team_name,
@@ -473,6 +473,27 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         metadata={
                             "id": team_id,
                             "class_path": _class_path(team),
+                        },
+                    )
+                )
+
+        # Workflows (code-defined workflows for rehydration and Studio)
+        if resource_type is None or resource_type == RegistryResourceType.WORKFLOW:
+            for workflow in getattr(registry, "workflows", []) or []:
+                workflow_id = getattr(workflow, "id", None)
+                # name is a required str on the response model: without the
+                # class-name fallback an entry with neither name nor id would
+                # 500 the whole route.
+                workflow_name = getattr(workflow, "name", None) or workflow_id or workflow.__class__.__name__
+                resources.append(
+                    RegistryContentResponse(
+                        name=workflow_name,
+                        id=workflow_id,
+                        type=RegistryResourceType.WORKFLOW,
+                        description=_safe_str(getattr(workflow, "description", None)),
+                        metadata={
+                            "id": workflow_id,
+                            "class_path": _class_path(workflow),
                         },
                     )
                 )

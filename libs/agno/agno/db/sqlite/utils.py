@@ -108,7 +108,10 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
         table_type (str): Type of table to get expected schema
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -128,7 +131,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
         return True
     except Exception as e:
         log_error(f"Error validating table schema for {table_name}: {str(e)}")
-        return False
+        raise
 
 
 async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str) -> bool:
@@ -141,7 +144,10 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         table_type (str): Type of table to get expected schema
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -160,7 +166,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
 
     except Exception as e:
         log_error(f"Error validating table schema for {table_name}: {str(e)}")
-        return False
+        raise
 
 
 def _get_table_columns(conn, table_name: str) -> set[str]:

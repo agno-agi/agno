@@ -43,6 +43,7 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics, merge_background_metrics
+from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
@@ -81,8 +82,11 @@ from agno.session import AgentSession
 from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
+    abuild_full_run_storage_copy,
+    abuild_offloaded_storage_copy,
     await_for_open_threads,
     await_for_thread_tasks_stream,
+    build_offloaded_storage_copy,
     collect_background_metrics,
     isolate_media_scrub_targets,
     scrub_history_messages_from_run_output,
@@ -537,6 +541,7 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    **result_store_kwargs(agent),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -1305,9 +1310,14 @@ def run_dispatch(
     """Run the Agent and return the response."""
     from agno.agent._init import has_async_db
     from agno.agent._response import get_response_format
+    from agno.media.storage.base import AsyncMediaStorage
 
     if has_async_db(agent):
         raise RuntimeError("`run` method is not supported with an async database. Please use `arun` method instead.")
+
+    # Refused here rather than at the persist below, which runs after the model call.
+    if isinstance(agent.media_storage, AsyncMediaStorage):
+        raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
     # Set the id for the run and register it immediately for cancellation tracking
     run_id = run_id or str(uuid4())
@@ -1663,6 +1673,7 @@ async def _arun(
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    **result_store_kwargs(agent),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -1930,13 +1941,15 @@ async def _arun_background(
     # 2. Set status to PENDING
     run_response.status = RunStatus.pending
 
-    # 3. Persist the PENDING run so polling can find it immediately
+    # 3. Persist the PENDING run so polling can find it immediately. The row stands until the
+    # terminal write, so its media is offloaded first.
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
-    agent_session.upsert_run(run=run_response)
-    run_index = resolve_run_index(agent_session, run_response)
+    storage_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
+    agent_session.upsert_run(run=storage_run)
+    run_index = resolve_run_index(agent_session, storage_run)
     await asave_session(agent, session=agent_session)
-    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
@@ -2003,7 +2016,8 @@ async def _arun_background(
             # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
+                error_run = await abuild_full_run_storage_copy(agent, run_response, session_id)
+                await apersist_run_transition(agent, "agent", session_id, error_run, user_id=user_id, full_run=True)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
@@ -2054,15 +2068,17 @@ async def _arun_background_stream(
         raise ValueError("run_id is required for background streaming")
 
     # 1. Persist PENDING status so the run is visible in the DB immediately.
-    # Execution (and the RUNNING transition) waits for a concurrency slot.
+    # Execution (and the RUNNING transition) waits for a concurrency slot. The row stands
+    # until the terminal write, so its media is offloaded first.
     run_response.status = RunStatus.pending
 
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
-    agent_session.upsert_run(run=run_response)
-    run_index = resolve_run_index(agent_session, run_response)
+    storage_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
+    agent_session.upsert_run(run=storage_run)
+    run_index = resolve_run_index(agent_session, storage_run)
     await asave_session(agent, session=agent_session)
-    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the run is still queued (no events buffered yet).
@@ -2166,7 +2182,8 @@ async def _arun_background_stream(
             # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
+                error_run = await abuild_full_run_storage_copy(agent, run_response, session_id)
+                await apersist_run_transition(agent, "agent", session_id, error_run, user_id=user_id, full_run=True)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
@@ -3362,6 +3379,7 @@ def continue_run_dispatch(
     from agno.agent._response import get_response_format
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._tools import determine_tools_for_model
+    from agno.media.storage.base import AsyncMediaStorage
 
     if run_response is None and run_id is None:
         raise ValueError("Either run_response or run_id must be provided.")
@@ -3371,6 +3389,10 @@ def continue_run_dispatch(
 
     if has_async_db(agent):
         raise Exception("continue_run() is not supported with an async DB. Please use acontinue_run() instead.")
+
+    # Refused here rather than at the persist below, which runs after the model call.
+    if isinstance(agent.media_storage, AsyncMediaStorage):
+        raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
 
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
@@ -3703,6 +3725,7 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    **result_store_kwargs(agent),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -4440,9 +4463,10 @@ async def _acontinue_run_background_stream(
     persist_run = run_response or cast(Optional[RunOutput], agent_session.get_run(_run_id))
     if persist_run:
         persist_run.status = RunStatus.pending
-        agent_session.upsert_run(run=persist_run)
+        storage_run = await abuild_offloaded_storage_copy(agent, persist_run, session_id) or persist_run
+        agent_session.upsert_run(run=storage_run)
         # v3 substrate: the run persists via the O(1) per-run save
-        await asave_run(agent, run=persist_run, session_id=session_id, user_id=user_id)
+        await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id)
     await asave_session(agent, session=agent_session)
 
     # Pre-register with the event buffer so reconnecting clients can attach and
@@ -4677,7 +4701,7 @@ async def _acontinue_run(
     """
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import get_continue_run_messages
+    from agno.agent._messages import aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -4874,7 +4898,7 @@ async def _acontinue_run(
                 )
 
                 # 6. Prepare run messages
-                run_messages = get_continue_run_messages(
+                run_messages = await aget_continue_run_messages(
                     agent,
                     input=input_messages,
                     session=agent_session,
@@ -4904,6 +4928,7 @@ async def _acontinue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    **result_store_kwargs(agent),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -5165,7 +5190,7 @@ async def _acontinue_run_stream(
     """
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import get_continue_run_messages
+    from agno.agent._messages import aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
@@ -5360,7 +5385,7 @@ async def _acontinue_run_stream(
                 )
 
                 # 6. Prepare run messages
-                run_messages = get_continue_run_messages(
+                run_messages = await aget_continue_run_messages(
                     agent,
                     input=input_messages,
                     session=agent_session,
@@ -5784,7 +5809,8 @@ def save_run_response_to_file(
 def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
     """Scrub run output based on storage flags before persisting to database."""
     if not agent.store_media:
-        scrub_media_from_run_output(run_response)
+        # store_media is off, so the media was never offloaded — the run keeps no pointer to it.
+        scrub_media_from_run_output(run_response, keep_references=False)
 
     if not agent.store_tool_messages:
         scrub_tool_results_from_run_output(run_response)
@@ -5884,6 +5910,7 @@ def _scrub_and_propagate_session_state(
     run_response: RunOutput,
     run_context: Optional[RunContext],
     isolate_inflight: bool = False,
+    storage_copy: Optional[RunOutput] = None,
 ) -> RunOutput:
     """Build a scrubbed shallow copy of ``run_response`` and propagate session_state.
 
@@ -5900,7 +5927,8 @@ def _scrub_and_propagate_session_state(
     """
     import copy
 
-    storage_copy = copy.copy(run_response)
+    if storage_copy is None:
+        storage_copy = copy.copy(run_response)
     if isolate_inflight and not agent.store_media:
         isolate_media_scrub_targets(storage_copy)
     scrub_run_output_for_storage(agent, storage_copy)
@@ -5933,7 +5961,11 @@ def persist_run_in_session(
     from agno.agent import _session
 
     if storage_copy is None:
-        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
+        # Mid-run checkpoint: offload its media like the terminal write, so the row carries references.
+        offloaded = build_offloaded_storage_copy(agent, run_response, session.session_id)
+        storage_copy = _scrub_and_propagate_session_state(
+            agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
+        )
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
@@ -5971,7 +6003,10 @@ async def apersist_run_in_session(
     from agno.agent import _session
 
     if storage_copy is None:
-        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
+        offloaded = await abuild_offloaded_storage_copy(agent, run_response, session.session_id)
+        storage_copy = _scrub_and_propagate_session_state(
+            agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
+        )
 
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
@@ -6002,11 +6037,14 @@ def cleanup_and_store(
 ) -> None:
     from agno.run.approval import update_approval_run_status
 
-    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
-
-    # Stop the timer for the Run duration (terminal only)
+    # Stop the timer for the Run duration (terminal only), before the storage copy is taken.
     if run_response.metrics:
         run_response.metrics.stop_timer()
+
+    # None means nothing was offloaded and the run is scrubbed as it stands.
+    storage_copy = build_offloaded_storage_copy(agent, run_response, session.session_id)
+
+    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, storage_copy=storage_copy)
 
     # Optional: Save output to file if save_response_to_file is set (terminal only)
     save_run_response_to_file(
@@ -6083,10 +6121,14 @@ async def acleanup_and_store(
 ) -> None:
     from agno.run.approval import aupdate_approval_run_status
 
-    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
-
+    # Stop the timer for the Run duration (terminal only), before the storage copy is taken.
     if run_response.metrics:
         run_response.metrics.stop_timer()
+
+    # None means nothing was offloaded and the run is scrubbed as it stands.
+    storage_copy = await abuild_offloaded_storage_copy(agent, run_response, session.session_id)
+
+    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, storage_copy=storage_copy)
 
     save_run_response_to_file(
         agent,
@@ -6409,9 +6451,12 @@ def fork_session_dispatch(
     from agno.agent._session import save_run
 
     for idx, run in enumerate(new_session.runs or []):
+        run_out = cast(RunOutput, run)
+        # Offload gives the fork its own objects; a cached source session still holds them inline.
+        run_out = build_offloaded_storage_copy(agent, run_out, new_session.session_id) or run_out
         save_run(
             agent,
-            run=cast(RunOutput, run),
+            run=run_out,
             session_id=new_session.session_id,
             user_id=new_session.user_id,
             run_index=idx,
@@ -6459,6 +6504,8 @@ async def afork_session_dispatch(
 
     for idx, run in enumerate(new_session.runs or []):
         run_out = cast(RunOutput, run)
+        # Offload gives the fork its own objects; a cached source session still holds them inline.
+        run_out = await abuild_offloaded_storage_copy(agent, run_out, new_session.session_id) or run_out
         if has_async_db(agent):
             await asave_run(
                 agent,

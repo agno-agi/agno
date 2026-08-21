@@ -43,8 +43,11 @@ Lifecycle:
 
 Identity and ownership:
     * The framework injects the caller's RunContext; components and schedules
-      created through Studio are owned by that user, other owners' rows answer
-      not-found, and shared (unowned) rows refuse mutation for scoped actors.
+      created through Studio are owned by that user. A draft-only component
+      and every schedule answer not-found to other owners; publishing puts a
+      component on the platform, readable and runnable by every user, while
+      mutation stays owner-scoped (not_owner). Shared (unowned) rows refuse
+      mutation for scoped actors.
 
 Palette policy:
     * Declared registry tools are buildable. Tools that arrived via the
@@ -71,8 +74,9 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Set, Union
 
+from agno.exceptions import SchemaMismatchError
 from agno.run import RunContext
 from agno.tools.function import Function
 from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools, _slugify
@@ -153,6 +157,28 @@ class _ToolsNotFoundError(ValueError):
     from tool_not_allowed, which is a palette refusal for a name that exists)."""
 
 
+class _LiveComponentView(Sequence[Any]):
+    """A sequence view over a component resolver, read at access time.
+
+    SchedulerTools' code-defined probe reads its include_* sequences on every
+    call; handing it these views keeps the probe aligned with the run tools'
+    resolution (explicit lists, else the registry) even when the registry is
+    populated after the toolkit is built.
+    """
+
+    def __init__(self, resolve: Callable[[], List[Any]]):
+        self._resolve = resolve
+
+    def __getitem__(self, index):  # type: ignore[no-untyped-def]
+        return self._resolve()[index]
+
+    def __iter__(self):
+        return iter(self._resolve())
+
+    def __len__(self) -> int:
+        return len(self._resolve())
+
+
 class StudioTools(Toolkit):
     """Toolkit that lets an agent compose agents, teams, and workflows.
 
@@ -224,7 +250,12 @@ class StudioTools(Toolkit):
         **kwargs: Any,
     ):
         self.registry = registry
-        self.db: Optional["BaseDb"] = db if db is not None else (registry.dbs[0] if registry.dbs else None)
+        # The explicit db wins; otherwise the registry's is adopted lazily on
+        # first access (see the db property). Studio is constructed before
+        # AgentOS - it is a tool on an agent the OS serves - and registry.dbs
+        # is filled by AgentOS afterwards, so an __init__ snapshot would leave
+        # every write answering db_not_configured forever.
+        self._db: Optional["BaseDb"] = db
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
@@ -235,6 +266,7 @@ class StudioTools(Toolkit):
         for source, bucket, source_name in (
             (include_agents, registry.agents, "include_agents"),
             (include_teams, registry.teams, "include_teams"),
+            (include_workflows, registry.workflows, "include_workflows"),
         ):
             for component in source or []:
                 component_id = getattr(component, "id", None)
@@ -267,7 +299,7 @@ class StudioTools(Toolkit):
         # and a dispatcher resolve and run components one way.
         self._runner_tools = StudioRunnerTools(
             registry=registry,
-            db=self.db,
+            db=db,
             include_agents=include_agents,
             include_teams=include_teams,
             include_workflows=include_workflows,
@@ -294,10 +326,19 @@ class StudioTools(Toolkit):
             # refusals build a probe from nothing, so enable_schedule would
             # refuse a code-defined target that create_schedule just allowed.
             self._scheduler_tools = SchedulerTools(
-                db=self.db,
-                include_agents=self.include_agents,
-                include_teams=self.include_teams,
-                include_workflows=self.include_workflows,
+                db=self._db,
+                # A bound method, not a lambda: deepcopy treats plain functions
+                # as atomic but rebinds methods through its memo, so a
+                # deep-copied toolkit's scheduler resolves through the COPY.
+                db_resolver=self._registry_db,
+                # Live views, not the raw lists: the embedded toolkit's own
+                # refusals build a code-defined probe from these, and that
+                # probe must see the same set the run tools resolve from
+                # (explicit lists, else the registry) - or enable_schedule
+                # refuses a target create_schedule just allowed.
+                include_agents=_LiveComponentView(self._runner_tools._iter_agents),
+                include_teams=_LiveComponentView(self._runner_tools._iter_teams),
+                include_workflows=_LiveComponentView(self._runner_tools._iter_workflows),
             )
 
         tools: List[Callable] = [
@@ -402,24 +443,90 @@ class StudioTools(Toolkit):
                 ]
             )
 
-        instruction_lines = [
-            "Compose agents, teams, and workflows from registry primitives. The lifecycle: create "
-            "(a draft, unless publish=true) -> validate_component -> publish_component. Only the "
-            "published version serves runs and schedules. Drafts are private to you; publishing "
-            "puts the component on the platform, where every user can find and run it (but only "
-            "you can edit it).",
-            "Discovery first: list_tools/list_functions/list_models names are exact and "
-            "case-sensitive; only buildable tools may be wired. Never guess a name.",
-            "get_component reads the LATEST version (the one you just edited); call it before "
-            "every edit and pass only the fields that change. Renaming is edit with name=; the id "
-            "never changes. Omit = keep, empty string = clear text, empty list = clear tools.",
-            "Version history is immutable: edits append, publish promotes, set_current_version "
-            "re-points between published versions, archive_component retires (restore_component "
-            "reverses it). Nothing is ever deleted except unpublished drafts.",
-            "Run tools execute as the current user; pass version= to preview a draft before "
-            "publishing. A PAUSED result waits on human approval: relay its requirements and keep "
-            "the run_id and session_id for the resume.",
+        # Instructions may only name tools this configuration registers:
+        # naming an unregistered tool tells the model to hallucinate a call.
+        # The gates mirror the registration blocks above - versions for the
+        # publish ladder, the enable_* trio for create/edit/run prose, the
+        # scheduler for the schedules line.
+        authoring = self.enable_agents or self.enable_teams or self.enable_workflows
+        # Name only the types this configuration can actually build. The flags
+        # are independently settable, so a workflows-only palette that advertises
+        # composing agents and teams sends the model after create_agent, which
+        # was never registered.
+        buildable = [
+            noun
+            for noun, enabled in (
+                ("agents", self.enable_agents),
+                ("teams", self.enable_teams),
+                ("workflows", self.enable_workflows),
+            )
+            if enabled
         ]
+        if len(buildable) > 2:
+            # Keep the serial comma the full palette has always used, so the
+            # default configuration's prompt is unchanged by this gating.
+            composable = f"{', '.join(buildable[:-1])}, and {buildable[-1]}"
+        elif len(buildable) == 2:
+            composable = f"{buildable[0]} and {buildable[1]}"
+        else:
+            composable = buildable[0] if buildable else ""
+        instruction_lines: List[str] = []
+        if authoring and self.enable_versions:
+            instruction_lines.append(
+                f"Compose {composable} from registry primitives. The lifecycle: create "
+                "(a draft, unless publish=true) -> validate_component -> publish_component. Only the "
+                "published version serves runs and schedules. Drafts are private to you; publishing "
+                "puts the component on the platform, where every user can find and run it (but only "
+                "you can edit it)."
+            )
+        elif authoring:
+            instruction_lines.append(
+                f"Compose {composable} from registry primitives. The lifecycle: create "
+                "-> validate_component. There is no draft stage and no publish step here: every create "
+                "and edit is published immediately as the new current version, on the platform where "
+                "every user can find and run it (but only you can edit it)."
+            )
+        instruction_lines.append(
+            "Discovery first: list_tools/list_functions/list_models names are exact and "
+            "case-sensitive; only buildable tools may be wired. Never guess a name."
+        )
+        if authoring:
+            instruction_lines.append(
+                "get_component reads the LATEST version (the one you just edited); call it before "
+                "every edit and pass only the fields that change. Renaming is edit with name=; the id "
+                "never changes. Omit = keep, empty string = clear text, empty list = clear tools."
+            )
+        if self.enable_versions:
+            instruction_lines.append(
+                "Version history is immutable: edits append, publish promotes, set_current_version "
+                "re-points between published versions, archive_component retires (restore_component "
+                "reverses it). Nothing is ever deleted except unpublished drafts."
+            )
+        else:
+            instruction_lines.append(
+                "Version history is immutable: every edit appends the next version and makes it "
+                "current at once. archive_component retires a component (restore_component reverses "
+                "it); nothing is ever deleted."
+            )
+        if authoring and self.enable_versions:
+            instruction_lines.append(
+                "Run tools execute as the current user; pass version= to preview a draft before "
+                "publishing. A PAUSED result waits on human approval: relay its requirements and keep "
+                "the run_id and session_id for the resume."
+            )
+        elif authoring:
+            instruction_lines.append(
+                "Run tools execute as the current user; pass version= to pin an earlier published "
+                "version. A PAUSED result waits on human approval: relay its requirements and keep "
+                "the run_id and session_id for the resume."
+            )
+        if self._scheduler_tools is not None:
+            instruction_lines.append(
+                "Schedules: create_schedule targets an existing component by target_type "
+                "('agent'/'team'/'workflow') + target_id (ids from list_components) and requires a "
+                "message. Cron is 5-field; timezone is an IANA name. trigger_schedule queues an "
+                "enabled schedule to run now via the platform poller."
+            )
 
         # Deletion-shaped operations pause for a human by default; a consumer
         # may replace this list (including with []) but is never forced.
@@ -439,6 +546,25 @@ class StudioTools(Toolkit):
             instructions="\n".join(instruction_lines),
             **kwargs,
         )
+
+    @property
+    def db(self) -> Optional["BaseDb"]:
+        if self._db is not None:
+            return self._db
+        # Resolved on every access, never memoized. Studio is built before
+        # AgentOS, so a single read before the OS declares its catalog db -- a
+        # log line, a debug print, a health check -- would otherwise pin this
+        # toolkit to whatever registry.dbs held at that moment for the life of
+        # the process, and the declaration that follows would do nothing. An
+        # explicitly passed db is still authoritative and still short-circuits.
+        return self.registry.resolve_component_db()
+
+    @db.setter
+    def db(self, value: Optional["BaseDb"]) -> None:
+        self._db = value
+
+    def _registry_db(self) -> Optional["BaseDb"]:
+        return self.db
 
     # ------------------------------------------------------------------
     # Registry lookups
@@ -710,7 +836,15 @@ class StudioTools(Toolkit):
         # another owner's draft under an archived component could be tombstoned
         # by delete_version (get_component without include_deleted reads the
         # archived row as absent, skipping the owner check).
-        row = self.db.get_component(component_id, include_deleted=True)
+        try:
+            row = self.db.get_component(component_id, include_deleted=True)
+        except NotImplementedError:
+            # An adapter without the component catalog cannot gate ownership,
+            # and every mutator behind this gate needs the same capability, so
+            # the capability refusal is answered here for all of them - this
+            # call runs before the tools' try blocks and would otherwise
+            # escape the envelope as a raw traceback.
+            return ("db_not_configured", "This database does not support the component catalog.")
         if row is None:
             return None  # No row: creates proceed; other paths produce their own not-found.
         owner = row.get("user_id")
@@ -842,10 +976,36 @@ class StudioTools(Toolkit):
             # An adapter without the component catalog (e.g. Mongo): an honest
             # capability answer, not an internal error.
             return error_result("db_not_configured", "This database does not support the component catalog.")
+        if isinstance(exc, SchemaMismatchError):
+            # The catalog table exists but is on an older shape, and the
+            # message names the migration that fixes it. Distinct from
+            # db_not_configured, where no catalog exists at all: the remedy
+            # differs, so the code has to. Matched by type rather than by
+            # class name so MigrationRequiredError and any other subclass are
+            # covered, and kept ahead of the ValueError branch because these
+            # are deliberately not ValueErrors - several routers map those to
+            # 400, which would report a stale database as a client error.
+            return error_result("db_schema_stale", str(exc))
         if isinstance(exc, ValueError) and str(exc):
             return error_result("invalid_request", str(exc))
         logger.exception(fallback_message)
         return error_result("internal_error", fallback_message)
+
+    def _warning_from_exception(self, exc: Exception, message: str) -> str:
+        """Describe a best-effort failure to the caller without quoting the driver.
+
+        Warnings ride in a SUCCESS envelope, so they reach the model's context
+        the same way an error message would - and the same rule applies:
+        typed catalog errors are ours and safe to name, anything else keeps
+        its text in the log. A raw adapter exception carries the failing
+        statement, the bound parameter values -- which include the row's own
+        metadata, the field most likely to hold something a caller would not
+        publish -- and, on a connection error, the server it was reaching for.
+        """
+        if type(exc).__name__ in self._TYPED_ERROR_CODES or isinstance(exc, (SchemaMismatchError, ValueError)):
+            return f"{message}: {exc}"
+        logger.exception(message)
+        return f"{message}: {type(exc).__name__}. The server log has the details."
 
     def _require_db(self) -> Optional[str]:
         if self.db is None:
@@ -1154,30 +1314,36 @@ class StudioTools(Toolkit):
         if db_err is not None:
             return None, None, db_err
         assert self.db is not None
-        row = self.db.get_component(identifier)
-        resolved_id: Optional[str] = identifier
-        if row is None:
-            from agno.db.base import ComponentType as _CT  # noqa: F401
+        try:
+            row = self.db.get_component(identifier)
+            resolved_id: Optional[str] = identifier
+            if row is None:
+                from agno.db.base import ComponentType as _CT  # noqa: F401
 
-            # limit spans the collisions: a published name can match several
-            # owners now, and the actor's own has to be found among them.
-            rows, total = _own_row_across_pages(self.db.list_components, actor, name=identifier, user_id=actor)
-            owned_rows = [r for r in rows if actor is not None and r.get("user_id") == actor]
-            if len(owned_rows) == 1:
-                rows, total = owned_rows, 1
-            if total > 1:
-                return (
-                    None,
-                    None,
-                    error_result(
-                        "ambiguous_reference",
-                        f"Display name '{identifier}' matches {total} components; use the exact id.",
-                        candidates=[r.get("component_id") for r in rows],
-                    ),
-                )
-            if rows:
-                resolved_id = rows[0].get("component_id")
-                row = self.db.get_component(resolved_id) if resolved_id else None
+                # limit spans the collisions: a published name can match several
+                # owners now, and the actor's own has to be found among them.
+                rows, total = _own_row_across_pages(self.db.list_components, actor, name=identifier, user_id=actor)
+                owned_rows = [r for r in rows if actor is not None and r.get("user_id") == actor]
+                if len(owned_rows) == 1:
+                    rows, total = owned_rows, 1
+                if total > 1:
+                    return (
+                        None,
+                        None,
+                        error_result(
+                            "ambiguous_reference",
+                            f"Display name '{identifier}' matches {total} components; use the exact id.",
+                            candidates=[r.get("component_id") for r in rows],
+                        ),
+                    )
+                if rows:
+                    resolved_id = rows[0].get("component_id")
+                    row = self.db.get_component(resolved_id) if resolved_id else None
+        except NotImplementedError as exc:
+            # This resolver runs before the tools' try blocks; without the
+            # catch an adapter that lacks the component catalog answers with a
+            # raw traceback instead of the capability envelope.
+            return None, None, self._error_from_exception(exc, "Failed to read component")
         if row is None:
             return None, None, error_result("component_not_found", f"Component not found: {identifier}")
         if not self._visible_to(row, actor):
@@ -1646,7 +1812,12 @@ class StudioTools(Toolkit):
             return err
         assert self.db is not None and row is not None
         current_version = row.get("current_version")
-        configs = self.db.list_configs(resolved_id, include_config=False)
+        try:
+            configs = self.db.list_configs(resolved_id, include_config=False)
+        except NotImplementedError as exc:
+            # Reachable only on an adapter that implements get_component but
+            # not list_configs; without the catch it escapes the envelope.
+            return self._error_from_exception(exc, "Failed to list versions")
         if not self._may_read_drafts(row, _actor_id(_agno_run_context)):
             # A non-owner sees the published history only: the draft numbers,
             # labels and timestamps above the live pointer are not theirs.
@@ -1708,6 +1879,11 @@ class StudioTools(Toolkit):
         ):
             if value is not None:
                 setattr(component, field_name, value or None)
+        if description is not None:
+            # The catalog projection reads key presence in the config as "this
+            # version owns the description column"; record that the caller
+            # touched it so _save_edit writes the key even for a clear.
+            replaced_keys.add("description")
         if model_id is not None:
             model = self._find_model(model_id)
             if model is None:
@@ -1778,6 +1954,7 @@ class StudioTools(Toolkit):
             if studio_meta is not None and "studio" not in merged:
                 merged["studio"] = studio_meta
             component.metadata = merged or None
+            replaced_keys.add("metadata")
         return None
 
     def _created_payload(self, component: Any, component_type: str, version: Optional[int], stage: str) -> str:
@@ -2626,6 +2803,7 @@ class StudioTools(Toolkit):
                 workflow.name = name
             if description is not None:
                 workflow.description = description or None
+                replaced_keys.add("description")
             pinned = None
             if steps is not None:
                 coerced, coerce_err = self._coerce_step_specs(steps)
@@ -2664,6 +2842,7 @@ class StudioTools(Toolkit):
                 if studio_meta is not None and "studio" not in merged:
                     merged["studio"] = studio_meta
                 workflow.metadata = merged or None
+                replaced_keys.add("metadata")
             return None, pinned
 
         return self._edit_component("workflow", workflow_id, expected_version, publish, _agno_run_context, mutate)
@@ -2766,8 +2945,8 @@ class StudioTools(Toolkit):
                     return self._denied_error(denied)
                 raise
             published_version = result.get("version", target)
-            self._sync_component_row(component_id, published_version)
-            return ok_result("published", id=component_id, version=published_version)
+            warnings = self._sync_component_row_after_commit(component_id, published_version)
+            return ok_result("published", warnings=warnings, id=component_id, version=published_version)
         except Exception as e:
             return self._error_from_exception(e, "Failed to publish component")
 
@@ -2813,8 +2992,8 @@ class StudioTools(Toolkit):
                 if missing is not None:
                     return missing
                 return error_result("version_not_found", f"Version not found: {component_id} v{version}")
-            self._sync_component_row(component_id, version)
-            return ok_result("set_current", id=component_id, version=version)
+            warnings = self._sync_component_row_after_commit(component_id, version)
+            return ok_result("set_current", warnings=warnings, id=component_id, version=version)
         except Exception as e:
             return self._error_from_exception(e, "Failed to set current version")
 
@@ -3748,7 +3927,16 @@ class StudioTools(Toolkit):
                     target_type,
                     component_id,
                     user_id=actor,
-                    is_code_defined=code_defined_probe(self.include_agents, self.include_teams, self.include_workflows),
+                    # The probe must see the same code-defined set the run
+                    # tools resolve from - lists when given, registry
+                    # otherwise - or a registry-only component would read as
+                    # catalog-defined here while its run path treats it as
+                    # code.
+                    is_code_defined=code_defined_probe(
+                        self._runner_tools._iter_agents(),
+                        self._runner_tools._iter_teams(),
+                        self._runner_tools._iter_workflows(),
+                    ),
                 )
                 is not None
             ):
@@ -3906,17 +4094,31 @@ class StudioTools(Toolkit):
             schedule = manager.update(schedule_id, user_id=actor, **updates)
             if schedule is None:
                 return error_result("schedule_not_found", f"Schedule not found: {schedule_id}")
+            warnings: List[str] = []
             if _agno_run_context is not None:
                 # Through the manager, not the adapter: on an async database the
                 # direct call builds a coroutine nobody awaits, so the stamp is
                 # dropped while the tool reports success.
-                manager.stamp_provenance(
-                    schedule_id,
-                    updated_by_run_id=_agno_run_context.run_id,
-                    updated_by_session_id=_agno_run_context.session_id,
-                )
+                #
+                # The update above is already committed, so the stamp is
+                # best-effort: a failure here loses only the record of who made
+                # a change that did happen, while reporting an error would tell
+                # the caller a cadence it can see take effect was never applied.
+                try:
+                    manager.stamp_provenance(
+                        schedule_id,
+                        updated_by_run_id=_agno_run_context.run_id,
+                        updated_by_session_id=_agno_run_context.session_id,
+                    )
+                except Exception as e:
+                    warnings.append(
+                        self._warning_from_exception(
+                            e, f"Updated schedule {schedule_id} but could not stamp provenance on it"
+                        )
+                    )
             return ok_result(
                 "updated",
+                warnings=warnings,
                 id=schedule.id,
                 name=schedule.name,
                 cron=schedule.cron_expr,
@@ -4391,6 +4593,18 @@ class StudioTools(Toolkit):
         replaced = replaced_keys or set()
         component_id = getattr(component, "id", None)
         self._preserve_unresolved_keys(component_id, config, replaced)
+        # description and metadata are also row-only columns (PATCH
+        # /components), so the catalog projection needs an explicit signal
+        # that THIS version authored them: for description the key's presence
+        # (serialization drops a cleared None, so the empty string is written
+        # back); for metadata the marker, because the provenance stamp above
+        # makes every scoped config carry a metadata dict whether or not the
+        # caller touched the field.
+        if "description" in replaced:
+            config["description"] = getattr(component, "description", None) or ""
+        if "metadata" in replaced:
+            config["metadata"] = getattr(component, "metadata", None) or {}
+            config["metadata_authored"] = True
         if replaced & {"members", "steps"}:
             # The edit replaced the composition: pin the new children at the
             # exact versions the binder rebuilt them from.
@@ -4421,7 +4635,11 @@ class StudioTools(Toolkit):
     def _preserve_unresolved_keys(
         self, component_id: Optional[str], config: Dict[str, Any], replaced_keys: Set[str]
     ) -> None:
-        """Copy stored reference keys the lenient load dropped back into ``config``."""
+        """Copy stored keys the lenient load dropped back into ``config``.
+
+        Reference keys the rebuild could not resolve, and the marker that says
+        which version owns the catalog row's metadata column.
+        """
         if self.db is None or component_id is None:
             return
         base = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
@@ -4446,6 +4664,18 @@ class StudioTools(Toolkit):
             if key in base and base.get(key) is not None and config.get(key) is None:
                 config[key] = base[key]
                 log_debug(f"StudioTools: preserving stored '{key}' the lenient load could not resolve.")
+        # metadata_authored records that a version owns the catalog row's
+        # metadata column, and it does not survive the rehydrate-and-
+        # reserialize this edit round-trips through: it is a marker on the
+        # config, not a field on the component. An edit that leaves metadata
+        # alone carries the same metadata forward, so it inherits the base
+        # version's authorship too - without this, a version that authored an
+        # empty metadata (a deliberate clear, whose only remaining content is
+        # the provenance stamp) stops owning the column as soon as any later
+        # edit touches a different field, and publishing that version restores
+        # the metadata the clear removed.
+        if "metadata" not in replaced_keys and base.get("metadata_authored"):
+            config["metadata_authored"] = True
 
     def _base_links(self, component_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
         """The base version's links, carried forward verbatim on an edit that
@@ -4640,28 +4870,51 @@ class StudioTools(Toolkit):
         )
         return result.get("version")
 
+    def _sync_component_row_after_commit(self, component_id: str, version: Optional[int]) -> List[str]:
+        """Re-project the catalog row for a pointer move that already committed.
+
+        The publish or re-point is durable before this runs, so a projection
+        failure leaves the row stale - recoverable by publishing or re-pointing
+        again. Reporting it as an error is not: the caller hears that a move
+        which actually happened did not, and retries or reports a failure that
+        never was. The row sync is therefore best-effort here, and the returned
+        warning tells the caller the row lags the live version. The envelope
+        is where these tools report a side effect of an operation that
+        otherwise succeeded, so it is the only channel used here; the REST
+        route for the same move has no such field and logs instead.
+        """
+        try:
+            self._sync_component_row(component_id, version)
+        except Exception as e:
+            return [
+                self._warning_from_exception(
+                    e, f"{component_id} is live at v{version} but its catalog row could not be re-projected"
+                )
+            ]
+        return []
+
     def _sync_component_row(self, component_id: str, version: Optional[int]) -> None:
         """Bring the component row's name/description/metadata in line with a
         newly published config version."""
         if self.db is None:
             return
-        from agno.db.base import ComponentType
+        from agno.db.base import ComponentType, project_config_identity
 
         component = self.db.get_component(component_id)
         row = self.db.get_config(component_id=component_id, version=version)
         config = row.get("config") if isinstance(row, dict) else None
         if component is None or not isinstance(config, dict):
             return
+        # project_config_identity states which row fields the version owns; a
+        # key it omits is row-only and upsert_component's None leaves that
+        # column alone.
+        projection = project_config_identity(config)
         self.db.upsert_component(
             component_id=component_id,
             component_type=ComponentType(component["component_type"]),
-            name=config.get("name") or component.get("name"),
-            # A field the published version does not carry was cleared, and the
-            # adapters read None as "leave this column alone" - so the empty
-            # value is projected explicitly, or the catalog keeps serving text
-            # the live version no longer has.
-            description=config.get("description") or "",
-            metadata=config.get("metadata") or {},
+            name=projection.get("name") or component.get("name"),
+            description=projection.get("description"),
+            metadata=projection.get("metadata"),
         )
 
 
@@ -4750,7 +5003,7 @@ def _persist_only(
     if component_id is None:
         raise ValueError("Component has no id")
     from agno.db.base import ComponentArchivedError as _ComponentArchivedError
-    from agno.db.base import ComponentType
+    from agno.db.base import ComponentType, project_config_identity
 
     resolved_config = config if config is not None else _component_to_dict(component)
     if db.get_component(component_id) is None:
@@ -4806,15 +5059,27 @@ def _persist_only(
             expected_latest_version=expected_latest_version,
             user_id=user_id,
         )
-        # Same rule as the publish projection: an absent description/metadata
-        # is a cleared field, and None reads as "leave the column alone".
-        db.upsert_component(
-            **{
-                **identity,
-                "description": identity["description"] or "",
-                "metadata": identity["metadata"] or {},
-            }
-        )
+        # project_config_identity states which row fields this config version
+        # owns; a key it omits is row-only (set through PATCH /components,
+        # never present in a config) and upsert_component's None leaves that
+        # column alone.
+        # The config write above is already committed, so the projection is
+        # best-effort from here: a failure leaves the row describing the
+        # previous version, which the next save fixes, while reporting an error
+        # would tell the caller a version it can see was never written - and an
+        # edit retried on that report appends yet another version.
+        try:
+            projection = project_config_identity(resolved_config)
+            db.upsert_component(
+                **{
+                    **identity,
+                    "name": projection.get("name") or identity["name"],
+                    "description": projection.get("description"),
+                    "metadata": projection.get("metadata"),
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Saved {component_id} v{result.get('version')} but could not re-project its row: {e}")
         return result.get("version")
 
     # Create fallback (the atomic path was unavailable): the component does

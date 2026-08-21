@@ -32,8 +32,9 @@ from agno.tools.user_feedback import UserFeedbackTools
 
 AUTO_INSTRUCTIONS = "Explain reliable research methods in concise steps."
 
-# Components created during a run are OWNED by the run's user: other scoped
-# users get component_not_found for them and cannot edit or archive them.
+# Components created during a run are OWNED by the run's user: only that user
+# can edit or archive them. Drafts answer component_not_found to other scoped
+# users; published components are readable and runnable platform-wide.
 DEMO_USER_ID = "console-hitl-user"
 
 DB_DIR = Path(__file__).parent / "tmp"

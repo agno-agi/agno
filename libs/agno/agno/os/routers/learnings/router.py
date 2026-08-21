@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Path, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.exceptions import AgnoError
 from agno.learn.utils import (
     DEFAULT_LEARNING_NAMESPACE,
     IDENTITY_KEYED_LEARNING_TYPES,
@@ -29,7 +30,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
+from agno.os.utils import AgnoHTTPException, get_db
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 )
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to list learnings: {e}")
 
@@ -311,6 +314,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
         except HTTPException:
             raise  # e.g. the 409 conflict above
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to create learning: {e}")
 
@@ -380,6 +385,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 )
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get learning users: {e}")
 
@@ -434,6 +441,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 cast(BaseDb, db).delete_user_learnings(user_id, learning_type=learning_type)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             # Don't report a destructive bulk delete as a success (204) when it failed.
             raise HTTPException(status_code=500, detail=f"Failed to delete user learnings: {e}")
@@ -506,6 +515,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 matched = cast(BaseDb, db).update_learning(learning_id, content=new_content, metadata=new_metadata)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to update learning: {e}")
 
@@ -560,6 +571,8 @@ async def _fetch_learning(db: Union[BaseDb, AsyncBaseDb, RemoteDb], learning_id:
             record = cast(BaseDb, db).get_learning_by_id(learning_id)
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+    except AgnoError as e:
+        raise AgnoHTTPException(e)
     except Exception as e:
         # A DB error is not "not found" -- surface it rather than emit a misleading 404.
         raise HTTPException(status_code=500, detail=f"Failed to fetch learning: {e}")
