@@ -20,8 +20,8 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics

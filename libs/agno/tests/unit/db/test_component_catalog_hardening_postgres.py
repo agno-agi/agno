@@ -12,10 +12,11 @@ Each test runs in its own schema, dropped on teardown. The whole module
 skips when psycopg is missing or the server is unreachable.
 """
 
+import threading
 import uuid
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 
 from agno.db.base import (
     DELETED_CONFIG_STAGE,
@@ -614,15 +615,49 @@ class TestCycles:
         assert _has_cycle_stub(graph)
 
 
+class _HoldFirstStatementOfThread:
+    """Pause one named thread at its first statement until released.
+
+    The pause lands before that thread has issued any SQL, so it holds no
+    row lock and starts no transaction while it waits: the other thread's
+    write commits in full, and the paused caller resumes against the
+    committed state. Arms once, for one thread, on an engine both threads
+    share.
+    """
+
+    def __init__(self, engine, thread_name: str):
+        self.engine = engine
+        self.thread_name = thread_name
+        self.reached = threading.Event()
+        self.release = threading.Event()
+        self._armed = True
+
+    def _hook(self, conn, cursor, statement, parameters, context, executemany):
+        if self._armed and threading.current_thread().name == self.thread_name:
+            self._armed = False
+            self.reached.set()
+            assert self.release.wait(timeout=15), "held thread was never released"
+
+    def __enter__(self):
+        event.listen(self.engine, "before_cursor_execute", self._hook)
+        return self
+
+    def __exit__(self, *exc):
+        # The held thread has joined and the hook disarmed itself; removal is
+        # deferred to here so no dispatch iterates a mutating listener deque.
+        event.remove(self.engine, "before_cursor_execute", self._hook)
+        return False
+
+
 class TestConcurrentCASWrites:
     """The compare-and-set guards must ride the write itself: with a
     check-then-write shape, two writers expecting the same state both pass
-    the check and both win. Each race here asserts exactly one winner and
-    exactly one ComponentVersionConflictError."""
+    the check and both win. Each race here asserts exactly one mutation
+    lands. Two symmetric writers can only settle as one win and one
+    ComponentVersionConflictError; an archive racing a pointer move settles
+    either way, so that race reads the committed row for its verdict."""
 
     def _race(self, fn_a, fn_b):
-        import threading
-
         barrier = threading.Barrier(2)
         results: list = [None, None]
 
@@ -668,6 +703,17 @@ class TestConcurrentCASWrites:
         errs = [r[1] for r in results if r[0] == "err"]
         assert isinstance(errs[0], ComponentVersionConflictError)
 
+    def test_the_unraced_guarded_pair_both_land(self, db):
+        """False-refusal baseline for the archive race below: run the same two
+        guarded calls with nothing competing and both must land. A conflict
+        verdict in the raced tests is then the race, not a guard that refuses
+        a healthy write."""
+        cid = self._component_with_versions(db, cid="race-unraced")
+        assert db.set_current_version(cid, 1, expected_current_version=2) is True
+        assert db.get_component(cid)["current_version"] == 1
+        assert db.delete_component(cid, hard_delete=False, expected_current_version=1) is True
+        assert db.get_component(cid, include_deleted=True)["deleted_at"] is not None
+
     def test_archive_race_has_one_winner(self, db):
         from agno.db.base import ComponentVersionConflictError
 
@@ -679,14 +725,12 @@ class TestConcurrentCASWrites:
 
         # Either order is legitimate, and which one runs is a scheduling
         # detail, so the invariant is that exactly one MUTATION lands - not
-        # that a particular call raised (the SQLite twin states the same
-        # rule; asserting a fixed loser made this fail whenever the archive
-        # fully won the race on a slow runner).
+        # that a particular call raised.
         #
         # Pointer move first: the archive's CAS sees current_version moved and
         # raises. Archive first: the pointer move finds an archived row and
         # reports False, the same verdict its pre-check gives for a row that
-        # was already archived.
+        # was already archived (pinned in test_component_archive_race.py).
         landed = [r for r in results if r[0] == "ok" and r[1] is not False]
         assert len(landed) == 1, results
 
@@ -700,6 +744,48 @@ class TestConcurrentCASWrites:
             errs = [r[1] for r in results if r[0] == "err"]
             assert errs and isinstance(errs[0], ComponentVersionConflictError), results
             assert db.get_component(cid)["current_version"] == 1
+
+    def test_archive_conflicts_when_the_pointer_moves_mid_flight(self, db):
+        """The archive loses: forced, not left to the scheduler.
+
+        delete_component opens its transaction on a locked read of the
+        components row, so the natural race on Postgres always resolves with
+        the archive committed before the pointer move even reads. Holding the
+        archive thread before it issues any SQL puts the pointer move first:
+        the archive's guard then sees current_version 1, raises, and the row
+        stays live carrying the moved pointer.
+        """
+        from agno.db.base import ComponentVersionConflictError
+
+        cid = self._component_with_versions(db, cid="race-ptr-first")
+        outcome: dict = {}
+
+        def archive():
+            try:
+                outcome["result"] = db.delete_component(cid, hard_delete=False, expected_current_version=2)
+            except Exception as e:
+                outcome["error"] = e
+            finally:
+                db.Session.remove()
+
+        with _HoldFirstStatementOfThread(db.db_engine, "cas-archiver") as hold:
+            t = threading.Thread(target=archive, name="cas-archiver")
+            t.start()
+            try:
+                assert hold.reached.wait(timeout=15), "archiver never issued a statement"
+                assert db.set_current_version(cid, 1, expected_current_version=2) is True
+            finally:
+                # The held thread must be released and joined on every exit:
+                # the listener is removed on the way out of this block and
+                # must not be torn down under a live dispatch.
+                hold.release.set()
+                t.join(timeout=30)
+            assert not t.is_alive()
+
+        assert isinstance(outcome.get("error"), ComponentVersionConflictError), outcome
+        row = db.get_component(cid, include_deleted=True)
+        assert row["deleted_at"] is None
+        assert row["current_version"] == 1
 
     def test_guarded_publish_race_has_one_winner(self, db):
         from agno.db.base import ComponentVersionConflictError

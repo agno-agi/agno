@@ -21,8 +21,8 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent._storage import is_auto_generated_memory_manager_id, resolve_memory_manager_reference
-from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics

@@ -5,6 +5,7 @@ Changes:
 - Copy every run stored in the sessions table `runs` column into the runs table
 - Add the user_id column and its index to every table in ``USER_ID_TABLE_TYPES``
 - Move the metrics unique key onto (user_id, date, aggregation_period)
+- Re-key namespace="user" entity_memory learnings onto their owner's key
 
 This removes the unbounded growth of session rows: each run is now stored once,
 in its own row, instead of the whole run list being rewritten on every save.
@@ -80,12 +81,71 @@ class ScheduleDuplicateNamesError(RuntimeError):
     later run (a re-run would skip an already-stamped version)."""
 
 
+# Buckets the operator has to act on, and buckets that only record what the
+# re-key did with a row. rekey_user_entity_learnings logs every count already,
+# so these lines carry the reason rather than the numbers.
+_REKEY_NEEDS_AN_OPERATOR = (
+    ("conflicts", "have a row on the target key whose content does not parse"),
+    ("failed", "could not be moved"),
+    ("malformed", "are missing the entity columns or do not parse"),
+)
+_REKEY_FOR_THE_RECORD = (
+    ("quarantined", "held more than one user's data and moved out of the entity store's reads"),
+    ("contaminated_keyed", "record a user other than their owner and were left in place"),
+    (
+        "unowned",
+        "have no owner: no user's erasure reaches them, and a scoped /learnings read returns them to every user",
+    ),
+)
+
+
+def _report_rekey(report: Dict[str, Any], table_name: str) -> bool:
+    """Say what the entity_memory re-key did with the rows it could not simply move.
+
+    Returns True when the re-key wrote something.
+    """
+    for buckets, emit in ((_REKEY_NEEDS_AN_OPERATOR, log_warning), (_REKEY_FOR_THE_RECORD, log_info)):
+        for bucket, note in buckets:
+            count = len(report.get(bucket) or [])
+            if count:
+                emit(
+                    f"{count} entity_memory row(s) on table {table_name} {note}. "
+                    "See 'Entity memory: per-user keys' in V3_MIGRATION_GUIDE.md."
+                )
+    return any(report.get(bucket) for bucket in ("rekeyed", "merged", "quarantined"))
+
+
+def _rekey_learnings(db: BaseDb, table_name: str) -> bool:
+    """Move pre-3.0 namespace="user" entity_memory rows onto their owner's key."""
+    from agno.learn.migrations import rekey_user_entity_learnings
+
+    try:
+        report = rekey_user_entity_learnings(db, dry_run=False)
+    except NotImplementedError:
+        log_info(f"{type(db).__name__} does not store learnings; table {table_name} is left unchanged")
+        return False
+    return _report_rekey(report, table_name)
+
+
+async def _arekey_learnings(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async version of _rekey_learnings."""
+    from agno.learn.migrations import arekey_user_entity_learnings
+
+    try:
+        report = await arekey_user_entity_learnings(db, dry_run=False)
+    except NotImplementedError:
+        log_info(f"{type(db).__name__} does not store learnings; table {table_name} is left unchanged")
+        return False
+    return _report_rekey(report, table_name)
+
+
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     """
     Apply the following changes to the database:
     - Move session runs out of the sessions `runs` column into the runs table
     - Add a user_id column and index to the tables listed in USER_ID_TABLE_TYPES
     - Move the metrics unique key onto (user_id, date, aggregation_period)
+    - Re-key namespace="user" entity_memory learnings onto their owner's key
 
     Notice only the changes related to the given table_type are applied.
 
@@ -95,6 +155,11 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
+        # The learnings re-key is a content move, identical on every backend that
+        # stores learnings, so it does not go through the per-backend schema work.
+        if table_type == "learnings":
+            return _rekey_learnings(db, table_name)
+
         if db_type == "PostgresDb":
             return _migrate_postgres(db, table_type, table_name)
         elif db_type == "SqliteDb":
@@ -133,6 +198,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     - Move session runs out of the sessions `runs` column into the runs table
     - Add a user_id column and index to the tables listed in USER_ID_TABLE_TYPES
     - Move the metrics unique key onto (user_id, date, aggregation_period)
+    - Re-key namespace="user" entity_memory learnings onto their owner's key
 
     Notice only the changes related to the given table_type are applied.
 
@@ -142,6 +208,10 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
+        # See the sync twin: the learnings re-key is a content move.
+        if table_type == "learnings":
+            return await _arekey_learnings(db, table_name)
+
         if db_type == "AsyncPostgresDb":
             return await _migrate_async_postgres(db, table_type, table_name)
         elif db_type == "AsyncSqliteDb":
@@ -164,12 +234,21 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
     - Move runs back into the sessions `runs` column and drop the runs table
     - Drop the user_id column and index from the tables listed in USER_ID_TABLE_TYPES
     - Move the metrics unique key back onto (date, aggregation_period)
+    - The entity_memory re-key is not reverted
 
     Notice only the changes related to the given table_type are reverted.
 
     Returns:
         bool: True if any migration was reverted, False otherwise.
     """
+    # The pre-3.0 entity_memory key under namespace="user" is shared across
+    # users, so moving these rows back onto it would collide them again.
+    if table_type == "learnings":
+        log_warning(
+            f"The entity_memory re-key on table {table_name} cannot be reverted: the pre-3.0 key is shared across users"
+        )
+        return False
+
     db_type = type(db).__name__
 
     try:
@@ -211,12 +290,21 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     - Move runs back into the sessions `runs` column and drop the runs table
     - Drop the user_id column and index from the tables listed in USER_ID_TABLE_TYPES
     - Move the metrics unique key back onto (date, aggregation_period)
+    - The entity_memory re-key is not reverted
 
     Notice only the changes related to the given table_type are reverted.
 
     Returns:
         bool: True if any migration was reverted, False otherwise.
     """
+    # The pre-3.0 entity_memory key under namespace="user" is shared across
+    # users, so moving these rows back onto it would collide them again.
+    if table_type == "learnings":
+        log_warning(
+            f"The entity_memory re-key on table {table_name} cannot be reverted: the pre-3.0 key is shared across users"
+        )
+        return False
+
     db_type = type(db).__name__
 
     try:
@@ -419,11 +507,16 @@ def _forget_table(db, table_name: Optional[str], attribute: str) -> None:
     ``db.metadata``, so a later up() in the same process fails with
     "Table is already defined".
     """
-    metadata = getattr(db, "metadata", None)
-    if metadata is not None and table_name is not None:
-        for table in list(metadata.tables.values()):
-            if table.name == table_name:
-                metadata.remove(table)
+    invalidate = getattr(db, "_invalidate_table_cache", None)
+    if invalidate is not None and table_name is not None:
+        invalidate(table_name)
+    else:
+        # Third-party adapter without the cache helper: best-effort metadata cleanup
+        metadata = getattr(db, "metadata", None)
+        if metadata is not None and table_name is not None:
+            for table in list(metadata.tables.values()):
+                if table.name == table_name:
+                    metadata.remove(table)
     if hasattr(db, attribute):
         setattr(db, attribute, None)
 
