@@ -868,14 +868,14 @@ def _get_task_management_tools(
         # Check HITL pause
         if member_run_response is not None and member_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_run_response)
-            transition_events = _transition_task(
-                task, TaskStatus.pending
-            )  # Reset to pending so it can be retried after HITL
-            save_task_list(run_context.session_state, task_list)
             use_team_logger()
             _post_process_member_run(
                 member_run_response, member_agent, member_task_description, member_session_state_copy
             )
+            transition_events = _transition_task(
+                task, TaskStatus.pending
+            )  # Reset to pending so it can be retried after HITL
+            save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield from transition_events
             yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
@@ -1064,8 +1064,6 @@ def _get_task_management_tools(
 
         if member_run_response is not None and member_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_run_response)
-            transition_events = _transition_task(task, TaskStatus.pending)
-            save_task_list(run_context.session_state, task_list)
             use_team_logger()
             await _apost_process_member_run(
                 member_run_response,
@@ -1073,6 +1071,8 @@ def _get_task_management_tools(
                 member_task_description,
                 member_session_state_copy,
             )
+            transition_events = _transition_task(task, TaskStatus.pending)
+            save_task_list(run_context.session_state, task_list)
             if stream_events:
                 for task_event in transition_events:
                     yield task_event
@@ -1235,6 +1235,22 @@ def _get_task_management_tools(
                         continue
 
                     use_team_logger()
+
+                    if member_run is not None and member_run.is_cancelled:
+                        _post_process_member_run(
+                            member_run,
+                            member_agent,
+                            member_task,
+                            state_copy,
+                            tool_name="execute_tasks_parallel",
+                            skip_session_merge=True,
+                        )
+                        if member_run.content:
+                            task_obj.result = str(member_run.content)
+                        if modified_states:
+                            merge_parallel_session_states(run_context.session_state, modified_states)  # type: ignore
+                        save_task_list(run_context.session_state, task_list)
+                        check_if_run_cancelled(member_run)
 
                     # Check HITL pause
                     if member_run is not None and member_run.is_paused:
@@ -1451,6 +1467,22 @@ def _get_task_management_tools(
                 continue
 
             use_team_logger()
+
+            if member_run is not None and member_run.is_cancelled:
+                await _apost_process_member_run(
+                    member_run,
+                    member_agent,
+                    member_task,
+                    state_copy,
+                    tool_name="execute_tasks_parallel",
+                    skip_session_merge=True,
+                )
+                if member_run.content:
+                    task_obj.result = str(member_run.content)
+                if modified_states:
+                    merge_parallel_session_states(run_context.session_state, modified_states)  # type: ignore
+                save_task_list(run_context.session_state, task_list)
+                check_if_run_cancelled(member_run)
 
             if member_run is not None and member_run.is_paused:
                 _propagate_member_pause(run_response, member_agent, member_run)

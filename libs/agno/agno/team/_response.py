@@ -21,9 +21,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent._tools import result_store_kwargs
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
-from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
@@ -415,6 +415,7 @@ def generate_response_with_output_model_stream(
     session: TeamSession,
     run_response: TeamRunOutput,
     run_messages: RunMessages,
+    run_context: RunContext,
     stream_events: bool = False,
 ):
     """Parse the model response using the output model stream."""
@@ -447,6 +448,7 @@ def generate_response_with_output_model_stream(
             run_response=run_response,
             full_model_response=model_response,
             model_response_event=model_response_event,
+            run_context=run_context,
         )
 
     # Update the TeamRunResponse content
@@ -501,6 +503,7 @@ async def agenerate_response_with_output_model_stream(
     session: TeamSession,
     run_response: TeamRunOutput,
     run_messages: RunMessages,
+    run_context: RunContext,
     stream_events: bool = False,
 ):
     """Parse the model response using the output model stream."""
@@ -533,6 +536,7 @@ async def agenerate_response_with_output_model_stream(
             run_response=run_response,
             full_model_response=model_response,
             model_response_event=model_response_event,
+            run_context=run_context,
         ):
             yield event
 

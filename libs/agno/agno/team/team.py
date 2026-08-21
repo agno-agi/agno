@@ -117,7 +117,7 @@ class Team:
     determine_input_for_members: bool = True
     # Maximum number of iterations for autonomous task loop (mode=tasks)
     max_iterations: int = 10
-    # Maximum character length for task result previews in the task summary
+    # Maximum character length for task result previews in the task summary; 0 disables previews
     task_result_summary_limit: int = 500
     # Maximum total character length for dependency results passed to a member; 0 disables forwarding
     task_dependency_context_limit: int = 4_000

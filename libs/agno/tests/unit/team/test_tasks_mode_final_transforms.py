@@ -517,6 +517,37 @@ async def test_async_output_model_replaces_stale_leader_parsed_content():
     assert formatter.invoke_count == 1
 
 
+def _parsed_output_model_for_stream() -> tuple[_RecordingScriptedModel, _RecordingScriptedModel, Team]:
+    leader, team = _two_iteration_leader()
+    leader.script[1] = ("parsed", _ParsedAnswer(answer="INTERMEDIATE LEADER PARSED"))
+    leader.script[3] = ("parsed", _ParsedAnswer(answer="FINAL LEADER PARSED"))
+    formatter = _fixed_transform_model("formatter", _ParsedAnswer(answer="FORMATTED OUTPUT"))
+    team.output_schema = _ParsedAnswer
+    team.output_model = formatter
+    return leader, formatter, team
+
+
+def test_sync_stream_output_model_preserves_parsed_only_content():
+    leader, formatter, team = _parsed_output_model_for_stream()
+
+    events = list(team.run("finish the persisted work", stream=True, stream_events=True))
+
+    assert _completed_content(events) == _ParsedAnswer(answer="FORMATTED OUTPUT")
+    assert leader.invoke_count == 4
+    assert formatter.invoke_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_stream_output_model_preserves_parsed_only_content():
+    leader, formatter, team = _parsed_output_model_for_stream()
+
+    events = [event async for event in team.arun("finish the persisted work", stream=True, stream_events=True)]
+
+    assert _completed_content(events) == _ParsedAnswer(answer="FORMATTED OUTPUT")
+    assert leader.invoke_count == 4
+    assert formatter.invoke_count == 1
+
+
 def test_sync_stream_output_model_runs_only_for_the_terminating_iteration():
     leader, team = _two_iteration_leader()
     formatter = _fixed_transform_model("formatter", "FORMATTED FINAL ANSWER")

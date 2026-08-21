@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
     from agno.team.team import Team
-    from agno.offload.store import ResultStore
 
 from os import getenv
 from typing import (
@@ -206,6 +206,12 @@ def __init__(
     team.determine_input_for_members = determine_input_for_members
     team.delegate_to_all_members = delegate_to_all_members
     team.max_iterations = max_iterations
+    if (
+        isinstance(task_result_summary_limit, bool)
+        or not isinstance(task_result_summary_limit, int)
+        or task_result_summary_limit < 0
+    ):
+        raise ValueError("task_result_summary_limit must be a non-negative integer")
     team.task_result_summary_limit = task_result_summary_limit
     if (
         isinstance(task_dependency_context_limit, bool)

@@ -8,10 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agno.agent import Agent
+from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.run.team import TeamRunOutput
+from agno.run.team import TaskUpdatedEvent, TeamRunOutput
 from agno.session import TeamSession
 from agno.team import Team
 from agno.team._task_tools import _get_task_management_tools
@@ -26,6 +27,7 @@ def _task_tools(
     members: list[Agent] | None = None,
     async_mode: bool = False,
     dependency_context_limit: int | None = None,
+    stream_events: bool = False,
 ) -> tuple[dict[str, Function], dict[str, Any], Team]:
     session_state: dict[str, Any] = {}
     save_task_list(session_state, task_list)
@@ -52,6 +54,7 @@ def _task_tools(
         session=session,
         team_run_context={},
         async_mode=async_mode,
+        stream_events=stream_events,
     )
     return {tool.name: tool for tool in tools}, session_state, team
 
@@ -73,6 +76,16 @@ def _completed_member_output(member: Agent, content: str = "unexpected execution
         session_id="dependency-safety-session",
         content=content,
         status=RunStatus.completed,
+    )
+
+
+def _member_output(member: Agent, *, status: RunStatus, content: str | None = None) -> RunOutput:
+    return RunOutput(
+        run_id="member-run",
+        agent_id=member.id,
+        session_id="dependency-safety-session",
+        content=content,
+        status=status,
     )
 
 
@@ -116,6 +129,103 @@ def _blocked_chain(member_id: str) -> tuple[TaskList, Task, Task]:
     )
     assert dependent.status == TaskStatus.blocked
     return task_list, dependency, dependent
+
+
+class TestTaskExecutionLifecycle:
+    def test_execute_task_sync_persists_pending_after_member_pause(self, monkeypatch: pytest.MonkeyPatch):
+        member = Agent(id="worker", name="Worker", telemetry=False)
+        monkeypatch.setattr(
+            member,
+            "run",
+            MagicMock(return_value=_member_output(member, status=RunStatus.paused)),
+        )
+        task_list = TaskList()
+        task = task_list.create_task("Wait for approval")
+        tools, session_state, _ = _task_tools(task_list, members=[member], stream_events=True)
+
+        output = _run_generator_tool(tools["execute_task"], task_id=task.id, member_id=member.id)
+
+        assert [item.status for item in output if isinstance(item, TaskUpdatedEvent)] == [
+            TaskStatus.in_progress.value,
+            TaskStatus.pending.value,
+        ]
+        assert task.status == TaskStatus.pending
+        persisted = load_task_list(session_state)
+        assert persisted is not None
+        assert persisted.get_task(task.id).status == TaskStatus.pending  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_execute_task_async_persists_pending_after_member_pause(self, monkeypatch: pytest.MonkeyPatch):
+        member = Agent(id="worker", name="Worker", telemetry=False)
+        monkeypatch.setattr(
+            member,
+            "arun",
+            AsyncMock(return_value=_member_output(member, status=RunStatus.paused)),
+        )
+        task_list = TaskList()
+        task = task_list.create_task("Wait for approval")
+        tools, session_state, _ = _task_tools(
+            task_list,
+            members=[member],
+            async_mode=True,
+            stream_events=True,
+        )
+
+        output = await _run_async_generator_tool(tools["execute_task"], task_id=task.id, member_id=member.id)
+
+        assert [item.status for item in output if isinstance(item, TaskUpdatedEvent)] == [
+            TaskStatus.in_progress.value,
+            TaskStatus.pending.value,
+        ]
+        assert task.status == TaskStatus.pending
+        persisted = load_task_list(session_state)
+        assert persisted is not None
+        assert persisted.get_task(task.id).status == TaskStatus.pending  # type: ignore[union-attr]
+
+    def test_execute_tasks_parallel_sync_propagates_cancelled_member_run(self, monkeypatch: pytest.MonkeyPatch):
+        member = Agent(id="worker", name="Worker", telemetry=False)
+        monkeypatch.setattr(
+            member,
+            "run",
+            MagicMock(return_value=_member_output(member, status=RunStatus.cancelled, content="partial result")),
+        )
+        task_list, dependency, dependent = _blocked_chain(member.id)
+        tools, session_state, _ = _task_tools(task_list, members=[member])
+
+        with pytest.raises(RunCancelledException):
+            _run_generator_tool(tools["execute_tasks_parallel"], task_ids=[dependency.id])
+
+        assert dependency.status == TaskStatus.in_progress
+        assert dependency.result == "partial result"
+        assert dependent.status == TaskStatus.blocked
+        persisted = load_task_list(session_state)
+        assert persisted is not None
+        assert persisted.get_task(dependency.id).status == TaskStatus.in_progress  # type: ignore[union-attr]
+        assert persisted.get_task(dependency.id).result == "partial result"  # type: ignore[union-attr]
+        assert persisted.get_task(dependent.id).status == TaskStatus.blocked  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_execute_tasks_parallel_async_propagates_cancelled_member_run(self, monkeypatch: pytest.MonkeyPatch):
+        member = Agent(id="worker", name="Worker", telemetry=False)
+        monkeypatch.setattr(
+            member,
+            "arun",
+            AsyncMock(return_value=_member_output(member, status=RunStatus.cancelled, content="partial result")),
+        )
+        task_list, dependency, dependent = _blocked_chain(member.id)
+        tools, session_state, _ = _task_tools(task_list, members=[member], async_mode=True)
+
+        with pytest.raises(RunCancelledException):
+            await _run_async_generator_tool(tools["execute_tasks_parallel"], task_ids=[dependency.id])
+
+        assert dependency.status == TaskStatus.in_progress
+        assert dependency.result == "partial result"
+        assert dependent.status == TaskStatus.blocked
+        persisted = load_task_list(session_state)
+        assert persisted is not None
+        assert persisted.get_task(dependency.id).status == TaskStatus.in_progress  # type: ignore[union-attr]
+        assert persisted.get_task(dependency.id).result == "partial result"  # type: ignore[union-attr]
+        assert persisted.get_task(dependent.id).status == TaskStatus.blocked  # type: ignore[union-attr]
 
 
 class TestDependencyRetrySafety:

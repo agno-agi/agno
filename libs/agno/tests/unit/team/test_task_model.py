@@ -325,6 +325,19 @@ class TestTaskListSummary:
         summary = tl.get_summary_string()
         assert "..." in summary
 
+    def test_zero_result_limit_omits_result_previews(self):
+        tl = TaskList()
+        task = tl.create_task("Task 1")
+        tl.update_task(task.id, status="completed", result="PRIVATE_RESULT")
+
+        summary = tl.get_summary_string(result_limit=0)
+
+        assert "Task 1" in summary
+        assert "COMPLETED" in summary
+        assert "Result:" not in summary
+        assert "PRIVATE_RESULT" not in summary
+        assert "..." not in summary
+
 
 class TestTaskListSerialization:
     def test_roundtrip(self):

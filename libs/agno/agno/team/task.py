@@ -198,7 +198,7 @@ class TaskList:
         """Render the task list as a formatted string for the system message.
 
         Args:
-            result_limit: Maximum character length for task result previews.
+            result_limit: Maximum character length for task result previews; 0 disables previews.
         """
         if not self.tasks:
             return "No tasks created yet."
@@ -217,7 +217,7 @@ class TaskList:
             lines.append(f"  [{t.id}] {t.title} - {status_str}{assignee_str}")
             if t.dependencies:
                 lines.append(f"      Depends on: {t.dependencies}")
-            if t.result:
+            if t.result and result_limit > 0:
                 result_preview = t.result[:result_limit] + "..." if len(t.result) > result_limit else t.result
                 lines.append(f"      Result: {result_preview}")
             if t.notes:

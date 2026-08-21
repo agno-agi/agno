@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -38,7 +39,6 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics, merge_background_metrics
-from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
@@ -1075,6 +1075,7 @@ def _run_tasks_stream(
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    run_context=run_context,
                     stream_events=stream_events,
                 ):
                     buffered_content = False
@@ -1874,6 +1875,7 @@ def _run_stream(
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3094,6 +3096,7 @@ async def _arun_tasks_stream(
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    run_context=run_context,
                     stream_events=stream_events,
                 ):
                     buffered_content = False
@@ -4302,6 +4305,7 @@ async def _arun_stream(
                         session=team_session,
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -8831,6 +8835,7 @@ def _continue_run_stream(
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -10501,6 +10506,7 @@ async def _acontinue_run_stream(
                             session=team_session,
                             run_response=run_response,
                             run_messages=run_messages,
+                            run_context=run_context,
                             stream_events=stream_events,
                         ):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -10620,6 +10626,7 @@ async def _acontinue_run_stream(
                             session=team_session,
                             run_response=run_response,
                             run_messages=run_messages,
+                            run_context=run_context,
                             stream_events=stream_events,
                         ):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
