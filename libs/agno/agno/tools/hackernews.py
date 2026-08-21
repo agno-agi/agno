@@ -30,7 +30,7 @@ class HackerNewsTools(Toolkit):
         if all or get_top_stories:
             tools.append(self.get_top_hackernews_stories)
         if all or get_user_details:
-            tools.append(self.get_user_details)
+            tools.append(self.hackernews_get_user_details)
 
         super().__init__(name="hackers_news", tools=tools, timeout=timeout, **kwargs)
 
@@ -69,7 +69,7 @@ class HackerNewsTools(Toolkit):
             logger.exception(e)
             return f"Error fetching stories: {e}"
 
-    def get_user_details(self, username: str) -> str:
+    def hackernews_get_user_details(self, username: str) -> str:
         """Use this function to get the details of a Hacker News user using their username.
 
         Args:

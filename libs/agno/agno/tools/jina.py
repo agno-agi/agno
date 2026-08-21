@@ -43,13 +43,13 @@ class JinaReaderTools(Toolkit):
 
         tools: List[Any] = []
         if all or read_url:
-            tools.append(self.read_url)
+            tools.append(self.jina_read_url)
         if all or search_query:
-            tools.append(self.search_query)
+            tools.append(self.jina_search)
 
         super().__init__(name="jina_reader_tools", tools=tools, **kwargs)
 
-    def read_url(self, url: str) -> str:
+    def jina_read_url(self, url: str) -> str:
         """Reads a URL and returns the truncated content using Jina Reader API."""
         full_url = f"{self.config.base_url}{url}"
         try:
@@ -62,7 +62,7 @@ class JinaReaderTools(Toolkit):
             log_error(error_msg)
             return error_msg
 
-    def search_query(self, query: str) -> str:
+    def jina_search(self, query: str) -> str:
         """Performs a web search using Jina Reader API and returns the truncated results."""
         full_url = f"{self.config.search_url}"
         headers = self._get_headers()

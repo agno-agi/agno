@@ -31,13 +31,13 @@ class WebexTools(Toolkit):
 
         tools: List[Any] = []
         if all or send_message:
-            tools.append(self.send_message)
+            tools.append(self.webex_send_message)
         if all or list_rooms:
-            tools.append(self.list_rooms)
+            tools.append(self.webex_list_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)
 
-    def send_message(self, room_id: str, text: str) -> str:
+    def webex_send_message(self, room_id: str, text: str) -> str:
         """
         Send a message to a Webex Room.
         Args:
@@ -53,7 +53,7 @@ class WebexTools(Toolkit):
             logger.exception(f"Error sending message in room: {room_id}")
             return json.dumps({"error": str(e)})
 
-    def list_rooms(self) -> str:
+    def webex_list_rooms(self) -> str:
         """
         List all rooms in the Webex.
         Returns:

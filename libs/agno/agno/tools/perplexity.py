@@ -57,7 +57,7 @@ class PerplexitySearch(Toolkit):
             **kwargs,
         )
 
-    def search(self, query: str, max_results: Optional[int] = None) -> str:
+    def perplexity_search(self, query: str, max_results: Optional[int] = None) -> str:
         """Use this function to search the web using the Perplexity Search API.
         Returns ranked web search results with titles, URLs, snippets, and dates.
 

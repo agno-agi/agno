@@ -99,13 +99,13 @@ class ExaTools(Toolkit):
         if all or search:
             tools.append(self.search_exa)
         if all or get_contents:
-            tools.append(self.get_contents)
+            tools.append(self.exa_get_contents)
         if all or find_similar:
-            tools.append(self.find_similar)
+            tools.append(self.exa_find_similar)
         if all or answer:
             tools.append(self.exa_answer)
         if all or research:
-            tools.append(self.research)
+            tools.append(self.exa_research)
 
         super().__init__(name="exa", tools=tools, **kwargs)
 
@@ -185,7 +185,7 @@ class ExaTools(Toolkit):
             logger.exception("Failed to search exa")
             return f"Error: {e}"
 
-    def get_contents(self, urls: list[str]) -> str:
+    def exa_get_contents(self, urls: list[str]) -> str:
         """
         Retrieve detailed content from specific URLs using the Exa API.
 
@@ -220,7 +220,7 @@ class ExaTools(Toolkit):
             logger.exception("Failed to get contents from Exa")
             return f"Error: {e}"
 
-    def find_similar(self, url: str, num_results: int = 5) -> str:
+    def exa_find_similar(self, url: str, num_results: int = 5) -> str:
         """
         Find similar links to a given URL using the Exa API.
 
@@ -314,7 +314,7 @@ class ExaTools(Toolkit):
             logger.exception("Failed to get answer from Exa")
             return f"Error: {e}"
 
-    def research(
+    def exa_research(
         self,
         instructions: str,
         output_schema: Optional[Dict[str, Any]] = None,

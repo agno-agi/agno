@@ -34,7 +34,7 @@ class Searxng(Toolkit):
 
         super().__init__(name="searxng", tools=tools, timeout=timeout, **kwargs)
 
-    def search_web(self, query: str, max_results: int = 5) -> str:
+    def searxng_search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
 
         Args:
@@ -46,7 +46,7 @@ class Searxng(Toolkit):
         """
         return self._search(query, max_results=max_results)
 
-    def image_search(self, query: str, max_results: int = 5) -> str:
+    def searxng_image_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search for images.
 
         Args:
@@ -58,7 +58,7 @@ class Searxng(Toolkit):
         """
         return self._search(query, "images", max_results)
 
-    def it_search(self, query: str, max_results: int = 5) -> str:
+    def searxng_it_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search for IT related information.
 
         Args:
@@ -70,7 +70,7 @@ class Searxng(Toolkit):
         """
         return self._search(query, "it", max_results)
 
-    def map_search(self, query: str, max_results: int = 5) -> str:
+    def searxng_map_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search maps
 
         Args:
@@ -82,7 +82,7 @@ class Searxng(Toolkit):
         """
         return self._search(query, "map", max_results)
 
-    def music_search(self, query: str, max_results: int = 5) -> str:
+    def searxng_music_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search for information related to music.
 
         Args:
@@ -94,7 +94,7 @@ class Searxng(Toolkit):
         """
         return self._search(query, "music", max_results)
 
-    def news_search(self, query: str, max_results: int = 5) -> str:
+    def searxng_news_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search for news.
 
         Args:
@@ -106,7 +106,7 @@ class Searxng(Toolkit):
         """
         return self._search(query, "news", max_results)
 
-    def science_search(self, query: str, max_results: int = 5) -> str:
+    def searxng_science_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search for information related to science.
 
         Args:
@@ -118,7 +118,7 @@ class Searxng(Toolkit):
         """
         return self._search(query, "science", max_results)
 
-    def video_search(self, query: str, max_results: int = 5) -> str:
+    def searxng_video_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search for videos.
 
         Args:
