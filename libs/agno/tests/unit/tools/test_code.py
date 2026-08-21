@@ -706,6 +706,7 @@ def test_approval_sentinel_on_a_bare_callable_reaches_the_bridged_function():
         return f"sent {amount}"
 
     bridge = ToolBridge([wire_money])
+    bridge._ensure_built()
     function = bridge._registry[("", "wire_money")]
     assert function.approval_type == "required"
     assert function.requires_confirmation is True
@@ -743,14 +744,25 @@ def test_connect_and_close_reach_the_injected_toolkits():
     code_mode.connect()
     assert probe.connects == 1
     assert probe.closes == 0
-    # A second connect in the same run must not reconnect an open toolkit.
-    code_mode.connect()
-    assert probe.connects == 1
     code_mode.close()
     assert probe.closes == 1
     # The next run connects again.
     code_mode.connect()
     assert probe.connects == 2
+
+
+def test_a_second_run_keeps_the_toolkits_open_until_it_ends():
+    # One CodeMode serves every session, so the first run to end must not
+    # disconnect a toolkit the other run's cell is still calling.
+    probe = ConnectProbeTools()
+    code_mode = CodeMode(tools=[probe], snapshot=False)
+    code_mode.connect()
+    code_mode.connect()
+    assert probe.connects == 1, "an open toolkit was reconnected"
+    code_mode.close()
+    assert probe.closes == 0, "the toolkit was closed under the run still holding it"
+    code_mode.close()
+    assert probe.closes == 1
 
 
 async def test_aconnect_and_aclose_reach_the_injected_toolkits():
@@ -767,3 +779,107 @@ def test_close_of_an_unconnected_toolkit_is_not_attempted():
     code_mode = CodeMode(tools=[probe], snapshot=False)
     code_mode.close()
     assert probe.closes == 0
+
+
+async def test_cancel_pending_answers_with_the_call_id_the_kernel_waits_on():
+    import asyncio
+
+    from agno.tools.code.bridge import ToolBridge
+
+    blocked = asyncio.Event()
+
+    async def wait_for_the_test() -> str:
+        """Block until the test cancels the call."""
+        await blocked.wait()
+        return "never"
+
+    session = _FakeSession()
+    bridge = ToolBridge([wait_for_the_test])
+    bridge._on_comm(
+        session,
+        {
+            "msg_type": "comm_msg",
+            "content": {
+                "comm_id": "comm-1",
+                "data": {"id": "7", "handle": "", "method": "wait_for_the_test", "kwargs": {}},
+            },
+        },
+    )
+    await asyncio.sleep(0)
+    serving = list(bridge._pending.values())
+    await bridge.cancel_pending(session, "the cell was interrupted")
+    # The kernel pops its pending entry by the call id, so an abort addressed
+    # to anything else — the kernel generation, say — reaches no one.
+    abort = session.kc.control_channel.sent[0]["content"]["data"]
+    assert abort["id"] == "7"
+    assert abort["ok"] is False
+    assert "aborted" in abort["error"]["message"]
+    blocked.set()
+    await asyncio.gather(*serving, return_exceptions=True)
+
+
+async def test_an_async_pre_hook_on_a_sync_tool_is_awaited():
+    from agno.tools.code.bridge import ToolBridge
+
+    gated = []
+
+    async def gate(fc) -> None:
+        gated.append(fc.function.name)
+
+    def stamp(value: str) -> str:
+        """Stamp a value.
+
+        Args:
+            value: What to stamp.
+        """
+        return "stamped:" + value
+
+    function = Function.from_callable(stamp)
+    function.pre_hook = gate
+    session = _FakeSession()
+    bridge = ToolBridge([function])
+    await _bridge_call(bridge, session, "stamp", value="v")
+    reply = session.kc.control_channel.sent[0]["content"]["data"]
+    assert reply["value"] == "stamped:v"
+    assert gated == ["stamp"], "an async pre_hook was called and its coroutine dropped"
+
+
+def test_a_toolkit_named_mcptools_is_treated_as_connectable():
+    from agno.tools.code.bridge import ToolBridge
+
+    class MCPTools(Toolkit):
+        """agno identifies MCPTools by class name; it sets no _requires_connect."""
+
+        def __init__(self):
+            super().__init__(name="mcp_tools", tools=[])
+
+        async def connect(self) -> None:
+            pass
+
+    mcp = MCPTools()
+    assert mcp.requires_connect is False
+    bridge = ToolBridge([mcp])
+    assert bridge._connectable == [mcp]
+
+
+def test_a_tool_name_python_cannot_use_binds_under_one_it_can():
+    from agno.tools.code.bridge import ToolBridge
+
+    def _entrypoint(**kwargs):
+        return kwargs
+
+    dashed = Function(
+        name="get-forecast",
+        description="Forecast.",
+        parameters={"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+        entrypoint=_entrypoint,
+        skip_entrypoint_processing=True,
+    )
+    bridge = ToolBridge([dashed])
+    bridge._ensure_built()
+    assert [entry["name"] for entry in bridge._spec["functions"]] == ["get_forecast"]
+    assert ("", "get_forecast") in bridge._registry
+    # The wire name the tool is dispatched under is unchanged.
+    assert bridge._registry[("", "get_forecast")].name == "get-forecast"
+    assert "the tool's own name is 'get-forecast'" in bridge._spec["functions"][0]["doc"]
+    assert handle_names_for([dashed]) == ["get_forecast"]

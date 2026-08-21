@@ -403,6 +403,7 @@ def test_one_unbindable_function_leaves_every_other_handle_bound(make_code_mode)
     # isolated, so this one degrades to a raising stub instead of taking the
     # bootstrap cell - and every other handle - down with it.
     cm = make_code_mode(tools=[EchoTools(), top_level_helper])
+    cm._bridge._ensure_built()
     cm._bridge._spec["toolkits"][0]["functions"].append(
         {"name": "broken", "doc": "", "params": [{"name": "class", "wire": "class", "required": True}]}
     )
@@ -631,3 +632,116 @@ async def test_sync_execute_from_inside_the_host_loop_does_not_wait_on_it(make_c
     elapsed = time.monotonic() - started
     assert "other-loop" in result.content, f"cell did not answer: {result.content}"
     assert elapsed < 15, "the call waited on a loop that was blocked by this very call"
+
+
+# ------------------------------------------------------------------
+# A toolkit whose functions arrive with its connection
+# ------------------------------------------------------------------
+
+
+class MCPTools(Toolkit):
+    """Shaped like agno's MCPTools: no ``_requires_connect`` flag, an async
+    ``connect()``, and functions that exist only once it is connected."""
+
+    def __init__(self, **kwargs):
+        self.initialized = False
+        self.closes = 0
+        super().__init__(name="weather_tools", tools=[], **kwargs)
+
+    async def connect(self) -> None:
+        await asyncio.sleep(0)
+        self.functions["get-forecast"] = _raw_schema_function("get-forecast", {"city": {"type": "string"}}, ["city"])
+        self.initialized = True
+
+    async def close(self) -> None:
+        await asyncio.sleep(0)
+        self.closes += 1
+        self.initialized = False
+
+
+def test_a_toolkit_that_registers_its_functions_on_connect_binds_them(make_code_mode):
+    mcp = MCPTools()
+    cm = make_code_mode(tools=[mcp])
+    cm.connect()
+    result = cm.run(_sid("connect-registers"), "await weather.get_forecast(city='Paris')")
+    assert result.status == "ok", f"cell failed: {result.traceback}"
+    assert mcp.initialized is True, "the toolkit was never connected"
+    assert result.result is not None
+    assert '"city": "Paris"' in result.result
+
+
+def test_a_toolkit_connected_by_the_bridge_is_closed_with_the_run(make_code_mode):
+    mcp = MCPTools()
+    cm = make_code_mode(tools=[mcp])
+    cm.connect()
+    cm.run(_sid("connect-closes"), "await weather.get_forecast(city='Rome')")
+    cm.close()
+    assert mcp.closes == 1
+    assert mcp.initialized is False
+
+
+class DashedTools(Toolkit):
+    """Tool names as an MCP server emits them: not Python identifiers."""
+
+    def __init__(self, **kwargs):
+        super().__init__(
+            name="weather-forecast_tools",
+            tools=[_raw_schema_function("get-forecast", {"city": {"type": "string"}}, ["city"])],
+            **kwargs,
+        )
+
+
+def test_a_tool_name_python_cannot_use_is_callable_from_a_cell(make_code_mode):
+    alerts = _raw_schema_function("get-alerts", {"state": {"type": "string"}}, ["state"])
+    cm = make_code_mode(tools=[DashedTools(), alerts])
+    # The instructions advertise these names, so they have to be the bound ones.
+    assert cm.handles == ["weather_forecast", "get_alerts"]
+    sid = _sid("dashed-names")
+    result = cm.run(sid, "await weather_forecast.get_forecast(city='Paris')")
+    assert result.status == "ok", f"cell failed: {result.traceback}"
+    assert result.result is not None
+    assert '"city": "Paris"' in result.result
+    result = cm.run(sid, "await get_alerts(state='CA')")
+    assert result.status == "ok", f"cell failed: {result.traceback}"
+    assert result.result is not None
+    assert '"state": "CA"' in result.result
+    doc = cm.run(sid, "weather_forecast.get_forecast.__doc__")
+    assert doc.result is not None
+    assert "get-forecast" in doc.result, "the stub does not say what the tool's own name is"
+
+
+_sent: list = []
+
+
+@tool(requires_user_input=True, user_input_fields=["recipient"])
+def send_message(recipient: str, body: str) -> str:
+    """Send a message.
+
+    Args:
+        recipient: Who to send it to.
+        body: What to send.
+    """
+    _sent.append(recipient)
+    return "SENT to " + recipient
+
+
+def test_a_user_input_tool_answers_with_the_refusal_not_a_type_error(make_code_mode):
+    # agno strips the user-input fields out of the tool's schema, so a stub
+    # built from that schema rejects the very argument the tool documents.
+    _sent.clear()
+    cm = make_code_mode(tools=[send_message])
+    code = (
+        "try:\n"
+        "    outcome = await send_message(recipient='ops', body='hi')\n"
+        "except TypeError as e:\n"
+        "    outcome = 'TypeError: ' + str(e)\n"
+        "except RuntimeError as e:\n"
+        "    outcome = 'RuntimeError: ' + str(e)\n"
+        "outcome\n"
+    )
+    result = cm.run(_sid("user-input"), code)
+    assert result.result is not None
+    assert "SENT" not in result.result, "a tool that pauses the run executed from a cell"
+    assert "TypeError" not in result.result
+    assert "requires human approval or external execution" in result.result
+    assert _sent == []

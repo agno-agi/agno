@@ -6,7 +6,9 @@ Every bound function is awaitable regardless of whether the underlying entrypoin
 
 A tool that would pause the run — `requires_confirmation`, `requires_user_input`, `external_execution`, or any `@approval` — is refused inside the kernel with a message telling the model to ask for it as a regular tool call. A cell cannot pause an agent run, so the call must not happen at all.
 
-Toolkits that manage their own connections (`_requires_connect`) are connected when the run starts and closed when it ends, the same as toolkits attached directly to the agent. Async tool calls are awaited on the agent's own event loop, so a toolkit whose transport lives there — an MCP `ClientSession`, an `httpx` client, an `asyncpg` pool — works from a cell.
+Toolkits that manage their own connections — anything with `_requires_connect`, plus `MCPTools` — are connected when the run starts and closed when it ends, the same as toolkits attached directly to the agent. A toolkit whose `connect()` is async is connected on the first cell of the run, because agno connects toolkits from a synchronous frame; a toolkit already opened by hand (`async with MCPTools(...)`) is left alone. Functions a toolkit registers while connecting are bound too, so an MCP server's tools are callable from a cell. Async tool calls are awaited on the agent's own event loop, so a toolkit whose transport lives there — an MCP `ClientSession`, an `httpx` client, an `asyncpg` pool — works from a cell.
+
+A tool name is not a Python name. An MCP server may call a tool `get-forecast`, which no expression in a cell can reference, so it binds as `get_forecast` and its docstring records the tool's own name. The tool is still called by its real name over the wire, so logs, hooks and caching are unaffected.
 
 - `basic.py` — a toolkit bound into the kernel; the agent loops its calls in one cell instead of one tool call per part.
 - `with_filesystem.py` — `FileSystem.tools()` as the `filesystem` handle: compute in the kernel, write durable notes to the database in the same cell.

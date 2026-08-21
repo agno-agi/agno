@@ -52,13 +52,18 @@ def safe_param_name(name: str, taken: Collection[str] = ()) -> str:
 
 
 def handle_names_for(tools: Sequence[Union[Toolkit, Callable[..., Any], Function]]) -> List[str]:
-    """The kernel-side names the given tools bind under, in input order."""
+    """The kernel-side names the given tools bind under, in input order.
+
+    A tool name carries no Python constraints — an MCP server may call a tool
+    ``get-forecast`` — and the bridge binds it under a name a cell can
+    reference, so these are the adapted names, not the tools' own.
+    """
     names: List[str] = []
     for tool in tools:
         if isinstance(tool, Toolkit):
             names.append(derive_handle_name(tool.name))
         elif isinstance(tool, Function):
-            names.append(tool.name)
+            names.append(safe_param_name(tool.name))
         else:
-            names.append(getattr(tool, "__name__", str(tool)))
+            names.append(safe_param_name(getattr(tool, "__name__", str(tool))))
     return names
