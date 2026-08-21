@@ -393,6 +393,7 @@ def __init__(
 
     # Team session
     team._cached_session = None
+    team._cached_session_db = None
 
     team._tool_instructions = None
 

@@ -636,12 +636,9 @@ def read_or_create_session(
     from uuid import uuid4
 
     # Returning cached session if we have one
-    if (
-        agent._cached_session is not None
-        and agent._cached_session.session_id == session_id
-        and (user_id is None or agent._cached_session.user_id == user_id)
-    ):
-        return agent._cached_session
+    cached_session = agent._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     agent_session = None
@@ -692,7 +689,7 @@ def read_or_create_session(
                 upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
-        agent._cached_session = agent_session
+        agent._set_cached_session(agent_session)
 
     return agent_session
 
@@ -708,12 +705,9 @@ async def aread_or_create_session(
     from agno.agent import _init
 
     # Returning cached session if we have one
-    if (
-        agent._cached_session is not None
-        and agent._cached_session.session_id == session_id
-        and (user_id is None or agent._cached_session.user_id == user_id)
-    ):
-        return agent._cached_session
+    cached_session = agent._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     agent_session = None
@@ -770,7 +764,7 @@ async def aread_or_create_session(
                     upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
-        agent._cached_session = agent_session
+        agent._set_cached_session(agent_session)
 
     return agent_session
 
