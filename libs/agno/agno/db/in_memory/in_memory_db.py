@@ -33,8 +33,9 @@ class InMemoryDb(BaseDb):
         """Interface for in-memory storage."""
         super().__init__()
 
-        # Initialize in-memory storage dictionaries
-        self._sessions: List[Dict[str, Any]] = []
+        # Initialize in-memory storage. Sessions are keyed by session_id so
+        # id lookups (get/upsert/delete) stay O(1) as the store grows.
+        self._sessions: Dict[str, Dict[str, Any]] = {}
         self._memories: List[Dict[str, Any]] = []
         self._metrics: List[Dict[str, Any]] = []
         self._eval_runs: List[Dict[str, Any]] = []
@@ -72,14 +73,9 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            original_count = len(self._sessions)
-            self._sessions = [
-                s
-                for s in self._sessions
-                if not (s.get("session_id") == session_id and (user_id is None or s.get("user_id") == user_id))
-            ]
-
-            if len(self._sessions) < original_count:
+            session = self._sessions.get(session_id)
+            if session is not None and (user_id is None or session.get("user_id") == user_id):
+                del self._sessions[session_id]
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
             else:
@@ -101,11 +97,10 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            self._sessions = [
-                s
-                for s in self._sessions
-                if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
-            ]
+            for session_id in session_ids:
+                session = self._sessions.get(session_id)
+                if session is not None and (user_id is None or session.get("user_id") == user_id):
+                    del self._sessions[session_id]
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
@@ -137,26 +132,23 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs while reading the session.
         """
         try:
-            for session_data in self._sessions:
-                if session_data.get("session_id") == session_id:
-                    if user_id is not None and session_data.get("user_id") != user_id:
-                        continue
+            session_data = self._sessions.get(session_id)
+            if session_data is None:
+                return None
+            if user_id is not None and session_data.get("user_id") != user_id:
+                return None
 
-                    session_data_copy = deepcopy(session_data)
+            session_data_copy = deepcopy(session_data)
 
-                    if runs_limit is not None:
-                        # No query engine to push "last N" down: filter+slice in memory to
-                        # match the SQL fast path (drop member/skip-status runs, then last N).
-                        session_data_copy["runs"] = filter_context_runs(session_data_copy.get("runs") or [])[
-                            -runs_limit:
-                        ]
+            if runs_limit is not None:
+                # No query engine to push "last N" down: filter+slice in memory to
+                # match the SQL fast path (drop member/skip-status runs, then last N).
+                session_data_copy["runs"] = filter_context_runs(session_data_copy.get("runs") or [])[-runs_limit:]
 
-                    if not deserialize:
-                        return session_data_copy
+            if not deserialize:
+                return session_data_copy
 
-                    return deserialize_session(session_type, session_data_copy)
-
-            return None
+            return deserialize_session(session_type, session_data_copy)
 
         except Exception as e:
             import traceback
@@ -206,7 +198,7 @@ class InMemoryDb(BaseDb):
         try:
             # Apply filters
             filtered_sessions = []
-            for session_data in self._sessions:
+            for session_data in self._sessions.values():
                 if user_id is not None and session_data.get("user_id") != user_id:
                     continue
                 if component_id is not None:
@@ -274,29 +266,26 @@ class InMemoryDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         try:
-            for i, session in enumerate(self._sessions):
-                if session.get("session_id") != session_id:
-                    continue
-                if session_type is not None and session.get("session_type") != session_type.value:
-                    continue
-                if user_id is not None and session.get("user_id") != user_id:
-                    continue
-                # Update session name in session_data
-                if "session_data" not in session or session["session_data"] is None:
-                    session["session_data"] = {}
-                session["session_data"]["session_name"] = session_name
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            if session_type is not None and session.get("session_type") != session_type.value:
+                return None
+            if user_id is not None and session.get("user_id") != user_id:
+                return None
 
-                self._sessions[i] = session
+            # Update session name in session_data
+            if "session_data" not in session or session["session_data"] is None:
+                session["session_data"] = {}
+            session["session_data"]["session_name"] = session_name
 
-                log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+            log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
-                session_copy = deepcopy(session)
-                if not deserialize:
-                    return session_copy
+            session_copy = deepcopy(session)
+            if not deserialize:
+                return session_copy
 
-                return deserialize_session(session_type, session_copy)
-
-            return None
+            return deserialize_session(session_type, session_copy)
 
         except Exception as e:
             log_error(f"Exception renaming session: {str(e)}")
@@ -316,24 +305,21 @@ class InMemoryDb(BaseDb):
             elif isinstance(session, WorkflowSession):
                 session_dict["session_type"] = SessionType.WORKFLOW.value
 
-            # Find existing session to update
-            session_updated = False
-            for i, existing_session in enumerate(self._sessions):
-                if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
-                    existing_session, session
-                ):
-                    existing_uid = existing_session.get("user_id")
-                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
-                        return None
-                    session_dict["updated_at"] = int(time.time())
-                    self._sessions[i] = deepcopy(session_dict)
-                    session_updated = True
-                    break
-
-            if not session_updated:
+            session_id = session_dict["session_id"]
+            existing_session = self._sessions.get(session_id)
+            if existing_session is not None:
+                # Owner guard, mirroring the SQL adapters' ON CONFLICT ... WHERE
+                # clause: an owned session is only writable by its owner; an
+                # unowned session can be claimed by anyone.
+                existing_uid = existing_session.get("user_id")
+                if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                    return None
+                session_dict["updated_at"] = int(time.time())
+            else:
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
-                self._sessions.append(deepcopy(session_dict))
+
+            self._sessions[session_id] = deepcopy(session_dict)
 
             session_dict_copy = deepcopy(session_dict)
             if not deserialize:
@@ -349,16 +335,6 @@ class InMemoryDb(BaseDb):
         except Exception as e:
             log_error(f"Exception upserting session: {str(e)}")
             raise e
-
-    def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
-        """Check if existing session matches the key for the session type."""
-        if isinstance(session, AgentSession):
-            return existing_session.get("agent_id") == session.agent_id
-        elif isinstance(session, TeamSession):
-            return existing_session.get("team_id") == session.team_id
-        elif isinstance(session, WorkflowSession):
-            return existing_session.get("workflow_id") == session.workflow_id
-        return False
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
@@ -404,7 +380,7 @@ class InMemoryDb(BaseDb):
     def _iter_session_runs(self) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
         """Yield (session_dict, run_dict) pairs across all in-memory sessions."""
         pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
-        for session in self._sessions:
+        for session in self._sessions.values():
             for run in session.get("runs") or []:
                 if isinstance(run, dict):
                     pairs.append((session, run))
@@ -496,28 +472,27 @@ class InMemoryDb(BaseDb):
             if run_id is None:
                 raise ValueError("Run must have a run_id")
 
-            for session in self._sessions:
-                if session.get("session_id") != session_id:
-                    continue
-                runs = session.setdefault("runs", [])
-                for i, existing in enumerate(runs):
-                    existing_id = (
-                        existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
-                    )
-                    if existing_id == run_id:
-                        # Preserve original run_index on update (matches SQL adapters)
-                        if isinstance(existing, dict) and "run_index" in existing:
-                            run_dict["run_index"] = existing["run_index"]
-                        runs[i] = run_dict
-                        break
-                else:
-                    if run_index is not None and "run_index" not in run_dict:
-                        run_dict["run_index"] = run_index
-                    runs.append(run_dict)
-                session["updated_at"] = int(time.time())
+            session = self._sessions.get(session_id)
+            if session is None:
+                log_debug(f"upsert_run: session {session_id} not found; skipping")
                 return
 
-            log_debug(f"upsert_run: session {session_id} not found; skipping")
+            runs = session.setdefault("runs", [])
+            for i, existing in enumerate(runs):
+                existing_id = (
+                    existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
+                )
+                if existing_id == run_id:
+                    # Preserve original run_index on update (matches SQL adapters)
+                    if isinstance(existing, dict) and "run_index" in existing:
+                        run_dict["run_index"] = existing["run_index"]
+                    runs[i] = run_dict
+                    break
+            else:
+                if run_index is not None and "run_index" not in run_dict:
+                    run_dict["run_index"] = run_index
+                runs.append(run_dict)
+            session["updated_at"] = int(time.time())
         except Exception as e:
             log_error(f"Error upserting run: {str(e)}")
             raise e
@@ -525,7 +500,7 @@ class InMemoryDb(BaseDb):
     def delete_run(self, run_id: str) -> bool:
         """Remove a run from its session by run_id."""
         try:
-            for session in self._sessions:
+            for session in self._sessions.values():
                 runs = session.get("runs") or []
                 new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") == run_id)]
                 if len(new_runs) != len(runs):
@@ -543,7 +518,7 @@ class InMemoryDb(BaseDb):
             return
         wanted = set(run_ids)
         try:
-            for session in self._sessions:
+            for session in self._sessions.values():
                 runs = session.get("runs") or []
                 new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") in wanted)]
                 if len(new_runs) != len(runs):
@@ -933,7 +908,7 @@ class InMemoryDb(BaseDb):
         # No metrics records. Return the date of the first recorded session.
         if self._sessions:
             # Sort by created_at
-            sorted_sessions = sorted(self._sessions, key=lambda x: x.get("created_at", 0))
+            sorted_sessions = sorted(self._sessions.values(), key=lambda x: x.get("created_at", 0))
             first_session_date = sorted_sessions[0]["created_at"]
             return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
@@ -945,7 +920,7 @@ class InMemoryDb(BaseDb):
         """Get all sessions for metrics calculation."""
         try:
             filtered_sessions = []
-            for session in self._sessions:
+            for session in self._sessions.values():
                 created_at = session.get("created_at", 0)
                 if start_timestamp is not None and created_at < start_timestamp:
                     continue
