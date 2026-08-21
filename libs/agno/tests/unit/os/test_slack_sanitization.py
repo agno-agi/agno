@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from agno.os.interfaces.slack.types import sanitize_mrkdwn_text, tool_name
 
 
