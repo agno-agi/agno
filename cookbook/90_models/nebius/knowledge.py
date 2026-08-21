@@ -17,7 +17,7 @@ knowledge = Knowledge(
 # Add content to the knowledge
 knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-agent = Agent(model=Nebius(id="Qwen/Qwen3-30B-A3B"), knowledge=knowledge)
+agent = Agent(model=Nebius(id="openai/gpt-oss-120b"), knowledge=knowledge)
 agent.print_response("How to make Thai curry?", markdown=True)
 
 # ---------------------------------------------------------------------------
