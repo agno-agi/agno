@@ -52,8 +52,8 @@ class PerplexitySearch(Toolkit):
 
         super().__init__(
             name="perplexity_search",
-            tools=[self.search],
-            async_tools=[(self.asearch, "search")],
+            tools=[self.perplexity_search],
+            async_tools=[(self.asearch, "perplexity_search")],
             **kwargs,
         )
 

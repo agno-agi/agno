@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -58,14 +58,31 @@ class GithubTools(Toolkit):
         self,
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
+        all: bool = False,
         **kwargs,
     ):
+        """Initialize GitHub toolkit for repository and issue management.
+
+        Args:
+            access_token: GitHub personal access token. Falls back to GITHUB_ACCESS_TOKEN env var.
+            base_url: GitHub Enterprise base URL. If None, uses public GitHub.
+            all: Enable all tools (default behavior, kept for API consistency).
+            **kwargs: Passed to Toolkit. Use include_tools/exclude_tools to filter.
+
+        Example:
+            # Include only specific tools
+            GithubTools(include_tools=[GithubTools.SEARCH_REPOSITORIES, GithubTools.GET_REPOSITORY])
+
+            # Exclude destructive tools
+            GithubTools(exclude_tools=[GithubTools.DELETE_REPOSITORY, GithubTools.DELETE_FILE])
+        """
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
 
         self.g = self.authenticate()
 
-        tools: List[Any] = [
+        # Register all tools - base Toolkit handles include_tools/exclude_tools filtering
+        tools: List[Callable] = [
             self.search_repositories,
             self.list_repositories,
             self.get_repository,

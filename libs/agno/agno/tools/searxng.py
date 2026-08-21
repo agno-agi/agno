@@ -22,14 +22,14 @@ class Searxng(Toolkit):
         self.fixed_max_results = fixed_max_results
 
         tools: List[Any] = [
-            self.search_web,
-            self.image_search,
-            self.it_search,
-            self.map_search,
-            self.music_search,
-            self.news_search,
-            self.science_search,
-            self.video_search,
+            self.searxng_search_web,
+            self.searxng_image_search,
+            self.searxng_it_search,
+            self.searxng_map_search,
+            self.searxng_music_search,
+            self.searxng_news_search,
+            self.searxng_science_search,
+            self.searxng_video_search,
         ]
 
         super().__init__(name="searxng", tools=tools, timeout=timeout, **kwargs)
