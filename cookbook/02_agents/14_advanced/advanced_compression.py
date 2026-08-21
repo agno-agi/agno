@@ -6,7 +6,7 @@ This example shows how to set a context token based limit for tool call compress
 """
 
 from agno.agent import Agent
-from agno.compression.manager import CompactionManager
+from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.websearch import WebSearchTools
@@ -41,10 +41,10 @@ compression_prompt = """
     - TechCo - Feb 10, 2024: Acquired DataStart for $150M, gaining 500 enterprise customers
 """
 
-compaction_manager = CompactionManager(
+compression_manager = CompressionManager(
     model=OpenAIResponses(id="gpt-5-mini"),
-    compact_tools_token_limit=5000,
-    compact_tools_instructions=compression_prompt,
+    compress_token_limit=5000,
+    compress_tool_call_instructions=compression_prompt,
 )
 
 # ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ agent = Agent(
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
     db=SqliteDb(db_file="tmp/token_based_tool_call_compression.db"),
-    compaction_manager=compaction_manager,
+    compression_manager=compression_manager,
     add_history_to_context=True,  # Add history to context
     num_history_runs=3,
     session_id="token_based_tool_call_compression",
