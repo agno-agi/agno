@@ -26,7 +26,6 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.compression.context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
@@ -155,7 +154,6 @@ def __init__(
     add_learnings_to_context: bool = True,
     compact_tool_results: bool = False,
     compaction_manager: Optional["CompactionManager"] = None,
-    context_compaction_manager: Optional["ContextCompactionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
@@ -332,10 +330,9 @@ def __init__(
     team.learning = learning
     team.add_learnings_to_context = add_learnings_to_context
 
-    # Context compression settings
+    # Context compaction settings
     team.compact_tool_results = compact_tool_results
     team.compaction_manager = compaction_manager
-    team.context_compaction_manager = context_compaction_manager
 
     team.metadata = metadata
 
@@ -586,12 +583,6 @@ def _set_compaction_manager(team: "Team") -> None:
             team.compact_tool_results = True
 
 
-def _set_context_compaction_manager(team: "Team") -> None:
-    """Ensure context_compaction_manager has a model if one is configured."""
-    if team.context_compaction_manager is not None and team.context_compaction_manager.model is None:
-        team.context_compaction_manager.model = team.model
-
-
 def _set_learning_machine(team: "Team") -> None:
     """Initialize LearningMachine with team's db and model.
 
@@ -744,8 +735,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_session_summary_manager(team)
     if team.compact_tool_results or team.compaction_manager is not None:
         _set_compaction_manager(team)
-    if team.context_compaction_manager is not None:
-        _set_context_compaction_manager(team)
+    if team.compaction_manager is not None:
+        _set_compaction_manager(team)
     if team.learning is not None and team.learning is not False:
         _set_learning_machine(team)
 

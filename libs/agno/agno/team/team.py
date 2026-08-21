@@ -22,7 +22,6 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.compression.context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -325,12 +324,10 @@ class Team:
     add_learnings_to_context: bool = True
 
     # --- Context Compression ---
-    # If True, compress tool call results to save context
+    # If True, compact tool call results to save context
     compact_tool_results: bool = False
-    # Compaction manager for compacting tool call results
+    # Compaction manager for tool results and/or conversation history
     compaction_manager: Optional["CompactionManager"] = None
-    # Context compaction manager for summarizing old conversation history
-    context_compaction_manager: Optional["ContextCompactionManager"] = None
 
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -529,7 +526,6 @@ class Team:
         add_learnings_to_context: bool = True,
         compact_tool_results: bool = False,
         compaction_manager: Optional["CompactionManager"] = None,
-        context_compaction_manager: Optional["ContextCompactionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -647,7 +643,6 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compact_tool_results=compact_tool_results,
             compaction_manager=compaction_manager,
-            context_compaction_manager=context_compaction_manager,
             metadata=metadata,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,

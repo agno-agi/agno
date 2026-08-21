@@ -1014,9 +1014,9 @@ def _handle_model_response_stream(
     from agno.team._run import build_team_after_tool_results_callback, build_team_compaction_callback
 
     # Pre-loop compaction: compress history BEFORE first model call
-    if team.context_compaction_manager is not None:
+    if team.compaction_manager is not None:
         log_debug(f"[TEAM-STREAM-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-        compaction_result = team.context_compaction_manager.compact(
+        compaction_result = team.compaction_manager.compact(
             run_messages.messages,
             run_response=run_response,
             run_metrics=run_response.metrics,
@@ -1190,9 +1190,9 @@ async def _ahandle_model_response_stream(
     from agno.team._run import abuild_team_after_tool_results_callback, abuild_team_compaction_callback
 
     # Pre-loop compaction: compress history BEFORE first model call
-    if team.context_compaction_manager is not None:
+    if team.compaction_manager is not None:
         log_debug(f"[TEAM-STREAM-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-        compaction_result = await team.context_compaction_manager.acompact(
+        compaction_result = await team.compaction_manager.acompact(
             run_messages.messages,
             run_response=run_response,
             run_metrics=run_response.metrics,

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from agno.compression.context import CompactionResult, ContextCompactionManager
     from agno.metrics import RunMetrics
     from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
 
 DEFAULT_TOOL_COMPACTION_PROMPT = dedent("""\
     You are compacting tool call results to save context space while preserving critical information.
@@ -225,7 +226,7 @@ class CompactionManager:
     def compact(
         self,
         messages: List[Message],
-        run_response: Optional["RunOutput"] = None,
+        run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> "CompactionResult":
         """Compact history into summary message."""
@@ -248,7 +249,7 @@ class CompactionManager:
     async def acompact(
         self,
         messages: List[Message],
-        run_response: Optional["RunOutput"] = None,
+        run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> "CompactionResult":
         """Async compact history into summary message."""

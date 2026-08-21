@@ -1039,8 +1039,8 @@ def handle_model_response_stream(
     agent.model = cast(Model, agent.model)
 
     # Pre-loop compaction: compress history BEFORE first model call
-    if agent.context_compaction_manager is not None:
-        compaction_result = agent.context_compaction_manager.compact(
+    if agent.compaction_manager is not None:
+        compaction_result = agent.compaction_manager.compact(
             run_messages.messages,
             run_response=run_response,
             run_metrics=run_response.metrics,
@@ -1215,8 +1215,8 @@ async def ahandle_model_response_stream(
     agent.model = cast(Model, agent.model)
 
     # Pre-loop compaction: compress history BEFORE first model call
-    if agent.context_compaction_manager is not None:
-        compaction_result = await agent.context_compaction_manager.acompact(
+    if agent.compaction_manager is not None:
+        compaction_result = await agent.compaction_manager.acompact(
             run_messages.messages,
             run_response=run_response,
             run_metrics=run_response.metrics,

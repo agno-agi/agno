@@ -178,28 +178,7 @@ def set_session_summary_manager(agent: Agent) -> None:
 
 
 def set_compaction_manager(agent: Agent) -> None:
-    """Initialize compaction_manager, handling both tool compaction and history compaction.
-
-    Unifies the old separate context_compaction_manager into the compaction_manager.
-    If user sets context_compaction_manager directly, we wire it into compaction_manager.
-    """
-    # If user set context_compaction_manager directly (deprecated), wire it into compaction_manager
-    if agent.context_compaction_manager is not None:
-        if agent.compaction_manager is None:
-            # Create compaction_manager with history compaction from the standalone compactor
-            agent.compaction_manager = CompactionManager(
-                model=agent.model,
-                compact_tool_results=agent.compact_tool_results,
-                compact_history=True,
-                history_message_limit=agent.context_compaction_manager.message_limit,
-                history_token_limit=agent.context_compaction_manager.token_limit,
-                history_keep_recent=agent.context_compaction_manager.keep_recent,
-                history_preserve_user_budget=agent.context_compaction_manager.preserve_user_budget,
-                history_instructions=agent.context_compaction_manager.instructions,
-            )
-        # Point the field to the unified manager's internal compactor
-        agent.context_compaction_manager = agent.compaction_manager.context_compaction_manager
-
+    """Initialize compaction_manager for tool and/or history compaction."""
     # Auto-create if compact_tool_results flag is set
     if agent.compact_tool_results and agent.compaction_manager is None:
         agent.compaction_manager = CompactionManager(model=agent.model)
@@ -279,7 +258,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     if (
         agent.compact_tool_results
         or agent.compaction_manager is not None
-        or agent.context_compaction_manager is not None
+        or agent.compaction_manager is not None
     ):
         set_compaction_manager(agent)
     if agent.learning is not None and agent.learning is not False:

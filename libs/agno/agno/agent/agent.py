@@ -32,7 +32,6 @@ from agno.agent import (
     _tools,
     _utils,
 )
-from agno.compression.context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -342,13 +341,11 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
-    # --- Context Compression ---
-    # If True, compress tool call results to save context
+    # --- Context Compaction ---
+    # If True, compact tool call results to save context
     compact_tool_results: bool = False
-    # Compaction manager for compacting tool call results
+    # Compaction manager for tool results and/or conversation history
     compaction_manager: Optional[CompactionManager] = None
-    # Context compaction manager for summarizing old conversation history
-    context_compaction_manager: Optional[ContextCompactionManager] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -399,7 +396,6 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compact_tool_results: bool = False,
         compaction_manager: Optional[CompactionManager] = None,
-        context_compaction_manager: Optional[ContextCompactionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -523,10 +519,9 @@ class Agent:
 
         self.add_session_summary_to_context = add_session_summary_to_context
 
-        # Context compression settings
+        # Context compaction settings
         self.compact_tool_results = compact_tool_results
         self.compaction_manager = compaction_manager
-        self.context_compaction_manager = context_compaction_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs

@@ -361,9 +361,9 @@ def _run_tasks(
         accumulated_messages = run_messages.messages
 
         # Pre-loop compaction: compress history BEFORE first iteration
-        if team.context_compaction_manager is not None:
+        if team.compaction_manager is not None:
             log_debug(f"[TEAM-TASKS-SYNC] Pre-loop compaction check: {len(accumulated_messages)} messages")
-            compaction_result = team.context_compaction_manager.compact(
+            compaction_result = team.compaction_manager.compact(
                 accumulated_messages,
                 run_response=run_response,
                 run_metrics=run_response.metrics,
@@ -1237,9 +1237,9 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Pre-loop compaction: compress history BEFORE first model call
-                if team.context_compaction_manager is not None:
+                if team.compaction_manager is not None:
                     log_debug(f"[TEAM-RUN-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-                    compaction_result = team.context_compaction_manager.compact(
+                    compaction_result = team.compaction_manager.compact(
                         run_messages.messages,
                         run_response=run_response,
                         run_metrics=run_response.metrics,
@@ -2253,9 +2253,9 @@ async def _arun_tasks(
         accumulated_messages = run_messages.messages
 
         # Pre-loop compaction: compress history BEFORE first iteration
-        if team.context_compaction_manager is not None:
+        if team.compaction_manager is not None:
             log_debug(f"[TEAM-TASKS-ASYNC] Pre-loop compaction check: {len(accumulated_messages)} messages")
-            compaction_result = await team.context_compaction_manager.acompact(
+            compaction_result = await team.compaction_manager.acompact(
                 accumulated_messages,
                 run_response=run_response,
                 run_metrics=run_response.metrics,
@@ -3220,9 +3220,9 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Pre-loop compaction: compress history BEFORE first model call
-                if team.context_compaction_manager is not None:
+                if team.compaction_manager is not None:
                     log_debug(f"[TEAM-RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-                    compaction_result = await team.context_compaction_manager.acompact(
+                    compaction_result = await team.compaction_manager.acompact(
                         run_messages.messages,
                         run_response=run_response,
                         run_metrics=run_response.metrics,
@@ -5036,7 +5036,7 @@ def build_team_compaction_callback(
     the threshold. If compaction triggers, returns the new shorter message list;
     the model loop rebinds its local variable from the return value.
     """
-    compaction_manager = team.context_compaction_manager
+    compaction_manager = team.compaction_manager
     if compaction_manager is None:
         return None
 
@@ -5069,7 +5069,7 @@ async def abuild_team_compaction_callback(
     run_response: TeamRunOutput,
 ) -> Optional[Callable[[], Awaitable[Optional[List[Message]]]]]:
     """Async variant of :func:`build_team_compaction_callback`."""
-    compaction_manager = team.context_compaction_manager
+    compaction_manager = team.compaction_manager
     if compaction_manager is None:
         return None
 

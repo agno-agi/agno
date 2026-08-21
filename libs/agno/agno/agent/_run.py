@@ -1679,9 +1679,9 @@ async def _arun(
                 # Two-list architecture:
                 #   - messages: canonical list for DB storage (always full history)
                 #   - compacted_messages: compressed view for model (summary + recent)
-                if agent.context_compaction_manager is not None:
+                if agent.compaction_manager is not None:
                     log_debug(f"[RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-                    compaction_result = await agent.context_compaction_manager.acompact(
+                    compaction_result = await agent.compaction_manager.acompact(
                         run_messages.messages,
                         run_response=run_response,
                         run_metrics=run_response.metrics,
@@ -6339,7 +6339,7 @@ def build_compaction_callback(
     the threshold. If compaction triggers, returns the new shorter message list;
     the model loop rebinds its local variable from the return value.
     """
-    compaction_manager = agent.context_compaction_manager
+    compaction_manager = agent.compaction_manager
     if compaction_manager is None:
         return None
 
@@ -6372,7 +6372,7 @@ async def abuild_compaction_callback(
     run_response: RunOutput,
 ) -> Optional[Callable[[], Awaitable[Optional[List[Message]]]]]:
     """Async variant of :func:`build_compaction_callback`."""
-    compaction_manager = agent.context_compaction_manager
+    compaction_manager = agent.compaction_manager
     if compaction_manager is None:
         return None
 
