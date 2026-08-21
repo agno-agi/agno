@@ -400,7 +400,7 @@ def render_comparison_table(cmp_groups: list, benchmarks: dict) -> str:
     framework_labels = [label for _, label, _ in ordered[0]["rows"]]
 
     header_cells = "<th>Metric</th>" + "".join(
-        '<th class="num">' + html.escape(label) + "</th>" for label in framework_labels
+        "<th>" + html.escape(label) + "</th>" for label in framework_labels
     )
 
     body_rows = []
@@ -413,23 +413,23 @@ def render_comparison_table(cmp_groups: list, benchmarks: dict) -> str:
         for name, _, series in group["rows"]:
             bench = benchmarks.get(name)
             if not bench or not bench.get("result"):
-                cells.append('<td class="num">-</td>')
+                cells.append("<td>-</td>")
                 continue
             median = stat(bench, "median", measure)
             value_text = fmt(median, unit) + " " + unit
             if series == "sync" or not baseline:
-                cells.append('<td class="num"><strong>' + value_text + "</strong></td>")
+                cells.append("<td><strong>" + value_text + "</strong></td>")
             else:
                 ratio = median / baseline
                 ratio_text = (
                     format(ratio, ".1f") if ratio < 10 else format(ratio, ",.0f")
-                ) + "x Agno"
+                ) + "x"
                 cells.append(
-                    '<td class="num">'
+                    "<td>"
                     + value_text
-                    + '<span class="cell-ratio">'
+                    + ' <span class="cell-ratio">('
                     + ratio_text
-                    + "</span></td>"
+                    + ")</span></td>"
                 )
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
 
@@ -437,8 +437,9 @@ def render_comparison_table(cmp_groups: list, benchmarks: dict) -> str:
         '<section class="group">'
         + "<h2>Agno versus other frameworks</h2>"
         + '<p class="blurb">Medians from one sequential run with every framework in the same '
-        + "environment on the same machine. Per-metric methodology and full statistics follow below.</p>"
-        + '<div class="table-wrap"><table class="headline">'
+        + "environment on the same machine. Multiples are relative to Agno. Per-metric "
+        + "methodology and full statistics follow below.</p>"
+        + '<div class="headline-wrap"><table class="headline">'
         + "<thead><tr>"
         + header_cells
         + "</tr></thead><tbody>"
@@ -653,9 +654,22 @@ h2 {
 }
 .bar-unit { color: var(--ink-3); font-size: 11px; }
 .bar-ratio { display: block; color: var(--ink-3); font-size: 11px; }
-.cell-ratio { display: block; color: var(--ink-3); font-size: 11px; font-weight: 400; }
-table.headline td, table.headline th { padding: 10px 14px; }
-table.headline td strong { color: var(--accent); }
+.headline-wrap { overflow-x: auto; margin: 14px 0 6px; }
+table.headline {
+  border-collapse: separate; border-spacing: 5px; width: 100%;
+  font-size: 15.5px; font-variant-numeric: tabular-nums;
+}
+table.headline th, table.headline td {
+  background: var(--surface); border: none; border-radius: 9px;
+  padding: 13px 18px; text-align: left; white-space: nowrap;
+  font-family: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+}
+table.headline th {
+  font-size: 15.5px; font-weight: 600; color: var(--ink);
+  text-transform: none; letter-spacing: 0;
+}
+table.headline td strong { color: var(--accent); font-weight: 700; }
+.cell-ratio { color: var(--ink-3); }
 .axis-note { font-size: 12px; color: var(--ink-3); margin: 8px 2px 0; }
 .stats { margin-top: 12px; }
 .stats summary { cursor: pointer; font-size: 13.5px; color: var(--ink-2); }
