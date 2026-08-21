@@ -174,7 +174,7 @@ def test_enable_search_only():
     with patch("agno.tools.websearch.DDGS"):
         tools = WebSearchTools(search_web=True, search_news=False)
         tool_names = [t.__name__ for t in tools.tools]
-        assert "search_web" in tool_names
+        assert "web_search" in tool_names
         assert "web_search_news" not in tool_names
 
 
@@ -183,7 +183,7 @@ def test_enable_news_only():
     with patch("agno.tools.websearch.DDGS"):
         tools = WebSearchTools(search_web=False, search_news=True)
         tool_names = [t.__name__ for t in tools.tools]
-        assert "search_web" not in tool_names
+        assert "web_search" not in tool_names
         assert "web_search_news" in tool_names
 
 
@@ -192,7 +192,7 @@ def test_enable_both():
     with patch("agno.tools.websearch.DDGS"):
         tools = WebSearchTools(search_web=True, search_news=True)
         tool_names = [t.__name__ for t in tools.tools]
-        assert "search_web" in tool_names
+        assert "web_search" in tool_names
         assert "web_search_news" in tool_names
 
 
