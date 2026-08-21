@@ -21,6 +21,8 @@ from agno.utils.models.claude import (
     build_system_blocks,
     format_messages,
     format_tools_for_model,
+    resolve_http_client,
+    route_sampling_params_to_extra_body,
     supports_prefill,
 )
 from agno.utils.tokens import count_schema_tokens
@@ -414,11 +416,9 @@ class Claude(Model):
             return self.client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.Client):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.Client. Ignoring and using Anthropic SDK default.")
+        http_client = resolve_http_client(self.http_client)
+        if http_client is not None:
+            _client_params["http_client"] = http_client
         # When no custom http_client is provided, let the Anthropic SDK use its own default client.
         # Each model instance gets its own connection, preventing HTTP/2 stream saturation
         # when multiple models (main agent, MemoryManager, etc.) run concurrently.
@@ -434,13 +434,9 @@ class Claude(Model):
             return self.async_client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using Anthropic SDK default."
-                )
+        http_client = resolve_http_client(self.http_client, is_async=True)
+        if http_client is not None:
+            _client_params["http_client"] = http_client
         # When no custom http_client is provided, let the Anthropic SDK use its own default client.
         # Each model instance gets its own connection, preventing HTTP/2 stream saturation
         # when multiple models (main agent, MemoryManager, etc.) run concurrently.
@@ -582,7 +578,7 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        return _request_params
+        return route_sampling_params_to_extra_body(_request_params)
 
     @staticmethod
     def _extract_container_id_from_messages(messages: List["Message"]) -> Optional[str]:

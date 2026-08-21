@@ -722,3 +722,70 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
 
         parsed_tools.append(tool)
     return parsed_tools
+
+
+# Sampling parameters the Anthropic SDK stopped declaring on its request methods in
+# 1.0.0: passing one raises TypeError before the request leaves the process. The API
+# still honours them, so they travel in extra_body, which every SDK version merges
+# into the request JSON as-is.
+SAMPLING_PARAMS = ("temperature", "top_p", "top_k")
+
+
+def route_sampling_params_to_extra_body(request_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Move the sampling parameters out of the request kwargs and into extra_body.
+
+    Mutates and returns the dict it is given, so it also catches a sampling parameter
+    that arrived through ``request_params`` rather than through a model field.
+    """
+    moved = {name: request_params.pop(name) for name in SAMPLING_PARAMS if name in request_params}
+    if moved:
+        # A caller who wrote extra_body themselves outranks the model's own fields.
+        request_params["extra_body"] = {**moved, **(request_params.get("extra_body") or {})}
+    return request_params
+
+
+def sdk_http_client_type(is_async: bool = False) -> type:
+    """The HTTP client class the installed Anthropic SDK accepts.
+
+    anthropic 1.0.0 moved its HTTP layer from httpx to httpx2 and raises TypeError at
+    construction when handed an ``httpx.Client``, so the accepted class is read off the
+    SDK's own re-export rather than assumed to be httpx's.
+    """
+    import httpx
+
+    fallback = httpx.AsyncClient if is_async else httpx.Client
+    try:
+        from anthropic import DefaultAsyncHttpxClient, DefaultHttpxClient
+    except ImportError:
+        return fallback
+
+    default = DefaultAsyncHttpxClient if is_async else DefaultHttpxClient
+    wanted = "AsyncClient" if is_async else "Client"
+    for base in default.__mro__[1:]:
+        if base.__name__ == wanted:
+            return base
+    return fallback
+
+
+def resolve_http_client(
+    http_client: Optional[Any], is_async: bool = False, fallback: Optional[Any] = None
+) -> Optional[Any]:
+    """Return the HTTP client to hand the Anthropic SDK, or None to let it build its own.
+
+    A client of the wrong flavour is dropped with a warning instead of being passed on,
+    where it would raise TypeError at client construction and take every request with it.
+    """
+    expected = sdk_http_client_type(is_async)
+
+    if http_client is not None:
+        if isinstance(http_client, expected):
+            return http_client
+        log_warning(
+            f"http_client is not an instance of {expected.__module__}.{expected.__qualname__} "
+            f"(the Anthropic SDK's HTTP client). Ignoring and using the SDK default."
+        )
+
+    # The shared agno client is httpx's, which an httpx2-based SDK will not take.
+    if fallback is not None and isinstance(fallback, expected):
+        return fallback
+    return None
