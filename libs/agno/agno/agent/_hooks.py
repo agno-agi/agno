@@ -33,6 +33,7 @@ from agno.utils.hooks import (
     get_hook_name,
     is_guardrail_hook,
     should_run_hook_in_background,
+    should_run_on_continue,
 )
 from agno.utils.log import (
     log_exception,
@@ -51,6 +52,7 @@ def execute_pre_hooks(
     debug_mode: Optional[bool] = None,
     stream_events: bool = False,
     background_tasks: Optional[Any] = None,
+    is_continue: bool = False,
     **kwargs: Any,
 ) -> Iterator[RunOutputEvent]:
     """Execute multiple pre-hook functions in succession."""
@@ -58,6 +60,15 @@ def execute_pre_hooks(
 
     if hooks is None:
         return
+
+    # On continue_run, filter to only:
+    # 1. Hooks decorated with @hook(run_on_continue=True)
+    # 2. Guardrails (security-critical, always run)
+    if is_continue:
+        hooks = [hook for hook in hooks if should_run_on_continue(hook) or is_guardrail_hook(hook)]
+        if not hooks:
+            return
+
     # Prepare arguments for this hook
     all_args = {
         "run_input": run_input,
@@ -162,6 +173,7 @@ async def aexecute_pre_hooks(
     debug_mode: Optional[bool] = None,
     stream_events: bool = False,
     background_tasks: Optional[Any] = None,
+    is_continue: bool = False,
     **kwargs: Any,
 ) -> AsyncIterator[RunOutputEvent]:
     """Execute multiple pre-hook functions in succession (async version)."""
@@ -169,6 +181,15 @@ async def aexecute_pre_hooks(
 
     if hooks is None:
         return
+
+    # On continue_run, filter to only:
+    # 1. Hooks decorated with @hook(run_on_continue=True)
+    # 2. Guardrails (security-critical, always run)
+    if is_continue:
+        hooks = [hook for hook in hooks if should_run_on_continue(hook) or is_guardrail_hook(hook)]
+        if not hooks:
+            return
+
     # Prepare arguments for this hook
     all_args = {
         "run_input": run_input,

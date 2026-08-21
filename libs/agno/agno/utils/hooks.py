@@ -3,7 +3,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.eval.base import BaseEval
 from agno.guardrails.base import BaseGuardrail
-from agno.hooks.decorator import HOOK_RUN_IN_BACKGROUND_ATTR
+from agno.hooks.decorator import HOOK_RUN_IN_BACKGROUND_ATTR, HOOK_RUN_ON_CONTINUE_ATTR
 from agno.utils.log import log_warning
 
 # Keys that should be deep copied for background hooks to prevent race conditions
@@ -58,6 +58,21 @@ def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
         True if the hook is decorated with @hook(run_in_background=True)
     """
     return getattr(hook, HOOK_RUN_IN_BACKGROUND_ATTR, False)
+
+
+def should_run_on_continue(hook: Callable[..., Any]) -> bool:
+    """
+    Check if a hook function should run on continue_run().
+
+    This checks for the _agno_run_on_continue attribute set by the @hook decorator.
+
+    Args:
+        hook: The hook function to check
+
+    Returns:
+        True if the hook is decorated with @hook(run_on_continue=True)
+    """
+    return getattr(hook, HOOK_RUN_ON_CONTINUE_ATTR, False)
 
 
 def is_guardrail_hook(hook: Callable[..., Any]) -> bool:
