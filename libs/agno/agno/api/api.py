@@ -14,6 +14,7 @@ from agno.utils.log import log_debug
 # Bounded so a dead or slow endpoint can never accumulate unbounded memory;
 # when it fills, new events are dropped (telemetry is best-effort).
 TELEMETRY_QUEUE_SIZE = 2000
+TELEMETRY_TIMEOUT = 5.0
 
 
 class Api:
@@ -57,7 +58,7 @@ class Api:
         )
 
     def post_in_background(self, route: str, payload: dict) -> None:
-        """Queue a fire-and-forget telemetry POST; never blocks, never raises."""
+        """Queue a telemetry POST without waiting on network I/O; never raises."""
         try:
             self._ensure_worker()
             self._queue.put_nowait((route, payload))
@@ -76,14 +77,16 @@ class Api:
         self.post_in_background(route, payload)
 
     def _ensure_worker(self) -> None:
-        if self._worker is not None and self._worker.is_alive() and self._pid == os.getpid():
+        current_pid = os.getpid()
+        if self._pid != current_pid:
+            # A child created without invoking Python's at-fork hooks can inherit
+            # a lock held by a vanished parent thread. Replace inherited state
+            # before acquiring that lock; the child is single-threaded here.
+            self._reset_after_fork()
+
+        if self._worker is not None and self._worker.is_alive():
             return
         with self._lock:
-            if self._pid != os.getpid():
-                # Forked child that bypassed Python's fork hooks (e.g. a C
-                # extension calling fork() directly): the worker thread and any
-                # open connection belong to the parent, so start fresh.
-                self._reset_after_fork()
             if self._worker is None or not self._worker.is_alive():
                 self._register_fork_reset()
                 self._worker = threading.Thread(target=self._drain, name="agno-telemetry", daemon=True)
@@ -127,15 +130,24 @@ class Api:
                 if invalid_response(response):
                     log_debug(f"Telemetry request to {route} returned status {response.status_code}")
             except Exception as e:
-                log_debug(f"Could not send telemetry event to {route}: {e}")
+                log_debug(f"Could not send telemetry event to {route}: {type(e).__name__}")
             finally:
                 self._queue.task_done()
 
     def _shared_client(self) -> HttpxClient:
         # Only ever touched from the worker thread, so no lock is needed.
         if self._client is None:
-            self._client = self.Client()
+            self._client = self._telemetry_client()
         return self._client
+
+    def _telemetry_client(self) -> HttpxClient:
+        """Create the worker's short-timeout, connection-reusing client."""
+        return HttpxClient(
+            base_url=agno_api_settings.api_url,
+            headers=self.headers,
+            timeout=TELEMETRY_TIMEOUT,
+            http2=True,
+        )
 
 
 api = Api()
