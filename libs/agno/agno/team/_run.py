@@ -89,7 +89,6 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -3399,9 +3398,9 @@ async def _arun_background(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
-    run_index = resolve_run_index(team_session, run_response)
     await asave_session(team, session=team_session)
-    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    # run_index=None for new runs → DB computes via atomic counter
+    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
@@ -3522,9 +3521,9 @@ async def _arun_background_stream(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
-    run_index = resolve_run_index(team_session, run_response)
     await asave_session(team, session=team_session)
-    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    # run_index=None for new runs → DB computes via atomic counter
+    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index)
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the run is still queued (no events buffered yet).
@@ -4593,7 +4592,7 @@ def _cleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    run_index = storage_copy.run_index
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -4657,7 +4656,7 @@ async def _acleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    run_index = storage_copy.run_index
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -4797,7 +4796,7 @@ def _persist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    run_index = storage_copy.run_index
     update_session_metrics(team, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4849,7 +4848,7 @@ async def _apersist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    run_index = storage_copy.run_index
     update_session_metrics(team, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -6772,6 +6771,8 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     # store_events=True the new run's events would otherwise be the parent's
     # events with this run's events appended onto them.
     forked.events = None
+    # Reset run_index so DB allocates a fresh index for this fork
+    forked.run_index = None
 
     _truncate_team_run_to_checkpoint(forked, message_index)
     return forked
@@ -6999,7 +7000,7 @@ def _mark_team_run_regenerated(
                 run=r,
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=r.run_index,
             )
             return
 
@@ -7020,7 +7021,7 @@ async def _amark_team_run_regenerated(
                 run=r,
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=r.run_index,
             )
             return
 

@@ -783,6 +783,10 @@ class TeamRunOutput:
     reasoning_messages: Optional[List[Message]] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
+    # Position within the session's run history. Injected from DB on read,
+    # used for ordering. None for new runs (DB computes via MAX+1 backfill).
+    run_index: Optional[int] = None
+
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
 
     status: RunStatus = RunStatus.running

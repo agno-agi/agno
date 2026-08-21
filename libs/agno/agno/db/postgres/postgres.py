@@ -881,10 +881,13 @@ class PostgresDb(BaseDb):
         filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
         terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
         the in-memory history window.
+
+        The run_index column is injected into each run_data dict so RunOutput
+        carries its DB position — enabling correct indexing with bounded loads.
         """
         if limit is not None:
             stmt = (
-                select(runs_table.c.run_data)
+                select(runs_table.c.run_data, runs_table.c.run_index)
                 .where(runs_table.c.session_id == session_id)
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
@@ -895,11 +898,15 @@ class PostgresDb(BaseDb):
                 )
                 .limit(limit)
             )
-            rows = [row[0] for row in sess.execute(stmt).fetchall()]
+            rows = []
+            for row in sess.execute(stmt).fetchall():
+                data = row[0]
+                data["run_index"] = row[1]
+                rows.append(data)
             rows.reverse()
             return rows
         stmt = (
-            select(runs_table.c.run_data)
+            select(runs_table.c.run_data, runs_table.c.run_index)
             .where(runs_table.c.session_id == session_id)
             .order_by(
                 runs_table.c.run_index.asc(),
@@ -907,7 +914,12 @@ class PostgresDb(BaseDb):
                 runs_table.c.run_id.asc(),
             )
         )
-        return [row[0] for row in sess.execute(stmt).fetchall()]
+        rows = []
+        for row in sess.execute(stmt).fetchall():
+            data = row[0]
+            data["run_index"] = row[1]
+            rows.append(data)
+        return rows
 
     def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]
@@ -1112,6 +1124,9 @@ class PostgresDb(BaseDb):
             if not deserialize:
                 return run_rows, total_count
 
+            # Inject run_index into run_data before deserializing
+            for row in run_rows:
+                row["run_data"]["run_index"] = row["run_index"]
             return [deserialize_run(row.get("run_type"), row["run_data"]) for row in run_rows]
 
         except Exception as e:

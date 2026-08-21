@@ -2146,16 +2146,20 @@ async def aprepare_queued_run(
         # Legacy create-and-save: adapters without the atomic primitives only
         if session.get_run(run_id) is not None:
             return
-        from agno.session._utils import resolve_run_index
 
         session.upsert_run(run=run_response_early)
         # Session row FIRST: on FK-backed runs tables (v3) the run insert is
         # rejected until its session row exists, and asave_run only logs the
         # failure - the 202'd run would be unpollable. Same order as the
         # normal producer flow (asave_session, then asave_run with index).
-        run_index = resolve_run_index(session, run_response_early)
         await asave_session(component, session=session)
-        await asave_run(component, run=run_response_early, session_id=session_id, user_id=user_id, run_index=run_index)
+        await asave_run(
+            component,
+            run=run_response_early,
+            session_id=session_id,
+            user_id=user_id,
+            run_index=run_response_early.run_index,
+        )
     elif component_type == "team":
         from agno.run.team import TeamRunInput, TeamRunOutput
         from agno.team._session import asave_run as team_asave_run
@@ -2182,14 +2186,16 @@ async def aprepare_queued_run(
                 return
         if team_session.get_run(run_id) is not None:
             return
-        from agno.session._utils import resolve_run_index
 
         team_session.upsert_run(run_response=team_run_early)
         # Session row first - see the agent branch for the FK rationale
-        team_run_index = resolve_run_index(team_session, team_run_early)
         await team_asave_session(component, session=team_session)
         await team_asave_run(
-            component, run=team_run_early, session_id=session_id, user_id=user_id, run_index=team_run_index
+            component,
+            run=team_run_early,
+            session_id=session_id,
+            user_id=user_id,
+            run_index=team_run_early.run_index,
         )
     elif component_type == "workflow":
         from datetime import datetime

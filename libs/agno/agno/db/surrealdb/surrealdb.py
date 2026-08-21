@@ -283,9 +283,11 @@ class SurrealDb(BaseDb):
                 dict,
             )
             rows = [desurrealize_run_row(r) for r in rows_raw]
-            run_data = [r["run_data"] for r in rows if "run_data" in r]
-            run_data.reverse()
-            return run_data
+            rows = [r for r in rows if "run_data" in r]
+            for r in rows:
+                r["run_data"]["run_index"] = r["run_index"]
+            rows.reverse()
+            return [r["run_data"] for r in rows]
         rows_raw = self._query(
             f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
             "WHERE session_id = $sid ORDER BY _ri ASC, _ca ASC",
@@ -293,7 +295,10 @@ class SurrealDb(BaseDb):
             dict,
         )
         rows = [desurrealize_run_row(r) for r in rows_raw]
-        return [r["run_data"] for r in rows if "run_data" in r]
+        rows = [r for r in rows if "run_data" in r]
+        for r in rows:
+            r["run_data"]["run_index"] = r["run_index"]
+        return [r["run_data"] for r in rows]
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:
@@ -302,6 +307,48 @@ class SurrealDb(BaseDb):
         for sid in session_ids:
             grouped[sid] = self._get_session_runs_data(sid)
         return grouped
+
+    def _allocate_run_index(self, runs_table: str, session_id: str) -> int:
+        """Atomically allocate the next run_index for a session.
+
+        Uses SurrealDB's UPDATE with += for atomic increment. The counter
+        record uses a synthetic ID and is excluded from run queries by lacking run_data.
+
+        On first allocation for a session (no counter exists), seeds from MAX(run_index).
+        """
+        counter_id = f"__run_counter__:{session_id}"
+
+        # Check if counter exists
+        existing = self._query_one(
+            "SELECT * FROM ONLY $record",
+            {"record": RecordID(runs_table, counter_id)},
+            dict,
+        )
+        if existing is not None and "next_run_index" in existing:
+            # Fast path: atomic increment
+            result = self._query_one(
+                "UPDATE ONLY $record SET next_run_index += 1 RETURN AFTER",
+                {"record": RecordID(runs_table, counter_id)},
+                dict,
+            )
+            return int(result["next_run_index"]) - 1 if result else 0
+
+        # Seed path: find max from existing runs
+        max_row = self._query_one(
+            f"SELECT math::max(run_index) AS max_idx FROM {runs_table} WHERE session_id = $sid AND run_index != NONE GROUP ALL",
+            {"sid": session_id},
+            dict,
+        )
+        current_max = max_row.get("max_idx") if max_row else None
+        seed_value = (current_max + 1) if current_max is not None else 0
+
+        # UPSERT counter: concurrent seeders handled by SurrealDB's UPSERT semantics
+        result = self._query_one(
+            "UPSERT ONLY $record SET next_run_index = $seed + 1 RETURN AFTER",
+            {"record": RecordID(runs_table, counter_id), "seed": seed_value},
+            dict,
+        )
+        return seed_value
 
     def upsert_run(
         self,
@@ -350,6 +397,10 @@ class SurrealDb(BaseDb):
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
 
+            # Allocate run_index atomically for new runs
+            if row.get("run_index") is None:
+                row["run_index"] = self._allocate_run_index(runs_table, session_id)
+
             content = serialize_run_row(row, runs_table)
             self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
@@ -365,6 +416,14 @@ class SurrealDb(BaseDb):
             runs_table = self._get_table("runs", create_table_if_not_found=False)
         except Exception:
             return 0
+
+        # Delete counter document
+        counter_id = f"__run_counter__:{session_id}"
+        self.client.query(
+            "DELETE ONLY $record",
+            {"record": RecordID(runs_table, counter_id)},
+        )
+
         result = self.client.query(
             f"DELETE FROM {runs_table} WHERE session_id = $sid RETURN BEFORE",
             {"sid": session_id},

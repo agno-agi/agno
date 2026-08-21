@@ -636,6 +636,10 @@ class AsyncMongoDb(AsyncBaseDb):
                 {"$limit": limit},
             ]
             docs = await self._aggregate_to_list(runs_collection, pipeline, length=limit)
+            # run_index is injected into run_data so RunOutput carries its DB position
+            for doc in docs:
+                if "run_data" in doc:
+                    doc["run_data"]["run_index"] = doc.get("run_index")
             run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
             run_docs.reverse()  # back to chronological order
             return run_docs
@@ -646,6 +650,10 @@ class AsyncMongoDb(AsyncBaseDb):
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
         docs = await self._aggregate_to_list(runs_collection, pipeline, length=None)
+        # run_index is injected into run_data so RunOutput carries its DB position
+        for doc in docs:
+            if "run_data" in doc:
+                doc["run_data"]["run_index"] = doc.get("run_index")
         return [doc["run_data"] for doc in docs if "run_data" in doc]
 
     async def _get_sessions_runs_docs(
@@ -664,6 +672,49 @@ class AsyncMongoDb(AsyncBaseDb):
                 continue
             runs_by_session.setdefault(sid, []).append(run_data)
         return runs_by_session
+
+    async def _allocate_run_index(self, runs_collection: Any, session_id: str) -> int:
+        """Atomically allocate the next run_index for a session.
+
+        Uses a per-session counter document for O(1) atomic allocation. The counter
+        document uses a synthetic _id and is excluded from run queries by lacking run_data.
+
+        On first allocation for a session (no counter exists), seeds the counter from
+        MAX(run_index) of existing runs to handle pre-existing data.
+        """
+        counter_id = f"__run_counter__:{session_id}"
+
+        # Fast path: atomic increment on existing counter
+        result = await runs_collection.find_one_and_update(
+            {"_id": counter_id, "next_run_index": {"$exists": True}},
+            {"$inc": {"next_run_index": 1}},
+            return_document=True,
+        )
+        if result is not None:
+            return int(result["next_run_index"]) - 1
+
+        # Seed path: counter doesn't exist, find max from existing runs
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"session_id": session_id, "run_index": {"$ne": None}}},
+            {"$group": {"_id": None, "max_idx": {"$max": "$run_index"}}},
+        ]
+        agg_result = await self._aggregate_to_list(runs_collection, pipeline, length=1)
+        current_max = agg_result[0]["max_idx"] if agg_result else None
+        seed_value = (current_max + 1) if current_max is not None else 0
+
+        # Insert counter if it doesn't exist, then increment atomically
+        await runs_collection.update_one(
+            {"_id": counter_id},
+            {"$setOnInsert": {"next_run_index": seed_value}},
+            upsert=True,
+        )
+        # Now atomically increment
+        result = await runs_collection.find_one_and_update(
+            {"_id": counter_id},
+            {"$inc": {"next_run_index": 1}},
+            return_document=True,
+        )
+        return int(result["next_run_index"]) - 1
 
     async def upsert_run(
         self,
@@ -703,9 +754,14 @@ class AsyncMongoDb(AsyncBaseDb):
                 run_index=run_index,
             )
 
+            # Preserve the original run_index if the document already exists
             existing = await runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1})
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
+
+            # Allocate run_index atomically for new runs
+            if row.get("run_index") is None:
+                row["run_index"] = await self._allocate_run_index(runs_collection, session_id)
 
             await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
         except Exception as e:

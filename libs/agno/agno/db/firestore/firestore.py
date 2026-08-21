@@ -304,13 +304,19 @@ class FirestoreDb(BaseDb):
 
     # -- Run methods --
     def _get_session_runs_docs(self, runs_collection_ref, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        run_index is injected into run_data so RunOutput carries its DB position.
+        """
         query = (
             runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
             .order_by("run_index")
             .order_by("created_at")
         )
-        return [doc.to_dict().get("run_data") for doc in query.stream() if doc.exists]
+        docs = [doc.to_dict() for doc in query.stream() if doc.exists and doc.to_dict().get("run_data")]
+        for doc in docs:
+            doc["run_data"]["run_index"] = doc["run_index"]
+        return [doc["run_data"] for doc in docs]
 
     def _get_sessions_runs_docs(self, runs_collection_ref, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get the raw run_data dicts for several sessions, grouped by session_id.
@@ -339,6 +345,52 @@ class FirestoreDb(BaseDb):
             items.sort(key=lambda t: (t[0], t[1]))
             runs_by_session[sid] = [t[2] for t in items]
         return runs_by_session
+
+    def _allocate_run_index(self, runs_collection_ref: Any, session_id: str) -> int:
+        """Atomically allocate the next run_index for a session.
+
+        Uses Firestore's Increment for O(1) atomic allocation. The counter
+        document uses a synthetic ID and is excluded from run queries by lacking run_data.
+
+        On first allocation for a session (no counter exists), seeds from MAX(run_index).
+        """
+        from google.cloud.firestore_v1 import Increment
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        counter_id = f"__run_counter__:{session_id}"
+        counter_ref = runs_collection_ref.document(counter_id)
+
+        # Try to read existing counter
+        snapshot = counter_ref.get()
+        if snapshot.exists:
+            # Fast path: atomic increment
+            counter_ref.update({"next_run_index": Increment(1)})
+            updated = counter_ref.get()
+            return int(updated.to_dict()["next_run_index"]) - 1
+
+        # Seed path: find max from existing runs
+        query = (
+            runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+            .order_by("run_index", direction="DESCENDING")
+            .limit(1)
+        )
+        docs = list(query.stream())
+        current_max = docs[0].to_dict().get("run_index") if docs else None
+        seed_value = (current_max + 1) if current_max is not None else 0
+
+        # Use transaction to handle concurrent seeders
+        @self.db_client.transaction
+        def seed_and_increment(transaction: Any) -> int:
+            snap = counter_ref.get(transaction=transaction)
+            if snap.exists:
+                current = snap.to_dict().get("next_run_index", 0)
+                transaction.update(counter_ref, {"next_run_index": current + 1})
+                return current
+            else:
+                transaction.set(counter_ref, {"next_run_index": seed_value + 1})
+                return seed_value
+
+        return seed_and_increment(self.db_client.transaction())
 
     def upsert_run(
         self,
@@ -385,6 +437,10 @@ class FirestoreDb(BaseDb):
                 existing = snapshot.to_dict() or {}
                 if "run_index" in existing:
                     row["run_index"] = existing["run_index"]
+
+            # Allocate run_index atomically for new runs
+            if row.get("run_index") is None:
+                row["run_index"] = self._allocate_run_index(runs_collection_ref, session_id)
 
             doc_ref.set(row)
         except Exception as e:
@@ -578,10 +634,14 @@ class FirestoreDb(BaseDb):
             for doc in docs:
                 doc.reference.delete()
 
-                # Cascade-delete the session's runs, chunked to Firestore's
+                # Cascade-delete the session's runs and counter, chunked to Firestore's
                 # 500-op-per-commit limit so sessions with many runs don't blow
                 # the batch (mirrors delete_sessions).
                 if runs_collection_ref is not None:
+                    # Delete counter document
+                    counter_ref = runs_collection_ref.document(f"__run_counter__:{session_id}")
+                    counter_ref.delete()
+
                     runs_query = runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
                     batch = self.db_client.batch()
                     in_batch = 0
