@@ -14,6 +14,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Set,
     Tuple,
     Type,
     Union,
@@ -11717,7 +11718,7 @@ def get_workflow_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
-        user_id: If set, only resolve the workflow when owned by this user or shared.
+        user_id: If set, only resolve the workflow when owned by this user, unowned (shared), or published.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the workflow was not found.
 
@@ -11732,7 +11733,7 @@ def get_workflow_by_id(
     try:
         from agno.utils.component_scope import component_owner_scope
 
-        # Only resolve the workflow if owned by this user or shared.
+        # Only resolve the workflow if owned by this user, unowned (shared), or published.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 
@@ -11788,9 +11789,20 @@ def get_workflow_by_id(
         return None
 
 
+# Rows fetched per list_components call while collecting the full catalog.
+_COMPONENT_LIST_PAGE = 100
+
+# Ceiling on rows collected per listing. Every listed row costs a get_config
+# read plus a full rehydration, and other users' published components share
+# the catalog, so an unbounded scan could turn one listing into thousands of
+# DB reads.
+_COMPONENT_LIST_CAP = 1000
+
+
 def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
     user_id: Optional[str] = None,
 ) -> List["Workflow"]:
     """
@@ -11801,13 +11813,49 @@ def get_workflows(
     Args:
         db: Database to load workflows from
         registry: Optional registry for rehydrating tools
-        user_id: If set, only load workflows owned by this user or shared.
+        exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load workflows owned by this user, unowned (shared), or published.
     """
     workflows: List[Workflow] = []
     try:
         from agno.utils.component_scope import component_owner_scope
 
-        components, _ = db.list_components(component_type=ComponentType.WORKFLOW, user_id=user_id)
+        # The DB default page is one small page and the catalog can exceed it
+        # (other users' published components compete for the same slots), so
+        # page until the filtered total is exhausted or the cap is hit.
+        components: List[Dict[str, Any]] = []
+        seen_component_ids: Set[str] = set()
+        scanned = 0
+        while True:
+            page, total = db.list_components(
+                component_type=ComponentType.WORKFLOW,
+                exclude_component_ids=exclude_component_ids,
+                user_id=user_id,
+                limit=_COMPONENT_LIST_PAGE,
+                offset=scanned,
+            )
+            scanned += len(page)
+            for row in page:
+                # Each page is its own read, so a row created between two of
+                # them shifts the window and hands back something an earlier
+                # page already carried.
+                row_id = row.get("component_id")
+                if row_id is None or row_id in seen_component_ids:
+                    continue
+                seen_component_ids.add(row_id)
+                components.append(row)
+            # A total that is not a count says nothing about what is left, so
+            # this page is all there is to read. BaseDb documents an int, but
+            # the baseline discarded the total entirely and an adapter that
+            # returns None was fine; comparing against it would raise here and
+            # the caller would get an empty listing instead of a short one.
+            if not page or not isinstance(total, int) or scanned >= total:
+                break
+            if scanned >= _COMPONENT_LIST_CAP:
+                log_warning(
+                    f"Workflow listing truncated by safety cap: returning {len(components)} of {total} components"
+                )
+                break
         for component in components:
             try:
                 config = db.get_config(component_id=component["component_id"])

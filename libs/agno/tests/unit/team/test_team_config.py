@@ -21,7 +21,7 @@ from agno.db.base import BaseDb, ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.registry import Registry
 from agno.session import TeamSession
-from agno.team.team import Team, get_team_by_id, get_teams
+from agno.team.team import _COMPONENT_LIST_PAGE, Team, get_team_by_id, get_teams
 
 # =============================================================================
 # Fixtures
@@ -1241,7 +1241,7 @@ class TestGetTeams:
                 {"component_id": "team-1"},
                 {"component_id": "team-2"},
             ],
-            None,
+            2,
         )
         mock_db.get_config.side_effect = [
             {"config": {"id": "team-1", "name": "Team 1"}},
@@ -1261,14 +1261,18 @@ class TestGetTeams:
         get_teams(db=mock_db)
 
         mock_db.list_components.assert_called_once_with(
-            component_type=ComponentType.TEAM, exclude_component_ids=None, user_id=None
+            component_type=ComponentType.TEAM,
+            exclude_component_ids=None,
+            user_id=None,
+            limit=_COMPONENT_LIST_PAGE,
+            offset=0,
         )
 
     def test_get_teams_with_registry(self, mock_db):
         """Test get_teams passes registry to from_dict."""
         mock_db.list_components.return_value = (
             [{"component_id": "tools-team"}],
-            None,
+            1,
         )
         mock_db.get_config.return_value = {"config": {"id": "tools-team", "tools": [{"name": "search"}]}}
 
@@ -1294,7 +1298,7 @@ class TestGetTeams:
                 {"component_id": "valid-team"},
                 {"component_id": "invalid-team"},
             ],
-            None,
+            2,
         )
         mock_db.get_config.side_effect = [
             {"config": {"id": "valid-team", "name": "Valid"}},
@@ -1312,7 +1316,7 @@ class TestGetTeams:
         mock_db.id = "test-db"
         mock_db.list_components.return_value = (
             [{"component_id": "team-1"}],
-            None,
+            1,
         )
         mock_db.get_config.return_value = {
             "config": {
@@ -1789,3 +1793,86 @@ class TestTeamMemoryManagerReferenceShapes:
         warnings = " ".join(str(c) for c in mock_warn.call_args_list)
         assert "mm-1" in warnings
         assert "mm-2" in warnings
+
+
+# =============================================================================
+# get_teams() Pagination Tests
+# =============================================================================
+
+
+class TestGetTeamsPagination:
+    """get_teams must page past the DB's default list_components limit.
+
+    Published components from other users share the catalog, so without
+    paging they crowd a user's own teams out of the first page.
+    """
+
+    @pytest.fixture
+    def sqlite_db(self, tmp_path):
+        return SqliteDb(db_file=str(tmp_path / "teams_pagination.db"))
+
+    def _create(self, db, component_id, user_id):
+        db.create_component_with_config(
+            component_id=component_id,
+            component_type=ComponentType.TEAM,
+            name=component_id,
+            config={"name": component_id, "members": []},
+            stage="published",
+            user_id=user_id,
+        )
+
+    def test_returns_all_own_teams_beyond_default_page(self, sqlite_db):
+        for i in range(25):
+            self._create(sqlite_db, f"own-team-{i:02d}", "owner")
+
+        teams = get_teams(db=sqlite_db, user_id="owner")
+
+        assert {t.id for t in teams} == {f"own-team-{i:02d}" for i in range(25)}
+
+    def test_own_teams_not_crowded_out_by_foreign_published(self, sqlite_db):
+        # Own rows first (older), foreign rows second (newer): the listing
+        # orders created_at DESC with component_id ASC ties, so the foreign
+        # rows fill the first page either way.
+        for i in range(5):
+            self._create(sqlite_db, f"z-own-team-{i}", "owner")
+        for i in range(25):
+            self._create(sqlite_db, f"a-pub-team-{i:02d}", "someone-else")
+
+        teams = get_teams(db=sqlite_db, user_id="owner")
+
+        ids = {t.id for t in teams}
+        assert {f"z-own-team-{i}" for i in range(5)} <= ids
+        assert len(teams) == 30
+
+    def test_cap_truncates_with_single_warning(self, mock_db, monkeypatch):
+        import agno.team.team as team_module
+
+        monkeypatch.setattr(team_module, "_COMPONENT_LIST_PAGE", 5)
+        monkeypatch.setattr(team_module, "_COMPONENT_LIST_CAP", 10)
+        mock_warn = MagicMock()
+        monkeypatch.setattr(team_module, "log_warning", mock_warn)
+
+        def fake_list_components(**kwargs):
+            rows = [{"component_id": f"team-{kwargs['offset'] + i:03d}"} for i in range(kwargs["limit"])]
+            return rows, 50
+
+        mock_db.list_components.side_effect = fake_list_components
+        mock_db.get_config.side_effect = lambda component_id: {"config": {"name": component_id, "members": []}}
+
+        teams = get_teams(db=mock_db, user_id="owner")
+
+        assert len(teams) == 10
+        mock_warn.assert_called_once()
+        assert "10 of 50" in mock_warn.call_args[0][0]
+
+    def test_paging_advances_the_offset_past_the_first_block(self, sqlite_db):
+        # A loop stuck at offset=0 still terminates (len >= total after two
+        # identical pages) but returns duplicates and misses the tail; unique
+        # recovery of 120 rows requires the offset to actually advance.
+        for i in range(120):
+            self._create(sqlite_db, f"own-team-{i:03d}", "owner")
+
+        loaded = get_teams(db=sqlite_db, user_id="owner")
+
+        assert len(loaded) == 120
+        assert {item.id for item in loaded} == {f"own-team-{i:03d}" for i in range(120)}

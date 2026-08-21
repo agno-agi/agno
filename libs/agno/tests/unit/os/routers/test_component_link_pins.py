@@ -116,6 +116,90 @@ class TestPinningAnotherOwnersUnpublishedVersion:
         assert db.get_links(bob_team, version=2) == []
 
 
+class TestPinningAnAbsentVersionOfAnotherOwnersComponent:
+    """A version with no config row must answer a foreign caller like the
+    draft it may not read.
+
+    The direct read gives that caller one 404 for a draft, a tombstoned
+    version, and a version that was never created. A write path that refuses
+    the draft but accepts the other two leaks one bit per version number:
+    "this one is a live unpublished draft" -- the owner's work-in-progress
+    high-water mark, enumerable by sweeping pins.
+    """
+
+    def test_create_config_refuses_a_nonexistent_version(self, db, bob_team, alice_agent):
+        r = _client(db, "bob").post(
+            f"/components/{bob_team}/configs",
+            json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, 99)},
+        )
+        assert r.status_code == 404, (r.status_code, r.text)
+        assert db.get_links(bob_team, version=2) == []
+
+    def test_update_config_refuses_a_nonexistent_version(self, db, bob_team, alice_agent):
+        r = _client(db, "bob").patch(
+            f"/components/{bob_team}/configs/1",
+            json={"config": {"name": "bob-team"}, "links": _pin(alice_agent, 99)},
+        )
+        assert r.status_code == 404, (r.status_code, r.text)
+        assert db.get_links(bob_team, version=1) == []
+
+    def test_create_config_refuses_a_tombstoned_version(self, db, bob_team, alice_agent):
+        assert db.delete_config(alice_agent, version=2) is True
+        r = _client(db, "bob").post(
+            f"/components/{bob_team}/configs",
+            json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, 2)},
+        )
+        assert r.status_code == 404, (r.status_code, r.text)
+
+    def test_update_config_refuses_a_tombstoned_version(self, db, bob_team, alice_agent):
+        assert db.delete_config(alice_agent, version=2) is True
+        r = _client(db, "bob").patch(
+            f"/components/{bob_team}/configs/1",
+            json={"config": {"name": "bob-team"}, "links": _pin(alice_agent, 2)},
+        )
+        assert r.status_code == 404, (r.status_code, r.text)
+
+    def test_the_refusal_is_one_answer_across_every_withheld_state(self, db, bob_team, alice_agent):
+        """Draft, tombstoned, and never-created must be byte-indistinguishable.
+
+        The only byte allowed to vary is the version number the caller itself
+        supplied, so each refusal is also compared to the direct read of the
+        same version -- the route whose answer this guard mirrors verbatim.
+        """
+        client = _client(db, "bob")
+
+        def _pin_response(version):
+            return client.post(
+                f"/components/{bob_team}/configs",
+                json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, version)},
+            )
+
+        draft = _pin_response(2)  # v2 is alice's live draft
+        absent = _pin_response(99)  # v99 was never created
+        assert db.delete_config(alice_agent, version=2) is True
+        tombstoned = _pin_response(2)  # the same v2, now tombstoned
+
+        assert draft.status_code == absent.status_code == tombstoned.status_code == 404
+        # Same version number, different withheld state: identical bytes.
+        assert draft.json() == tombstoned.json()
+        # Different version numbers: identical up to the caller's own input,
+        # and each one verbatim what the direct read answers.
+        assert draft.json()["detail"] == f"Config {alice_agent} v2 not found"
+        assert absent.json()["detail"] == f"Config {alice_agent} v99 not found"
+        assert absent.json()["detail"] == client.get(f"/components/{alice_agent}/configs/99").json()["detail"]
+        assert tombstoned.json()["detail"] == client.get(f"/components/{alice_agent}/configs/2").json()["detail"]
+
+    def test_no_dangling_link_row_is_stored(self, db, bob_team, alice_agent):
+        """The accepted write used to store a pin at a version that does not
+        exist -- a dangling link the adapters never check for."""
+        _client(db, "bob").post(
+            f"/components/{bob_team}/configs",
+            json={"config": {"name": "bob-team"}, "stage": "draft", "links": _pin(alice_agent, 99)},
+        )
+        for parent_version in (1, 2):
+            assert db.get_links(bob_team, version=parent_version) == []
+
+
 class TestTheVersionIsWhateverJsonCarried:
     """The links body is List[Dict[str, Any]], so the version arrives however
     the client typed it and the adapter's INTEGER column coerces it on the way
@@ -217,6 +301,24 @@ class TestTheLegitimateCompositionsStillWork:
         r = _client(db, "alice").post(
             "/components/alice-team/configs",
             json={"config": {"name": "alice-team"}, "stage": "draft", "links": _pin(alice_agent, 2)},
+        )
+        assert r.status_code == 201, (r.status_code, r.text)
+
+    def test_the_owner_may_pin_their_own_nonexistent_version(self, db, alice_agent):
+        """Dangling pins on your own component are the adapter's business;
+        the not-found refusal exists only for callers the version is withheld
+        from."""
+        db.create_component_with_config(
+            component_id="alice-team",
+            component_type=ComponentType.TEAM,
+            name="alice-team",
+            config={"name": "alice-team"},
+            stage="draft",
+            user_id="alice",
+        )
+        r = _client(db, "alice").post(
+            "/components/alice-team/configs",
+            json={"config": {"name": "alice-team"}, "stage": "draft", "links": _pin(alice_agent, 99)},
         )
         assert r.status_code == 201, (r.status_code, r.text)
 

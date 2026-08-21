@@ -133,7 +133,9 @@ def run_demo() -> None:
                 "session_id": f"studio-tools-{component_id}",
                 # The framework injects this caller's RunContext into every
                 # StudioTools call: the created component is OWNED by this
-                # user. Other scoped users get component_not_found for it.
+                # user. It publishes on create, so other users can read and
+                # run it, but only this user can edit or archive it; while a
+                # component is draft-only, other users get component_not_found.
                 "user_id": "studio-demo-user",
                 "stream": "false",
             },

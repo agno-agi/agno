@@ -1855,8 +1855,11 @@ def get_team_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.team.team import get_teams
 
-            # Exclude teams whose IDs are owned by the registry
-            exclude_ids = registry.get_team_ids() if registry else None
+            # Exclude the ids this OS serves, which is what the code half
+            # above renders. The registry is a superset - it also carries
+            # rehydration context this route never lists - so subtracting it
+            # would drop a stored team with nothing left to list it back.
+            exclude_ids = {tid for t in os.teams or [] if (tid := getattr(t, "id", None)) is not None}
             db_teams = get_teams(
                 db=os.db,
                 registry=registry,

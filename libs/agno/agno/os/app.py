@@ -3,7 +3,7 @@ import contextlib
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Set, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -482,6 +482,8 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._bind_studio_catalog_dbs()
+        self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
         # Discover knowledge instances and mirror them into the registry so that
@@ -559,6 +561,8 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._bind_studio_catalog_dbs()
+        self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
         # Check for duplicate IDs
@@ -851,13 +855,89 @@ class AgentOS:
             workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def _populate_registry(self) -> None:
-        """Populate the registry with code-defined agents and teams.
+        """Populate the registry with code-defined agents, teams, and workflows.
 
-        This ensures that workflows loaded from DB can rehydrate their steps
-        using code-defined agents/teams via the registry.
+        This ensures that components loaded from DB can rehydrate their
+        references using code-defined components via the registry, and that
+        Studio surfaces holding this registry can see everything the OS
+        serves.
         """
         if self.registry is None:
             self.registry = Registry()
+
+        # Name the db behind the component catalog outright, including when
+        # there is none. A Studio toolkit given no db of its own resolves this
+        # rather than guessing at the head of registry.dbs: that list is
+        # whatever the component tree happened to carry, so guessing binds
+        # Studio to an agent-private session db and writes the catalog where no
+        # OS surface reads it. Declaring only when self.db exists would leave
+        # exactly that guess in place for an OS with no db, which is the wiring
+        # most likely to have one - a builder agent carrying its own.
+        #
+        # A db-less OS still does not OVERRIDE a catalog another OS already
+        # named: registries are explicitly shareable, so a second, dispatch-only
+        # OS mounted on the same registry would otherwise unbind the first one's
+        # Studio and turn its working writes into db_not_configured. Toolkits
+        # this OS actually serves are bound to it directly and outrank this
+        # declaration; what is left here is the answer for toolkits no OS
+        # serves.
+        declared_by = self.registry.component_db_declared_by
+        declaring_os = declared_by() if declared_by is not None else None
+        if not self.registry.component_db_declared:
+            # With no db of its own, declare what the USER put on the registry
+            # rather than a flat None. This runs before component discovery, so
+            # registry.dbs can only hold dbs passed to Registry(...) at this
+            # point, never an agent-private one collected from the served tree
+            # - and re-running it later must not reach for that list either.
+            #
+            # A db that cannot back a synchronous catalog still gets to be the
+            # one declared: declare_component_db reads it as a refusal, and a
+            # refusal is the honest answer. Reaching for the registry's list
+            # instead whenever this db is async or remote would put the guess
+            # back exactly where this declaration removed it, and would land
+            # the catalog behind the listings an OS turns off for such a db:
+            # /components, and the stored half of /agents, /teams and
+            # /workflows. The Studio toolkits this OS serves would still read
+            # that catalog on the run surface, so the objection is the guess
+            # rather than the reachability.
+            declared = self.db if self.db is not None else (self.registry.dbs[0] if self.registry.dbs else None)
+            self.registry.declare_component_db(declared, declared_by=self)
+        elif self.db is not None:
+            if self.registry.component_db is None or declaring_os is self:
+                # A declared None is a refusal that a later db-bearing OS lifts,
+                # and the OS that made a declaration can move it - a resync, or
+                # its db swapped in place - so the catalog declaration follows
+                # the same rebinding rule as the toolkit bindings. Without that,
+                # a swapped db would move the toolkits this OS serves while
+                # leaving the declaration on the old db, and a toolkit resolving
+                # through the registry instead would disagree with them.
+                self.registry.declare_component_db(self.db, declared_by=self)
+            elif self.db is not self.registry.component_db:
+                # Not a warning: a legitimate sibling OS with its own db is
+                # normal wiring, and the toolkits it serves are bound to it
+                # directly. Only a toolkit pulled between two of them warns.
+                log_debug(
+                    f"Registry: component catalog stays on db '{self.registry.component_db.id}'; this AgentOS "
+                    f"holds a different db ('{getattr(self.db, 'id', None)}') and binds only the Studio "
+                    "toolkits it serves."
+                )
+
+        # The catalog db also goes first in registry.dbs, so rehydration that
+        # walks the list meets it before any component-private db. Ordering is
+        # a convenience here, not the contract - the declaration above is what
+        # Studio resolves - so an id already taken by another db is left to
+        # add_db's own duplicate-id warning rather than warned about twice.
+        if self.db is not None and isinstance(self.db, BaseDb):
+            existing_index = next(
+                (index for index, existing in enumerate(self.registry.dbs) if existing is self.db), None
+            )
+            if existing_index is None:
+                self.registry.add_db(self.db)
+                existing_index = next(
+                    (index for index, existing in enumerate(self.registry.dbs) if existing is self.db), None
+                )
+            if existing_index is not None and existing_index > 0:
+                self.registry.dbs.insert(0, self.registry.dbs.pop(existing_index))
 
         if self._agents:
             existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
@@ -869,8 +949,11 @@ class AgentOS:
                 if existing_agent is not None:
                     if existing_agent is not agent:
                         log_warning(
-                            f"Registry: multiple distinct agents share id '{agent_id}'; keeping the "
-                            "first. Give them distinct ids to avoid one shadowing the other."
+                            f"Registry: multiple distinct agents share id '{agent_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
                         )
                     continue
                 self.registry.agents.append(agent)
@@ -886,12 +969,37 @@ class AgentOS:
                 if existing_team is not None:
                     if existing_team is not team:
                         log_warning(
-                            f"Registry: multiple distinct teams share id '{team_id}'; keeping the "
-                            "first. Give them distinct ids to avoid one shadowing the other."
+                            f"Registry: multiple distinct teams share id '{team_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
                         )
                     continue
                 self.registry.teams.append(team)
                 existing_teams[team_id] = team
+
+        if self._workflows:
+            existing_workflows = {
+                wid: w for w in self.registry.workflows if (wid := getattr(w, "id", None)) is not None
+            }
+            for workflow in self._workflows:
+                workflow_id = getattr(workflow, "id", None)
+                if workflow_id is None:
+                    continue
+                existing_workflow = existing_workflows.get(workflow_id)
+                if existing_workflow is not None:
+                    if existing_workflow is not workflow:
+                        log_warning(
+                            f"Registry: multiple distinct workflows share id '{workflow_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
+                        )
+                    continue
+                self.registry.workflows.append(workflow)
+                existing_workflows[workflow_id] = workflow
 
     def _populate_registry_knowledge(self) -> None:
         """Add knowledge instances to the registry so stored components resolve them by name.
@@ -910,6 +1018,227 @@ class AgentOS:
             self.registry.add_knowledge(kb, mirrored=True)
         for kb in self.knowledge or []:
             self.registry.add_knowledge(kb, mirrored=True)
+
+    def _bind_studio_catalog_dbs(self) -> None:
+        """Bind every Studio toolkit this OS serves to this OS's own db.
+
+        A Registry is explicitly shareable, so its single catalog declaration
+        cannot say which of several mounted AgentOS instances owns a given
+        toolkit: whichever OS was constructed last would take every unpinned
+        toolkit with it, and its writes would land in a db the OS actually
+        serving that toolkit never reads. Binding follows the OS that SERVES
+        the toolkit, which does not depend on construction order.
+
+        The binding records WHICH OS made it, so this OS can replace its own
+        binding whenever it runs again - a resync, or its db swapped in place
+        - and only a second, different OS naming a different db is held off.
+
+        A toolkit served by an OS with no usable db is deliberately left
+        unbound so it falls through to the registry declaration: that keeps a
+        db-less deployment working once another OS names a catalog db.
+        """
+        from weakref import ref
+
+        for component in self._iter_component_carriers():
+            tools = getattr(component, "tools", None)
+            # tools may be a callable factory; only a materialized list can be
+            # inspected here, and a factory cannot be called safely at
+            # construction time. Stamp the carrier instead and bind when the
+            # factory first runs (agno.utils.callables): a toolkit delivered by
+            # a factory otherwise never learns which OS serves it, falls through
+            # to the registry-wide declaration - which belongs to whichever
+            # AgentOS declared FIRST - and writes its catalog into a db the
+            # serving OS never reads, reporting success either way.
+            if not isinstance(tools, list):
+                if tools is not None:
+                    # First stamp wins, exactly as the first binding does for a
+                    # materialized list: two OS instances serving one component
+                    # must not have the answer decided by which constructed
+                    # last. Only the OS that made the stamp may move it, so a
+                    # resync or a swapped db still follows its own OS. A stamp
+                    # whose OS has been collected is left alone rather than
+                    # replaced, so the outcome never depends on when the
+                    # garbage collector ran.
+                    existing = getattr(component, "_studio_catalog_os", None)
+                    stamped_by = existing() if existing is not None else None
+                    if existing is None or stamped_by is self:
+                        try:
+                            component._studio_catalog_os = ref(self)
+                        except AttributeError:
+                            # A slotted or frozen carrier cannot hold the
+                            # stamp; it keeps the registry-declaration
+                            # behaviour it had before.
+                            pass
+                continue
+            self._bind_studio_tools(component, tools)
+
+    def _bind_studio_tools(self, component: Any, tools: List[Any]) -> None:
+        """Bind the Studio toolkits in one materialized tool list to this OS's db.
+
+        Called with a plain list at construction time, and again from the
+        callable-tools resolver the first time a factory produces its list.
+        """
+        from weakref import ref
+
+        from agno.tools.studio import StudioTools
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        os_db = self.db if isinstance(self.db, BaseDb) else None
+        for tool in tools:
+            if not isinstance(tool, (StudioTools, StudioRunnerTools)):
+                continue
+            # A toolkit on another registry is a different catalog entirely
+            # (warned about separately), and an explicit db always wins.
+            if getattr(tool, "registry", None) is not self.registry or getattr(tool, "_db", None) is not None:
+                continue
+            already = getattr(tool, "_os_db", None)
+            binding = getattr(tool, "_os_binding", None)
+            # Held weakly, so a collected OS reads as None here. That is
+            # not this OS either way, and the first binding stands: making
+            # a rebind depend on whether the other OS happens to still be
+            # alive would make the outcome depend on collection timing.
+            bound_by = binding() if binding is not None else None
+            if bound_by is not self and already is not None and already is not os_db:
+                if os_db is not None:
+                    label = getattr(component, "id", None) or getattr(component, "name", None)
+                    bound_id = getattr(already, "id", None)
+                    this_id = getattr(os_db, "id", None)
+                    # Two dbs can carry the same id, and naming both would
+                    # then read as a contradiction rather than a conflict.
+                    which = (
+                        f"two distinct db instances sharing the id '{bound_id}'"
+                        if bound_id == this_id
+                        else f"bound '{bound_id}', this OS '{this_id}'"
+                    )
+                    # Says what is true in every case this can fire. A
+                    # count of AgentOS instances is not: replacing the OS
+                    # object over the same toolkit reaches here with
+                    # exactly one AgentOS in the user's code.
+                    log_warning(
+                        f"Component '{label}' carries {type(tool).__name__} already bound to a different "
+                        f"database ({which}); keeping the first binding. Pass the toolkit its own db "
+                        "(StudioTools(db=...)) to make the choice explicit."
+                    )
+            else:
+                # StudioTools delegates its component lookups to an embedded
+                # runner toolkit, so both halves have to resolve one db.
+                tool._os_db = os_db
+                tool._os_binding = ref(self)
+                embedded = getattr(tool, "_runner_tools", None)
+                if embedded is not None and getattr(embedded, "_db", None) is None:
+                    embedded._os_db = os_db
+                    embedded._os_binding = ref(self)
+
+    def _iter_component_carriers(self) -> Iterator[Any]:
+        """Every served component that can carry a toolkit: top-level
+        agents and teams, team members recursively, and the agents/teams
+        executing workflow steps (nested step containers included)."""
+        seen: Set[int] = set()
+
+        def visit(component: Any):
+            if component is None or id(component) in seen:
+                return
+            seen.add(id(component))
+            yield component
+            # members may be a callable factory, which is truthy but not
+            # iterable; only a materialized list can be walked, and a
+            # factory cannot be called safely at construction time.
+            members = getattr(component, "members", None)
+            if isinstance(members, list):
+                for member in members:
+                    yield from visit(member)
+
+        for top in [*self._agents, *self._teams]:
+            yield from visit(top)
+
+        def visit_steps(steps: Any):
+            # steps may be a Steps container rather than a plain list --
+            # WorkflowSteps accepts one at the top level, and a bare
+            # container here would otherwise skip the whole subtree. A tuple
+            # is a step list too, in both spellings.
+            if not isinstance(steps, (list, tuple)):
+                inner = getattr(steps, "steps", None)
+                if steps is None or not isinstance(inner, (list, tuple)):
+                    return
+                steps = inner
+            for step in steps:
+                # Containers can reference each other; without this the
+                # walk recurses until the stack dies, taking the whole
+                # application down at construction time.
+                if id(step) in seen:
+                    continue
+                # An agent or team may BE the step, with no Step wrapper
+                # around it, and carries toolkits exactly like a wrapped
+                # executor does. visit() records the id, which is what keeps
+                # the guard above meaningful, so nothing marks it here.
+                yield from visit(step)
+                for attr in ("agent", "team"):
+                    yield from visit(getattr(step, attr, None))
+                # Every container a step can be: Loop, Parallel and
+                # Condition hold steps, Condition also else_steps, Router
+                # holds choices, and a nested Workflow its own step list.
+                for attr in ("steps", "else_steps", "choices"):
+                    yield from visit_steps(getattr(step, attr, None))
+                nested = getattr(step, "workflow", None)
+                if nested is not None and id(nested) not in seen:
+                    seen.add(id(nested))
+                    yield from visit_steps(getattr(nested, "steps", None))
+
+        for workflow in self._workflows:
+            yield from visit_steps(getattr(workflow, "steps", None))
+
+    def _warn_on_foreign_studio_registries(self) -> None:
+        """Warn when a served component carries a Studio toolkit bound to a
+        different Registry than the one this OS populates.
+
+        This is the likeliest zero-wiring mistake: StudioTools(registry=reg)
+        built against one registry while AgentOS mints or holds another.
+        Everything then appears to work - drafts save, publish works - but the
+        OS's code-defined components are invisible to Studio, with no error
+        anywhere. Adopting the tool's registry or rebinding the tool silently
+        would both be surprising, so the split is loud instead.
+        """
+        from agno.tools.studio import StudioTools
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        for component in self._iter_component_carriers():
+            tools = getattr(component, "tools", None)
+            # tools may be a callable factory; only a materialized list can be
+            # inspected here, and a factory cannot be called safely at
+            # construction time.
+            if not isinstance(tools, list):
+                continue
+            for tool in tools:
+                if not isinstance(tool, (StudioTools, StudioRunnerTools)):
+                    continue
+                component_label = getattr(component, "id", None) or getattr(component, "name", None)
+                tool_registry = getattr(tool, "registry", None)
+                if tool_registry is not None and tool_registry is not self.registry:
+                    log_warning(
+                        f"Component '{component_label}' carries {type(tool).__name__} bound to a different "
+                        "Registry than this AgentOS populates: the OS's code-defined agents, teams, and "
+                        "workflows will be invisible to it. Pass that registry to AgentOS (registry=...), "
+                        "or construct the toolkit with the OS's registry."
+                    )
+                # No catalog db means every Studio WRITE refuses. Say so here:
+                # the alternative to refusing is adopting a component-private
+                # db and writing a catalog no OS surface serves, and a silent
+                # success is the worse of the two failures.
+                #
+                # Only StudioTools: StudioRunnerTools registers no write tools
+                # and lists and dispatches code-defined components perfectly
+                # well with no db at all. And the question is what the TOOL
+                # will resolve, which is its own registry's answer - the
+                # warning above exists precisely because that can differ from
+                # this OS's.
+                tool_registry_db = tool_registry.resolve_component_db() if tool_registry is not None else None
+                if isinstance(tool, StudioTools) and getattr(tool, "_db", None) is None and tool_registry_db is None:
+                    log_warning(
+                        f"Component '{component_label}' carries {type(tool).__name__} but this AgentOS has no "
+                        "database that can back the component catalog, so every Studio write will answer "
+                        "db_not_configured. Pass a synchronous db to AgentOS (db=...), or give the toolkit "
+                        "its own (StudioTools(db=...))."
+                    )
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.
