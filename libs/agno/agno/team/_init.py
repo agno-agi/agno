@@ -153,6 +153,7 @@ def __init__(
     learning: Optional[Union[bool, LearningMachine]] = None,
     add_learnings_to_context: bool = True,
     compact_tool_results: bool = False,
+    compact_context: bool = False,
     compaction_manager: Optional["CompactionManager"] = None,
     # Deprecated aliases (use compact_tool_results and compaction_manager)
     compress_tool_results: Optional[bool] = None,
@@ -339,6 +340,8 @@ def __init__(
         team.compact_tool_results = compress_tool_results
     else:
         team.compact_tool_results = compact_tool_results
+
+    team.compact_context = compact_context
 
     if compression_manager is not None:
         log_debug("compression_manager is deprecated, use compaction_manager")
@@ -580,19 +583,28 @@ def _set_session_summary_manager(team: "Team") -> None:
 
 
 def _set_compaction_manager(team: "Team") -> None:
-    if team.compact_tool_results and team.compaction_manager is None:
+    # Auto-create if either compaction flag is set
+    if (team.compact_tool_results or team.compact_context) and team.compaction_manager is None:
         team.compaction_manager = CompactionManager(
             model=team.model,
+            compact_tool_results=team.compact_tool_results,
+            compact_history=team.compact_context,
         )
-    elif team.compaction_manager is not None and team.compaction_manager.model is None:
-        # If compaction manager exists but has no model, use the team's model
+
+    # If manager exists, sync the compact_context flag to compact_history
+    if team.compaction_manager is not None and team.compact_context:
+        team.compaction_manager.compact_history = True
+
+    # Ensure model is set
+    if team.compaction_manager is not None and team.compaction_manager.model is None:
         team.compaction_manager.model = team.model
 
+    # Sync flags from manager back to team
     if team.compaction_manager is not None:
-        if team.compaction_manager.model is None:
-            team.compaction_manager.model = team.model
         if team.compaction_manager.compact_tool_results:
             team.compact_tool_results = True
+        if team.compaction_manager.compact_history:
+            team.compact_context = True
 
 
 def _set_learning_machine(team: "Team") -> None:
@@ -745,7 +757,7 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_memory_manager(team)
     if team.enable_session_summaries or team.session_summary_manager is not None:
         _set_session_summary_manager(team)
-    if team.compact_tool_results or team.compaction_manager is not None:
+    if team.compact_tool_results or team.compact_context or team.compaction_manager is not None:
         _set_compaction_manager(team)
     if team.compaction_manager is not None:
         _set_compaction_manager(team)

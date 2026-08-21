@@ -326,6 +326,8 @@ class Team:
     # --- Context Compression ---
     # If True, compact tool call results to save context
     compact_tool_results: bool = False
+    # If True, compact conversation history to save context
+    compact_context: bool = False
     # Compaction manager for tool results and/or conversation history
     compaction_manager: Optional["CompactionManager"] = None
 
@@ -525,6 +527,7 @@ class Team:
         learning: Optional[Union[bool, LearningMachine]] = None,
         add_learnings_to_context: bool = True,
         compact_tool_results: bool = False,
+        compact_context: bool = False,
         compaction_manager: Optional["CompactionManager"] = None,
         # Deprecated aliases (use compact_tool_results and compaction_manager)
         compress_tool_results: Optional[bool] = None,
@@ -645,6 +648,7 @@ class Team:
             learning=learning,
             add_learnings_to_context=add_learnings_to_context,
             compact_tool_results=compact_tool_results,
+            compact_context=compact_context,
             compaction_manager=compaction_manager,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,

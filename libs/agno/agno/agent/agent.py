@@ -344,6 +344,8 @@ class Agent:
     # --- Context Compaction ---
     # If True, compact tool call results to save context
     compact_tool_results: bool = False
+    # If True, compact conversation history to save context
+    compact_context: bool = False
     # Compaction manager for tool results and/or conversation history
     compaction_manager: Optional[CompactionManager] = None
 
@@ -395,6 +397,7 @@ class Agent:
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compact_tool_results: bool = False,
+        compact_context: bool = False,
         compaction_manager: Optional[CompactionManager] = None,
         # Deprecated aliases (use compact_tool_results and compaction_manager)
         compress_tool_results: Optional[bool] = None,
@@ -528,6 +531,8 @@ class Agent:
             self.compact_tool_results = compress_tool_results
         else:
             self.compact_tool_results = compact_tool_results
+
+        self.compact_context = compact_context
 
         if compression_manager is not None:
             log_debug("compression_manager is deprecated, use compaction_manager")

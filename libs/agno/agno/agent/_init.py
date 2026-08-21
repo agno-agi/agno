@@ -179,17 +179,28 @@ def set_session_summary_manager(agent: Agent) -> None:
 
 def set_compaction_manager(agent: Agent) -> None:
     """Initialize compaction_manager for tool and/or history compaction."""
-    # Auto-create if compact_tool_results flag is set
-    if agent.compact_tool_results and agent.compaction_manager is None:
-        agent.compaction_manager = CompactionManager(model=agent.model)
+    # Auto-create if either compaction flag is set
+    if (agent.compact_tool_results or agent.compact_context) and agent.compaction_manager is None:
+        agent.compaction_manager = CompactionManager(
+            model=agent.model,
+            compact_tool_results=agent.compact_tool_results,
+            compact_history=agent.compact_context,
+        )
+
+    # If manager exists, sync the compact_context flag to compact_history
+    if agent.compaction_manager is not None and agent.compact_context:
+        agent.compaction_manager.compact_history = True
 
     # Ensure model is set
     if agent.compaction_manager is not None and agent.compaction_manager.model is None:
         agent.compaction_manager.model = agent.model
 
-    # Sync flag
-    if agent.compaction_manager is not None and agent.compaction_manager.compact_tool_results:
-        agent.compact_tool_results = True
+    # Sync flags from manager back to agent
+    if agent.compaction_manager is not None:
+        if agent.compaction_manager.compact_tool_results:
+            agent.compact_tool_results = True
+        if agent.compaction_manager.compact_history:
+            agent.compact_context = True
 
 
 def _initialize_session_state(
@@ -257,7 +268,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_session_summary_manager(agent)
     if (
         agent.compact_tool_results
-        or agent.compaction_manager is not None
+        or agent.compact_context
         or agent.compaction_manager is not None
     ):
         set_compaction_manager(agent)
