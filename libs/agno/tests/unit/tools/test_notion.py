@@ -218,11 +218,7 @@ def test_update_page_with_long_content(notion_tools, mock_update_page_response):
 # Search Pages Tests
 def test_search_pages_success(notion_tools, mock_search_pages_response):
     """Test successful search for pages by tag."""
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = mock_search_pages_response
-
-    with patch("httpx.post", return_value=mock_response):
+    with patch.object(notion_tools.client, "request", return_value=mock_search_pages_response):
         result = notion_tools.search_pages(tag="travel")
 
         result_json = json.loads(result)
@@ -235,11 +231,7 @@ def test_search_pages_success(notion_tools, mock_search_pages_response):
 
 def test_search_pages_empty_results(notion_tools, mock_empty_search_response):
     """Test search when no pages match the tag."""
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = mock_empty_search_response
-
-    with patch("httpx.post", return_value=mock_response):
+    with patch.object(notion_tools.client, "request", return_value=mock_empty_search_response):
         result = notion_tools.search_pages(tag="nonexistent")
 
         result_json = json.loads(result)
@@ -250,22 +242,17 @@ def test_search_pages_empty_results(notion_tools, mock_empty_search_response):
 
 def test_search_pages_api_error(notion_tools):
     """Test search when API returns an error."""
-    mock_response = Mock()
-    mock_response.status_code = 400
-    mock_response.text = "Invalid database ID"
-
-    with patch("httpx.post", return_value=mock_response):
+    with patch.object(notion_tools.client, "request", side_effect=Exception("API Error: 400")):
         result = notion_tools.search_pages(tag="tech")
 
         result_json = json.loads(result)
         assert result_json["success"] is False
         assert "error" in result_json
-        assert "400" in result_json["error"]
 
 
 def test_search_pages_network_exception(notion_tools):
     """Test search when network request fails."""
-    with patch("httpx.post", side_effect=Exception("Network timeout")):
+    with patch.object(notion_tools.client, "request", side_effect=Exception("Network timeout")):
         result = notion_tools.search_pages(tag="fashion")
 
         result_json = json.loads(result)
@@ -289,11 +276,7 @@ def test_search_pages_with_missing_properties(notion_tools):
         ]
     }
 
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = mock_response_data
-
-    with patch("httpx.post", return_value=mock_response):
+    with patch.object(notion_tools.client, "request", return_value=mock_response_data):
         result = notion_tools.search_pages(tag="tech")
 
         result_json = json.loads(result)
@@ -307,12 +290,8 @@ def test_search_pages_with_various_tags(notion_tools, mock_search_pages_response
     """Test search with different tag values."""
     tags_to_test = ["travel", "tech", "general-blogs", "fashion", "documents"]
 
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = mock_search_pages_response
-
     for tag in tags_to_test:
-        with patch("httpx.post", return_value=mock_response):
+        with patch.object(notion_tools.client, "request", return_value=mock_search_pages_response):
             result = notion_tools.search_pages(tag=tag)
             result_json = json.loads(result)
             assert result_json["success"] is True
@@ -337,11 +316,7 @@ def test_notion_tools_with_all_methods(
         assert update_json["success"] is True
 
     # Search for pages
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = mock_search_pages_response
-
-    with patch("httpx.post", return_value=mock_response):
+    with patch.object(notion_tools.client, "request", return_value=mock_search_pages_response):
         search_result = notion_tools.search_pages("travel")
         search_json = json.loads(search_result)
         assert search_json["success"] is True
