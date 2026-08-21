@@ -190,7 +190,7 @@ class TestManagerList:
 def _make_paged_get_schedules(schedules):
     """Build a get_schedules side effect serving pages from the given rows."""
 
-    def _get_schedules(enabled=None, limit=100, page=1, raise_on_error=False):
+    def _get_schedules(enabled=None, limit=100, page=1, user_id=None, raise_on_error=False):
         offset = (page - 1) * limit
         return schedules[offset : offset + limit], len(schedules)
 
@@ -207,7 +207,7 @@ class TestManagerListAll:
         assert len(result) == 150
         assert {s.id for s in result} == {f"sched-{i}" for i in range(150)}
         assert mock_db.get_schedules.call_count == 2
-        mock_db.get_schedules.assert_called_with(enabled=None, limit=100, page=2, raise_on_error=True)
+        mock_db.get_schedules.assert_called_with(enabled=None, limit=100, page=2, user_id=None, raise_on_error=True)
 
     def test_list_all_exact_page_multiple(self, mgr, mock_db):
         schedules = [_make_schedule(id=f"sched-{i}", name=f"schedule-{i}") for i in range(200)]
@@ -227,12 +227,12 @@ class TestManagerListAll:
     def test_list_all_empty_table_returns_empty_list(self, mgr, mock_db):
         mock_db.get_schedules = MagicMock(return_value=([], 0))
         assert mgr.list_all() == []
-        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1, raise_on_error=True)
+        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1, user_id=None, raise_on_error=True)
 
     def test_list_all_forwards_flags(self, mgr, mock_db):
         mock_db.get_schedules = MagicMock(return_value=([], 0))
         mgr.list_all(enabled=True, raise_on_error=False)
-        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=100, page=1, raise_on_error=False)
+        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=100, page=1, user_id=None, raise_on_error=False)
 
     def test_list_all_tolerates_bare_list_result(self, mgr, mock_db):
         # Legacy third-party Dbs may return a bare list instead of (rows, total)
@@ -381,7 +381,7 @@ class TestAsyncListAll:
         assert len(result) == 150
         assert {s.id for s in result} == {f"sched-{i}" for i in range(150)}
         assert mock_async_db.get_schedules.call_count == 2
-        mock_async_db.get_schedules.assert_called_with(enabled=None, limit=100, page=2, raise_on_error=True)
+        mock_async_db.get_schedules.assert_called_with(enabled=None, limit=100, page=2, user_id=None, raise_on_error=True)
 
     @pytest.mark.asyncio
     async def test_alist_all_propagates_db_error(self, async_mgr, mock_async_db):
@@ -393,7 +393,7 @@ class TestAsyncListAll:
     async def test_alist_all_empty_table_returns_empty_list(self, async_mgr, mock_async_db):
         mock_async_db.get_schedules = AsyncMock(return_value=([], 0))
         assert await async_mgr.alist_all() == []
-        mock_async_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1, raise_on_error=True)
+        mock_async_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1, user_id=None, raise_on_error=True)
 
     @pytest.mark.asyncio
     async def test_alist_all_tolerates_bare_list_result(self, async_mgr, mock_async_db):
@@ -421,7 +421,7 @@ class TestAsyncListAll:
     async def test_alist_all_forwards_flags(self, async_mgr, mock_async_db):
         mock_async_db.get_schedules = AsyncMock(return_value=([], 0))
         await async_mgr.alist_all(enabled=True, raise_on_error=False)
-        mock_async_db.get_schedules.assert_called_once_with(enabled=True, limit=100, page=1, raise_on_error=False)
+        mock_async_db.get_schedules.assert_called_once_with(enabled=True, limit=100, page=1, user_id=None, raise_on_error=False)
 
     @pytest.mark.asyncio
     async def test_alist_all_tolerates_none_rows_result(self, async_mgr, mock_async_db):
