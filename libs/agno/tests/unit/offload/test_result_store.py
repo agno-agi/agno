@@ -707,3 +707,29 @@ def test_search_never_reexecutes_a_guardless_caller_script(tmp_path):
     assert completed.returncode == 0, completed.stderr
     assert "MATCHES 1" in completed.stdout
     assert sentinel.read_text() == "ran\n", "the caller script was executed more than once"
+
+
+# ------------------------------------------------------------------
+# The envelope previews the tail as well as the head
+# ------------------------------------------------------------------
+
+
+def test_envelope_preview_carries_head_and_tail(store):
+    output = "\n".join(f"row {i}: value={i * 7}" for i in range(1, 501))
+    envelope = store.offload_for_model(
+        session_id="S1", run_id="r1", tool_call_id="tail-1", tool_name="fetch", tool_args={}, output=output
+    )
+    assert "row 1: value=7" in envelope
+    assert "row 500: value=3500" in envelope
+    assert "lines omitted ...]" in envelope
+    # The stored row carries the same block, so a replayed envelope shows the
+    # tail too, not only the head.
+    rows = [r for r in store.db.get_tool_results_for_session("S1") if r["tool_call_id"] == "tail-1"]
+    assert "row 500: value=3500" in rows[0]["preview"]
+
+
+def test_short_output_previews_whole_with_no_tail_marker(store):
+    envelope = store.offload_for_model(
+        session_id="S1", run_id="r1", tool_call_id="tail-2", tool_name="fetch", tool_args={}, output="x" * 150
+    )
+    assert "lines omitted" not in envelope

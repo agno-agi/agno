@@ -238,6 +238,24 @@ def _head_preview(output: str, preview_lines: int, preview_chars: int) -> str:
     return head
 
 
+def _preview_block(output: str, preview_lines: int, preview_chars: int) -> str:
+    """The preview an envelope shows: the head, and the tail when lines were cut.
+
+    Errors, totals and summaries live at the end of a result, so a head-only
+    preview hides exactly the lines a model most often needs. The tail is
+    capped like the head, and the omitted count says what sits between them.
+    """
+    lines = output.split("\n")
+    head = _head_preview(output, preview_lines, preview_chars)
+    omitted = len(lines) - len(head.split("\n")) - _TAIL_LINES
+    if omitted <= 0:
+        return head
+    tail = "\n".join(lines[-_TAIL_LINES:])
+    if len(tail) > preview_chars:
+        tail = "..." + tail[-preview_chars:]
+    return f"{head}\n[... {omitted} lines omitted ...]\n{tail}"
+
+
 def render_stored_envelope(ref: ResultRef, preview: str) -> str:
     return (
         f'<result id="{ref.result_id}" tool="{ref.tool_name}" lines="{ref.line_count}" '
@@ -476,7 +494,7 @@ class ResultStore:
             "content_type": content_type,
             "size_bytes": len(output.encode("utf-8")),
             "line_count": len(output.split("\n")),
-            "preview": _head_preview(output, self.preview_lines, self.preview_chars),
+            "preview": _preview_block(output, self.preview_lines, self.preview_chars),
             "user_id": user_id,
             "created_at": created_at,
             "expires_at": created_at + self.ttl_seconds if self.ttl_seconds else None,
@@ -667,7 +685,7 @@ class ResultStore:
                 user_id=user_id,
                 shared=shared,
             )
-            return render_stored_envelope(ref, _head_preview(output, self.preview_lines, self.preview_chars))
+            return render_stored_envelope(ref, _preview_block(output, self.preview_lines, self.preview_chars))
         except QuotaExceededError as e:
             reason = self._quota_reason(e)
         except Exception as e:
@@ -706,7 +724,7 @@ class ResultStore:
                 user_id=user_id,
                 shared=shared,
             )
-            return render_stored_envelope(ref, _head_preview(output, self.preview_lines, self.preview_chars))
+            return render_stored_envelope(ref, _preview_block(output, self.preview_lines, self.preview_chars))
         except QuotaExceededError as e:
             reason = self._quota_reason(e)
         except Exception as e:

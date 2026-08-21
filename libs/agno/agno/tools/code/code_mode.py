@@ -20,7 +20,7 @@ import concurrent.futures
 import functools
 import weakref
 from collections import OrderedDict
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.fs import FileSystem
 from agno.run import RunContext
@@ -91,7 +91,12 @@ def _warn() -> None:
     )
 
 
-def build_instructions(handles: List[str], allow_shell: bool, allow_restart: bool) -> str:
+def build_instructions(
+    handles: List[str],
+    allow_shell: bool,
+    allow_restart: bool,
+    snapshot_caps: Optional[Tuple[int, int]] = None,
+) -> str:
     """Render the CodeMode instruction block for the given capabilities."""
     paragraphs = [
         (
@@ -106,8 +111,16 @@ def build_instructions(handles: List[str], allow_shell: bool, allow_restart: boo
     ]
     state_paragraph = (
         "State persists across cells: variables, functions, classes, imports, notes, and parsed "
-        "outputs stay available in every later turn."
+        "outputs stay available in every later turn. The environment outlives your visible "
+        "conversation: variables created in turns you can no longer see are still live, and "
+        "%whos lists everything that exists."
     )
+    if snapshot_caps is not None:
+        variable_cap, snapshot_cap = snapshot_caps
+        state_paragraph += (
+            f" State is saved between processes; a single variable over {variable_cap} bytes "
+            f"or total state over {snapshot_cap} bytes is not saved and must be rebuilt."
+        )
     if handles:
         state_paragraph += (
             " Attached tools are awaitable calls in this environment: "
@@ -127,9 +140,10 @@ def build_instructions(handles: List[str], allow_shell: bool, allow_restart: boo
     )
     if allow_shell:
         paragraphs.append(
-            "Each %%bash cell is a throw-away subshell, so cd, export, and shell variables do not "
-            "carry over. Keep dependent shell steps in one cell, or use %cd and os.environ[...], "
-            "which are kernel-level and apply to every later %%bash cell."
+            "%%bash must be the first line of its cell - no comment, import, or statement before "
+            "it. Each %%bash cell is a throw-away subshell, so cd, export, and shell variables do "
+            "not carry over. Keep dependent shell steps in one cell, or use %cd and "
+            "os.environ[...], which are kernel-level and apply to every later %%bash cell."
         )
     if allow_restart:
         paragraphs.append(
@@ -213,7 +227,12 @@ class CodeMode(Toolkit):
         idle_ttl: int = 1800,
         timeout: Optional[int] = 300,
         python: Optional[str] = None,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
         startup_code: Optional[str] = None,
+        max_images_per_cell: int = 8,
+        max_image_bytes: int = 5_000_000,
+        max_kernels: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
         self.injected_tools: List[Union[Toolkit, Callable[..., Any], Function]] = list(tools or [])
@@ -231,9 +250,31 @@ class CodeMode(Toolkit):
         self.idle_ttl = idle_ttl
         self.cell_timeout = timeout
         self.python = python
+        self.cwd = cwd
+        self.env = env
         self.startup_code = startup_code
+        self.max_images_per_cell = max_images_per_cell
+        self.max_image_bytes = max_image_bytes
+        # Live kernels this CodeMode keeps at once. A new session past the
+        # cap evicts the least recently used idle one, snapshot flushed
+        # first. None keeps every session until its idle_ttl.
+        self.max_kernels = max_kernels
 
         self.handles = handle_names_for(self.injected_tools)
+
+        # The instruction text names the real snapshot caps, which the file
+        # store may lower below the constructor arguments.
+        snapshot_caps: Optional[Tuple[int, int]] = None
+        if fs is not None and snapshot:
+            from agno.tools.code.snapshot import reconcile_caps
+
+            variable_cap, snapshot_cap, _ = reconcile_caps(
+                max_variable_bytes,
+                max_snapshot_bytes,
+                getattr(fs, "max_file_bytes", None),
+                getattr(fs, "max_namespace_bytes", None),
+            )
+            snapshot_caps = (variable_cap, snapshot_cap)
 
         registered = ["execute"] + (["restart"] if allow_restart else [])
         sync_tools = [getattr(self, name) for name in registered]
@@ -245,7 +286,12 @@ class CodeMode(Toolkit):
             async_tools=async_tools,
             instructions=kwargs.pop(
                 "instructions",
-                build_instructions(self.handles, allow_shell=allow_shell, allow_restart=allow_restart),
+                build_instructions(
+                    self.handles,
+                    allow_shell=allow_shell,
+                    allow_restart=allow_restart,
+                    snapshot_caps=snapshot_caps,
+                ),
             ),
             add_instructions=kwargs.pop("add_instructions", True),
             **kwargs,
@@ -544,6 +590,38 @@ class CodeMode(Toolkit):
     async def _run_on_loop(self, coro: Coroutine[Any, Any, Any]) -> Any:
         return await asyncio.wrap_future(self._runner.submit(coro))
 
+    async def _evict_past_the_cap(self) -> None:
+        """Evict least-recently-used idle sessions until the cap has room.
+
+        Only a session whose lock is free and whose kernel is not busy is
+        taken: evicting one mid-cell would tear the kernel down under the
+        cell. When every session is busy the cap is exceeded rather than
+        deadlocked, with a warning naming the count. The evicted session's
+        snapshot is flushed first, so a returning session id restores its
+        state; the reset notice tells its model either way.
+        """
+        if self.max_kernels is None:
+            return
+        while len(self._sessions) >= self.max_kernels:
+            candidates = [s for s in self._sessions.values() if s.running and not s.lock.locked() and not s.maybe_busy]
+            if not candidates:
+                log_warning(
+                    f"CodeMode is over max_kernels={self.max_kernels} with every kernel busy; "
+                    f"{len(self._sessions) + 1} kernels will be live until one goes idle"
+                )
+                return
+            oldest = min(candidates, key=lambda s: s.last_used)
+            async with oldest.lock:
+                if oldest.running and oldest.flush_hook is not None:
+                    try:
+                        await oldest.flush_hook(oldest)
+                        oldest.snapshot_pending = False
+                    except Exception as e:
+                        log_warning(f"CodeMode snapshot flush while evicting past max_kernels failed: {e}")
+                await oldest._teardown_kernel()
+            self._forget_session(oldest)
+            log_debug(f"CodeMode evicted session {oldest.session_id}: past max_kernels={self.max_kernels}")
+
     def _session_for(self, session_id: str, user_id: Optional[str] = None) -> KernelSession:
         session = self._sessions.get(session_id)
         if session is None:
@@ -556,6 +634,10 @@ class CodeMode(Toolkit):
                 busy_wait=self.busy_wait,
                 on_busy_kernel=self.on_busy_kernel,
                 idle_ttl=self.idle_ttl,
+                cwd=self.cwd,
+                env=self.env,
+                max_images_per_cell=self.max_images_per_cell,
+                max_image_bytes=self.max_image_bytes,
                 owner_user_id=user_id,
                 flush_hook=self._snapshots.flush_locked if self._snapshots is not None else None,
                 setup_hook=self._asetup_session,
@@ -630,6 +712,8 @@ class CodeMode(Toolkit):
         user_id = self._user_key(run_context)
         if await self._refuse_foreign_user(session_id, user_id):
             return ToolResult(content=OWNER_REFUSAL)
+        if session_id not in self._sessions:
+            await self._evict_past_the_cap()
         session = self._session_for(session_id, user_id)
         cell = await self._execute_with_busy_policy(session, code, run_context)
         # An idle eviction can drop the registry entry while this cell waits
@@ -640,6 +724,11 @@ class CodeMode(Toolkit):
             self._snapshots.schedule(session)
         notice = session.take_notice()
         content = self._format_cell(cell)
+        if cell.status == "error" and "%%bash" in code and not code.lstrip().startswith("%%bash"):
+            content += (
+                "\n[hint: %%bash must be the first line of its cell - move any comment, "
+                "import, or statement into a separate cell]"
+            )
         if notice:
             content = f"{notice}\n{content}"
         return ToolResult(content=content, images=cell.images or None)
@@ -660,6 +749,8 @@ class CodeMode(Toolkit):
     async def _arun_impl(self, session_id: str, code: str) -> CellResult:
         if self._rejects_shell(code):
             return CellResult(status="error", stderr="Error: %%bash cells are disabled (allow_shell=False).")
+        if session_id not in self._sessions:
+            await self._evict_past_the_cap()
         session = self._session_for(session_id)
         cell = await self._execute_with_busy_policy(session, code, run_context=None)
         self._sessions.setdefault(session_id, session)

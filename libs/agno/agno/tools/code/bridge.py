@@ -245,13 +245,42 @@ def _params_from_schema(function: Function) -> List[Dict[str, Any]]:
     for name in ordered:
         safe = safe_param_name(name, taken)
         taken.add(safe)
-        params.append({"name": safe, "wire": name, "required": name in required})
+        prop = properties.get(name) or {}
+        entry: Dict[str, Any] = {"name": safe, "wire": name, "required": name in required}
+        # Carried for the docstring only; the kernel stub reads name/wire/required.
+        for key in ("type", "description", "enum", "default"):
+            if key in prop:
+                entry[key] = prop[key]
+        params.append(entry)
     return params
 
 
 def _stub_doc(function: Function, params: Sequence[Dict[str, Any]], bound_as: Optional[str] = None) -> str:
-    """The stub's docstring: the tool description, plus every name adapted for Python."""
+    """The stub's docstring: the description, an argument block, and every adapted name.
+
+    ``help(handle.method)`` in a cell is the model's only schema view once a
+    tool lives in the kernel, so the argument types, choices, defaults and
+    descriptions the JSON schema carried are rendered here.
+    """
     doc = function.description or ""
+    argument_lines = []
+    for p in params:
+        pieces = [p["name"]]
+        if p.get("type"):
+            pieces.append(f"({p['type']})")
+        line = " ".join(pieces) + ":"
+        details = []
+        if p.get("description"):
+            details.append(str(p["description"]).strip())
+        if p.get("enum"):
+            details.append("one of " + ", ".join(repr(v) for v in p["enum"]))
+        if not p["required"]:
+            details.append(f"default {p['default']!r}" if "default" in p else "optional")
+        argument_lines.append(f"    {line} {' - '.join(details)}" if details else f"    {line}")
+    if argument_lines:
+        doc = (
+            f"{doc}\n\nArguments:\n" + "\n".join(argument_lines) if doc else "Arguments:\n" + "\n".join(argument_lines)
+        )
     notes = []
     if bound_as is not None and bound_as != function.name:
         notes.append(f"Bound as '{bound_as}'; the tool's own name is '{function.name}'.")
