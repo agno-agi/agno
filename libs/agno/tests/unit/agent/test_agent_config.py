@@ -1304,6 +1304,142 @@ class TestMemoryManagerRoundTrip:
         assert loaded.memory_manager is None
 
 
+class TestLearningReferenceRoundTrip:
+    """A named LearningMachine is a registry resource: the config carries a
+    reference by name and the registry supplies the live machine. An unnamed
+    machine belongs to its component and inlines in full, exactly as every
+    config written before machines had names."""
+
+    def test_named_machine_serializes_as_reference_and_resolves_to_same_instance(self):
+        from agno.learn import LearningMachine
+
+        machine = LearningMachine(name="shared-brain", user_memory=True)
+        agent = Agent(id="learn-agent", name="Learn Agent", learning=machine)
+
+        config = agent.to_dict()
+        assert config["learning"] == {"name": "shared-brain"}
+
+        loaded = Agent.from_dict(config, registry=Registry(learning=[machine]), strict=True)
+        assert loaded.learning is machine
+
+    def test_unnamed_machine_still_inlines_and_rebuilds_without_a_registry(self):
+        from agno.learn import LearningMachine
+
+        agent = Agent(id="learn-agent", name="Learn Agent", learning=LearningMachine(user_memory=True))
+
+        config = agent.to_dict()
+        assert "name" not in config["learning"]
+        assert config["learning"]["user_memory"] is True
+
+        loaded = Agent.from_dict(config, registry=Registry(), strict=True)
+        assert isinstance(loaded.learning, LearningMachine)
+        assert loaded.learning is not agent.learning
+        assert loaded.learning.name is None
+        assert loaded.learning.user_memory is True
+
+    def test_inline_shapes_are_never_mistaken_for_references(self):
+        """``{}`` (a machine with every store off) and the pre-name payloads
+        are inline configs: strict loads with an empty registry rebuild them."""
+        from agno.learn import LearningMachine
+
+        for payload in ({}, {"user_profile": True, "user_memory": True}, {"name": "", "user_memory": True}):
+            config = {"id": "learn-agent", "name": "Learn Agent", "learning": payload}
+            loaded = Agent.from_dict(config, registry=Registry(), strict=True)
+            assert isinstance(loaded.learning, LearningMachine), payload
+
+    def test_named_inline_config_rebuilds_unnamed_and_keeps_round_tripping_inline(self):
+        """A dict carrying a name PLUS store keys (what LearningMachine.to_dict()
+        writes for a named machine, authorable by hand) is an inline config.
+        The rebuilt machine drops the name, so the next to_dict writes the
+        stores again instead of a bare reference no registry resolves."""
+        from agno.learn import LearningMachine
+
+        payload = {"name": "brain", "user_memory": True, "entity_memory": True, "namespace": "west"}
+        loaded = Agent.from_dict(
+            {"id": "learn-agent", "name": "Learn Agent", "learning": payload}, registry=Registry(), strict=True
+        )
+        assert isinstance(loaded.learning, LearningMachine)
+        assert loaded.learning.name is None
+        assert loaded.learning.user_memory is True and loaded.learning.namespace == "west"
+
+        resaved = loaded.to_dict()["learning"]
+        assert resaved == {"user_memory": True, "entity_memory": True, "namespace": "west"}
+        again = Agent.from_dict({"id": "learn-agent", "learning": resaved}, registry=Registry(), strict=True)
+        assert again.learning.user_memory is True
+
+    def test_missing_reference_raises_strict_and_drops_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {"id": "learn-agent", "name": "Learn Agent", "learning": {"name": "ghost"}}
+
+        with pytest.raises(ComponentRehydrationError, match="learning machine 'ghost'"):
+            Agent.from_dict(config, registry=Registry(), strict=True)
+        with pytest.raises(ComponentRehydrationError, match="learning machine 'ghost'"):
+            Agent.from_dict(config, registry=None, strict=True)
+
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Agent.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.learning is None
+        assert any("ghost" in str(call) for call in mock_warn.call_args_list)
+
+    def test_ambiguous_name_raises_strict_and_binds_first_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.learn import LearningMachine
+
+        first = LearningMachine(name="shared-brain", user_memory=True)
+        second = LearningMachine(name="shared-brain", entity_memory=True)
+        registry = Registry(learning=[first, second])
+        config = {"id": "learn-agent", "name": "Learn Agent", "learning": {"name": "shared-brain"}}
+
+        with pytest.raises(ComponentRehydrationError, match="two distinct"):
+            Agent.from_dict(config, registry=registry, strict=True)
+
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Agent.from_dict(config, registry=registry, strict=False)
+        assert loaded.learning is first
+        assert any("more than one" in str(call) for call in mock_warn.call_args_list)
+
+    def test_shared_machine_is_one_instance_and_the_first_binder_sets_its_model(self, tmp_path):
+        """Two components referencing the same name get the SAME machine. The
+        framework injects db/model into it only when unset, so the first
+        component to initialize fixes them for every sharer: a registry
+        machine that should capture with its own model must declare one."""
+        from agno.agent._init import initialize_agent
+        from agno.db.sqlite import SqliteDb
+        from agno.learn import LearningMachine
+        from agno.models.openai import OpenAIResponses
+
+        db = SqliteDb(db_file=str(tmp_path / "shared.db"))
+        machine = LearningMachine(name="shared-brain", user_memory=True)
+        registry = Registry(learning=[machine])
+
+        first = Agent.from_dict(
+            {"id": "a1", "name": "A1", "learning": {"name": "shared-brain"}}, registry=registry, strict=True
+        )
+        second = Agent.from_dict(
+            {"id": "a2", "name": "A2", "learning": {"name": "shared-brain"}}, registry=registry, strict=True
+        )
+        assert first.learning is machine and second.learning is machine
+
+        first.db = db
+        first.model = OpenAIResponses(id="gpt-5.5")
+        second.db = db
+        second.model = OpenAIResponses(id="gpt-5.4")
+        initialize_agent(first)
+        initialize_agent(second)
+
+        assert first.learning_machine is second.learning_machine is machine
+        assert machine.db is db
+        assert machine.model is first.model
+
+        # A machine that declares its own model keeps it for every sharer.
+        declared = LearningMachine(name="declared", user_memory=True, model=OpenAIResponses(id="gpt-5.5"))
+        third = Agent(id="a3", name="A3", db=db, model=OpenAIResponses(id="gpt-5.4"), learning=declared)
+        initialize_agent(third)
+        assert declared.model is not third.model
+        assert declared.model.id == "gpt-5.5"
+
+
 class TestMemoryManagerReferenceShapes:
     """A memory_manager reference is authored by more than to_dict: a config
     built against the registry listing carries the resource's name or id, and

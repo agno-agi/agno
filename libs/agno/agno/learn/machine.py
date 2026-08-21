@@ -12,6 +12,7 @@ Coordinates multiple learning stores to give agents:
 Plus maintenance via the Curator for keeping memories healthy.
 """
 
+import threading
 from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Callable, ClassVar, Dict, List, Optional, Union
@@ -85,6 +86,11 @@ class LearningMachine:
     for recall, processing, tool generation, and maintenance.
 
     Args:
+        name: Registry name. A named machine is a shared, deployer-declared
+            resource: a component that carries one serializes a reference to
+            the name and resolves the live machine from the Registry on load,
+            the same way knowledge does. Leave it None for a machine that
+            belongs to one component and should be stored inline.
         db: Database backend for persistence.
         model: Model for learning extraction.
         knowledge: Knowledge base for learned knowledge store.
@@ -124,6 +130,12 @@ class LearningMachine:
     # Debug mode
     debug_mode: bool = False
 
+    # Identity: set for a machine declared on a Registry, None for one that
+    # is stored inline with its component. Declared after the fields above so
+    # their positional order (db, model, knowledge, the stores, ...) is
+    # unchanged.
+    name: Optional[str] = None
+
     # Internal state (lazy initialization)
     _stores: Optional[Dict[str, LearningStore]] = field(default=None, init=False)
     _curator: Optional[Any] = field(default=None, init=False)
@@ -137,6 +149,21 @@ class LearningMachine:
     # Strong refs to fire-and-forget capture tasks (acapture_hook), so the event
     # loop cannot garbage-collect them mid-flight.
     _capture_tasks: set = field(default_factory=set, init=False)
+    # Serializes the first store initialization. A registry machine is one
+    # instance shared by every component that references it, so two first
+    # requests can race here; without the lock each would build its own store
+    # set and the loser's objects would be discarded mid-use.
+    _init_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
+
+    def __getstate__(self) -> Dict[str, Any]:
+        # Locks cannot be copied or pickled; a copy gets a lock of its own.
+        state = self.__dict__.copy()
+        state.pop("_init_lock", None)
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._init_lock = threading.Lock()
 
     # =========================================================================
     # Initialization (Lazy)
@@ -146,65 +173,77 @@ class LearningMachine:
     def stores(self) -> Dict[str, LearningStore]:
         """All registered stores, keyed by name. Lazily initialized.
 
-        Stores take the machine's model at construction, but the model usually
-        arrives *after* them: ``learning=`` hands over the agent's model during
-        Agent init, which is later than any earlier read of this property — a
-        test, an inspection, or the manual door. Backfill on access so a store
-        built before the model was bound picks it up, instead of keeping
-        ``model=None`` for the life of the process and silently declining to
-        capture.
+        Stores take the machine's model, db and knowledge at construction, but
+        those usually arrive *after* them: ``learning=`` hands over the agent's
+        model during Agent init, which is later than any earlier read of this
+        property — a test, an inspection, or the manual door — and a registry
+        machine shared by several components is built by whichever runs first,
+        which may lack the knowledge a later sharer brings. Backfill on access
+        so a store built before a dependency was bound picks it up, instead of
+        keeping ``None`` for the life of the process and silently declining to
+        capture or search.
         """
         if self._stores is None:
-            self._initialize_stores()
-        if self.model is not None:
-            for store in self._stores.values():  # type: ignore[union-attr]
-                config = getattr(store, "config", None)
-                if config is not None and getattr(config, "model", "unused") is None:
-                    config.model = self.model
+            with self._init_lock:
+                if self._stores is None:
+                    self._initialize_stores()
+        for store in self._stores.values():  # type: ignore[union-attr]
+            config = getattr(store, "config", None)
+            if config is None:
+                continue
+            for attr in ("model", "db", "knowledge"):
+                value = getattr(self, attr)
+                if value is not None and getattr(config, attr, "unused") is None:
+                    setattr(config, attr, value)
         return self._stores  # type: ignore
 
     def _initialize_stores(self) -> None:
-        """Initialize all configured stores."""
-        self._stores = {}
+        """Initialize all configured stores.
+
+        Builds the full map locally and publishes it in one assignment, so a
+        reader that checks ``_stores is None`` without the lock never sees a
+        partially populated map.
+        """
+        stores: Dict[str, LearningStore] = {}
 
         # User Profile
         if self.user_profile:
-            self._stores["user_profile"] = self._resolve_store(
+            stores["user_profile"] = self._resolve_store(
                 input_value=self.user_profile,
                 store_type="user_profile",
             )
 
         # User Memory
         if self.user_memory:
-            self._stores["user_memory"] = self._resolve_store(
+            stores["user_memory"] = self._resolve_store(
                 input_value=self.user_memory,
                 store_type="user_memory",
             )
 
         # Session Context
         if self.session_context:
-            self._stores["session_context"] = self._resolve_store(
+            stores["session_context"] = self._resolve_store(
                 input_value=self.session_context,
                 store_type="session_context",
             )
 
         # Entity Memory
         if self.entity_memory:
-            self._stores["entity_memory"] = self._resolve_store(
+            stores["entity_memory"] = self._resolve_store(
                 input_value=self.entity_memory,
                 store_type="entity_memory",
             )
 
         # Learned Knowledge (auto-enable if knowledge provided)
         if self.learned_knowledge or self.knowledge is not None:
-            self._stores["learned_knowledge"] = self._resolve_store(
+            stores["learned_knowledge"] = self._resolve_store(
                 input_value=self.learned_knowledge if self.learned_knowledge else True,
                 store_type="learned_knowledge",
             )
 
         # Decision Log
         if self.decision_log:
-            self._stores["decision_log"] = self._resolve_store(
+            stores["decision_log"] = self._resolve_store(
                 input_value=self.decision_log,
                 store_type="decision_log",
             )
@@ -212,9 +251,10 @@ class LearningMachine:
         # Custom stores
         if self.custom_stores:
             for name, store in self.custom_stores.items():
-                self._stores[name] = store
+                stores[name] = store
 
-        log_debug(f"LearningMachine initialized with stores: {list(self._stores.keys())}")
+        self._stores = stores
+        log_debug(f"LearningMachine initialized with stores: {list(stores.keys())}")
 
     def _resolve_store(
         self,
@@ -362,6 +402,7 @@ class LearningMachine:
             config = LearnedKnowledgeConfig(
                 model=self.model,
                 knowledge=self.knowledge,
+                namespace=self.namespace,
                 mode=LearningMode.AGENTIC,
                 max_updates_per_run=self.max_updates_per_run,
             )
@@ -1020,6 +1061,8 @@ class LearningMachine:
         instances cannot be rebuilt from a dict).
         """
         d: Dict[str, Any] = {}
+        if isinstance(self.name, str) and self.name:
+            d["name"] = self.name
         for store_name in self._STORE_CONFIG_CLASSES:
             value = getattr(self, store_name)
             if not value:
@@ -1110,7 +1153,9 @@ class LearningMachine:
                 f"rebuilt from a serialized config; re-attach them programmatically."
             )
 
+        name = data.get("name")
         return cls(
+            name=name if isinstance(name, str) and name else None,
             namespace=data.get("namespace", "global"),
             max_updates_per_run=data.get("max_updates_per_run", 10),
             debug_mode=data.get("debug_mode", False),
@@ -1198,9 +1243,65 @@ class LearningMachine:
 
         return (
             f"LearningMachine("
+            f"name={self.name!r}, "
             f"stores={store_names}, "
             f"db={db_name}, "
             f"model={model_name}, "
             f"knowledge={has_knowledge}, "
             f"namespace={self.namespace!r})"
         )
+
+
+def describe_learning_machine(machine: Any) -> Dict[str, Any]:
+    """Summarize a machine from its declared fields, for listings.
+
+    Reads the declared fields only and never touches ``machine.stores``: that
+    property lazily builds and caches the store objects, and a store built
+    before the machine has a db keeps db=None for the life of the process.
+    Per store: the mode, and for entity_memory / learned_knowledge the
+    namespace the store will use at run time - a store given as a bool or a
+    Config inherits the machine namespace when it is on the "global" default,
+    while a pre-built Store instance keeps its own config namespace, which is
+    what the machine does when it resolves the stores.
+    """
+    import dataclasses
+
+    machine_namespace = getattr(machine, "namespace", "global")
+    stores: Dict[str, Dict[str, Any]] = {}
+    for store_name, config_cls in LearningMachine._STORE_CONFIG_CLASSES.items():
+        value = getattr(machine, store_name, False)
+        # learned_knowledge is auto-enabled when the machine binds a knowledge.
+        if store_name == "learned_knowledge" and not value and getattr(machine, "knowledge", None) is not None:
+            value = True
+        if not value:
+            continue
+        # bool -> the config class defaults; Store instance -> its config;
+        # Config instance -> itself.
+        is_store_instance = getattr(value, "config", None) is not None
+        config = getattr(value, "config", None) if is_store_instance else None
+        if config is None and dataclasses.is_dataclass(value) and not isinstance(value, type):
+            config = value
+        mode = getattr(config, "mode", None) if config is not None else getattr(config_cls, "mode", None)
+        row: Dict[str, Any] = {"mode": getattr(mode, "value", mode)}
+        if store_name in ("entity_memory", "learned_knowledge"):
+            store_namespace = getattr(config, "namespace", None) if config is not None else None
+            if is_store_instance:
+                row["namespace"] = store_namespace or "global"
+            else:
+                row["namespace"] = (
+                    store_namespace if store_namespace and store_namespace != "global" else machine_namespace
+                )
+        stores[store_name] = row
+    model = getattr(machine, "model", None)
+    summary: Dict[str, Any] = {
+        "name": getattr(machine, "name", None),
+        "namespace": machine_namespace,
+        "stores": stores,
+        "model_id": getattr(model, "id", None) if model is not None else None,
+        "db": getattr(machine, "db", None) is not None,
+        "knowledge": getattr(machine, "knowledge", None) is not None,
+    }
+    custom_stores = getattr(machine, "custom_stores", None)
+    if custom_stores:
+        summary["custom_stores"] = sorted(custom_stores)
+    return summary

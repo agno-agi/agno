@@ -38,6 +38,7 @@ StudioErrorCode = Literal[
     "knowledge_not_found",
     "schema_not_found",
     "memory_manager_not_found",
+    "learning_not_found",
     "ambiguous_reference",
     "schedule_not_found",
     "schedule_conflict",
