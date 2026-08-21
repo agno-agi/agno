@@ -709,11 +709,11 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """Resolve run-level params: call-site > self.<field> > None.
+        """Resolve run-level params with precedence: workflow < session < call-site.
 
         ``session_metadata`` is the session-stored metadata read by the dispatch
-        function; it sits between call-site values and workflow defaults in the
-        metadata merge (call-site < session < self).
+        function; it sits between workflow defaults and call-site values in the
+        metadata merge (workflow < session < call-site).
 
         Returns a dict of resolved values ready to pass to RunContext().
         """
@@ -731,13 +731,12 @@ class Workflow:
         elif self.dependencies is not None:
             resolved_dependencies = self.dependencies.copy()
 
-        # metadata: layered merge, self wins (call-site < session < self).
-        # Each layer is deep-copied before it is merged, so no nested dict in the
-        # result aliases a source dict — in particular self.metadata, whose nested
-        # dicts must never be mutated by an in-run write to run_context.metadata
-        # (merge_dictionaries recurses in place).
+        # metadata: layered merge with precedence workflow < session < call-site.
+        # Later layers win, so order is: self.metadata, session_metadata, metadata.
+        # Each layer is deep-copied before merge so no nested dict in the result
+        # aliases a source dict — protecting self.metadata from in-run writes.
         resolved_metadata: Optional[Dict[str, Any]] = None
-        for layer in (metadata, session_metadata, self.metadata):
+        for layer in (self.metadata, session_metadata, metadata):
             if layer is not None:
                 if resolved_metadata is None:
                     resolved_metadata = {}
@@ -1975,17 +1974,22 @@ class Workflow:
     def _update_metadata(self, session: WorkflowSession):
         """Merge the workflow's metadata into the session's metadata.
 
-        Workflow values win on conflict, matching _resolve_run_params
-        (session < self). The workflow layer is deep-copied so the session record
-        never aliases the shared Workflow instance's nested dicts. Only the
-        session is updated; the shared Workflow instance is never mutated.
+        Session values win on conflict (workflow < session), matching
+        _resolve_run_params precedence. The workflow layer is deep-copied
+        so the session record never aliases the shared Workflow instance's
+        nested dicts. Only the session is updated; the shared Workflow
+        instance is never mutated.
         """
         from copy import deepcopy
 
         from agno.utils.merge_dict import merge_dictionaries
 
-        if session.metadata is not None and self.metadata is not None:
-            merge_dictionaries(session.metadata, deepcopy(self.metadata))
+        if self.metadata is not None:
+            # Start with workflow defaults, then overlay session (session wins)
+            merged = deepcopy(self.metadata)
+            if session.metadata:
+                merge_dictionaries(merged, session.metadata)
+            session.metadata = merged
 
     def _load_session_state(self, session: WorkflowSession, session_state: Dict[str, Any]):
         """Load and return the stored session_state from the database, optionally merging it with the given one"""
