@@ -59,6 +59,7 @@ class MigrationManager:
             "components": "components_table_name",
             "schedules": "schedules_table_name",
             "schedule_runs": "schedule_runs_table_name",
+            "learnings": "learnings_table_name",
         }
 
         # Select tables to migrate
@@ -169,6 +170,7 @@ class MigrationManager:
             "components": "components_table_name",
             "schedules": "schedules_table_name",
             "schedule_runs": "schedule_runs_table_name",
+            "learnings": "learnings_table_name",
         }
 
         # Select tables to migrate
