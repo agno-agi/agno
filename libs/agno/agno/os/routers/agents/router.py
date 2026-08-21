@@ -61,6 +61,7 @@ from agno.os.utils import (
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
+    parse_gateway_tools,
     process_audio,
     process_document,
     process_image,
@@ -611,8 +612,17 @@ def get_agent_router(
             None,
             description="JSON object with factory-specific parameters for dynamic agent construction",
         ),
+        model: Optional[str] = Form(
+            None,
+            description="Override the agent's model for this run, as '<provider>:<model_id>' (e.g. 'agno:openai/gpt-5.4'). If omitted, the model defined in code is used.",
+        ),
+        gateway_tools: Optional[str] = Form(
+            None,
+            description="JSON array of Agno Gateway tool names to add for this run.",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+        parsed_gateway_tools = parse_gateway_tools(gateway_tools)
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
@@ -653,6 +663,11 @@ def get_agent_router(
             user_id=user_id,
             session_id=session_id,
             factory_input=factory_input,
+            # Per-run Agno credential for gateway models and hosted tools. Read from a header
+            # so it stays out of form data, logged kwargs, and persisted configuration.
+            agno_api_key=request.headers.get("X-Agno-Api-Key"),
+            model_override=model,
+            gateway_tools=parsed_gateway_tools,
         )
 
         if session_id is None or session_id == "":

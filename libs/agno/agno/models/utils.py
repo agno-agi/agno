@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 # `provider` attributes. The construction registry and the (provider, name) resolution indices
 # below are all derived from this table, so adding a provider means adding exactly one row here.
 _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
+    "agno": ("agno.models.agno", "Agno", "Agno", "agno"),
     "aimlapi": ("agno.models.aimlapi", "AIMLAPI", "AIMLAPI", "aimlapi"),
     "anthropic": ("agno.models.anthropic", "Claude", "Claude", "anthropic"),
     "aws-bedrock": ("agno.models.aws", "AwsBedrock", "AwsBedrock", "awsbedrock"),

@@ -57,6 +57,7 @@ from agno.os.utils import (
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    parse_gateway_tools,
     process_audio,
     process_document,
     process_image,
@@ -594,8 +595,17 @@ def get_team_router(
             None,
             description="JSON object with factory-specific parameters for dynamic team construction",
         ),
+        model: Optional[str] = Form(
+            None,
+            description="Override the team's model for this run, as '<provider>:<model_id>' (e.g. 'agno:openai/gpt-5.4'). If omitted, the model defined in code is used.",
+        ),
+        gateway_tools: Optional[str] = Form(
+            None,
+            description="JSON array of Agno Gateway tool names to add for this run.",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
+        parsed_gateway_tools = parse_gateway_tools(gateway_tools)
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
@@ -638,6 +648,11 @@ def get_team_router(
             user_id=user_id,
             session_id=session_id,
             factory_input=factory_input,
+            # Per-run Agno credential for gateway models and hosted tools. Read from a header
+            # so it stays out of form data, logged kwargs, and persisted configuration.
+            agno_api_key=request.headers.get("X-Agno-Api-Key"),
+            model_override=model,
+            gateway_tools=parsed_gateway_tools,
         )
 
         # Member HITL needs member runs embedded on the team run (member_responses).
