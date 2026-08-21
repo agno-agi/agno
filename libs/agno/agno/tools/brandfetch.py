@@ -45,12 +45,6 @@ class BrandfetchTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_search_by_identifier" in kwargs:
-            search_by_identifier = kwargs.pop("enable_search_by_identifier")
-        if "enable_search_by_brand" in kwargs:
-            search_by_brand = kwargs.pop("enable_search_by_brand")
-
         self.api_key = api_key or getenv("BRANDFETCH_API_KEY")
         self.client_id = client_id or getenv("BRANDFETCH_CLIENT_ID")
         self.base_url = base_url

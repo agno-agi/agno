@@ -39,6 +39,7 @@ class SeltzTools(Toolkit):
         profile: Legacy SDK search profile to use for ranking.
         show_results: Log search results for debugging.
         search: Enable search tool functionality. Defaults to True.
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -52,12 +53,9 @@ class SeltzTools(Toolkit):
         profile: Optional[str] = None,
         show_results: bool = False,
         search: bool = True,
+        all: bool = False,
         **kwargs: Any,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_search" in kwargs:
-            search = kwargs.pop("enable_search")
-
         default_max_results = self._resolve_max_results(max_results=max_results, max_documents=max_documents)
 
         self.api_key = api_key or getenv("SELTZ_API_KEY")
@@ -82,7 +80,7 @@ class SeltzTools(Toolkit):
             self.client = Seltz(**client_kwargs)
 
         tools: List[Callable] = []
-        if search:
+        if all or search:
             tools.append(self.search_seltz)
 
         super().__init__(name="seltz", tools=tools, **kwargs)

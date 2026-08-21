@@ -68,14 +68,6 @@ class OpenRouteServiceTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_directions" in kwargs:
-            directions = kwargs.pop("enable_directions")
-        if "enable_distance_matrix" in kwargs:
-            distance_matrix = kwargs.pop("enable_distance_matrix")
-        if "enable_geocoding" in kwargs:
-            geocoding = kwargs.pop("enable_geocoding")
-
         self.api_key = api_key or getenv("ORS_API_KEY")
         if not self.api_key:
             raise ValueError(

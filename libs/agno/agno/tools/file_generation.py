@@ -93,36 +93,31 @@ CODE_LANGUAGE_MAP: Dict[str, Tuple[str, str]] = {
 
 
 class FileGenerationTools(Toolkit):
+    # Agno 2.x kwarg names whose 3.0 name is not just the stripped enable_ prefix
+    _legacy_param_aliases = {
+        "enable_json_generation": "generate_json",
+        "enable_csv_generation": "generate_csv",
+        "enable_pdf_generation": "generate_pdf",
+        "enable_docx_generation": "generate_docx",
+        "enable_txt_generation": "generate_txt",
+        "enable_html_generation": "generate_html",
+        "enable_code_generation": "generate_code",
+    }
+
     def __init__(
         self,
-        generate_json: bool = False,
-        generate_csv: bool = False,
-        generate_pdf: bool = False,
-        generate_docx: bool = False,
-        generate_txt: bool = False,
-        generate_html: bool = False,
-        generate_code: bool = False,
+        generate_json: bool = True,
+        generate_csv: bool = True,
+        generate_pdf: bool = True,
+        generate_docx: bool = True,
+        generate_txt: bool = True,
+        generate_html: bool = True,
+        generate_code: bool = True,
         output_directory: Optional[str] = None,
         save_files: bool = False,
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X_generation -> generate_X
-        if "enable_json_generation" in kwargs:
-            generate_json = kwargs.pop("enable_json_generation")
-        if "enable_csv_generation" in kwargs:
-            generate_csv = kwargs.pop("enable_csv_generation")
-        if "enable_pdf_generation" in kwargs:
-            generate_pdf = kwargs.pop("enable_pdf_generation")
-        if "enable_docx_generation" in kwargs:
-            generate_docx = kwargs.pop("enable_docx_generation")
-        if "enable_txt_generation" in kwargs:
-            generate_txt = kwargs.pop("enable_txt_generation")
-        if "enable_html_generation" in kwargs:
-            generate_html = kwargs.pop("enable_html_generation")
-        if "enable_code_generation" in kwargs:
-            generate_code = kwargs.pop("enable_code_generation")
-
         self.generate_json = generate_json
         self.generate_csv = generate_csv
         self.generate_pdf = generate_pdf and PDF_AVAILABLE

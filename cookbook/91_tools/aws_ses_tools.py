@@ -78,7 +78,10 @@ agent = Agent(
     ],
     tools=[
         AWSSESTool(
-            sender_email=sender_email, sender_name=sender_name, region_name=region_name
+            sender_email=sender_email,
+            sender_name=sender_name,
+            region_name=region_name,
+            send_email=True,
         ),
         WebSearchTools(),
     ],

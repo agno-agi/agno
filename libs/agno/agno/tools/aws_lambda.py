@@ -18,12 +18,6 @@ class AWSLambdaTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_list_functions" in kwargs:
-            list_functions = kwargs.pop("enable_list_functions")
-        if "enable_invoke_function" in kwargs:
-            invoke_function = kwargs.pop("enable_invoke_function")
-
         self.client = boto3.client("lambda", region_name=region_name)
 
         tools: List[Callable] = []

@@ -31,14 +31,6 @@ class GroqTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_transcribe_audio" in kwargs:
-            transcribe_audio = kwargs.pop("enable_transcribe_audio")
-        if "enable_translate_audio" in kwargs:
-            translate_audio = kwargs.pop("enable_translate_audio")
-        if "enable_generate_speech" in kwargs:
-            generate_speech = kwargs.pop("enable_generate_speech")
-
         tools: List[Callable] = []
         if all or transcribe_audio:
             tools.append(self.groq_transcribe_audio)

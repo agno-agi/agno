@@ -21,6 +21,7 @@ class WebexTools(Toolkit):
         access_token: Webex access token. Falls back to WEBEX_ACCESS_TOKEN env var.
         send_message: Enable send_message tool. Defaults to False (externally visible).
         list_rooms: Enable list_rooms tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -28,14 +29,9 @@ class WebexTools(Toolkit):
         access_token: Optional[str] = None,
         send_message: bool = False,
         list_rooms: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_send_message" in kwargs:
-            send_message = kwargs.pop("enable_send_message")
-        if "enable_list_rooms" in kwargs:
-            list_rooms = kwargs.pop("enable_list_rooms")
-
         access_token = access_token or getenv("WEBEX_ACCESS_TOKEN")
         if access_token is None:
             raise ValueError("Webex access token is not set. Please set the WEBEX_ACCESS_TOKEN environment variable.")
@@ -43,9 +39,9 @@ class WebexTools(Toolkit):
         self.client = WebexAPI(access_token=access_token)
 
         tools: List[Callable] = []
-        if send_message:
+        if all or send_message:
             tools.append(self.send_webex_message)
-        if list_rooms:
+        if all or list_rooms:
             tools.append(self.list_webex_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)

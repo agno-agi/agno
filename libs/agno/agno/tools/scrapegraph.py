@@ -65,18 +65,6 @@ class ScrapeGraphTools(Toolkit):
             crawl_max_wait (int): Max seconds to wait for a crawl to complete. Defaults to 180. Raise this if your crawls legitimately take longer.
             all (bool): Enable all tools. Defaults to False.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_smartscraper" in kwargs:
-            smartscraper = kwargs.pop("enable_smartscraper")
-        if "enable_markdownify" in kwargs:
-            markdownify = kwargs.pop("enable_markdownify")
-        if "enable_searchscraper" in kwargs:
-            searchscraper = kwargs.pop("enable_searchscraper")
-        if "enable_crawl" in kwargs:
-            crawl = kwargs.pop("enable_crawl")
-        if "enable_scrape" in kwargs:
-            scrape = kwargs.pop("enable_scrape")
-
         self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
         if not self.api_key:
             log_error("SGAI_API_KEY not set. Please set the SGAI_API_KEY environment variable.")

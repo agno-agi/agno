@@ -45,14 +45,6 @@ class TwelveLabsTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_analyze_video" in kwargs:
-            analyze_video = kwargs.pop("enable_analyze_video")
-        if "enable_embed_text" in kwargs:
-            embed_text = kwargs.pop("enable_embed_text")
-        if "enable_embed_video" in kwargs:
-            embed_video = kwargs.pop("enable_embed_video")
-
         self.api_key = api_key or getenv("TWELVELABS_API_KEY")
         if not self.api_key:
             logger.warning("No TwelveLabs API key provided. Set TWELVELABS_API_KEY or pass api_key.")

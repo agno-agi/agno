@@ -31,18 +31,6 @@ class GitlabTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_list_projects" in kwargs:
-            list_projects = kwargs.pop("enable_list_projects")
-        if "enable_get_projects" in kwargs:
-            get_projects = kwargs.pop("enable_get_projects")
-        if "enable_list_merge_requests" in kwargs:
-            list_merge_requests = kwargs.pop("enable_list_merge_requests")
-        if "enable_get_merge_request" in kwargs:
-            get_merge_request = kwargs.pop("enable_get_merge_request")
-        if "enable_list_issues" in kwargs:
-            list_issues = kwargs.pop("enable_list_issues")
-
         self.access_token = access_token or getenv("GITLAB_ACCESS_TOKEN")
         self.base_url = (base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com").rstrip("/")
         self.timeout = timeout

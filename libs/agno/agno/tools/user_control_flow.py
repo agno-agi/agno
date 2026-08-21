@@ -11,6 +11,7 @@ class UserControlFlowTools(Toolkit):
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         get_user_input: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Toolkit that allows the agent to interrupt execution and request user input.
@@ -19,19 +20,16 @@ class UserControlFlowTools(Toolkit):
             instructions: Custom instructions for the toolkit. Defaults to built-in guidelines.
             add_instructions: Whether to add instructions to the agent's system prompt.
             get_user_input: Whether to enable the get_user_input tool.
+            all: Enable all tools. Defaults to False.
             **kwargs: Additional arguments passed to the Toolkit base class.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_get_user_input" in kwargs:
-            get_user_input = kwargs.pop("enable_get_user_input")
-
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
         else:
             self.instructions = instructions
 
         tools: List[Callable] = []
-        if get_user_input:
+        if all or get_user_input:
             tools.append(self.get_user_input)
 
         super().__init__(

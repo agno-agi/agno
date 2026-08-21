@@ -1,0 +1,1873 @@
+{
+ "agno.tools.adanos": {
+  "AdanosTools": [
+   "api_key",
+   "base_url",
+   "timeout",
+   "enable_stock_sentiment",
+   "enable_crypto_sentiment",
+   "enable_trending",
+   "enable_market_sentiment",
+   "all"
+  ]
+ },
+ "agno.tools.advisor": {
+  "AdvisorTools": [
+   "advisors",
+   "descriptions",
+   "system_message",
+   "instructions",
+   "add_instructions",
+   "ask_all_advisors"
+  ]
+ },
+ "agno.tools.agentos": {
+  "AgentOSTools": [
+   "db",
+   "metrics",
+   "traces",
+   "schedules",
+   "evals",
+   "components",
+   "approvals"
+  ]
+ },
+ "agno.tools.agentql": {
+  "AgentQLTools": [
+   "api_key",
+   "enable_scrape_website",
+   "enable_custom_scrape_website",
+   "all",
+   "agentql_query"
+  ]
+ },
+ "agno.tools.airflow": {
+  "AirflowTools": [
+   "dags_dir",
+   "enable_save_dag_file",
+   "enable_read_dag_file",
+   "all"
+  ]
+ },
+ "agno.tools.antigravity": {
+  "AntigravityTools": [
+   "api_key",
+   "base_url",
+   "agent",
+   "default_sources",
+   "persistent",
+   "timeout",
+   "instructions",
+   "add_instructions",
+   "agent_directory",
+   "register"
+  ]
+ },
+ "agno.tools.api": {
+  "CustomApiTools": [
+   "base_url",
+   "username",
+   "password",
+   "api_key",
+   "headers",
+   "verify_ssl",
+   "timeout",
+   "enable_make_request",
+   "all"
+  ]
+ },
+ "agno.tools.apify": {
+  "ApifyTools": [
+   "actors",
+   "apify_api_token"
+  ]
+ },
+ "agno.tools.arxiv": {
+  "ArxivTools": [
+   "enable_search_arxiv",
+   "enable_read_arxiv_papers",
+   "all",
+   "download_dir"
+  ]
+ },
+ "agno.tools.aws_lambda": {
+  "AWSLambdaTools": [
+   "region_name",
+   "enable_list_functions",
+   "enable_invoke_function",
+   "all"
+  ]
+ },
+ "agno.tools.aws_ses": {
+  "AWSSESTool": [
+   "sender_email",
+   "sender_name",
+   "region_name",
+   "enable_send_email",
+   "all"
+  ]
+ },
+ "agno.tools.baidusearch": {
+  "BaiduSearchTools": [
+   "fixed_max_results",
+   "fixed_language",
+   "headers",
+   "proxy",
+   "timeout",
+   "debug",
+   "enable_baidu_search",
+   "all"
+  ]
+ },
+ "agno.tools.bitbucket": {
+  "BitbucketTools": [
+   "server_url",
+   "username",
+   "password",
+   "token",
+   "workspace",
+   "repo_slug",
+   "api_version",
+   "timeout"
+  ]
+ },
+ "agno.tools.brandfetch": {
+  "BrandfetchTools": [
+   "api_key",
+   "client_id",
+   "base_url",
+   "timeout",
+   "enable_search_by_identifier",
+   "enable_search_by_brand",
+   "all"
+  ]
+ },
+ "agno.tools.bravesearch": {
+  "BraveSearchTools": [
+   "api_key",
+   "fixed_max_results",
+   "fixed_language",
+   "enable_brave_search",
+   "all"
+  ]
+ },
+ "agno.tools.brightdata": {
+  "BrightDataTools": [
+   "api_key",
+   "enable_scrape_markdown",
+   "enable_screenshot",
+   "enable_search_engine",
+   "enable_web_data_feed",
+   "all",
+   "serp_zone",
+   "web_unlocker_zone",
+   "verbose",
+   "timeout"
+  ]
+ },
+ "agno.tools.browserbase": {
+  "BrowserbaseTools": [
+   "api_key",
+   "project_id",
+   "base_url",
+   "enable_navigate_to",
+   "enable_screenshot",
+   "enable_get_page_content",
+   "enable_close_session",
+   "all",
+   "parse_html",
+   "max_content_length"
+  ]
+ },
+ "agno.tools.calcom": {
+  "CalComTools": [
+   "api_key",
+   "event_type_id",
+   "user_timezone",
+   "timeout",
+   "enable_get_available_slots",
+   "enable_create_booking",
+   "enable_get_upcoming_bookings",
+   "enable_reschedule_booking",
+   "enable_cancel_booking",
+   "all"
+  ]
+ },
+ "agno.tools.cartesia": {
+  "CartesiaTools": [
+   "api_key",
+   "model_id",
+   "default_voice_id",
+   "enable_text_to_speech",
+   "enable_list_voices",
+   "enable_localize_voice",
+   "all"
+  ]
+ },
+ "agno.tools.clickup": {
+  "ClickUpTools": [
+   "api_key",
+   "master_space_id",
+   "timeout"
+  ]
+ },
+ "agno.tools.coding": {
+  "CodingTools": [
+   "base_dir",
+   "restrict_to_base_dir",
+   "max_lines",
+   "max_bytes",
+   "shell_timeout",
+   "enable_read_file",
+   "enable_edit_file",
+   "enable_write_file",
+   "enable_run_shell",
+   "enable_grep",
+   "enable_find",
+   "enable_ls",
+   "instructions",
+   "add_instructions",
+   "all",
+   "allowed_commands"
+  ]
+ },
+ "agno.tools.confluence": {
+  "ConfluenceTools": [
+   "username",
+   "password",
+   "url",
+   "api_key",
+   "verify_ssl"
+  ]
+ },
+ "agno.tools.crawl4ai": {
+  "Crawl4aiTools": [
+   "max_length",
+   "timeout",
+   "use_pruning",
+   "pruning_threshold",
+   "bm25_threshold",
+   "headless",
+   "wait_until",
+   "proxy_config",
+   "enable_crawl",
+   "all"
+  ]
+ },
+ "agno.tools.csv_toolkit": {
+  "CsvTools": [
+   "csvs",
+   "row_limit",
+   "duckdb_connection",
+   "duckdb_kwargs",
+   "enable_read_csv_file",
+   "enable_list_csv_files",
+   "enable_get_columns",
+   "enable_query_csv_file",
+   "all"
+  ]
+ },
+ "agno.tools.daytona": {
+  "DaytonaTools": [
+   "api_key",
+   "api_url",
+   "sandbox_id",
+   "sandbox_language",
+   "sandbox_target",
+   "sandbox_os",
+   "auto_stop_interval",
+   "sandbox_os_user",
+   "sandbox_env_vars",
+   "sandbox_labels",
+   "sandbox_public",
+   "organization_id",
+   "timeout",
+   "auto_create_sandbox",
+   "verify_ssl",
+   "persistent",
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.desi_vocal": {
+  "DesiVocalTools": [
+   "api_key",
+   "voice_id",
+   "enable_get_voices",
+   "enable_text_to_speech",
+   "all",
+   "timeout"
+  ]
+ },
+ "agno.tools.discord": {
+  "DiscordTools": [
+   "bot_token",
+   "enable_send_message",
+   "enable_get_channel_messages",
+   "enable_get_channel_info",
+   "enable_list_channels",
+   "enable_delete_message",
+   "all"
+  ]
+ },
+ "agno.tools.docling": {
+  "DoclingTools": [
+   "converter",
+   "max_chars",
+   "allowed_input_formats",
+   "format_options",
+   "pdf_pipeline_options",
+   "pdf_enable_ocr",
+   "pdf_ocr_engine",
+   "pdf_ocr_lang",
+   "pdf_force_full_page_ocr",
+   "pdf_enable_table_structure",
+   "pdf_enable_picture_description",
+   "pdf_enable_picture_classification",
+   "pdf_document_timeout",
+   "pdf_enable_remote_services",
+   "enable_convert_to_markdown",
+   "enable_convert_to_text",
+   "enable_convert_to_html",
+   "enable_convert_to_html_split_page",
+   "enable_convert_to_json",
+   "enable_convert_to_yaml",
+   "enable_convert_to_doctags",
+   "enable_convert_to_vtt",
+   "enable_convert_string_content",
+   "enable_list_supported_parsers",
+   "all"
+  ]
+ },
+ "agno.tools.duckdb": {
+  "DuckDbTools": [
+   "db_path",
+   "connection",
+   "init_commands",
+   "read_only",
+   "config"
+  ]
+ },
+ "agno.tools.e2b": {
+  "E2BTools": [
+   "api_key",
+   "timeout",
+   "sandbox_options"
+  ]
+ },
+ "agno.tools.eleven_labs": {
+  "ElevenLabsTools": [
+   "voice_id",
+   "api_key",
+   "target_directory",
+   "model_id",
+   "output_format",
+   "enable_get_voices",
+   "enable_generate_sound_effect",
+   "enable_text_to_speech",
+   "all"
+  ]
+ },
+ "agno.tools.email": {
+  "EmailTools": [
+   "receiver_email",
+   "sender_name",
+   "sender_email",
+   "sender_passkey",
+   "enable_email_user",
+   "all"
+  ]
+ },
+ "agno.tools.evm": {
+  "EvmTools": [
+   "private_key",
+   "rpc_url",
+   "enable_send_transaction",
+   "all"
+  ]
+ },
+ "agno.tools.exa": {
+  "ExaTools": [
+   "enable_search",
+   "enable_get_contents",
+   "enable_find_similar",
+   "enable_answer",
+   "enable_research",
+   "all",
+   "text",
+   "text_length_limit",
+   "summary",
+   "api_key",
+   "num_results",
+   "livecrawl",
+   "start_crawl_date",
+   "end_crawl_date",
+   "start_published_date",
+   "end_published_date",
+   "type",
+   "category",
+   "include_domains",
+   "exclude_domains",
+   "show_results",
+   "model",
+   "timeout",
+   "research_model"
+  ]
+ },
+ "agno.tools.fal": {
+  "FalTools": [
+   "api_key",
+   "model",
+   "enable_generate_media",
+   "enable_image_to_image",
+   "all"
+  ]
+ },
+ "agno.tools.file": {
+  "FileTools": [
+   "base_dir",
+   "enable_save_file",
+   "enable_read_file",
+   "enable_delete_file",
+   "enable_list_files",
+   "enable_search_files",
+   "enable_read_file_chunk",
+   "enable_replace_file_chunk",
+   "enable_search_content",
+   "expose_base_directory",
+   "max_file_length",
+   "max_file_lines",
+   "line_separator",
+   "exclude_patterns",
+   "all"
+  ]
+ },
+ "agno.tools.file_generation": {
+  "FileGenerationTools": [
+   "enable_json_generation",
+   "enable_csv_generation",
+   "enable_pdf_generation",
+   "enable_docx_generation",
+   "enable_txt_generation",
+   "enable_html_generation",
+   "enable_code_generation",
+   "output_directory",
+   "save_files",
+   "all"
+  ]
+ },
+ "agno.tools.financial_datasets": {
+  "FinancialDatasetsTools": [
+   "api_key",
+   "timeout"
+  ]
+ },
+ "agno.tools.firecrawl": {
+  "FirecrawlTools": [
+   "api_key",
+   "enable_scrape",
+   "enable_crawl",
+   "enable_mapping",
+   "enable_search",
+   "all",
+   "formats",
+   "limit",
+   "poll_interval",
+   "search_params",
+   "api_url"
+  ]
+ },
+ "agno.tools.giphy": {
+  "GiphyTools": [
+   "api_key",
+   "limit",
+   "enable_search_gifs",
+   "all"
+  ]
+ },
+ "agno.tools.github": {
+  "GithubTools": [
+   "access_token",
+   "base_url"
+  ]
+ },
+ "agno.tools.gitlab": {
+  "GitlabTools": [
+   "access_token",
+   "base_url",
+   "timeout",
+   "enable_list_projects",
+   "enable_get_projects",
+   "enable_list_merge_requests",
+   "enable_get_merge_request",
+   "enable_list_issues"
+  ]
+ },
+ "agno.tools.google.auth.toolkit": {
+  "GoogleAuth": [
+   "client_id",
+   "redirect_uri"
+  ]
+ },
+ "agno.tools.google.base": {
+  "GoogleToolkit": [
+   "scopes",
+   "creds",
+   "token_path",
+   "credentials_path",
+   "auth",
+   "service_account_path",
+   "delegated_user",
+   "oauth_port",
+   "login_hint"
+  ]
+ },
+ "agno.tools.google.bigquery": {
+  "GoogleBigQueryTools": [
+   "dataset",
+   "project",
+   "location",
+   "credentials",
+   "list_tables",
+   "describe_table",
+   "run_sql_query",
+   "enable_list_tables",
+   "enable_describe_table",
+   "enable_run_sql_query",
+   "all"
+  ]
+ },
+ "agno.tools.google.calendar": {
+  "GoogleCalendarTools": [
+   "creds",
+   "credentials_path",
+   "token_path",
+   "service_account_path",
+   "delegated_user",
+   "scopes",
+   "oauth_port",
+   "login_hint",
+   "calendar_id",
+   "max_results",
+   "expand_recurring",
+   "allow_update",
+   "list_events",
+   "get_event",
+   "fetch_all_events",
+   "find_available_slots",
+   "list_calendars",
+   "check_availability",
+   "get_event_attendees",
+   "search_events",
+   "create_event",
+   "update_event",
+   "delete_event",
+   "quick_add_event",
+   "move_event",
+   "respond_to_event",
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.google.drive": {
+  "GoogleDriveTools": [
+   "oauth_port",
+   "login_hint",
+   "creds",
+   "scopes",
+   "credentials_path",
+   "token_path",
+   "service_account_path",
+   "delegated_user",
+   "quota_project_id",
+   "list_files",
+   "search_files",
+   "read_file",
+   "upload_file",
+   "download_file",
+   "download_dir",
+   "include_trashed",
+   "max_read_size",
+   "corpora",
+   "supports_all_drives",
+   "include_items_from_all_drives",
+   "drive_id",
+   "max_results",
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.google.gmail": {
+  "GmailTools": [
+   "creds",
+   "credentials_path",
+   "token_path",
+   "service_account_path",
+   "delegated_user",
+   "scopes",
+   "oauth_port",
+   "login_hint",
+   "include_html",
+   "max_body_length",
+   "attachment_dir",
+   "max_results",
+   "get_latest_emails",
+   "get_emails_from_user",
+   "get_unread_emails",
+   "get_starred_emails",
+   "get_emails_by_context",
+   "get_emails_by_date",
+   "get_emails_by_thread",
+   "search_emails",
+   "mark_email_as_read",
+   "mark_email_as_unread",
+   "star_email",
+   "unstar_email",
+   "archive_email",
+   "create_draft_email",
+   "send_email",
+   "send_email_reply",
+   "list_custom_labels",
+   "apply_label",
+   "remove_label",
+   "delete_custom_label",
+   "get_message",
+   "get_thread",
+   "search_threads",
+   "modify_thread_labels",
+   "trash_thread",
+   "get_draft",
+   "list_drafts",
+   "send_draft",
+   "update_draft",
+   "list_labels",
+   "modify_message_labels",
+   "trash_message",
+   "download_attachment",
+   "max_batch_size",
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.google.maps": {
+  "GoogleMapTools": [
+   "key",
+   "search_places",
+   "get_directions",
+   "validate_address",
+   "geocode_address",
+   "reverse_geocode",
+   "get_distance_matrix",
+   "get_elevation",
+   "get_timezone"
+  ]
+ },
+ "agno.tools.google.sheets": {
+  "GoogleSheetsTools": [
+   "scopes",
+   "spreadsheet_id",
+   "spreadsheet_range",
+   "creds",
+   "credentials_path",
+   "token_path",
+   "service_account_path",
+   "oauth_port",
+   "read_sheet",
+   "create_sheet",
+   "update_sheet",
+   "create_duplicate_sheet",
+   "enable_read_sheet",
+   "enable_create_sheet",
+   "enable_update_sheet",
+   "enable_create_duplicate_sheet",
+   "all"
+  ]
+ },
+ "agno.tools.google.slides": {
+  "GoogleSlidesTools": [
+   "scopes",
+   "creds",
+   "credentials_path",
+   "token_path",
+   "service_account_path",
+   "delegated_user",
+   "oauth_port",
+   "login_hint",
+   "create_presentation",
+   "get_presentation",
+   "list_presentations",
+   "get_presentation_metadata",
+   "get_page",
+   "get_slide_text",
+   "read_all_text",
+   "get_slide_thumbnail",
+   "add_slide",
+   "add_text_box",
+   "add_table",
+   "set_background_image",
+   "duplicate_slide",
+   "move_slides",
+   "insert_youtube_video",
+   "insert_drive_video",
+   "delete_presentation",
+   "delete_slide",
+   "all",
+   "max_results",
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.hackernews": {
+  "HackerNewsTools": [
+   "enable_get_top_stories",
+   "enable_get_user_details",
+   "all",
+   "timeout"
+  ]
+ },
+ "agno.tools.jina": {
+  "JinaReaderTools": [
+   "api_key",
+   "base_url",
+   "search_url",
+   "max_content_length",
+   "timeout",
+   "search_query_content",
+   "enable_read_url",
+   "enable_search_query",
+   "all"
+  ]
+ },
+ "agno.tools.jira": {
+  "JiraTools": [
+   "server_url",
+   "username",
+   "password",
+   "token",
+   "enable_get_issue",
+   "enable_create_issue",
+   "enable_search_issues",
+   "enable_add_comment",
+   "enable_add_worklog",
+   "all"
+  ]
+ },
+ "agno.tools.knowledge": {
+  "KnowledgeTools": [
+   "knowledge",
+   "enable_think",
+   "enable_search",
+   "enable_analyze",
+   "instructions",
+   "add_instructions",
+   "add_few_shot",
+   "few_shot_examples",
+   "all"
+  ]
+ },
+ "agno.tools.linear": {
+  "LinearTools": [
+   "api_key"
+  ]
+ },
+ "agno.tools.linkup": {
+  "LinkupTools": [
+   "api_key",
+   "depth",
+   "output_type",
+   "enable_web_search_with_linkup",
+   "all"
+  ]
+ },
+ "agno.tools.llms_txt": {
+  "LLMsTxtTools": [
+   "knowledge",
+   "max_urls",
+   "timeout",
+   "skip_optional",
+   "allowed_hosts"
+  ]
+ },
+ "agno.tools.lumalab": {
+  "LumaLabTools": [
+   "api_key",
+   "wait_for_completion",
+   "poll_interval",
+   "max_wait_time",
+   "enable_generate_video",
+   "enable_image_to_video",
+   "all"
+  ]
+ },
+ "agno.tools.mcp.mcp": {
+  "MCPTools": [
+   "command",
+   "name",
+   "url",
+   "env",
+   "transport",
+   "server_params",
+   "session",
+   "timeout_seconds",
+   "client",
+   "include_tools",
+   "exclude_tools",
+   "refresh_connection",
+   "tool_name_prefix",
+   "header_provider"
+  ]
+ },
+ "agno.tools.mcp_toolbox": {
+  "MCPToolbox": [
+   "url",
+   "toolsets",
+   "tool_name",
+   "headers",
+   "transport",
+   "append_mcp_to_url"
+  ]
+ },
+ "agno.tools.mem0": {
+  "Mem0Tools": [
+   "config",
+   "api_key",
+   "user_id",
+   "org_id",
+   "project_id",
+   "infer",
+   "enable_add_memory",
+   "enable_search_memory",
+   "enable_get_all_memories",
+   "enable_delete_all_memories",
+   "all"
+  ]
+ },
+ "agno.tools.memory": {
+  "MemoryTools": [
+   "db",
+   "enable_get_memories",
+   "enable_add_memory",
+   "enable_update_memory",
+   "enable_delete_memory",
+   "enable_analyze",
+   "enable_think",
+   "instructions",
+   "add_instructions",
+   "add_few_shot",
+   "few_shot_examples",
+   "all"
+  ]
+ },
+ "agno.tools.mlx_transcribe": {
+  "MLXTranscribeTools": [
+   "base_dir",
+   "enable_read_files_in_base_dir",
+   "restrict_to_base_dir",
+   "path_or_hf_repo",
+   "verbose",
+   "temperature",
+   "compression_ratio_threshold",
+   "logprob_threshold",
+   "no_speech_threshold",
+   "condition_on_previous_text",
+   "initial_prompt",
+   "word_timestamps",
+   "prepend_punctuations",
+   "append_punctuations",
+   "clip_timestamps",
+   "hallucination_silence_threshold",
+   "decode_options",
+   "all"
+  ]
+ },
+ "agno.tools.models.azure_openai": {
+  "AzureOpenAITools": [
+   "api_key",
+   "azure_endpoint",
+   "api_version",
+   "image_deployment",
+   "image_model",
+   "image_quality",
+   "enable_generate_image",
+   "all"
+  ]
+ },
+ "agno.tools.models.gemini": {
+  "GeminiTools": [
+   "api_key",
+   "vertexai",
+   "project_id",
+   "location",
+   "image_generation_model",
+   "video_generation_model",
+   "enable_generate_image",
+   "enable_generate_video",
+   "all"
+  ]
+ },
+ "agno.tools.models.groq": {
+  "GroqTools": [
+   "api_key",
+   "transcription_model",
+   "translation_model",
+   "tts_model",
+   "tts_voice",
+   "enable_transcribe_audio",
+   "enable_translate_audio",
+   "enable_generate_speech",
+   "all"
+  ]
+ },
+ "agno.tools.models.morph": {
+  "MorphTools": [
+   "api_key",
+   "base_url",
+   "instructions",
+   "add_instructions",
+   "model"
+  ]
+ },
+ "agno.tools.models_labs": {
+  "ModelsLabTools": [
+   "api_key",
+   "wait_for_completion",
+   "add_to_eta",
+   "max_wait_time",
+   "file_type",
+   "model_id",
+   "width",
+   "height"
+  ]
+ },
+ "agno.tools.moviepy_video": {
+  "MoviePyVideoTools": [
+   "enable_process_video",
+   "enable_generate_captions",
+   "enable_embed_captions",
+   "all"
+  ]
+ },
+ "agno.tools.nano_banana": {
+  "NanoBananaTools": [
+   "model",
+   "aspect_ratio",
+   "api_key",
+   "enable_create_image"
+  ]
+ },
+ "agno.tools.neo4j": {
+  "Neo4jTools": [
+   "uri",
+   "user",
+   "password",
+   "database",
+   "enable_list_labels",
+   "enable_list_relationships",
+   "enable_get_schema",
+   "enable_run_cypher",
+   "all"
+  ]
+ },
+ "agno.tools.newspaper": {
+  "NewspaperTools": [
+   "enable_get_article_text",
+   "all"
+  ]
+ },
+ "agno.tools.newspaper4k": {
+  "Newspaper4kTools": [
+   "include_summary",
+   "article_length",
+   "enable_read_article",
+   "all"
+  ]
+ },
+ "agno.tools.notion": {
+  "NotionTools": [
+   "api_key",
+   "database_id",
+   "enable_create_page",
+   "enable_update_page",
+   "enable_search_pages",
+   "all"
+  ]
+ },
+ "agno.tools.models.openai": {
+  "OpenAITools": [
+   "api_key",
+   "enable_transcription",
+   "enable_image_generation",
+   "enable_speech_generation",
+   "all",
+   "transcription_model",
+   "text_to_speech_voice",
+   "text_to_speech_model",
+   "text_to_speech_format",
+   "image_model",
+   "image_quality",
+   "image_size",
+   "image_style"
+  ]
+ },
+ "agno.tools.openbb": {
+  "OpenBBTools": [
+   "obb",
+   "openbb_pat",
+   "provider",
+   "enable_get_stock_price",
+   "enable_search_company_symbol",
+   "enable_get_company_news",
+   "enable_get_company_profile",
+   "enable_get_price_targets",
+   "all"
+  ]
+ },
+ "agno.tools.opencv": {
+  "OpenCVTools": [
+   "show_preview",
+   "enable_capture_image",
+   "enable_capture_video",
+   "all"
+  ]
+ },
+ "agno.tools.openrouteservice": {
+  "OpenRouteServiceTools": [
+   "api_key",
+   "base_url",
+   "timeout",
+   "enable_directions",
+   "enable_distance_matrix",
+   "enable_geocoding",
+   "all"
+  ]
+ },
+ "agno.tools.openweather": {
+  "OpenWeatherTools": [
+   "api_key",
+   "units",
+   "enable_current_weather",
+   "enable_forecast",
+   "enable_air_pollution",
+   "enable_geocoding",
+   "all",
+   "timeout"
+  ]
+ },
+ "agno.tools.oxylabs": {
+  "OxylabsTools": [
+   "username",
+   "password",
+   "markdown"
+  ]
+ },
+ "agno.tools.pandas": {
+  "PandasTools": [
+   "enable_create_pandas_dataframe",
+   "enable_run_dataframe_operation",
+   "all"
+  ]
+ },
+ "agno.tools.parallel": {
+  "ParallelTools": [
+   "api_key",
+   "enable_search",
+   "enable_extract",
+   "enable_task",
+   "enable_monitor",
+   "all",
+   "max_results",
+   "max_chars_per_result",
+   "mode",
+   "include_domains",
+   "exclude_domains",
+   "max_age_seconds",
+   "disable_cache_fallback",
+   "default_processor",
+   "default_monitor_processor",
+   "default_monitor_frequency",
+   "default_timeout",
+   "default_output_schema"
+  ]
+ },
+ "agno.tools.perplexity": {
+  "PerplexitySearch": [
+   "api_key",
+   "max_results",
+   "max_tokens_per_page",
+   "search_recency_filter",
+   "search_domain_filter",
+   "search_language_filter",
+   "show_results"
+  ]
+ },
+ "agno.tools.plivo": {
+  "PlivoTools": [
+   "auth_id",
+   "auth_token",
+   "debug",
+   "enable_send_sms",
+   "enable_make_call",
+   "enable_get_call_details",
+   "enable_list_messages",
+   "enable_list_calls",
+   "enable_lookup_number",
+   "all"
+  ]
+ },
+ "agno.tools.postgres": {
+  "PostgresTools": [
+   "connection",
+   "db_name",
+   "user",
+   "password",
+   "host",
+   "port",
+   "table_schema"
+  ]
+ },
+ "agno.tools.pubmed": {
+  "PubmedTools": [
+   "email",
+   "max_results",
+   "results_expanded",
+   "enable_search_pubmed",
+   "all"
+  ]
+ },
+ "agno.tools.python": {
+  "PythonTools": [
+   "base_dir",
+   "safe_globals",
+   "safe_locals",
+   "restrict_to_base_dir"
+  ]
+ },
+ "agno.tools.reasoning": {
+  "ReasoningTools": [
+   "enable_think",
+   "enable_analyze",
+   "all",
+   "instructions",
+   "add_instructions",
+   "add_few_shot",
+   "few_shot_examples"
+  ]
+ },
+ "agno.tools.reddit": {
+  "RedditTools": [
+   "reddit_instance",
+   "client_id",
+   "client_secret",
+   "user_agent",
+   "username",
+   "password",
+   "allowed_subreddits"
+  ]
+ },
+ "agno.tools.redmine": {
+  "RedmineTools": [
+   "server_url",
+   "username",
+   "password",
+   "token",
+   "enable_get_issue",
+   "enable_create_issue",
+   "enable_update_issue",
+   "enable_search_issues",
+   "enable_add_comment",
+   "enable_log_time",
+   "enable_list_projects",
+   "enable_list_users",
+   "enable_list_project_members",
+   "enable_list_versions",
+   "all"
+  ]
+ },
+ "agno.tools.redshift": {
+  "RedshiftTools": [
+   "host",
+   "port",
+   "database",
+   "user",
+   "password",
+   "iam",
+   "cluster_identifier",
+   "region",
+   "db_user",
+   "access_key_id",
+   "secret_access_key",
+   "session_token",
+   "profile",
+   "ssl",
+   "table_schema"
+  ]
+ },
+ "agno.tools.replicate": {
+  "ReplicateTools": [
+   "api_key",
+   "model",
+   "enable_generate_media",
+   "all"
+  ]
+ },
+ "agno.tools.resend": {
+  "ResendTools": [
+   "api_key",
+   "from_email",
+   "enable_send_email",
+   "all"
+  ]
+ },
+ "agno.tools.salesforce": {
+  "SalesforceTools": [
+   "username",
+   "password",
+   "security_token",
+   "domain",
+   "instance_url",
+   "session_id",
+   "max_records",
+   "max_fields",
+   "enable_list_objects",
+   "enable_describe_object",
+   "enable_get_record",
+   "enable_query",
+   "enable_search",
+   "enable_create_record",
+   "enable_update_record",
+   "enable_delete_record",
+   "enable_get_report",
+   "all",
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.scavio": {
+  "ScavioTools": [
+   "api_key",
+   "enable_google",
+   "enable_amazon",
+   "enable_walmart",
+   "enable_youtube",
+   "enable_reddit",
+   "enable_tiktok",
+   "enable_instagram",
+   "all"
+  ]
+ },
+ "agno.tools.scheduler": {
+  "SchedulerTools": [
+   "db",
+   "default_endpoint",
+   "default_method",
+   "default_timezone",
+   "default_payload"
+  ]
+ },
+ "agno.tools.scrapegraph": {
+  "ScrapeGraphTools": [
+   "api_key",
+   "enable_smartscraper",
+   "enable_markdownify",
+   "enable_searchscraper",
+   "enable_crawl",
+   "enable_scrape",
+   "render_heavy_js",
+   "headers",
+   "crawl_poll_interval",
+   "crawl_max_wait",
+   "all"
+  ]
+ },
+ "agno.tools.searchapi": {
+  "SearchApiTools": [
+   "api_key",
+   "num_results",
+   "timeout",
+   "enable_search_google",
+   "enable_search_news",
+   "enable_search_images",
+   "enable_search_youtube",
+   "all"
+  ]
+ },
+ "agno.tools.searxng": {
+  "Searxng": [
+   "host",
+   "engines",
+   "fixed_max_results",
+   "timeout"
+  ]
+ },
+ "agno.tools.seltz": {
+  "SeltzTools": [
+   "api_key",
+   "endpoint",
+   "insecure",
+   "max_results",
+   "max_documents",
+   "context",
+   "profile",
+   "show_results",
+   "enable_search",
+   "all"
+  ]
+ },
+ "agno.tools.serpapi": {
+  "SerpApiTools": [
+   "api_key",
+   "enable_search_google",
+   "enable_search_youtube",
+   "all"
+  ]
+ },
+ "agno.tools.serper": {
+  "SerperTools": [
+   "api_key",
+   "location",
+   "language",
+   "num_results",
+   "date_range",
+   "enable_search",
+   "enable_search_news",
+   "enable_search_scholar",
+   "enable_scrape_webpage",
+   "all",
+   "timeout"
+  ]
+ },
+ "agno.tools.shell": {
+  "ShellTools": [
+   "base_dir",
+   "enable_run_shell_command",
+   "all"
+  ]
+ },
+ "agno.tools.shopify": {
+  "ShopifyTools": [
+   "shop_name",
+   "access_token",
+   "api_version",
+   "timeout"
+  ]
+ },
+ "agno.tools.slack": {
+  "SlackTools": [
+   "token",
+   "user_token",
+   "markdown",
+   "output_directory",
+   "save_downloads",
+   "enable_send_message",
+   "enable_send_message_thread",
+   "enable_list_channels",
+   "enable_get_channel_history",
+   "enable_upload_file",
+   "enable_download_file",
+   "enable_search_messages",
+   "enable_search_workspace",
+   "enable_get_thread",
+   "enable_list_users",
+   "enable_get_user_info",
+   "enable_get_channel_info",
+   "all",
+   "ssl",
+   "max_file_size",
+   "thread_message_limit"
+  ]
+ },
+ "agno.tools.sleep": {
+  "SleepTools": [
+   "enable_sleep",
+   "all"
+  ]
+ },
+ "agno.tools.smallest": {
+  "SmallestTools": [
+   "voice_id",
+   "api_key",
+   "model",
+   "language",
+   "sample_rate",
+   "speed",
+   "output_format",
+   "target_directory",
+   "base_url",
+   "enable_get_voices",
+   "enable_text_to_speech",
+   "all",
+   "timeout"
+  ]
+ },
+ "agno.tools.sofya": {
+  "SofyaTools": [
+   "api_key",
+   "base_url",
+   "enable_search",
+   "enable_extract",
+   "enable_research",
+   "all",
+   "max_results",
+   "search_depth",
+   "include_answer",
+   "format",
+   "timeout"
+  ]
+ },
+ "agno.tools.spider": {
+  "SpiderTools": [
+   "max_results",
+   "url",
+   "optional_params",
+   "enable_search",
+   "enable_scrape",
+   "enable_crawl",
+   "all"
+  ]
+ },
+ "agno.tools.spotify": {
+  "SpotifyTools": [
+   "access_token",
+   "default_market",
+   "timeout"
+  ]
+ },
+ "agno.tools.sql": {
+  "SQLTools": [
+   "db_url",
+   "db_engine",
+   "user",
+   "password",
+   "host",
+   "port",
+   "schema",
+   "dialect",
+   "tables",
+   "enable_list_tables",
+   "enable_describe_table",
+   "enable_run_sql_query",
+   "all"
+  ]
+ },
+ "agno.tools.superserve": {
+  "SuperserveTools": [
+   "api_key",
+   "base_url",
+   "sandbox_id",
+   "template",
+   "timeout",
+   "auto_delete_seconds",
+   "command_timeout",
+   "output_directory",
+   "metadata",
+   "env_vars",
+   "secrets",
+   "persistent",
+   "enable_run_python_code",
+   "enable_run_command",
+   "enable_create_file",
+   "enable_read_file",
+   "enable_list_files",
+   "enable_delete_file",
+   "enable_download_directory",
+   "enable_get_sandbox_info",
+   "enable_list_sandboxes",
+   "enable_shutdown_sandbox",
+   "enable_shutdown_sandbox_by_id",
+   "enable_get_preview_url",
+   "enable_pause_sandbox",
+   "enable_resume_sandbox",
+   "enable_attach_secret",
+   "enable_detach_secret",
+   "all",
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.tavily": {
+  "TavilyTools": [
+   "api_key",
+   "api_base_url",
+   "enable_search",
+   "enable_search_context",
+   "enable_extract",
+   "all",
+   "max_tokens",
+   "include_answer",
+   "search_depth",
+   "extract_depth",
+   "include_images",
+   "include_favicon",
+   "extract_timeout",
+   "extract_format",
+   "format",
+   "topic",
+   "time_range",
+   "start_date",
+   "end_date",
+   "days",
+   "include_domains",
+   "exclude_domains",
+   "country",
+   "auto_parameters",
+   "chunks_per_source",
+   "search_params"
+  ]
+ },
+ "agno.tools.telegram": {
+  "TelegramTools": [
+   "chat_id",
+   "token",
+   "output_directory",
+   "save_downloads",
+   "enable_send_message",
+   "enable_send_photo",
+   "enable_send_document",
+   "enable_send_video",
+   "enable_send_audio",
+   "enable_send_animation",
+   "enable_send_sticker",
+   "enable_edit_message",
+   "enable_delete_message",
+   "enable_react_with_emoji",
+   "enable_pin_message",
+   "enable_get_chat",
+   "enable_get_file",
+   "all"
+  ]
+ },
+ "agno.tools.todoist": {
+  "TodoistTools": [
+   "api_token"
+  ]
+ },
+ "agno.tools.toolkit": {
+  "Toolkit": [
+   "name",
+   "id",
+   "tools",
+   "async_tools",
+   "instructions",
+   "add_instructions",
+   "include_tools",
+   "exclude_tools",
+   "requires_confirmation_tools",
+   "external_execution_required_tools",
+   "stop_after_tool_call_tools",
+   "show_result_tools",
+   "cache_results",
+   "cache_ttl",
+   "cache_dir",
+   "timeout",
+   "auto_register"
+  ]
+ },
+ "agno.tools.trafilatura": {
+  "TrafilaturaTools": [
+   "output_format",
+   "include_comments",
+   "include_tables",
+   "include_images",
+   "include_formatting",
+   "include_links",
+   "with_metadata",
+   "favor_precision",
+   "favor_recall",
+   "target_language",
+   "deduplicate",
+   "max_tree_size",
+   "max_crawl_urls",
+   "max_known_urls",
+   "enable_extract_text",
+   "enable_extract_metadata_only",
+   "enable_html_to_text",
+   "enable_extract_batch",
+   "enable_crawl_website",
+   "all"
+  ]
+ },
+ "agno.tools.trello": {
+  "TrelloTools": [
+   "api_key",
+   "api_secret",
+   "token"
+  ]
+ },
+ "agno.tools.twelvelabs": {
+  "TwelveLabsTools": [
+   "api_key",
+   "analyze_model",
+   "embed_model",
+   "max_tokens",
+   "embed_poll_interval",
+   "embed_timeout",
+   "enable_analyze_video",
+   "enable_embed_text",
+   "enable_embed_video",
+   "all"
+  ]
+ },
+ "agno.tools.twilio": {
+  "TwilioTools": [
+   "account_sid",
+   "auth_token",
+   "api_key",
+   "api_secret",
+   "region",
+   "edge",
+   "debug",
+   "enable_send_sms",
+   "enable_get_call_details",
+   "enable_list_messages",
+   "all"
+  ]
+ },
+ "agno.tools.unsplash": {
+  "UnsplashTools": [
+   "access_key",
+   "enable_search_photos",
+   "enable_get_photo",
+   "enable_get_random_photo",
+   "enable_download_photo",
+   "all",
+   "timeout"
+  ]
+ },
+ "agno.tools.user_control_flow": {
+  "UserControlFlowTools": [
+   "instructions",
+   "add_instructions",
+   "enable_get_user_input",
+   "all"
+  ]
+ },
+ "agno.tools.user_feedback": {
+  "UserFeedbackTools": [
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.valyu": {
+  "ValyuTools": [
+   "api_key",
+   "enable_academic_search",
+   "enable_web_search",
+   "enable_paper_search",
+   "all",
+   "text_length",
+   "max_results",
+   "relevance_threshold",
+   "content_category",
+   "search_start_date",
+   "search_end_date",
+   "search_domains",
+   "sources",
+   "max_price",
+   "tool_call_mode"
+  ]
+ },
+ "agno.tools.visualization": {
+  "VisualizationTools": [
+   "output_dir",
+   "enable_create_bar_chart",
+   "enable_create_line_chart",
+   "enable_create_pie_chart",
+   "enable_create_scatter_plot",
+   "enable_create_histogram",
+   "all"
+  ]
+ },
+ "agno.tools.webbrowser": {
+  "WebBrowserTools": [
+   "enable_open_page",
+   "all"
+  ]
+ },
+ "agno.tools.webex": {
+  "WebexTools": [
+   "enable_send_message",
+   "enable_list_rooms",
+   "all",
+   "access_token"
+  ]
+ },
+ "agno.tools.websearch": {
+  "WebSearchTools": [
+   "enable_search",
+   "enable_news",
+   "backend",
+   "modifier",
+   "fixed_max_results",
+   "proxy",
+   "timeout",
+   "verify_ssl",
+   "timelimit",
+   "region"
+  ]
+ },
+ "agno.tools.website": {
+  "WebsiteTools": [
+   "knowledge"
+  ]
+ },
+ "agno.tools.webtools": {
+  "WebTools": [
+   "retries",
+   "enable_expand_url",
+   "all"
+  ]
+ },
+ "agno.tools.whatsapp": {
+  "WhatsAppTools": [
+   "access_token",
+   "phone_number_id",
+   "version",
+   "recipient_waid",
+   "enable_send_text_message",
+   "enable_send_template_message",
+   "enable_send_reply_buttons",
+   "enable_send_list_message",
+   "enable_send_image",
+   "enable_send_document",
+   "enable_send_location",
+   "enable_send_reaction",
+   "all",
+   "timeout"
+  ]
+ },
+ "agno.tools.wikipedia": {
+  "WikipediaTools": [
+   "knowledge",
+   "auto_suggest",
+   "all"
+  ]
+ },
+ "agno.tools.workflow": {
+  "WorkflowTools": [
+   "workflow",
+   "enable_run_workflow",
+   "enable_think",
+   "enable_analyze",
+   "all",
+   "instructions",
+   "add_instructions",
+   "add_few_shot",
+   "few_shot_examples",
+   "async_mode"
+  ]
+ },
+ "agno.tools.workspace": {
+  "Workspace": [
+   "root",
+   "allowed",
+   "confirm",
+   "require_read_before_write",
+   "max_file_lines",
+   "max_file_length",
+   "exclude_patterns"
+  ]
+ },
+ "agno.tools.x": {
+  "XTools": [
+   "bearer_token",
+   "consumer_key",
+   "consumer_secret",
+   "access_token",
+   "access_token_secret",
+   "include_post_metrics",
+   "wait_on_rate_limit"
+  ]
+ },
+ "agno.tools.yfinance": {
+  "YFinanceTools": [
+   "enable_stock_price",
+   "enable_company_info",
+   "enable_stock_fundamentals",
+   "enable_income_statements",
+   "enable_key_financial_ratios",
+   "enable_analyst_recommendations",
+   "enable_company_news",
+   "enable_technical_indicators",
+   "enable_historical_prices",
+   "all",
+   "session"
+  ]
+ },
+ "agno.tools.youcom": {
+  "YouTools": [
+   "api_key",
+   "base_url",
+   "num_results",
+   "livecrawl",
+   "livecrawl_formats",
+   "text_length_limit",
+   "include_domains",
+   "exclude_domains",
+   "country",
+   "freshness",
+   "language",
+   "safesearch",
+   "offset",
+   "boost_domains",
+   "crawl_timeout",
+   "search_params",
+   "timeout",
+   "format",
+   "show_results"
+  ]
+ },
+ "agno.tools.youtube": {
+  "YouTubeTools": [
+   "enable_get_video_captions",
+   "enable_get_video_data",
+   "enable_get_video_timestamps",
+   "all",
+   "languages",
+   "proxies",
+   "timeout"
+  ]
+ },
+ "agno.tools.zendesk": {
+  "ZendeskTools": [
+   "username",
+   "password",
+   "company_name",
+   "enable_search_zendesk",
+   "all",
+   "timeout"
+  ]
+ },
+ "agno.tools.zep": {
+  "ZepTools": [
+   "session_id",
+   "user_id",
+   "api_key",
+   "ignore_assistant_messages",
+   "enable_add_zep_message",
+   "enable_get_zep_memory",
+   "enable_search_zep_memory",
+   "instructions",
+   "add_instructions",
+   "all"
+  ],
+  "ZepAsyncTools": [
+   "session_id",
+   "user_id",
+   "api_key",
+   "ignore_assistant_messages",
+   "add_zep_message",
+   "get_zep_memory",
+   "search_zep_memory",
+   "instructions",
+   "add_instructions"
+  ]
+ },
+ "agno.tools.zoom": {
+  "ZoomTools": [
+   "account_id",
+   "client_id",
+   "client_secret",
+   "timeout"
+  ]
+ }
+}

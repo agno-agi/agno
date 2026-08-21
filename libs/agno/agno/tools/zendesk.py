@@ -21,6 +21,7 @@ class ZendeskTools(Toolkit):
         password: Zendesk password. Falls back to ZENDESK_PASSWORD env var.
         company_name: Company subdomain. Falls back to ZENDESK_COMPANY_NAME env var.
         search_zendesk: Enable search_zendesk tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
         timeout: Request timeout in seconds. Defaults to 30.
     """
 
@@ -30,13 +31,10 @@ class ZendeskTools(Toolkit):
         password: Optional[str] = None,
         company_name: Optional[str] = None,
         search_zendesk: bool = True,
+        all: bool = False,
         timeout: int = 30,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_search_zendesk" in kwargs:
-            search_zendesk = kwargs.pop("enable_search_zendesk")
-
         self.username = username or getenv("ZENDESK_USERNAME")
         self.password = password or getenv("ZENDESK_PASSWORD")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
@@ -45,7 +43,7 @@ class ZendeskTools(Toolkit):
             log_error("Username, password, or company name not provided.")
 
         tools: List[Callable] = []
-        if search_zendesk:
+        if all or search_zendesk:
             tools.append(self.search_zendesk)
 
         super().__init__(name="zendesk_tools", tools=tools, timeout=timeout, **kwargs)

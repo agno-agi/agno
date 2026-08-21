@@ -10,15 +10,12 @@ class WebBrowserTools(Toolkit):
 
     Args:
         open_page: Enable open_page tool. Defaults to False (opens external browser).
+        all: Enable all tools. Defaults to False.
     """
 
-    def __init__(self, open_page: bool = False, **kwargs):
-        # Backwards compat: enable_X -> X
-        if "enable_open_page" in kwargs:
-            open_page = kwargs.pop("enable_open_page")
-
+    def __init__(self, open_page: bool = False, all: bool = False, **kwargs):
         tools: List[Callable] = []
-        if open_page:
+        if all or open_page:
             tools.append(self.open_page)
 
         super().__init__(name="webbrowser_tools", tools=tools, **kwargs)

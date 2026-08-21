@@ -45,6 +45,15 @@ class DoclingTools(Toolkit):
     active environment.
     """
 
+    # Agno 2.x kwarg names whose 3.0 name is not just the stripped enable_ prefix
+    _legacy_param_aliases = {
+        "pdf_enable_ocr": "pdf_ocr",
+        "pdf_enable_table_structure": "pdf_table_structure",
+        "pdf_enable_picture_description": "pdf_picture_description",
+        "pdf_enable_picture_classification": "pdf_picture_classification",
+        "pdf_enable_remote_services": "pdf_remote_services",
+    }
+
     def __init__(
         self,
         converter: Optional[DocumentConverter] = None,
@@ -74,28 +83,6 @@ class DoclingTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_convert_to_markdown" in kwargs:
-            convert_to_markdown = kwargs.pop("enable_convert_to_markdown")
-        if "enable_convert_to_text" in kwargs:
-            convert_to_text = kwargs.pop("enable_convert_to_text")
-        if "enable_convert_to_html" in kwargs:
-            convert_to_html = kwargs.pop("enable_convert_to_html")
-        if "enable_convert_to_html_split_page" in kwargs:
-            convert_to_html_split_page = kwargs.pop("enable_convert_to_html_split_page")
-        if "enable_convert_to_json" in kwargs:
-            convert_to_json = kwargs.pop("enable_convert_to_json")
-        if "enable_convert_to_yaml" in kwargs:
-            convert_to_yaml = kwargs.pop("enable_convert_to_yaml")
-        if "enable_convert_to_doctags" in kwargs:
-            convert_to_doctags = kwargs.pop("enable_convert_to_doctags")
-        if "enable_convert_to_vtt" in kwargs:
-            convert_to_vtt = kwargs.pop("enable_convert_to_vtt")
-        if "enable_convert_string_content" in kwargs:
-            convert_string_content = kwargs.pop("enable_convert_string_content")
-        if "enable_list_supported_parsers" in kwargs:
-            list_supported_parsers = kwargs.pop("enable_list_supported_parsers")
-
         self.converter: DocumentConverter = converter or self._build_converter(
             allowed_input_formats=allowed_input_formats,
             format_options=format_options,

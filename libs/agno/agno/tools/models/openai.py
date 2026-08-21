@@ -41,6 +41,13 @@ class OpenAITools(Toolkit):
         image_style: Style setting for image generation.
     """
 
+    # Agno 2.x kwarg names whose 3.0 name is not just the stripped enable_ prefix
+    _legacy_param_aliases = {
+        "enable_transcription": "transcribe_audio",
+        "enable_image_generation": "generate_image",
+        "enable_speech_generation": "generate_speech",
+    }
+
     def __init__(
         self,
         api_key: Optional[str] = None,

@@ -46,16 +46,6 @@ class FirecrawlTools(Toolkit):
         api_url: Optional[str] = "https://api.firecrawl.dev",
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_scrape" in kwargs:
-            scrape = kwargs.pop("enable_scrape")
-        if "enable_crawl" in kwargs:
-            crawl = kwargs.pop("enable_crawl")
-        if "enable_mapping" in kwargs:
-            mapping = kwargs.pop("enable_mapping")
-        if "enable_search" in kwargs:
-            search = kwargs.pop("enable_search")
-
         self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
         if not self.api_key:
             log_error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")
