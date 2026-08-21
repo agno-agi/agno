@@ -107,12 +107,17 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        mcp.add_tool(Tool.from_function(_inject_user_id(entrypoint), name=name, description=description))
+        # 1. Inject user_id (hidden from schema)
+        # 2. Wrap with progress (adds ctx: Context, auto-injected by FastMCP)
+        wrapped = _wrap_with_progress(_inject_user_id(entrypoint), tool_name=name or "tool")
+        mcp.add_tool(Tool.from_function(wrapped, name=name, description=description))
         return
 
     # Plain callable: name/description inferred from ``__name__``/docstring.
     if callable(tool):
-        mcp.add_tool(Tool.from_function(_inject_user_id(tool)))
+        name = getattr(tool, "__name__", None) or "tool"
+        wrapped = _wrap_with_progress(_inject_user_id(tool), tool_name=name)
+        mcp.add_tool(Tool.from_function(wrapped, name=name))
         return
 
     raise TypeError(
@@ -137,6 +142,18 @@ def _inject_user_id(fn: Callable) -> Callable:
 
     visible_params = [p for name, p in sig.parameters.items() if name != "user_id"]
     new_sig = sig.replace(parameters=visible_params)
+
+    # Async generators need a dedicated wrapper to preserve isasyncgenfunction identity
+    if inspect.isasyncgenfunction(fn):
+
+        @functools.wraps(fn)
+        async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+            kwargs["user_id"] = _resolve_user_id(None)
+            async for item in fn(*args, **kwargs):
+                yield item
+
+        async_gen_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+        return async_gen_wrapper
 
     if inspect.iscoroutinefunction(fn):
 
@@ -378,6 +395,72 @@ async def _report_progress(ctx: Context, progress: float, message: str, total: O
         await ctx.report_progress(progress=progress, total=total, message=message)
     except Exception:
         logger.debug("Failed to send MCP progress notification", exc_info=True)
+
+
+def _wrap_with_progress(fn: Callable, tool_name: str = "tool") -> Callable:
+    """Wrap a custom tool to report MCP progress notifications.
+
+    Adds a ``ctx: Context`` parameter that FastMCP auto-injects at call time (hidden from
+    the MCP schema). Reports progress at start, during yields (for async generators), and
+    on completion. Tools that already declare a Context parameter are returned unchanged.
+    """
+    import asyncio
+
+    try:
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        return fn
+
+    # Skip if tool already handles its own Context
+    for param in sig.parameters.values():
+        if param.annotation is Context:
+            return fn
+
+    # Build new signature with ctx: Context as first parameter
+    ctx_param = inspect.Parameter("ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=Context)
+    new_params = [ctx_param] + list(sig.parameters.values())
+    new_sig = sig.replace(parameters=new_params)
+
+    if inspect.isasyncgenfunction(fn):
+
+        @functools.wraps(fn)
+        async def async_gen_wrapper(ctx: Context, *args: Any, **kwargs: Any) -> Any:
+            await _report_progress(ctx, 0.0, f"{tool_name}: starting")
+            tick = 0
+            async for chunk in fn(*args, **kwargs):
+                tick += 1
+                # Throttle progress updates to avoid flooding clients
+                if tick <= 3 or tick % 5 == 0:
+                    await _report_progress(ctx, float(tick), f"{tool_name}: processing")
+                yield chunk
+            await _report_progress(ctx, float(tick), f"{tool_name}: complete")
+
+        async_gen_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+        return async_gen_wrapper
+
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(ctx: Context, *args: Any, **kwargs: Any) -> Any:
+            await _report_progress(ctx, 0.0, f"{tool_name}: starting")
+            result = await fn(*args, **kwargs)
+            await _report_progress(ctx, 100.0, f"{tool_name}: complete")
+            return result
+
+        async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+        return async_wrapper
+
+    # Sync function: offload to thread pool to avoid blocking the event loop
+    @functools.wraps(fn)
+    async def sync_wrapper(ctx: Context, *args: Any, **kwargs: Any) -> Any:
+        await _report_progress(ctx, 0.0, f"{tool_name}: starting")
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+        await _report_progress(ctx, 100.0, f"{tool_name}: complete")
+        return result
+
+    sync_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+    return sync_wrapper
 
 
 def _describe_tool_call_event(event: Any) -> str:
