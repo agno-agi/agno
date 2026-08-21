@@ -1200,6 +1200,45 @@ async def aget_user_message(
 # ---------------------------------------------------------------------------
 
 
+# Session state key under which the files uploaded during a run are recorded so
+# tools can reference them. Kept in session_state (rather than only on the run)
+# so a tool invoked after the upload can act on the file even when the file is
+# not sent to the model (send_media_to_model=False).
+UPLOADED_FILES_SESSION_STATE_KEY = "uploaded_files"
+
+
+def record_uploaded_files_in_session_state(
+    run_context: Optional[RunContext],
+    files: Optional[Sequence[File]] = None,
+) -> None:
+    """Record the ids/filenames/paths of files uploaded during a run into session_state.
+
+    Each file is stored as a compact dict of non-None fields (id, filename,
+    filepath, mime_type) under ``UPLOADED_FILES_SESSION_STATE_KEY``. This lets a
+    tool invoked during the run (and later in the session) see which files are
+    available, even when the files are not sent to the model.
+    """
+    if not files or run_context is None or run_context.session_state is None:
+        return
+
+    file_refs: List[Dict[str, Any]] = []
+    for file in files:
+        ref: Dict[str, Any] = {}
+        if file.id:
+            ref["id"] = file.id
+        if file.filename:
+            ref["filename"] = file.filename
+        elif file.name:
+            ref["filename"] = file.name
+        if file.filepath is not None:
+            ref["filepath"] = str(file.filepath)
+        if file.mime_type:
+            ref["mime_type"] = file.mime_type
+        file_refs.append(ref)
+
+    run_context.session_state[UPLOADED_FILES_SESSION_STATE_KEY] = file_refs
+
+
 def get_run_messages(
     agent: Agent,
     *,
@@ -1244,6 +1283,10 @@ def get_run_messages(
 
     # Initialize the RunMessages object (no media here - that's in RunInput now)
     run_messages = RunMessages()
+
+    # Record the files uploaded during this run in session_state so tools can
+    # reference them, even when the files are not sent to the model.
+    record_uploaded_files_in_session_state(run_context, files)
 
     # 1. Add system message to run_messages
     system_message = get_system_message(
@@ -1450,6 +1493,10 @@ async def aget_run_messages(
 
     # Initialize the RunMessages object (no media here - that's in RunInput now)
     run_messages = RunMessages()
+
+    # Record the files uploaded during this run in session_state so tools can
+    # reference them, even when the files are not sent to the model.
+    record_uploaded_files_in_session_state(run_context, files)
 
     # 1. Add system message to run_messages
     system_message = await aget_system_message(
