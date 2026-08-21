@@ -32,6 +32,12 @@ def _remove_file_if_exists(path: Optional[str]) -> None:
 class MoviePyVideoTools(Toolkit):
     """Tool for processing video files, extracting audio, and adding captions."""
 
+    # Agno 2.x kwarg names whose 3.0 name is not just the stripped enable_ prefix
+    _legacy_param_aliases = {
+        "enable_process_video": "extract_audio",
+        "enable_generate_captions": "create_srt",
+    }
+
     def __init__(
         self,
         extract_audio: bool = True,
@@ -48,14 +54,6 @@ class MoviePyVideoTools(Toolkit):
             embed_captions: Enable the embed_captions tool.
             all: Enable all tools.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_process_video" in kwargs:
-            extract_audio = kwargs.pop("enable_process_video")
-        if "enable_generate_captions" in kwargs:
-            create_srt = kwargs.pop("enable_generate_captions")
-        if "enable_embed_captions" in kwargs:
-            embed_captions = kwargs.pop("enable_embed_captions")
-
         tools: List[Callable] = []
         if all or extract_audio:
             tools.append(self.extract_audio)

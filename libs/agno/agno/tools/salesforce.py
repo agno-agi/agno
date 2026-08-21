@@ -101,26 +101,6 @@ class SalesforceTools(Toolkit):
             instructions: Custom instructions for the agent.
             add_instructions: Whether to include default SOQL/SOSL instructions.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_list_objects" in kwargs:
-            list_objects = kwargs.pop("enable_list_objects")
-        if "enable_describe_object" in kwargs:
-            describe_object = kwargs.pop("enable_describe_object")
-        if "enable_get_record" in kwargs:
-            get_record = kwargs.pop("enable_get_record")
-        if "enable_query" in kwargs:
-            query = kwargs.pop("enable_query")
-        if "enable_search" in kwargs:
-            search = kwargs.pop("enable_search")
-        if "enable_create_record" in kwargs:
-            create_record = kwargs.pop("enable_create_record")
-        if "enable_update_record" in kwargs:
-            update_record = kwargs.pop("enable_update_record")
-        if "enable_delete_record" in kwargs:
-            delete_record = kwargs.pop("enable_delete_record")
-        if "enable_get_report" in kwargs:
-            get_report = kwargs.pop("enable_get_report")
-
         self.instructions = instructions or SALESFORCE_INSTRUCTIONS if add_instructions else None
         self.max_records = max_records
         self.max_fields = max_fields

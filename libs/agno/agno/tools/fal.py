@@ -29,12 +29,6 @@ class FalTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_generate_media" in kwargs:
-            generate_media = kwargs.pop("enable_generate_media")
-        if "enable_image_to_image" in kwargs:
-            image_to_image = kwargs.pop("enable_image_to_image")
-
         self.api_key = api_key or getenv("FAL_API_KEY")
         if not self.api_key:
             log_error("FAL_API_KEY not set. Please set the FAL_API_KEY environment variable.")

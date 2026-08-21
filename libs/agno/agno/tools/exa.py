@@ -69,20 +69,10 @@ class ExaTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_search" in kwargs:
-            search = kwargs.pop("enable_search")
-        if "enable_get_contents" in kwargs:
-            get_contents = kwargs.pop("enable_get_contents")
-        if "enable_find_similar" in kwargs:
-            find_similar = kwargs.pop("enable_find_similar")
-        if "enable_answer" in kwargs:
-            answer = kwargs.pop("enable_answer")
+        # Backwards compat: research_model no longer applies
         if "research_model" in kwargs:
             # The research tool no longer selects a dedicated model; accept and ignore the 2.x kwarg
             kwargs.pop("research_model")
-        if "enable_research" in kwargs:
-            research = kwargs.pop("enable_research")
 
         self.api_key = api_key or getenv("EXA_API_KEY")
         if not self.api_key:

@@ -28,6 +28,13 @@ class YouTubeTools(Toolkit):
         proxy: Proxy URL for transcript API requests (e.g., "http://user:pass@host:port").
     """
 
+    # Agno 2.x kwarg names whose 3.0 name is not just the stripped enable_ prefix
+    _legacy_param_aliases = {
+        "enable_get_video_captions": "get_transcript",
+        "enable_get_video_data": "get_metadata",
+        "enable_get_video_timestamps": "get_timestamps",
+    }
+
     def __init__(
         self,
         get_transcript: bool = False,
@@ -39,13 +46,6 @@ class YouTubeTools(Toolkit):
         proxy: Optional[str] = None,
         **kwargs,
     ):
-        # Backwards compat: enable_get_video_X -> get_X
-        if "enable_get_video_captions" in kwargs:
-            get_transcript = kwargs.pop("enable_get_video_captions")
-        if "enable_get_video_data" in kwargs:
-            get_metadata = kwargs.pop("enable_get_video_data")
-        if "enable_get_video_timestamps" in kwargs:
-            get_timestamps = kwargs.pop("enable_get_video_timestamps")
 
         self.languages: Optional[List[str]] = languages
 

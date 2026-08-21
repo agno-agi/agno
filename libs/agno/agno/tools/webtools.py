@@ -23,10 +23,6 @@ class WebTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_expand_url" in kwargs:
-            expand_url = kwargs.pop("enable_expand_url")
-
         self.retries = retries
 
         tools: List[Callable] = []

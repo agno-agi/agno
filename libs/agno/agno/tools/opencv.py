@@ -35,12 +35,6 @@ class OpenCVTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_capture_image" in kwargs:
-            capture_image = kwargs.pop("enable_capture_image")
-        if "enable_capture_video" in kwargs:
-            capture_video = kwargs.pop("enable_capture_video")
-
         self.show_preview = show_preview
 
         tools: List[Callable] = []

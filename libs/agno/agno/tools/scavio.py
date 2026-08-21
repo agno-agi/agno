@@ -97,6 +97,17 @@ class ScavioTools(Toolkit):
         ],
     }
 
+    # Agno 2.x per-platform flags; handled below (translated to exclude_tools), so the base shim leaves them alone
+    _legacy_param_aliases = {
+        "enable_google": None,
+        "enable_amazon": None,
+        "enable_walmart": None,
+        "enable_youtube": None,
+        "enable_reddit": None,
+        "enable_tiktok": None,
+        "enable_instagram": None,
+    }
+
     def __init__(self, api_key: Optional[str] = None, all: bool = False, **kwargs):
         """Initialize ScavioTools for multi-platform search.
 

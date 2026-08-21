@@ -13,6 +13,12 @@ from agno.utils.serialize import to_json_str
 
 
 class Neo4jTools(Toolkit):
+    # Agno 2.x kwarg names whose 3.0 name is not just the stripped enable_ prefix
+    _legacy_param_aliases = {
+        "enable_list_relationships": "list_relationship_types",
+        "enable_run_cypher": "run_cypher_query",
+    }
+
     def __init__(
         self,
         uri: Optional[str] = None,
@@ -43,16 +49,6 @@ class Neo4jTools(Toolkit):
             run_cypher_query: Register the run_cypher_query tool (can execute arbitrary queries)
             all: Register all tools
         """
-        # Backwards compat: enable_X -> X
-        if "enable_list_labels" in kwargs:
-            list_labels = kwargs.pop("enable_list_labels")
-        if "enable_list_relationships" in kwargs:
-            list_relationship_types = kwargs.pop("enable_list_relationships")
-        if "enable_get_schema" in kwargs:
-            get_schema = kwargs.pop("enable_get_schema")
-        if "enable_run_cypher" in kwargs:
-            run_cypher_query = kwargs.pop("enable_run_cypher")
-
         # Determine the connection URI and credentials
         uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
         user = user or os.getenv("NEO4J_USERNAME")

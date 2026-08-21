@@ -12,6 +12,14 @@ except ImportError:
 
 
 class OpenWeatherTools(Toolkit):
+    # Agno 2.x kwarg names whose 3.0 name is not just the stripped enable_ prefix
+    _legacy_param_aliases = {
+        "enable_current_weather": "get_current_weather",
+        "enable_forecast": "get_forecast",
+        "enable_air_pollution": "get_air_pollution",
+        "enable_geocoding": "geocode_location",
+    }
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -37,16 +45,6 @@ class OpenWeatherTools(Toolkit):
             all: Register all tools regardless of individual flags.
             timeout: Per-request HTTP timeout in seconds.
         """
-        # Backwards compat: enable_X -> X
-        if "enable_current_weather" in kwargs:
-            get_current_weather = kwargs.pop("enable_current_weather")
-        if "enable_forecast" in kwargs:
-            get_forecast = kwargs.pop("enable_forecast")
-        if "enable_air_pollution" in kwargs:
-            get_air_pollution = kwargs.pop("enable_air_pollution")
-        if "enable_geocoding" in kwargs:
-            geocode_location = kwargs.pop("enable_geocoding")
-
         self.api_key = api_key or getenv("OPENWEATHER_API_KEY")
         if not self.api_key:
             raise ValueError(

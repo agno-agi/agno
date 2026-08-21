@@ -21,7 +21,11 @@ from agno.tools.shell import ShellTools
 # ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
-    tools=[ShellTools(run_shell_command=True, requires_confirmation_tools=["run_shell_command"])],
+    tools=[
+        ShellTools(
+            run_shell_command=True, requires_confirmation_tools=["run_shell_command"]
+        )
+    ],
 )
 
 # ---------------------------------------------------------------------------

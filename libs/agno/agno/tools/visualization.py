@@ -30,18 +30,6 @@ class VisualizationTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_create_bar_chart" in kwargs:
-            create_bar_chart = kwargs.pop("enable_create_bar_chart")
-        if "enable_create_line_chart" in kwargs:
-            create_line_chart = kwargs.pop("enable_create_line_chart")
-        if "enable_create_pie_chart" in kwargs:
-            create_pie_chart = kwargs.pop("enable_create_pie_chart")
-        if "enable_create_scatter_plot" in kwargs:
-            create_scatter_plot = kwargs.pop("enable_create_scatter_plot")
-        if "enable_create_histogram" in kwargs:
-            create_histogram = kwargs.pop("enable_create_histogram")
-
         # Check if matplotlib is available
         try:
             import matplotlib

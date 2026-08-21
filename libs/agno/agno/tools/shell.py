@@ -24,10 +24,6 @@ class ShellTools(Toolkit):
 
                 ShellTools(run_shell_command=True, requires_confirmation_tools=["run_shell_command"])
         """
-        # Backwards compat: enable_X -> X
-        if "enable_run_shell_command" in kwargs:
-            run_shell_command = kwargs.pop("enable_run_shell_command")
-
         self.base_dir: Optional[Path] = None
         if base_dir is not None:
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir

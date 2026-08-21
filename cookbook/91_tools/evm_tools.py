@@ -23,7 +23,9 @@ from agno.tools.evm import EvmTools
 
 # Option 1: Use environment variables (recommended)
 agent = Agent(
-    tools=[EvmTools(send_transaction=True)],  # Will use EVM_PRIVATE_KEY and EVM_RPC_URL from env
+    tools=[
+        EvmTools(send_transaction=True)
+    ],  # Will use EVM_PRIVATE_KEY and EVM_RPC_URL from env
 )
 
 # Option 2: Pass credentials directly (for testing only)

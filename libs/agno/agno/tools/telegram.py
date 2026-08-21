@@ -60,34 +60,6 @@ class TelegramTools(Toolkit):
         all: bool = False,
         **kwargs: Any,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_send_message" in kwargs:
-            send_message = kwargs.pop("enable_send_message")
-        if "enable_send_photo" in kwargs:
-            send_photo = kwargs.pop("enable_send_photo")
-        if "enable_send_document" in kwargs:
-            send_document = kwargs.pop("enable_send_document")
-        if "enable_send_video" in kwargs:
-            send_video = kwargs.pop("enable_send_video")
-        if "enable_send_audio" in kwargs:
-            send_audio = kwargs.pop("enable_send_audio")
-        if "enable_send_animation" in kwargs:
-            send_animation = kwargs.pop("enable_send_animation")
-        if "enable_send_sticker" in kwargs:
-            send_sticker = kwargs.pop("enable_send_sticker")
-        if "enable_edit_message" in kwargs:
-            edit_message = kwargs.pop("enable_edit_message")
-        if "enable_delete_message" in kwargs:
-            delete_message = kwargs.pop("enable_delete_message")
-        if "enable_react_with_emoji" in kwargs:
-            react_with_emoji = kwargs.pop("enable_react_with_emoji")
-        if "enable_pin_message" in kwargs:
-            pin_message = kwargs.pop("enable_pin_message")
-        if "enable_get_chat" in kwargs:
-            get_chat = kwargs.pop("enable_get_chat")
-        if "enable_get_file" in kwargs:
-            get_file = kwargs.pop("enable_get_file")
-
         self.token = token or getenv("TELEGRAM_TOKEN")
         if not self.token:
             raise ValueError("TELEGRAM_TOKEN not set. Please set the TELEGRAM_TOKEN environment variable.")

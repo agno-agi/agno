@@ -50,6 +50,13 @@ class ZepTools(Toolkit):
         all: Enable all tools. Defaults to False.
     """
 
+    # Agno 2.x kwarg names whose 3.0 name is not just the stripped enable_ prefix
+    _legacy_param_aliases = {
+        "enable_add_zep_message": "add_message",
+        "enable_get_zep_memory": "get_memory",
+        "enable_search_zep_memory": "search_memory",
+    }
+
     def __init__(
         self,
         session_id: Optional[str] = None,
@@ -64,14 +71,6 @@ class ZepTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X_zep_Y -> X_Y
-        if "enable_add_zep_message" in kwargs:
-            add_message = kwargs.pop("enable_add_zep_message")
-        if "enable_get_zep_memory" in kwargs:
-            get_memory = kwargs.pop("enable_get_zep_memory")
-        if "enable_search_zep_memory" in kwargs:
-            search_memory = kwargs.pop("enable_search_zep_memory")
-
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
@@ -284,6 +283,16 @@ class ZepAsyncTools(Toolkit):
         all: Enable all tools. Defaults to False.
     """
 
+    # Agno 2.x kwarg names (the async toolkit's 2.x flags carried no enable_ prefix)
+    _legacy_param_aliases = {
+        "enable_add_zep_message": "add_message",
+        "enable_get_zep_memory": "get_memory",
+        "enable_search_zep_memory": "search_memory",
+        "add_zep_message": "add_message",
+        "get_zep_memory": "get_memory",
+        "search_zep_memory": "search_memory",
+    }
+
     def __init__(
         self,
         session_id: Optional[str] = None,
@@ -298,21 +307,6 @@ class ZepAsyncTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: 2.x names add_zep_message / get_zep_memory / search_zep_memory
-        if "add_zep_message" in kwargs:
-            add_message = kwargs.pop("add_zep_message")
-        if "get_zep_memory" in kwargs:
-            get_memory = kwargs.pop("get_zep_memory")
-        if "search_zep_memory" in kwargs:
-            search_memory = kwargs.pop("search_zep_memory")
-        # Backwards compat: enable_X_zep_Y -> X_Y
-        if "enable_add_zep_message" in kwargs:
-            add_message = kwargs.pop("enable_add_zep_message")
-        if "enable_get_zep_memory" in kwargs:
-            get_memory = kwargs.pop("enable_get_zep_memory")
-        if "enable_search_zep_memory" in kwargs:
-            search_memory = kwargs.pop("enable_search_zep_memory")
-
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(

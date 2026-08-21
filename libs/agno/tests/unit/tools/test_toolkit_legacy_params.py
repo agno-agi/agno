@@ -2,8 +2,10 @@
 
 The 3.0 toolkit cleanup renamed tool-toggle params (enable_search -> search),
 renamed a few others (proxies -> proxy), and removed `all` from some toolkits.
-Every 2.x kwarg must still be accepted: either it is still a constructor
-parameter, or the constructor maps it with an `if "<name>" in kwargs:` block.
+Every 2.x kwarg must still be accepted: it is still a constructor parameter,
+the base Toolkit shim maps it (stripping the `enable_` prefix, or through the
+class's `_legacy_param_aliases`), or the constructor consumes it itself with an
+`if "<name>" in kwargs:` check.
 
 `data/toolkit_constructor_params_v2.json` is the frozen list of 2.x
 constructor parameters per toolkit class (captured from the pre-cleanup
@@ -22,20 +24,6 @@ import pytest
 
 TOOLS_DIR = Path(__file__).resolve().parents[3] / "agno" / "tools"
 CONTRACT = json.loads((Path(__file__).parent / "data" / "toolkit_constructor_params_v2.json").read_text())
-
-# 2.x kwargs a toolkit handles without a literal `"name" in kwargs` check.
-HANDLED_DYNAMICALLY: Dict[str, Set[str]] = {
-    # ScavioTools builds the key as f"enable_{platform}" for every platform
-    "agno.tools.scavio.ScavioTools": {
-        "enable_google",
-        "enable_amazon",
-        "enable_walmart",
-        "enable_youtube",
-        "enable_reddit",
-        "enable_tiktok",
-        "enable_instagram",
-    },
-}
 
 
 def _class_nodes(tree: ast.Module) -> Dict[str, ast.ClassDef]:
@@ -64,11 +52,29 @@ def _accepted_kwargs(init: ast.FunctionDef) -> Set[str]:
     return names
 
 
+def _legacy_aliases(cls: ast.ClassDef, classes: Dict[str, ast.ClassDef]) -> Dict[str, object]:
+    """The class's `_legacy_param_aliases`, inherited from same-module bases like the shim does."""
+    for item in cls.body:
+        if isinstance(item, ast.Assign) and any(
+            getattr(t, "id", None) == "_legacy_param_aliases" for t in item.targets
+        ):
+            return ast.literal_eval(item.value)
+    for base in cls.bases:
+        if isinstance(base, ast.Name) and base.id in classes:
+            return _legacy_aliases(classes[base.id], classes)
+    return {}
+
+
 def _effective_kwargs(cls: ast.ClassDef, classes: Dict[str, ast.ClassDef]) -> Set[str]:
     init = _init(cls)
     if init is None:
         return set()
     names = _accepted_kwargs(init)
+    # The base Toolkit shim strips enable_ and applies the alias map before binding
+    names |= {f"enable_{n}" for n in list(names)}
+    for legacy, target in _legacy_aliases(cls, classes).items():
+        if target is None or target in names:
+            names.add(legacy)
     # A thin alias like `class OldName(NewName): def __init__(self, *args, **kwargs)`
     # accepts whatever its base accepts.
     if not init.args.args[1:] and init.args.vararg and init.args.kwarg:
@@ -91,9 +97,7 @@ def test_every_2x_constructor_kwarg_is_still_accepted(module: str, class_name: s
     source_path = TOOLS_DIR / Path(*module.split(".")[2:]).with_suffix(".py")
     classes = _class_nodes(ast.parse(source_path.read_text()))
     assert class_name in classes, f"{class_name} no longer defined in {source_path}"
-    accepted = _effective_kwargs(classes[class_name], classes) | HANDLED_DYNAMICALLY.get(
-        f"{module}.{class_name}", set()
-    )
+    accepted = _effective_kwargs(classes[class_name], classes)
     missing = [p for p in legacy_params if p not in accepted]
     assert not missing, f"{module}.{class_name} would raise TypeError for 2.x kwargs: {missing}"
 
