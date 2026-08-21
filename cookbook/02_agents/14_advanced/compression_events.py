@@ -20,7 +20,7 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
-    compress_tool_results=True,
+    compact_tool_results=True,
 )
 
 

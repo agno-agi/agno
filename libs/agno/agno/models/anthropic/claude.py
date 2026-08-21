@@ -482,7 +482,7 @@ class Claude(Model):
     ) -> int:
         anthropic_messages, system_prompt = format_messages(
             messages,
-            compress_tool_results=True,
+            compact_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
             enable_citations=self.citations and not self._output_format_enabled(response_format),
@@ -510,7 +510,7 @@ class Claude(Model):
     ) -> int:
         anthropic_messages, system_prompt = format_messages(
             messages,
-            compress_tool_results=True,
+            compact_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
             enable_citations=self.citations and not self._output_format_enabled(response_format),
@@ -730,7 +730,7 @@ class Claude(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
@@ -738,7 +738,7 @@ class Claude(Model):
         try:
             chat_messages, system_message = format_messages(
                 messages,
-                compress_tool_results=compress_tool_results,
+                compact_tool_results=compact_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
                 enable_citations=self.citations and not self._output_format_enabled(response_format),
@@ -780,7 +780,7 @@ class Claude(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> Any:
         """
         Stream a response from the Anthropic API.
@@ -798,7 +798,7 @@ class Claude(Model):
         """
         chat_messages, system_message = format_messages(
             messages,
-            compress_tool_results=compress_tool_results,
+            compact_tool_results=compact_tool_results,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
             enable_citations=self.citations and not self._output_format_enabled(response_format),
@@ -841,7 +841,7 @@ class Claude(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
@@ -849,7 +849,7 @@ class Claude(Model):
         try:
             chat_messages, system_message = format_messages(
                 messages,
-                compress_tool_results=compress_tool_results,
+                compact_tool_results=compact_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
                 enable_citations=self.citations and not self._output_format_enabled(response_format),
@@ -892,7 +892,7 @@ class Claude(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.
@@ -908,7 +908,7 @@ class Claude(Model):
         try:
             chat_messages, system_message = format_messages(
                 messages,
-                compress_tool_results=compress_tool_results,
+                compact_tool_results=compact_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
                 enable_citations=self.citations and not self._output_format_enabled(response_format),

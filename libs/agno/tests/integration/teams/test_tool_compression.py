@@ -1,7 +1,7 @@
 import pytest
 
 from agno.agent import Agent
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
@@ -36,8 +36,8 @@ def compression_team(dummy_member, shared_db):
         members=[dummy_member],
         tools=[search_tool, get_data],  # Tools directly on team leader
         db=shared_db,
-        compress_tool_results=True,
-        compression_manager=CompressionManager(compress_tool_results_limit=1),
+        compact_tool_results=True,
+        compaction_manager=CompactionManager(tool_result_limit=1),
         instructions="Use YOUR OWN search_tool and get_data tools to answer questions. Do NOT delegate to members for search tasks.",
         telemetry=False,
     )
@@ -85,8 +85,8 @@ async def test_compression_async(shared_db):
         members=[dummy_member],
         tools=[search_tool, get_data],  # Tools directly on team leader
         db=shared_db,
-        compress_tool_results=True,
-        compression_manager=CompressionManager(compress_tool_results_limit=1),
+        compact_tool_results=True,
+        compaction_manager=CompactionManager(tool_result_limit=1),
         instructions="Use YOUR OWN search_tool and get_data tools to answer questions. Do NOT delegate to members for search tasks.",
         telemetry=False,
     )
@@ -117,7 +117,7 @@ def test_no_compression_when_disabled(shared_db):
         members=[dummy_member],
         tools=[search_tool],
         db=shared_db,
-        compress_tool_results=False,
+        compact_tool_results=False,
         instructions="Use YOUR OWN search_tool. Do NOT delegate.",
         telemetry=False,
     )
@@ -144,8 +144,8 @@ def test_no_compression_below_threshold(shared_db):
         members=[dummy_member],
         tools=[search_tool],
         db=shared_db,
-        compress_tool_results=True,
-        compression_manager=CompressionManager(compress_tool_results_limit=10),
+        compact_tool_results=True,
+        compaction_manager=CompactionManager(tool_result_limit=10),
         instructions="Use YOUR OWN search_tool once. Do NOT delegate.",
         telemetry=False,
     )

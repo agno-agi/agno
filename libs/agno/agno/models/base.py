@@ -26,7 +26,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from agno.compression.manager import CompressionManager
+    from agno.compression.manager import CompactionManager
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -648,7 +648,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional["CompressionManager"] = None,
+        compaction_manager: Optional["CompactionManager"] = None,
         compaction_callback: Optional[Callable[[], Optional[List[Message]]]] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
         compacted_messages: Optional[List[Message]] = None,
@@ -694,15 +694,15 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
+        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tool_results
+        _compaction_manager = compaction_manager if _compact_tool_results else None
 
         while True:
             # Compress tool results if compression is enabled and threshold is met
-            if _compression_manager is not None and _compression_manager.should_compress(
+            if _compaction_manager is not None and _compaction_manager.should_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
-                _compression_manager.compress(
+                _compaction_manager.compact_tools(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
 
@@ -723,7 +723,7 @@ class Model(ABC):
                 tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
                 run_response=run_response,
-                compress_tool_results=_compress_tool_results,
+                compact_tool_results=_compact_tool_results,
             )
 
             # Accumulate metrics for non-stream responses
@@ -738,7 +738,7 @@ class Model(ABC):
                 compacted_messages.append(assistant_message)
 
             # Log response and metrics
-            assistant_message.log(metrics=True, use_compressed_content=_compress_tool_results)
+            assistant_message.log(metrics=True, use_compressed_content=_compact_tool_results)
 
             # Handle tool calls if present
             if assistant_message.tool_calls:
@@ -821,7 +821,7 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
-                    compress_tool_results=_compress_tool_results,
+                    compact_tool_results=_compact_tool_results,
                     **model_response.extra or {},
                 )
                 if compacted_messages is not None:
@@ -836,7 +836,7 @@ class Model(ABC):
                     )
 
                 for function_call_result in function_call_results:
-                    function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+                    function_call_result.log(metrics=True, use_compressed_content=_compact_tool_results)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -901,7 +901,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional["CompressionManager"] = None,
+        compaction_manager: Optional["CompactionManager"] = None,
         compaction_callback: Optional[Callable[[], Awaitable[Optional[List[Message]]]]] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
         compacted_messages: Optional[List[Message]] = None,
@@ -937,17 +937,17 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
+        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tool_results
+        _compaction_manager = compaction_manager if _compact_tool_results else None
 
         function_call_count = 0
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
-            if _compression_manager is not None and await _compression_manager.ashould_compress(
+            if _compaction_manager is not None and await _compaction_manager.ashould_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
-                await _compression_manager.acompress(
+                await _compaction_manager.acompact_tools(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
 
@@ -968,7 +968,7 @@ class Model(ABC):
                 tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
                 run_response=run_response,
-                compress_tool_results=_compress_tool_results,
+                compact_tool_results=_compact_tool_results,
             )
 
             # Accumulate metrics for non-stream responses
@@ -1065,7 +1065,7 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
-                    compress_tool_results=_compress_tool_results,
+                    compact_tool_results=_compact_tool_results,
                     **model_response.extra or {},
                 )
                 if compacted_messages is not None:
@@ -1080,7 +1080,7 @@ class Model(ABC):
                     )
 
                 for function_call_result in function_call_results:
-                    function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+                    function_call_result.log(metrics=True, use_compressed_content=_compact_tool_results)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -1145,7 +1145,7 @@ class Model(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -1161,7 +1161,7 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
-            compress_tool_results=compress_tool_results,
+            compact_tool_results=compact_tool_results,
         )
 
         # Set TTFT after response arrives (guard ensures first-call-wins)
@@ -1215,7 +1215,7 @@ class Model(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -1231,7 +1231,7 @@ class Model(ABC):
             tool_choice=tool_choice or self._tool_choice,
             assistant_message=assistant_message,
             run_response=run_response,
-            compress_tool_results=compress_tool_results,
+            compact_tool_results=compact_tool_results,
         )
 
         # Set TTFT after response arrives (guard ensures first-call-wins)
@@ -1369,7 +1369,7 @@ class Model(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model with retry logic for ModelProviderError.
@@ -1382,7 +1382,7 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
-            compress_tool_results=compress_tool_results,
+            compact_tool_results=compact_tool_results,
         ):
             # Set TTFT when first chunk arrives (guard ensures first-call-wins)
             if run_response and run_response.metrics:
@@ -1406,7 +1406,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional["CompressionManager"] = None,
+        compaction_manager: Optional["CompactionManager"] = None,
         compaction_callback: Optional[Callable[[], Optional[List[Message]]]] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
         compacted_messages: Optional[List[Message]] = None,
@@ -1449,25 +1449,25 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
+        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tool_results
+        _compaction_manager = compaction_manager if _compact_tool_results else None
 
         function_call_count = 0
 
         while True:
             # Compress existing tool results BEFORE invoke
-            if _compression_manager is not None and _compression_manager.should_compress(
+            if _compaction_manager is not None and _compaction_manager.should_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
                 # Emit compression started event
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                _compression_manager.compress(
+                _compaction_manager.compact_tools(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
                 # Emit compression completed event with stats
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
-                    compression_stats=_compression_manager.stats.copy(),
+                    compression_stats=_compaction_manager.stats.copy(),
                 )
 
             assistant_message = Message(role=self.assistant_message_role)
@@ -1500,7 +1500,7 @@ class Model(ABC):
                         tools=_tool_dicts,
                         tool_choice=tool_choice or self._tool_choice,
                         run_response=run_response,
-                        compress_tool_results=_compress_tool_results,
+                        compact_tool_results=_compact_tool_results,
                     ):
                         if self.cache_response and isinstance(response, ModelResponse):
                             streaming_responses.append(response)
@@ -1525,7 +1525,7 @@ class Model(ABC):
                     tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
-                    compress_tool_results=_compress_tool_results,
+                    compact_tool_results=_compact_tool_results,
                 )
                 # Accumulate metrics for non-streamed response within stream
                 if run_response is not None and model_response.response_usage is not None:
@@ -1582,21 +1582,21 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        compress_tool_results=_compress_tool_results,
+                        compact_tool_results=_compact_tool_results,
                         **stream_data.extra,
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        compress_tool_results=_compress_tool_results,
+                        compact_tool_results=_compact_tool_results,
                         **model_response.extra,
                     )
                 else:
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        compress_tool_results=_compress_tool_results,
+                        compact_tool_results=_compact_tool_results,
                     )
                 if compacted_messages is not None:
                     compacted_messages.extend(function_call_results)
@@ -1610,7 +1610,7 @@ class Model(ABC):
                     )
 
                 for function_call_result in function_call_results:
-                    function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+                    function_call_result.log(metrics=True, use_compressed_content=_compact_tool_results)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -1673,7 +1673,7 @@ class Model(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model with retry logic for ModelProviderError.
@@ -1685,7 +1685,7 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
-            compress_tool_results=compress_tool_results,
+            compact_tool_results=compact_tool_results,
         ):
             # Set TTFT when first chunk arrives (guard ensures first-call-wins)
             if run_response and run_response.metrics:
@@ -1709,7 +1709,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional["CompressionManager"] = None,
+        compaction_manager: Optional["CompactionManager"] = None,
         compaction_callback: Optional[Callable[[], Awaitable[Optional[List[Message]]]]] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
         compacted_messages: Optional[List[Message]] = None,
@@ -1752,25 +1752,25 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
+        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tool_results
+        _compaction_manager = compaction_manager if _compact_tool_results else None
 
         function_call_count = 0
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
-            if _compression_manager is not None and await _compression_manager.ashould_compress(
+            if _compaction_manager is not None and await _compaction_manager.ashould_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
                 # Emit compression started event
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                await _compression_manager.acompress(
+                await _compaction_manager.acompact_tools(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
                 # Emit compression completed event with stats
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
-                    compression_stats=_compression_manager.stats.copy(),
+                    compression_stats=_compaction_manager.stats.copy(),
                 )
 
             # Create assistant message and stream data
@@ -1803,7 +1803,7 @@ class Model(ABC):
                         tools=_tool_dicts,
                         tool_choice=tool_choice or self._tool_choice,
                         run_response=run_response,
-                        compress_tool_results=_compress_tool_results,
+                        compact_tool_results=_compact_tool_results,
                     ):
                         if self.cache_response and isinstance(model_response_delta, ModelResponse):
                             streaming_responses.append(model_response_delta)
@@ -1828,7 +1828,7 @@ class Model(ABC):
                     tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
-                    compress_tool_results=_compress_tool_results,
+                    compact_tool_results=_compact_tool_results,
                 )
                 # Accumulate metrics for non-streamed response within stream
                 if run_response is not None and model_response.response_usage is not None:
@@ -1885,21 +1885,21 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        compress_tool_results=_compress_tool_results,
+                        compact_tool_results=_compact_tool_results,
                         **stream_data.extra,
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        compress_tool_results=_compress_tool_results,
+                        compact_tool_results=_compact_tool_results,
                         **model_response.extra or {},
                     )
                 else:
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        compress_tool_results=_compress_tool_results,
+                        compact_tool_results=_compact_tool_results,
                     )
                 if compacted_messages is not None:
                     compacted_messages.extend(function_call_results)
@@ -1913,7 +1913,7 @@ class Model(ABC):
                     )
 
                 for function_call_result in function_call_results:
-                    function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+                    function_call_result.log(metrics=True, use_compressed_content=_compact_tool_results)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -3103,7 +3103,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         function_call_results: List[Message],
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
         **kwargs,
     ) -> None:
         """

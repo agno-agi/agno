@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.context import ContextCompactionManager
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -326,9 +326,9 @@ class Team:
 
     # --- Context Compression ---
     # If True, compress tool call results to save context
-    compress_tool_results: bool = False
-    # Compression manager for compressing tool call results
-    compression_manager: Optional["CompressionManager"] = None
+    compact_tool_results: bool = False
+    # Compaction manager for compacting tool call results
+    compaction_manager: Optional["CompactionManager"] = None
     # Context compaction manager for summarizing old conversation history
     context_compaction_manager: Optional["ContextCompactionManager"] = None
 
@@ -527,8 +527,8 @@ class Team:
         add_session_summary_to_context: Optional[bool] = None,
         learning: Optional[Union[bool, LearningMachine]] = None,
         add_learnings_to_context: bool = True,
-        compress_tool_results: bool = False,
-        compression_manager: Optional["CompressionManager"] = None,
+        compact_tool_results: bool = False,
+        compaction_manager: Optional["CompactionManager"] = None,
         context_compaction_manager: Optional["ContextCompactionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
@@ -645,8 +645,8 @@ class Team:
             add_session_summary_to_context=add_session_summary_to_context,
             learning=learning,
             add_learnings_to_context=add_learnings_to_context,
-            compress_tool_results=compress_tool_results,
-            compression_manager=compression_manager,
+            compact_tool_results=compact_tool_results,
+            compaction_manager=compaction_manager,
             context_compaction_manager=context_compaction_manager,
             metadata=metadata,
             reasoning_model=reasoning_model,

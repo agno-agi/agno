@@ -593,7 +593,7 @@ class OpenAIResponses(Model):
     def _format_messages(
         self,
         messages: List[Message],
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     ) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
@@ -601,7 +601,7 @@ class OpenAIResponses(Model):
 
         Args:
             messages (List[Message]): The message to format.
-            compress_tool_results: Whether to compress tool results.
+            compact_tool_results: Whether to compress tool results.
             tools: The tools list, used to detect if file_search is present.
 
         Returns:
@@ -645,7 +645,7 @@ class OpenAIResponses(Model):
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.get_content(use_compressed_content=compress_tool_results),
+                    "content": message.get_content(use_compressed_content=compact_tool_results),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -678,7 +678,7 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                tool_result = message.get_content(use_compressed_content=compress_tool_results)
+                tool_result = message.get_content(use_compressed_content=compact_tool_results)
 
                 if message.tool_call_id and tool_result is not None:
                     function_call_id = message.tool_call_id
@@ -729,7 +729,7 @@ class OpenAIResponses(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
-            formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
+            formatted_input = self._format_messages(messages, compact_tool_results=True, tools=tools)
             formatted_tools = self._format_tool_params(messages, tools) if tools is not None else None
 
             response = self.get_client().responses.input_tokens.count(
@@ -751,7 +751,7 @@ class OpenAIResponses(Model):
     ) -> int:
         """Async version of count_tokens using the async client."""
         try:
-            formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
+            formatted_input = self._format_messages(messages, compact_tool_results=True, tools=tools)
             formatted_tools = self._format_tool_params(messages, tools) if tools else None
 
             response = await self.get_async_client().responses.input_tokens.count(
@@ -773,7 +773,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a request to the OpenAI Responses API.
@@ -787,7 +787,7 @@ class OpenAIResponses(Model):
 
             provider_response = self.get_client().responses.create(
                 **self._get_model_request_kwargs(),
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
+                input=self._format_messages(messages, compact_tool_results, tools=tools),  # type: ignore
                 **request_params,
             )
 
@@ -878,7 +878,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous request to the OpenAI Responses API.
@@ -892,7 +892,7 @@ class OpenAIResponses(Model):
 
             provider_response = await self.get_async_client().responses.create(
                 **self._get_model_request_kwargs(),
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
+                input=self._format_messages(messages, compact_tool_results, tools=tools),  # type: ignore
                 **request_params,
             )
 
@@ -983,7 +983,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming request to the OpenAI Responses API.
@@ -1001,7 +1001,7 @@ class OpenAIResponses(Model):
 
             for chunk in self.get_client().responses.create(
                 **self._get_model_request_kwargs(),
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
+                input=self._format_messages(messages, compact_tool_results, tools=tools),  # type: ignore
                 stream=True,
                 **request_params,
             ):
@@ -1072,7 +1072,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
@@ -1090,7 +1090,7 @@ class OpenAIResponses(Model):
 
             async_stream = await self.get_async_client().responses.create(
                 **self._get_model_request_kwargs(),
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
+                input=self._format_messages(messages, compact_tool_results, tools=tools),  # type: ignore
                 stream=True,
                 **request_params,
             )
@@ -1154,7 +1154,7 @@ class OpenAIResponses(Model):
         self,
         messages: List[Message],
         function_call_results: List[Message],
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
         **kwargs,
     ) -> None:
         """

@@ -122,7 +122,7 @@ SHARED_BY_REFERENCE_FIELDS = (
     "parser_model",
     "output_model",
     "session_summary_manager",
-    "compression_manager",
+    "compaction_manager",
     "learning",
     "skills",
 )

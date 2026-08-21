@@ -8,7 +8,6 @@ import pytest
 
 from agno.agent import Agent
 from agno.agent._utils import SHARED_BY_REFERENCE_FIELDS
-from agno.compression.manager import CompactionManager
 from agno.db.in_memory import InMemoryDb
 from agno.environments import (
     Environment,
@@ -1080,6 +1079,7 @@ async def test_error_storm_detected_by_error_type_on_real_agent():
 
 
 async def test_hermetic_real_agent_full_override_set(tmp_path):
+    from agno.compression.manager import CompactionManager
     from agno.session import SessionSummaryManager
     from agno.skills.agent_skills import Skills
 
@@ -1714,6 +1714,7 @@ async def test_write_isolation_deep_freeze(tmp_path):
     # learning machine over a shared store, reasoning agent, fallback models,
     # warm caches, save file. Snapshot the caller's reachable graph before and
     # after; zero caller-side mutations, no save file, no cache replay.
+    from agno.compression.manager import CompactionManager
     from agno.learn import LearningMachine
     from agno.learn.config import LearnedKnowledgeConfig, LearningMode
     from agno.memory import MemoryManager

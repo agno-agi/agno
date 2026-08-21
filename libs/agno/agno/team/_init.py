@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.context import ContextCompactionManager
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -153,8 +153,8 @@ def __init__(
     add_session_summary_to_context: Optional[bool] = None,
     learning: Optional[Union[bool, LearningMachine]] = None,
     add_learnings_to_context: bool = True,
-    compress_tool_results: bool = False,
-    compression_manager: Optional["CompressionManager"] = None,
+    compact_tool_results: bool = False,
+    compaction_manager: Optional["CompactionManager"] = None,
     context_compaction_manager: Optional["ContextCompactionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
@@ -333,8 +333,8 @@ def __init__(
     team.add_learnings_to_context = add_learnings_to_context
 
     # Context compression settings
-    team.compress_tool_results = compress_tool_results
-    team.compression_manager = compression_manager
+    team.compact_tool_results = compact_tool_results
+    team.compaction_manager = compaction_manager
     team.context_compaction_manager = context_compaction_manager
 
     team.metadata = metadata
@@ -570,20 +570,20 @@ def _set_session_summary_manager(team: "Team") -> None:
         team.add_session_summary_to_context = team.enable_session_summaries or team.session_summary_manager is not None
 
 
-def _set_compression_manager(team: "Team") -> None:
-    if team.compress_tool_results and team.compression_manager is None:
-        team.compression_manager = CompressionManager(
+def _set_compaction_manager(team: "Team") -> None:
+    if team.compact_tool_results and team.compaction_manager is None:
+        team.compaction_manager = CompactionManager(
             model=team.model,
         )
-    elif team.compression_manager is not None and team.compression_manager.model is None:
-        # If compression manager exists but has no model, use the team's model
-        team.compression_manager.model = team.model
+    elif team.compaction_manager is not None and team.compaction_manager.model is None:
+        # If compaction manager exists but has no model, use the team's model
+        team.compaction_manager.model = team.model
 
-    if team.compression_manager is not None:
-        if team.compression_manager.model is None:
-            team.compression_manager.model = team.model
-        if team.compression_manager.compress_tool_results:
-            team.compress_tool_results = True
+    if team.compaction_manager is not None:
+        if team.compaction_manager.model is None:
+            team.compaction_manager.model = team.model
+        if team.compaction_manager.compact_tool_results:
+            team.compact_tool_results = True
 
 
 def _set_context_compaction_manager(team: "Team") -> None:
@@ -742,8 +742,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_memory_manager(team)
     if team.enable_session_summaries or team.session_summary_manager is not None:
         _set_session_summary_manager(team)
-    if team.compress_tool_results or team.compression_manager is not None:
-        _set_compression_manager(team)
+    if team.compact_tool_results or team.compaction_manager is not None:
+        _set_compaction_manager(team)
     if team.context_compaction_manager is not None:
         _set_context_compaction_manager(team)
     if team.learning is not None and team.learning is not False:
