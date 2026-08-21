@@ -496,9 +496,12 @@ def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
         raise ValueError(f"`page` must be >= 1 (pages are 1-indexed); got {page}.")
 
 
-# Table types MigrationManager.up() can migrate. Must stay in sync with
-# ``_table_type_to_attr`` in agno/db/migrations/manager.py, which cannot be
-# imported here: manager -> db.base -> this module would be a cycle.
+# Table types MigrationManager.up() knows how to migrate at all, across every
+# version it ships, not just the ones with a pending step in the current
+# release: a sessions table still at its 2.0 shape needs the 2.3/2.5 steps even
+# though 3.0 adds none. Must stay in sync with ``_table_type_to_attr`` in
+# agno/db/migrations/manager.py, which cannot be imported here: manager ->
+# db.base -> this module would be a cycle.
 MIGRATABLE_TABLE_TYPES = frozenset(
     {
         "memories",
