@@ -17,6 +17,7 @@ Registry/Components HTTP contracts.
 | `registry_and_components.py` | Read `GET /registry` and complete a component lifecycle over the Components API: draft, guarded append, publish, archive, restore. |
 | `studio_runner_dispatcher.py` | Dispatch Studio-built components from a runner-only Agent with `StudioRunnerTools`. |
 | `studio_runner_direct.py` | Call the runner's list/run tools directly and observe the registry guard's refusal. |
+| `registry_learning.py` | Declare `LearningMachine`s on the Registry, discover them with `list_learning`, wire a built agent with `learning_name`, and rehydrate it with the shared machine. |
 
 ## Prerequisites
 
@@ -113,6 +114,36 @@ other scoped users get `component_not_found` for them and cannot edit or
 archive them. Calls without a run context (direct Python, tests) write
 unowned, shared rows. The AgentOS demos pass `user_id` on the run request to
 show this.
+
+## Learning
+
+Learning is the only memory surface a Studio-built component can be given, and
+the deployer decides what learning exists. Declare `LearningMachine`s by name
+on the `Registry` (`Registry(learning=[LearningMachine(name="shared-brain",
+...)])` or `registry.add_learning(...)`); the builder discovers them with
+`list_learning` and wires one with `learning_name` on `create_agent`,
+`edit_agent`, `create_team` and `edit_team` (`""` detaches). The stored config
+carries `{"name": ...}`, never the machine's config, so a component cannot
+author learning the deployer did not declare; an undeclared name returns
+`learning_not_found`.
+
+Every component wired to a machine reads and writes that machine's namespace,
+so `list_learning` shows the namespace (machine-level and per store) first,
+plus each store's mode and whether the machine already binds a `model`, `db`
+or `knowledge`. A registry machine is one shared instance: the framework
+injects a component's db and model into it only when it has none, so declare
+the model on the machine if the deployer, not the first component that runs,
+should decide what it captures with. Namespaces are literal strings; there is
+no per-component templating of a learning namespace.
+
+The legacy `memory_manager_id` / `enable_agentic_memory` pair is gone from the
+Studio forms. Wiring `learning_name` onto a component stored with them clears
+both, and `get_component` still shows `enable_agentic_memory` on a component
+that carries it, so the real state stays visible.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/22_studio/registry_learning.py
+```
 
 ## Palette policy
 
