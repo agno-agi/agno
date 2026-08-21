@@ -478,3 +478,41 @@ def test_allowed_hosts_rejects_str_input():
     """Passing a single string (instead of a list) must raise error."""
     with pytest.raises(TypeError, match="must be a list"):
         DoclingReader(allowed_hosts="docs.agno.com")
+
+
+def test_preserve_images_flag_defaults_off(mock_converter):
+    reader = DoclingReader(converter=mock_converter)
+    assert reader.preserve_images is False
+
+
+def test_images_scale_default_and_pipeline_option(mock_converter):
+    from docling.datamodel.base_models import InputFormat
+
+    reader = DoclingReader(converter=mock_converter, preserve_images=True)
+    assert reader.images_scale == 2.0
+
+    converter = DoclingReader._build_image_aware_converter(images_scale=3.0)
+    pdf_option = converter.format_to_options[InputFormat.PDF]
+    assert pdf_option.pipeline_options.generate_picture_images is True
+    assert pdf_option.pipeline_options.images_scale == 3.0
+
+
+def test_preserve_images_uses_markdown_export(mock_converter, mock_docling_result, tmp_path):
+    from agno.knowledge.image import LocalKnowledgeImageStore, set_image_store
+
+    mock_docling_result.document.export_to_markdown.return_value = "# Title\n\nBody"
+    mock_docling_result.document.iterate_items.return_value = []
+    store = LocalKnowledgeImageStore(base_dir=str(tmp_path / "images"))
+    set_image_store(store)
+    try:
+        reader = DoclingReader(
+            converter=mock_converter,
+            preserve_images=True,
+            chunk=False,
+        )
+        with patch("pathlib.Path.exists", return_value=True):
+            documents = reader.read(Path("test.pdf"), content_id="c1")
+        assert len(documents) == 1
+        assert "Title" in documents[0].content
+    finally:
+        set_image_store(None)
