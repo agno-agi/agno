@@ -66,14 +66,17 @@ def handle_names_for(tools: Sequence[Union[Toolkit, Callable[..., Any], Function
     reference, so these are the adapted names, not the tools' own. Toolkits
     and top-level callables share one kernel namespace, so the names are
     deduplicated across all of them, in input order, the same way the bridge
-    binds them.
+    binds them. 'results' is reserved for the built-in stored-results handle,
+    so a toolkit reducing to that name binds under a suffix.
     """
     names: List[str] = []
+    taken: List[str] = ["results"]
     for tool in tools:
         if isinstance(tool, Toolkit):
-            names.append(derive_handle_name(tool.name, names))
+            names.append(derive_handle_name(tool.name, taken))
         elif isinstance(tool, Function):
-            names.append(safe_param_name(tool.name, names))
+            names.append(safe_param_name(tool.name, taken))
         else:
-            names.append(safe_param_name(getattr(tool, "__name__", str(tool)), names))
+            names.append(safe_param_name(getattr(tool, "__name__", str(tool)), taken))
+        taken.append(names[-1])
     return names

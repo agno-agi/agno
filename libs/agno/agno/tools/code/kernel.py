@@ -1,8 +1,8 @@
 """Kernel lifecycle and cell execution for CodeMode.
 
-One ``KernelSession`` owns one IPython kernel subprocess (launched with
-``python -m ipykernel_launcher`` so no kernelspec is needed and the ``python=``
-override works). All kernel I/O — ZMQ channels, locks, timers — lives on one
+One ``KernelSession`` owns one IPython kernel subprocess, launched from an
+explicit ``KernelSpec`` built around ``python``, so no installed kernelspec is
+ever consulted and the interpreter is exactly the one asked for. All kernel I/O — ZMQ channels, locks, timers — lives on one
 background event loop owned by ``LoopRunner``, so the sync and async toolkit
 surfaces share a single client and a single per-session ``asyncio.Lock``.
 """
@@ -12,13 +12,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import concurrent.futures
+import os
 import re
+import subprocess
 import sys
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from queue import Empty
-from typing import Any, Callable, Coroutine, List, Literal, Optional
+from typing import Any, Callable, Coroutine, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from agno.media import Image
@@ -27,6 +29,7 @@ from agno.tools.code.types import CellResult
 from agno.utils.log import log_debug, log_warning
 
 try:
+    from jupyter_client.kernelspec import KernelSpec
     from jupyter_client.manager import AsyncKernelManager
 except ImportError:
     raise ImportError(
@@ -72,37 +75,113 @@ def _strip_ansi(text: str) -> str:
 class OutputAccumulator:
     """Accumulates one output stream under a hard character budget.
 
-    The cap applies at accumulation time: once the budget is spent, further
-    chunks are dropped (only their arrival is noted), so a runaway loop bounds
-    host memory and not just the returned payload.
+    The cap applies at accumulation time, so a runaway loop bounds host
+    memory and not just the returned payload. Three quarters of the budget
+    keep the head of the stream and the last quarter keeps a rolling tail:
+    the end of a long stream is where the traceback or the summary lives,
+    and a head-only cut loses exactly that.
     """
 
     def __init__(self, max_chars: int) -> None:
         self.max_chars = max_chars
-        self.truncated = False
-        self._parts: List[str] = []
-        self._length = 0
+        self._head_limit = max(1, max_chars * 3 // 4)
+        self._tail_limit = max(1, max_chars - self._head_limit)
+        self._head: List[str] = []
+        self._head_length = 0
+        self._tail: "deque[str]" = deque()
+        self._tail_length = 0
+        self._seen = 0
 
     def add(self, text: str) -> None:
         if not text:
             return
-        remaining = self.max_chars - self._length
-        if remaining <= 0:
-            self.truncated = True
+        self._seen += len(text)
+        room = self._head_limit - self._head_length
+        if room > 0:
+            piece = text[:room]
+            self._head.append(piece)
+            self._head_length += len(piece)
+            text = text[room:]
+            if not text:
+                return
+        if len(text) >= self._tail_limit:
+            self._tail.clear()
+            self._tail.append(text[-self._tail_limit :])
+            self._tail_length = self._tail_limit
             return
-        if len(text) > remaining:
-            self._parts.append(text[:remaining])
-            self._length = self.max_chars
-            self.truncated = True
-        else:
-            self._parts.append(text)
-            self._length += len(text)
+        self._tail.append(text)
+        self._tail_length += len(text)
+        while self._tail_length > self._tail_limit and len(self._tail) > 1:
+            dropped = self._tail.popleft()
+            self._tail_length -= len(dropped)
+        if self._tail_length > self._tail_limit:
+            only = self._tail.popleft()
+            keep = only[-self._tail_limit :]
+            self._tail.append(keep)
+            self._tail_length = len(keep)
+
+    @property
+    def truncated(self) -> bool:
+        # Truncated means characters were actually lost, not merely that the
+        # stream spilled from the head budget into the tail ring.
+        return self._seen > self._head_length + self._tail_length
 
     def render(self) -> str:
-        text = "".join(self._parts)
-        if self.truncated:
-            text += f"\n[... output truncated at {self.max_chars} chars ...]"
-        return text
+        head = "".join(self._head)
+        tail = "".join(self._tail)
+        if not self.truncated:
+            return head + tail
+        omitted = self._seen - len(head) - len(tail)
+        return f"{head}\n[... {omitted} chars omitted; output capped at {self.max_chars} ...]\n{tail}"
+
+
+class StderrTail:
+    """Keeps the last bytes a kernel wrote to stderr, and keeps the pipe drained.
+
+    The kernel's stderr is piped so it stays out of the host's console, but a
+    pipe nobody reads deadlocks the child once its buffer fills, so a daemon
+    thread drains it continuously into a bounded ring. The tail is what a
+    startup or death error can actually show: the reason a kernel refused to
+    start is one of these lines, never in the exception jupyter_client raises.
+    """
+
+    def __init__(self, stream: Any, max_bytes: int = 4096) -> None:
+        self.max_bytes = max_bytes
+        self._chunks: "deque[bytes]" = deque()
+        self._length = 0
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._drain, args=(stream,), name="agno-kernel-stderr", daemon=True)
+        self._thread.start()
+
+    def _drain(self, stream: Any) -> None:
+        try:
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    return
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8", "replace")
+                with self._lock:
+                    self._chunks.append(chunk)
+                    self._length += len(chunk)
+                    while self._length > self.max_bytes and len(self._chunks) > 1:
+                        dropped = self._chunks.popleft()
+                        self._length -= len(dropped)
+        except Exception:
+            return
+
+    def tail(self) -> str:
+        with self._lock:
+            text = b"".join(self._chunks).decode("utf-8", "replace")
+        return text[-self.max_bytes :].strip()
+
+    def settle(self, timeout: float = 0.25) -> None:
+        """Give the drain thread a moment to read the final bytes at EOF."""
+        self._thread.join(timeout)
+
+    def describe(self) -> str:
+        text = self.tail()
+        return f" Kernel stderr tail:\n{text}" if text else ""
 
 
 class LoopRunner:
@@ -166,6 +245,10 @@ class KernelSession:
         on_busy_kernel: str = "wait",
         interrupt_grace: float = 1.0,
         idle_ttl: int = 1800,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        max_images_per_cell: int = 8,
+        max_image_bytes: int = 5_000_000,
         owner_user_id: Optional[str] = None,
         flush_hook: Optional[Callable[["KernelSession"], Coroutine[Any, Any, None]]] = None,
         setup_hook: Optional[Callable[["KernelSession"], Coroutine[Any, Any, Optional[str]]]] = None,
@@ -181,6 +264,14 @@ class KernelSession:
         self.on_busy_kernel = on_busy_kernel
         self.interrupt_grace = interrupt_grace
         self.idle_ttl = idle_ttl
+        # Working directory and extra environment for the kernel process. The
+        # extras are laid over the parent environment, never replacing it.
+        self.cwd = cwd
+        self.env = env
+        # Bounds on images promoted from display_data into the cell result;
+        # max_output_chars covers the text streams, never the image bytes.
+        self.max_images_per_cell = max_images_per_cell
+        self.max_image_bytes = max_image_bytes
         # The user_id of the run this session was created for. A warm kernel
         # holds that run's variables, so a run of a different user is refused
         # by the owner of this session (CodeMode) before it reaches the kernel.
@@ -195,6 +286,7 @@ class KernelSession:
 
         self.km: Optional[AsyncKernelManager] = None
         self.kc: Any = None
+        self._stderr_tail: Optional[StderrTail] = None
         self.lock = asyncio.Lock()
         self.execution_count = 0
         self.last_used = time.monotonic()
@@ -227,13 +319,21 @@ class KernelSession:
         self.bridge_comm_id: Optional[str] = None
         # The RunContext of the run whose cell is currently executing.
         self.run_context: Optional[Any] = None
+        # And that run's ResultStore, the fallback for a bridged call whose
+        # cell token has left the window.
+        self.current_result_store: Optional[Any] = None
+        # Set by the bridge when injected tools are bound: only then do
+        # background tasks need per-cell context tokens.
+        self.needs_context_tokens = False
         # Cell token -> the RunContext of the run that executed that cell. A
         # bridged call carries the token of the cell that created its task, so
         # a background task that calls a tool after its cell finished still
         # resolves to the run that started it, not to whichever run is
         # executing when the call is drained. Bounded and cleared on teardown
-        # so no RunContext outlives its kernel.
+        # so no RunContext outlives its kernel. The parallel store map gives
+        # the bridge's results handle the run's ResultStore the same way.
         self.context_tokens: "OrderedDict[str, Any]" = OrderedDict()
+        self.context_stores: "OrderedDict[str, Any]" = OrderedDict()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -246,25 +346,50 @@ class KernelSession:
     def touch(self) -> None:
         self.last_used = time.monotonic()
 
+    def _make_kernel_manager(self) -> AsyncKernelManager:
+        """A manager that launches exactly ``python``, and nothing else.
+
+        The interpreter is an explicit spec object. Assigning km.kernel_cmd
+        does nothing on jupyter_client 8 - it is not a trait there - so the
+        kernel would come from whatever installed kernelspec the environment
+        resolves, ignoring ``python`` and, with a stray JUPYTER_PATH, running
+        a foreign interpreter whose dill cannot restore this session's
+        snapshots. The spec below is the whole launch: no kernelspec on disk
+        is ever consulted.
+        """
+        km = AsyncKernelManager()
+        km._kernel_spec = KernelSpec(
+            argv=[self.python, "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+            display_name="agno-code-mode",
+            language="python",
+        )
+        return km
+
     async def ensure_started(self) -> None:
         if self.kc is not None:
             return
-        km = AsyncKernelManager()
-        # kernel_cmd is a traitlets attribute mypy cannot see. Launching by
-        # explicit command needs no installed kernelspec and honors python=.
-        km.kernel_cmd = [self.python, "-m", "ipykernel_launcher", "-f", "{connection_file}"]  # type: ignore[attr-defined]
-        await km.start_kernel()
+        km = self._make_kernel_manager()
+        launch_kwargs: Dict[str, Any] = {"stderr": subprocess.PIPE}
+        if self.cwd is not None:
+            launch_kwargs["cwd"] = self.cwd
+        if self.env:
+            launch_kwargs["env"] = {**os.environ, **self.env}
+        await km.start_kernel(**launch_kwargs)
+        stderr_stream = getattr(getattr(km, "provisioner", None), "process", None)
+        stderr_stream = getattr(stderr_stream, "stderr", None)
+        self._stderr_tail = StderrTail(stderr_stream) if stderr_stream is not None else None
         kc = km.client()
         kc.start_channels()
         try:
             await kc.wait_for_ready(timeout=60)
-        except Exception:
+        except Exception as e:
             kc.stop_channels()
             try:
                 await km.shutdown_kernel(now=True)
             except Exception:
                 pass
-            raise
+            tail = self._stderr_tail.describe() if self._stderr_tail is not None else ""
+            raise KernelDiedError(f"The kernel for session {self.session_id} did not become ready: {e}.{tail}") from e
         self.km = km
         self.kc = kc
         self.generation += 1
@@ -334,11 +459,14 @@ class KernelSession:
                 pass
         self.maybe_busy = False
         self.bridge_comm_id = None
+        self._stderr_tail = None
         # The RunContext carries the run's whole message list. A torn-down
         # session must not pin it until the next run stamps a new one; the
         # token map holds the same contexts and dies with the kernel too.
         self.run_context = None
+        self.current_result_store = None
         self.context_tokens.clear()
+        self.context_stores.clear()
 
     async def restart(self, before_start: Optional[Callable[[], Coroutine[Any, Any, None]]] = None) -> str:
         """Tear the kernel down, start a fresh one, and return the reset notice.
@@ -400,7 +528,11 @@ class KernelSession:
     # ------------------------------------------------------------------
 
     async def execute_cell(
-        self, code: str, timeout: Optional[float] = None, run_context: Optional[Any] = None
+        self,
+        code: str,
+        timeout: Optional[float] = None,
+        run_context: Optional[Any] = None,
+        result_store: Optional[Any] = None,
     ) -> CellResult:
         """Run one cell, serialized on the per-session lock.
 
@@ -414,13 +546,14 @@ class KernelSession:
             # cell must see this run's context, not a later queued run's.
             if run_context is not None:
                 self.run_context = run_context
+            self.current_result_store = result_store
             await self.ensure_started()
             if self.maybe_busy:
                 cleared = await self._clear_busy()
                 if not cleared:
                     raise KernelBusyError()
             await self._drain_channels()
-            await self._stamp_context_token(run_context)
+            await self._stamp_context_token(run_context, result_store)
             self._cell_idle_seen = False
             try:
                 result = await self._execute_locked(code, timeout)
@@ -436,7 +569,7 @@ class KernelSession:
             self.touch()
             return result
 
-    async def _stamp_context_token(self, run_context: Optional[Any]) -> None:
+    async def _stamp_context_token(self, run_context: Optional[Any], result_store: Optional[Any] = None) -> None:
         """Bind the coming cell, and every task it spawns, to this run's context.
 
         The bridge bootstrap reads the token into a contextvar in a
@@ -448,10 +581,16 @@ class KernelSession:
         """
         if self.comm_handler is None or self.kc is None:
             return
+        # A plain CodeMode with no injected tools and no store has nothing a
+        # token could resolve, so its cells skip the extra silent round trip.
+        if not self.needs_context_tokens and result_store is None:
+            return
         token = uuid4().hex[:16]
         self.context_tokens[token] = run_context
+        self.context_stores[token] = result_store
         while len(self.context_tokens) > _MAX_CONTEXT_TOKENS:
-            self.context_tokens.popitem(last=False)
+            dropped, _ = self.context_tokens.popitem(last=False)
+            self.context_stores.pop(dropped, None)
         await self._run_silent(f"_agno_cm_next_token = '{token}'")
 
     async def _execute_locked(self, code: str, timeout: Optional[float]) -> CellResult:
@@ -500,9 +639,10 @@ class KernelSession:
             except (Empty, asyncio.TimeoutError):
                 if not await self.km.is_alive():
                     await self._on_kernel_death()
+                    tail = self._stderr_tail.describe() if self._stderr_tail is not None else ""
                     raise KernelDiedError(
                         f"The kernel for session {self.session_id} died while executing the cell. "
-                        "A fresh kernel will start on the next execute; previous state is gone."
+                        f"A fresh kernel will start on the next execute; previous state is gone.{tail}"
                     )
                 continue
             if self._route_comm(msg):
@@ -522,10 +662,18 @@ class KernelSession:
             elif msg_type == "display_data":
                 png = content.get("data", {}).get("image/png")
                 if png:
-                    try:
-                        images.append(Image(content=base64.b64decode(png), mime_type="image/png", format="png"))
-                    except Exception as e:
-                        log_warning(f"CodeMode could not decode display_data image: {e}")
+                    if len(images) >= self.max_images_per_cell:
+                        stderr.add(f"[image dropped: more than {self.max_images_per_cell} images in one cell]\n")
+                    elif len(png) * 3 // 4 > self.max_image_bytes:
+                        stderr.add(
+                            f"[image dropped: about {len(png) * 3 // 4} bytes, "
+                            f"over the {self.max_image_bytes}-byte limit]\n"
+                        )
+                    else:
+                        try:
+                            images.append(Image(content=base64.b64decode(png), mime_type="image/png", format="png"))
+                        except Exception as e:
+                            log_warning(f"CodeMode could not decode display_data image: {e}")
             elif msg_type == "error":
                 traceback_text = _strip_ansi("\n".join(content.get("traceback", [])))
                 status = "error"
@@ -656,7 +804,10 @@ class KernelSession:
                     break
 
     async def _on_kernel_death(self) -> None:
-        log_warning(f"CodeMode kernel for session {self.session_id} died")
+        if self._stderr_tail is not None:
+            self._stderr_tail.settle()
+        tail = self._stderr_tail.describe() if self._stderr_tail is not None else ""
+        log_warning(f"CodeMode kernel for session {self.session_id} died.{tail}")
         await self._teardown_kernel()
         self.pending_notice = RESET_NOTICE
 
@@ -682,7 +833,10 @@ class KernelSession:
             except (Empty, asyncio.TimeoutError):
                 if not await self.km.is_alive():
                     await self._on_kernel_death()
-                    raise KernelDiedError(f"The kernel for session {self.session_id} died during an internal cell.")
+                    tail = self._stderr_tail.describe() if self._stderr_tail is not None else ""
+                    raise KernelDiedError(
+                        f"The kernel for session {self.session_id} died during an internal cell.{tail}"
+                    )
                 continue
             if self._route_comm(msg):
                 continue
