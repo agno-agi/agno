@@ -477,3 +477,24 @@ def test_environment_variable_reaches_child_shell():
     v = ShellVerifier("command -v sh >/dev/null", env={"UNUSED": "1"}).verify(None)
     assert v.passed is True, v.report
     assert "PATH" in os.environ
+
+
+def test_a_real_averify_outranks_an_async_verify():
+    """Classifying halves purely by what they ARE lets an `async def verify` claim the async
+    slot and shadow a genuine averify, which is the half the author meant to be awaited."""
+    called = []
+
+    class Both:
+        name = "both"
+
+        async def verify(self, run):
+            called.append("verify")
+            return True
+
+        async def averify(self, run):
+            called.append("averify")
+            return True
+
+    verdict = asyncio.run(coerce_verifier(Both()).averify(None))
+    assert verdict.passed is True
+    assert called == ["averify"]

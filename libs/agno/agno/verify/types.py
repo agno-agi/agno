@@ -137,6 +137,10 @@ class VerificationAttempt:
     the last attempt. Scope such a check to the world it changed, not to the call list. `fingerprint` is captured after the attempt's run and before its
     verifiers; None means no fingerprint was configured or the capture failed, and None
     never compares equal to anything, so `noop` is False whenever either side is unknown.
+    It is the state the verifiers judged, not the baseline `noop` was decided against: that
+    baseline is a second capture taken after the previous attempt's verifiers ran, so their
+    artefacts are not charged to this attempt. The two differ whenever a verifier writes, and
+    only `noop` reports the comparison.
     """
 
     index: int

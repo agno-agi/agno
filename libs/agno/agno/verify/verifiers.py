@@ -212,13 +212,16 @@ class GuardedVerifier:
         # so every attempt failed on a confusing NoneType error instead of running the check.
         self._sync: Optional[Callable[[Any], Any]] = None
         self._async: Optional[Callable[[Any], Awaitable[Any]]] = None
-        for half in (sync_half, async_half):
-            if not callable(half):
-                continue
-            if _is_async_callable(half):
-                self._async = self._async or half
+        if callable(sync_half):
+            if _is_async_callable(sync_half):
+                self._async = sync_half
             else:
-                self._sync = self._sync or half
+                self._sync = sync_half
+        if callable(async_half):
+            if _is_async_callable(async_half):
+                self._async = async_half  # a real averify outranks an `async def verify`
+            elif self._sync is None:
+                self._sync = async_half  # a plain `def averify` is the sync half when verify is absent
 
     def verify(self, run: Any) -> Verdict:
         try:
@@ -455,11 +458,16 @@ class ShellVerifier:
             except Exception:
                 pass
         reader.join(timeout=_DRAIN_GRACE_S)
-        try:
-            if proc.stdout is not None:
-                proc.stdout.close()
-        except Exception:
-            pass
+        if not reader.is_alive():
+            # Only when the drain has finished. BufferedReader.close() takes the same buffer
+            # lock the reader holds inside read1(), so closing while it is still parked on a
+            # descendant that kept the pipe would block for that descendant's whole life and
+            # make timeout_s bound nothing at all. Left open, the fd goes with the Popen.
+            try:
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            except Exception:
+                pass
         return self._report(proc.returncode, buffer.text(), timed_out)
 
     async def averify(self, run: Any) -> Verdict:
@@ -473,7 +481,6 @@ class ShellVerifier:
                 self.command,
                 cwd=self.cwd,
                 env=self._env(),
-                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 **popen_kwargs,
@@ -521,6 +528,16 @@ class ShellVerifier:
                 await asyncio.wait_for(asyncio.shield(pump_task), timeout=_DRAIN_GRACE_S)
             except BaseException:  # noqa: BLE001 - the drain is best effort
                 pass
+            # Close the transport while the loop is still running. A descendant that escaped
+            # the group kill can hold the pipe open, and the read fd would then leak on every
+            # call; on the long-lived bridge loop that accumulates, and each surviving
+            # transport later raises "Event loop is closed" from __del__ after the loop goes.
+            transport = getattr(proc, "_transport", None)
+            if transport is not None:
+                try:
+                    transport.close()
+                except Exception:
+                    pass
         return self._report(proc.returncode, buffer.text(), timed_out)
 
 

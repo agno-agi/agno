@@ -2083,8 +2083,6 @@ class FunctionCall(BaseModel):
         if not self.function.tool_hooks:
             return execute_entrypoint
 
-        _refuse_hooks_on_a_verified_tool(self.function)
-
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
 
@@ -2217,6 +2215,12 @@ class FunctionCall(BaseModel):
 
         raw_results: List[Any] = []
         try:
+            # Hooks can defeat an @verified_tool comparison, so refuse before running anything.
+            # This sits here, not in the chain builder below, because that builder is only
+            # reached when tool_hooks are set - a pre_hook or post_hook alone would never
+            # reach it. Inside the try so it surfaces as a tool failure, not a raised run.
+            _refuse_hooks_on_a_verified_tool(self.function)
+
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = self._build_nested_execution_chain(
@@ -2392,8 +2396,6 @@ class FunctionCall(BaseModel):
         if not self.function.tool_hooks:
             return execute_entrypoint_async
 
-        _refuse_hooks_on_a_verified_tool(self.function)
-
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
 
@@ -2477,6 +2479,12 @@ class FunctionCall(BaseModel):
 
         raw_results: List[Any] = []
         try:
+            # Hooks can defeat an @verified_tool comparison, so refuse before running anything.
+            # This sits here, not in the chain builder below, because that builder is only
+            # reached when tool_hooks are set - a pre_hook or post_hook alone would never
+            # reach it. Inside the try so it surfaces as a tool failure, not a raised run.
+            _refuse_hooks_on_a_verified_tool(self.function)
+
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = await self._build_nested_execution_chain_async(

@@ -331,12 +331,12 @@ def _hooked(decorated, hook):
     return fn
 
 
-def _assert_refused(out, *, tool_ran):
+def _assert_refused(out):
     """A verified tool behind hooks must fail its call, not quietly skip the comparison."""
     assert out.status == "failure", f"expected a refusal, got {out.result!r}"
     assert "@verified_tool" in str(out.error)
     assert "tool_hooks" in str(out.error)
-    assert tool_ran == [] or tool_ran, tool_ran
+    assert out.result is None
 
 
 def test_argument_rewriting_hook_is_refused():
@@ -348,7 +348,7 @@ def test_argument_rewriting_hook_is_refused():
 
     fn = _hooked(verified_tool(same)(make_counter()[0]), rewrite_expect)
     out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
-    _assert_refused(out, tool_ran=[])
+    _assert_refused(out)
 
 
 def test_result_rewriting_hook_is_refused():
@@ -360,7 +360,7 @@ def test_result_rewriting_hook_is_refused():
 
     fn = _hooked(verified_tool(same)(make_counter()[0]), strip_blocks)
     out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
-    _assert_refused(out, tool_ran=[])
+    _assert_refused(out)
 
 
 def test_short_circuiting_hook_is_refused():
@@ -415,3 +415,14 @@ def test_a_compare_returning_a_reason_uses_it_as_the_divergence_context():
     out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
     assert "the counter is capped at 5" in str(out.result)
     assert "compare returned str" not in str(out.result)
+
+
+@pytest.mark.parametrize("hook_field", ["pre_hook", "post_hook"])
+def test_a_lone_pre_or_post_hook_is_refused_too(hook_field):
+    """The chain builder is only reached when tool_hooks are set, so a guard placed there would
+    never see a tool carrying only a pre_hook or a post_hook."""
+    fn = Function.from_callable(verified_tool(same)(make_counter()[0]))
+    setattr(fn, hook_field, lambda **kwargs: None)
+    out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
+    assert out.status == "failure"
+    assert hook_field in str(out.error)
