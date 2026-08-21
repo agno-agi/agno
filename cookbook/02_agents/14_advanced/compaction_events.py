@@ -13,7 +13,7 @@ import asyncio
 from agno.agent import Agent
 from agno.compression import CompactionManager
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from agno.run.agent import RunEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -21,7 +21,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 # Create Agent with compaction enabled
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=Gemini(id="gemini-3.6-flash"),
     tools=[DuckDuckGoTools()],
     description="Research assistant with context compaction",
     instructions="Help users research topics. Be thorough but concise.",
@@ -29,10 +29,10 @@ agent = Agent(
     add_history_to_context=True,
     # Enable context compaction with low threshold for testing
     compaction_manager=CompactionManager(
-        compact_history=True,
-        model=OpenAIResponses(id="gpt-5-mini"),
-        message_limit=5,  # Low limit to trigger compaction quickly
-        keep_recent=2,
+        compact_context=True,
+        model=Gemini(id="gemini-3.6-flash"),
+        compact_context_message_limit=5,  # Low limit to trigger compaction quickly
+        compact_context_keep_recent=2,
     ),
 )
 
