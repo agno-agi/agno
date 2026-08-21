@@ -854,6 +854,23 @@ class ComponentConfigResponse(BaseModel):
     updated_at: Optional[int] = None
 
 
+class ComponentCodeFile(BaseModel):
+    path: str
+    content: str
+
+
+class ComponentCodeResponse(BaseModel):
+    component_id: str
+    component_type: ComponentType
+    version: Optional[int] = None
+    language: str
+    entrypoint: str
+    files: List[ComponentCodeFile]
+    requirements: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    exportable: bool = True
+
+
 class ComponentUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
