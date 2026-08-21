@@ -26,7 +26,7 @@ class TestAWSSESTool:
         assert tool.sender_email == "test@example.com"
         assert tool.sender_name == "Test Sender"
         assert tool.client == mock_client
-        assert tool.name == "aws_ses_tool"
+        assert tool.name == "aws_ses_tools"
 
     @patch("boto3.client")
     def test_initialization_custom_region(self, mock_boto_client):
@@ -150,7 +150,9 @@ class TestAWSSESTool:
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
 
         # Act - v3.0 returns JSON error instead of raising
-        result = tool.aws_ses_send_email(subject="Test Subject", body="Test Body", receiver_email="unverified@example.com")
+        result = tool.aws_ses_send_email(
+            subject="Test Subject", body="Test Body", receiver_email="unverified@example.com"
+        )
         result_json = json.loads(result)
 
         # Assert
@@ -165,7 +167,9 @@ class TestAWSSESTool:
         tool.client = None  # Simulate client not initialized
 
         # Act - v3.0 returns JSON error instead of raising
-        result = tool.aws_ses_send_email(subject="Test Subject", body="Test Body", receiver_email="receiver@example.com")
+        result = tool.aws_ses_send_email(
+            subject="Test Subject", body="Test Body", receiver_email="receiver@example.com"
+        )
         result_json = json.loads(result)
 
         # Assert

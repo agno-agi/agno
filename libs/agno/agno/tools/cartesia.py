@@ -64,7 +64,7 @@ class CartesiaTools(Toolkit):
         try:
             voices = self.client.voices.list()
 
-            voice_objects = voices.items if voices else None
+            voice_objects = list(voices) if voices else None
 
             filtered_result = []
             if voice_objects:
@@ -100,6 +100,7 @@ class CartesiaTools(Toolkit):
         description: str,
         language: str,
         original_speaker_gender: str,
+        accent: str = "neutral",
         voice_id: Optional[str] = None,
     ) -> str:
         """Create a new voice localized to a different language.
@@ -109,6 +110,7 @@ class CartesiaTools(Toolkit):
             description: The description for the new localized voice.
             language: The target language code (e.g., 'fr', 'es').
             original_speaker_gender: The gender of the original speaker ("male" or "female").
+            accent: The accent for the localized voice. Defaults to "neutral".
             voice_id: The ID of an existing voice to use as the base. Defaults to the configured default.
 
         Returns:
@@ -122,8 +124,9 @@ class CartesiaTools(Toolkit):
                 voice_id=localize_voice_id,
                 name=name,
                 description=description,
-                language=language,
-                original_speaker_gender=original_speaker_gender,
+                language=language,  # type: ignore[arg-type]
+                original_speaker_gender=original_speaker_gender,  # type: ignore[arg-type]
+                accent=accent,  # type: ignore[arg-type]
             )
 
             if isinstance(result, dict):

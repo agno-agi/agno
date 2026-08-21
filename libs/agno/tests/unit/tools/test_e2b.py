@@ -118,21 +118,24 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools enabled."""
     with patch("agno.tools.e2b.Sandbox"):
         with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
+            # In v3.0, include_tools/exclude_tools filter from tools enabled by boolean flags
+            # Default enabled tools: list_files, read_file_content, watch_directory,
+            # set_sandbox_timeout, get_sandbox_status, list_running_sandboxes
             tools = E2BTools(
-                include_tools=["run_python_code", "list_files", "run_command"],
-                exclude_tools=["upload_file", "download_png_result", "get_public_url"],
+                include_tools=["list_files", "read_file_content", "get_sandbox_status"],
+                exclude_tools=["watch_directory", "set_sandbox_timeout", "list_running_sandboxes"],
             )
 
-            # Check enabled functions
+            # Check enabled functions (included and not excluded)
             function_names = [func.name for func in tools.functions.values()]
-            assert "run_python_code" in function_names
             assert "list_files" in function_names
-            assert "run_command" in function_names
+            assert "read_file_content" in function_names
+            assert "get_sandbox_status" in function_names
 
-            # Check disabled functions
-            assert "upload_file" not in function_names
-            assert "download_png_result" not in function_names
-            assert "get_public_url" not in function_names
+            # Check disabled functions (excluded)
+            assert "watch_directory" not in function_names
+            assert "set_sandbox_timeout" not in function_names
+            assert "list_running_sandboxes" not in function_names
 
 
 def test_run_python_code(mock_e2b_tools):

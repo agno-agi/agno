@@ -75,7 +75,7 @@ class RedditTools(Toolkit):
             self.username = username or getenv("REDDIT_USERNAME")
             self.password = password or getenv("REDDIT_PASSWORD")
 
-            self.reddit = None
+            self.reddit = None  # type: ignore[assignment]
             # Check if we have all required credentials
             if builtins.all([self.client_id, self.client_secret]):
                 # Initialize with read-only access if no user credentials
@@ -416,6 +416,9 @@ class RedditTools(Toolkit):
             log_debug(f"Attempting to post reply with content length: {len(content)}")
             reply = submission.reply(body=content)
 
+            if reply is None:
+                return json.dumps({"error": "Failed to create reply - no response from Reddit"})
+
             # Prepare the response information
             reply_info: Dict[str, Union[str, int, float]] = {
                 "id": reply.id,
@@ -495,6 +498,9 @@ class RedditTools(Toolkit):
             # Create the reply
             log_debug(f"Attempting to post reply with content length: {len(content)}")
             reply = comment.reply(body=content)
+
+            if reply is None:
+                return json.dumps({"error": "Failed to create reply - no response from Reddit"})
 
             # Prepare the response information
             reply_info: Dict[str, Union[str, int, float]] = {

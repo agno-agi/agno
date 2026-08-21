@@ -199,46 +199,51 @@ class TestMem0Toolkit:
 
     def test_get_all_memories_success(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "user-all-1"
-        result_str = toolkit_api_key.mem0_get_all_memories(dummy_run_context)
+        result_str = toolkit_api_key.get_all_memories(dummy_run_context)
         mock_memory_client_instance.get_all.assert_called_once_with(user_id="user-all-1")
         expected = [{"id": "mem-client-all-1", "memory": "all client mem 1"}]
         assert json.loads(result_str) == expected
 
     def test_get_all_memories_success_dict_return(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "user-all-dict"
-        result_str = toolkit_config.mem0_get_all_memories(dummy_run_context)
+        result_str = toolkit_config.get_all_memories(dummy_run_context)
         mock_memory_instance.get_all.assert_called_once_with(user_id="user-all-dict")
         expected = [{"id": "mem-all-1", "memory": "all mem 1"}]
         assert json.loads(result_str) == expected
 
     def test_get_all_memories_no_user_id(self, toolkit_api_key, dummy_run_context):
-        result_str = toolkit_api_key.mem0_get_all_memories(dummy_run_context)
+        result_str = toolkit_api_key.get_all_memories(dummy_run_context)
         expected_error_msg = "Error in get_all_memories: A user_id must be provided in the method call."
         assert result_str == expected_error_msg
 
     def test_get_all_memories_error(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "error-user"
         mock_memory_client_instance.get_all.side_effect = Exception("Test get_all error")
-        result_str = toolkit_api_key.mem0_get_all_memories(dummy_run_context)
+        result_str = toolkit_api_key.get_all_memories(dummy_run_context)
         assert "Error getting all memories: Test get_all error" in result_str
 
     def test_delete_all_memories_success(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "user-delete-all-1"
-        result_str = toolkit_api_key.mem0_delete_all_memories(dummy_run_context)
+        result_str = toolkit_api_key.delete_all_memories(dummy_run_context)
         mock_memory_client_instance.delete_all.assert_called_once_with(user_id="user-delete-all-1")
-        expected_str = "Successfully deleted all memories for user_id: user-delete-all-1."
-        assert result_str == expected_str
+        result = json.loads(result_str)
+        assert result["status"] == "success"
+        assert result["message"] == "Successfully deleted all memories for user_id: user-delete-all-1"
 
     def test_delete_all_memories_no_user_id(self, toolkit_api_key, dummy_run_context):
-        result_str = toolkit_api_key.mem0_delete_all_memories(dummy_run_context)
-        expected_error_msg = "Error in delete_all_memories: A user_id must be provided in the method call."
-        assert "Error deleting all memories:" in result_str and expected_error_msg in result_str
+        result_str = toolkit_api_key.delete_all_memories(dummy_run_context)
+        result = json.loads(result_str)
+        assert "error" in result
+        assert "Error deleting all memories:" in result["error"]
+        assert "Error in delete_all_memories: A user_id must be provided in the method call." in result["error"]
 
     def test_delete_all_memories_error(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "error-user"
         mock_memory_client_instance.delete_all.side_effect = Exception("Test delete_all error")
-        result_str = toolkit_api_key.mem0_delete_all_memories(dummy_run_context)
-        assert "Error deleting all memories: Test delete_all error" in result_str
+        result_str = toolkit_api_key.delete_all_memories(dummy_run_context)
+        result = json.loads(result_str)
+        assert "error" in result
+        assert "Error deleting all memories: Test delete_all error" in result["error"]
 
     def test_add_memory_with_infer_false(self, monkeypatch, dummy_run_context):
         """Test that infer parameter can be configured to False"""

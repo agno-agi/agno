@@ -39,15 +39,6 @@ class TestHackerNewsToolsInitialization:
         assert "get_user_details" in function_names
         assert tools.name == "hackers_news"
 
-    def test_initialization_with_all_flag(self):
-        """Test initialization with all=True enables all tools."""
-        tools = HackerNewsTools(enable_get_top_stories=False, enable_get_user_details=False, all=True)
-
-        function_names = [func.name for func in tools.functions.values()]
-
-        assert "get_top_hackernews_stories" in function_names
-        assert "get_user_details" in function_names
-
     def test_initialization_stories_only(self):
         """Test initialization with only stories enabled."""
         tools = HackerNewsTools(enable_get_top_stories=True, enable_get_user_details=False)

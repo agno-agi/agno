@@ -95,7 +95,7 @@ class TestGitlabTools:
         assert "get_project" in tools.async_functions
         assert "list_merge_requests" in tools.async_functions
         assert "get_merge_request" in tools.async_functions
-        assert "list_issues" in tools.async_functions
+        assert "gitlab_list_issues" in tools.async_functions
         assert "alist_projects" not in tools.async_functions
 
     def test_enable_flags_register_selected_tools_only(self):

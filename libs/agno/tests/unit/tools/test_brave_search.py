@@ -68,7 +68,7 @@ def test_toolkit_integration():
     """Test that the toolkit is properly initialized with name and tools"""
     with patch("agno.tools.bravesearch.Brave"):
         tools = BraveSearchTools(api_key="test_key")
-        assert tools.name == "brave_search"
+        assert tools.name == "brave_search_tools"
         assert len(tools.tools) == 1
         assert tools.tools[0].__name__ == "brave_search"
 
@@ -298,8 +298,11 @@ def test_brave_search_exception_handling(brave_search_tools, mock_brave_client):
     """Test that exceptions from Brave client are handled gracefully"""
     mock_brave_client.search.side_effect = Exception("API Error")
 
-    with pytest.raises(Exception, match="API Error"):
-        brave_search_tools.brave_search("test query")
+    # v3.0: Toolkits return JSON error responses instead of raising exceptions
+    result = brave_search_tools.brave_search("test query")
+    result_dict = json.loads(result)
+    assert "error" in result_dict
+    assert "API Error" in result_dict["error"]
 
 
 @patch("agno.tools.bravesearch.log_info")

@@ -41,6 +41,7 @@ def mock_cartesia_client():
     mock_voice_obj2.language = "es"
 
     mock_pager.items = [mock_voice_obj1, mock_voice_obj2]
+    mock_pager.__iter__ = lambda self: iter([mock_voice_obj1, mock_voice_obj2])
     mock_client.voices.list.return_value = mock_pager
 
     # Mock tts.bytes to return an iterator
@@ -128,21 +129,21 @@ def test_feature_registration(mock_cartesia_client):
         # Test with only TTS and List enabled (defaults)
         tools = CartesiaTools()
         assert len(tools.functions) == 2
-        assert "text_to_speech" in tools.functions
+        assert "cartesia_text_to_speech" in tools.functions
         assert "list_voices" in tools.functions
 
         # Test with localize enabled as well
-        tools = CartesiaTools(enable_localize_voice=True)
+        tools = CartesiaTools(localize_voice=True)
         assert len(tools.functions) == 3
-        assert "text_to_speech" in tools.functions
+        assert "cartesia_text_to_speech" in tools.functions
         assert "list_voices" in tools.functions
         assert "localize_voice" in tools.functions
 
         # Test with all disabled
         tools = CartesiaTools(
-            enable_text_to_speech=False,
-            enable_list_voices=False,
-            enable_localize_voice=False,
+            text_to_speech=False,
+            list_voices=False,
+            localize_voice=False,
         )
         assert len(tools.functions) == 0
 
@@ -151,7 +152,7 @@ def test_list_voices(cartesia_tools, mock_cartesia_client):
     """Test listing voices correctly handles the pager and extracts data."""
     # Mock client already set up in fixture to return pager
 
-    result_json_str = cartesia_tools.cartesia_list_voices()
+    result_json_str = cartesia_tools.list_voices()
     result_data = json.loads(result_json_str)
 
     # Check the client method was called
@@ -174,7 +175,7 @@ def test_list_voices_error(cartesia_tools, mock_cartesia_client):
     """Test error handling for list_voices."""
     mock_cartesia_client.voices.list.side_effect = Exception("List API Error")
 
-    result_json_str = cartesia_tools.cartesia_list_voices()
+    result_json_str = cartesia_tools.list_voices()
     result_data = json.loads(result_json_str)
 
     assert "error" in result_data
@@ -250,7 +251,7 @@ def test_localize_voice(cartesia_tools, mock_cartesia_client):
     # Use the client from the specific tools instance
     mock_cartesia_client.voices.localize.return_value = localized_voice_data
 
-    result = cartesia_tools.cartesia_localize_voice(
+    result = cartesia_tools.localize_voice(
         voice_id="original_voice_id",
         language="es",
         name="Localized Voice",
@@ -261,10 +262,11 @@ def test_localize_voice(cartesia_tools, mock_cartesia_client):
 
     mock_cartesia_client.voices.localize.assert_called_once_with(
         voice_id="original_voice_id",
-        language="es",
         name="Localized Voice",
         description="Test Localization",
+        language="es",
         original_speaker_gender="female",
+        accent="neutral",
     )
     assert result_data["id"] == "localized_voice_id"
     assert result_data["language"] == "es"
