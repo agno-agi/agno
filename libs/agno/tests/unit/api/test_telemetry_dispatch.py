@@ -33,6 +33,7 @@ from agno.api.schemas.evals import EvalRunCreate
 from agno.api.schemas.os import OSLaunch
 from agno.api.schemas.team import TeamRunCreate
 from agno.api.schemas.workflows import WorkflowRunCreate
+from agno.api.settings import AgnoAPISettings
 from agno.api.team import acreate_team_run, create_team_run
 from agno.api.workflow import acreate_workflow_run, create_workflow_run
 from agno.db.schemas.evals import EvalType
@@ -261,6 +262,33 @@ def test_background_client_uses_short_telemetry_timeout():
         _create_telemetry_client()
 
     assert client.call_args.kwargs["timeout"] == TELEMETRY_TIMEOUT
+
+
+def test_telemetry_timeouts_default_when_env_is_unset(monkeypatch):
+    monkeypatch.delenv("AGNO_TELEMETRY_TIMEOUT", raising=False)
+    monkeypatch.delenv("AGNO_TELEMETRY_SHUTDOWN_TIMEOUT", raising=False)
+
+    settings = AgnoAPISettings()
+
+    assert settings.telemetry_timeout == 5.0
+    assert settings.telemetry_shutdown_timeout == 2.0
+
+
+def test_telemetry_timeouts_are_env_tunable(monkeypatch):
+    monkeypatch.setenv("AGNO_TELEMETRY_TIMEOUT", "1.5")
+    monkeypatch.setenv("AGNO_TELEMETRY_SHUTDOWN_TIMEOUT", "0")
+
+    settings = AgnoAPISettings()
+
+    assert settings.telemetry_timeout == 1.5
+    assert settings.telemetry_shutdown_timeout == 0.0
+
+
+def test_negative_telemetry_timeouts_clamp_to_zero():
+    settings = AgnoAPISettings(telemetry_timeout=-1, telemetry_shutdown_timeout=-0.5)
+
+    assert settings.telemetry_timeout == 0.0
+    assert settings.telemetry_shutdown_timeout == 0.0
 
 
 def test_changed_pid_is_reset_before_acquiring_inherited_lock(dispatcher_factory):
@@ -751,6 +779,40 @@ assert started.wait(2)
     elapsed = time.monotonic() - start
 
     assert 1.5 <= elapsed < TELEMETRY_SHUTDOWN_TIMEOUT + 2
+
+
+def test_zero_shutdown_timeout_skips_atexit_flush():
+    script = """
+import threading
+import time
+
+from agno.api.api import TELEMETRY_SHUTDOWN_TIMEOUT, api
+
+assert TELEMETRY_SHUTDOWN_TIMEOUT == 0.0
+started = threading.Event()
+
+class BlockingClient:
+    def post(self, route, json):
+        started.set()
+        time.sleep(30)
+
+    def close(self):
+        pass
+
+api._dispatcher._client_factory = BlockingClient
+api.post_in_background('/telemetry/test', {'run_id': 'run'})
+assert started.wait(2)
+"""
+    env = os.environ.copy()
+    package_root = str(Path(__file__).resolve().parents[3])
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
+    env["AGNO_TELEMETRY_SHUTDOWN_TIMEOUT"] = "0"
+
+    start = time.monotonic()
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=6, env=env)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.5, "a zero shutdown timeout must not hold process exit for a blocked worker"
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is not available on this platform")

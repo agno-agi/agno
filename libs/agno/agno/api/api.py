@@ -16,8 +16,10 @@ from agno.utils.log import log_debug
 # Bounded so a dead or slow endpoint can never accumulate unbounded memory;
 # when it fills, new events are dropped (telemetry is best-effort).
 TELEMETRY_QUEUE_SIZE = 2000
-TELEMETRY_TIMEOUT = 5.0
-TELEMETRY_SHUTDOWN_TIMEOUT = 2.0
+# Both are read once at import from AGNO_TELEMETRY_TIMEOUT and
+# AGNO_TELEMETRY_SHUTDOWN_TIMEOUT (see AgnoAPISettings); defaults 5s and 2s.
+TELEMETRY_TIMEOUT = agno_api_settings.telemetry_timeout
+TELEMETRY_SHUTDOWN_TIMEOUT = agno_api_settings.telemetry_shutdown_timeout
 
 _STOP = object()
 
