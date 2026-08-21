@@ -442,7 +442,7 @@ class TestDeleteMessage:
         tools = TelegramTools(chat_id="12345", enable_delete_message=True)
         tools.bot.delete_message = MagicMock(return_value=True)
 
-        result = tools.delete_message(message_id=42)
+        result = tools.delete_telegram_message(message_id=42)
         tools.bot.delete_message.assert_called_once_with("12345", 42)
         parsed = json.loads(result)
         assert parsed["status"] == "success"
@@ -455,7 +455,7 @@ class TestDeleteMessage:
         tools = TelegramTools(chat_id="12345", enable_delete_message=True)
         tools.bot.delete_message = MagicMock(side_effect=_FakeApiTelegramException("deleteMessage", "Bad Request", 400))
 
-        result = tools.delete_message(message_id=42)
+        result = tools.delete_telegram_message(message_id=42)
         parsed = json.loads(result)
         assert parsed["status"] == "error"
         assert "Bad Request" in parsed["message"]
@@ -552,10 +552,10 @@ def test_get_telegram_chat_success(monkeypatch):
     mock_chat.first_name = None
     mock_chat.last_name = None
     mock_chat.description = "A test group"
-    tools.bot.get_telegram_chat = MagicMock(return_value=mock_chat)
+    tools.bot.get_chat = MagicMock(return_value=mock_chat)
 
     result = tools.get_telegram_chat()
-    tools.bot.get_telegram_chat.assert_called_once_with("12345")
+    tools.bot.get_chat.assert_called_once_with("12345")
     parsed = json.loads(result)
     assert parsed["status"] == "success"
     assert parsed["id"] == 12345
@@ -568,7 +568,7 @@ def test_get_telegram_chat_api_error(monkeypatch):
     from agno.tools.telegram import TelegramTools
 
     tools = TelegramTools(chat_id="12345", enable_get_chat=True)
-    tools.bot.get_telegram_chat = MagicMock(side_effect=_FakeApiTelegramException("getChat", "Chat not found", 400))
+    tools.bot.get_chat = MagicMock(side_effect=_FakeApiTelegramException("getChat", "Chat not found", 400))
 
     result = tools.get_telegram_chat()
     parsed = json.loads(result)
