@@ -1207,6 +1207,28 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    # The offload and CodeMode-snapshot suites parametrize over sqlite and
+    # postgresql, and open the Postgres engine in a session fixture with no
+    # skip marker: without a server every postgresql case errors on connection
+    # refused instead of skipping, and the sqlite lane alone is not a gate on
+    # the adapter production runs. Same image, port and credentials the suites
+    # target (postgresql+psycopg://ai:ai@localhost:5532/ai).
+    services:
+      postgres:
+        image: agnohq/pgvector:18
+        env:
+          POSTGRES_DB: ai
+          POSTGRES_USER: ai
+          POSTGRES_PASSWORD: ai
+        ports:
+          - "5532:5432"
+        options: >-
+          --health-cmd "pg_isready -U ai -d ai"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -1231,11 +1253,10 @@ jobs:
 
   # Run the DbFileSystem suite against a real Postgres (both dialects).
   #
-  # This suite is ignored by test-remaining because its conftest eager-connects
-  # to Postgres with no skip marker; without a DB, every postgresql-parametrized
-  # case errors on connection-refused. Give it its own job with a pgvector
-  # service on localhost:5532 — the exact host/port/creds the conftest targets —
-  # so both the sqlite and postgresql lanes run in CI.
+  # test-remaining ignores this suite and runs it here instead, in parallel,
+  # so the largest Postgres-backed suite does not stretch that job's wall clock.
+  # The pgvector service is on localhost:5532 — the exact host/port/creds the
+  # conftest targets — so both the sqlite and postgresql lanes run in CI.
   test-fs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
