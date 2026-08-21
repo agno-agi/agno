@@ -457,9 +457,20 @@ class SchedulerTools(Toolkit):
         include_agents: Optional[Sequence[Any]] = None,
         include_teams: Optional[Sequence[Any]] = None,
         include_workflows: Optional[Sequence[Any]] = None,
+        db_resolver: Optional[Callable[[], Any]] = None,
         **kwargs: Any,
     ):
-        self.manager = ScheduleManager(db=db)
+        # With a resolver and no db yet, the manager is built lazily on first
+        # access: the embedding StudioTools may learn its db only after
+        # AgentOS fills the shared registry.
+        self._db_resolver = db_resolver
+        self._manager: Optional[ScheduleManager] = (
+            ScheduleManager(db=db) if db is not None or db_resolver is None else None
+        )
+        # A manager built from an explicit db - or assigned through the setter -
+        # is the caller's choice and is never rebuilt underneath them. Only a
+        # resolver-backed one tracks the resolver.
+        self._manager_pinned = self._manager is not None
         self.user_id = user_id
         self.default_endpoint = default_endpoint
         self.default_method = default_method
@@ -532,6 +543,25 @@ class SchedulerTools(Toolkit):
     # ------------------------------------------------------------------
     # Sync tools
     # ------------------------------------------------------------------
+
+    @property
+    def manager(self) -> ScheduleManager:
+        if self._manager_pinned and self._manager is not None:
+            return self._manager
+        resolved = self._db_resolver() if self._db_resolver is not None else None
+        # Rebuild whenever the resolver's answer MOVES, not just when it is
+        # still None. The embedding toolkit learns its db from the registry
+        # only once AgentOS declares one, so a manager built before that -- by
+        # any read at all -- would otherwise hold the pre-declaration db for
+        # the life of the process, splitting schedules from the catalog.
+        if self._manager is None or self._manager.db is not resolved:
+            self._manager = ScheduleManager(db=resolved)
+        return self._manager
+
+    @manager.setter
+    def manager(self, value: ScheduleManager) -> None:
+        self._manager = value
+        self._manager_pinned = True
 
     def create_schedule(
         self,

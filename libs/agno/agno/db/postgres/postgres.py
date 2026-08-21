@@ -20,6 +20,7 @@ from agno.db.base import (
     ComponentType,
     ComponentVersionConflictError,
     SessionType,
+    project_config_identity,
 )
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -5452,12 +5453,7 @@ class PostgresDb(BaseDb):
                         ).scalar()
                         published_config = stored if isinstance(stored, dict) else None
                     if isinstance(published_config, dict):
-                        if published_config.get("name") is not None:
-                            projection["name"] = published_config["name"]
-                        if "description" in published_config:
-                            projection["description"] = published_config.get("description")
-                        if published_config.get("metadata") is not None:
-                            projection["metadata"] = published_config.get("metadata")
+                        projection.update(project_config_identity(published_config))
                     projection_update = (
                         components_table.update()
                         .where(
