@@ -123,7 +123,9 @@ class ContextCompactionManager:
     message_limit: Optional[int] = None  # trigger compaction at N messages
     token_limit: Optional[int] = None  # trigger compaction at N tokens
     keep_recent: int = 10  # messages to keep intact (not summarized)
-    preserve_user_budget: Optional[int] = None  # token budget for preserving user messages; derived from token_limit if not set
+    preserve_user_budget: Optional[int] = (
+        None  # token budget for preserving user messages; derived from token_limit if not set
+    )
     instructions: Optional[str] = None  # custom summarization prompt
     stats: Dict[str, Any] = field(default_factory=dict)  # runtime stats for display
 
@@ -195,7 +197,9 @@ class ContextCompactionManager:
             return CompactionResult(compacted_messages=messages)
 
         # 3. Summarize old messages (merges with existing summary if available)
-        existing_summary = run_response.compaction_state.summary if run_response and run_response.compaction_state else None
+        existing_summary = (
+            run_response.compaction_state.summary if run_response and run_response.compaction_state else None
+        )
         log_debug(f"[COMPACTION] Existing summary ({len(existing_summary) if existing_summary else 0} chars)")
         if existing_summary:
             log_debug(
@@ -413,7 +417,9 @@ class ContextCompactionManager:
             return CompactionResult(compacted_messages=messages)
 
         # 3. Summarize old messages (merges with existing summary if available)
-        existing_summary = run_response.compaction_state.summary if run_response and run_response.compaction_state else None
+        existing_summary = (
+            run_response.compaction_state.summary if run_response and run_response.compaction_state else None
+        )
         log_debug(f"[COMPACTION] Existing summary ({len(existing_summary) if existing_summary else 0} chars)")
         if existing_summary:
             log_debug(

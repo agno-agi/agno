@@ -266,11 +266,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_memory_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
-    if (
-        agent.compact_tool_results
-        or agent.compact_context
-        or agent.compaction_manager is not None
-    ):
+    if agent.compact_tool_results or agent.compact_context or agent.compaction_manager is not None:
         set_compaction_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
