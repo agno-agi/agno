@@ -108,8 +108,6 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 
 if TYPE_CHECKING:
-    from weakref import ReferenceType
-
     from agno.agent.agent import Agent
     from agno.db.base import BaseDb, ComponentType
     from agno.registry.registry import Registry
@@ -268,14 +266,6 @@ class StudioRunnerTools(Toolkit):
         # before AgentOS, and AgentOS fills registry.dbs only afterwards, so
         # snapshotting leaves every db-backed tool dark forever.
         self._db: Optional["BaseDb"] = db
-        # Set by the AgentOS that SERVES this toolkit (see the db property).
-        # Declared before super().__init__ so a deep copy of the toolkit carries
-        # the field rather than resolving as if it had never been bound.
-        self._os_db: Optional["BaseDb"] = None
-        # Which AgentOS set _os_db, held weakly - see the twin on StudioTools.
-        # The same OS binding again replaces its own binding silently; a
-        # different OS naming a different db keeps the first one and warns.
-        self._os_binding: Optional["ReferenceType[Any]"] = None
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
@@ -336,11 +326,6 @@ class StudioRunnerTools(Toolkit):
     def db(self) -> Optional["BaseDb"]:
         if self._db is not None or self.registry is None:
             return self._db
-        # The db of the AgentOS that serves this toolkit, when one does: a
-        # shared registry cannot say which of several mounted OS instances owns
-        # this toolkit's catalog, so the serving OS names it.
-        if self._os_db is not None:
-            return self._os_db
         # Resolved on every access, never memoized - see the twin on
         # StudioTools: a read taken before AgentOS declares its catalog db
         # would otherwise pin this toolkit to the wrong db permanently.

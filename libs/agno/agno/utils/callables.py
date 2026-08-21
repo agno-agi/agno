@@ -210,33 +210,6 @@ async def _acompute_cache_key(
 # ---------------------------------------------------------------------------
 
 
-def bind_studio_catalog_db(entity: Any, tools: Any) -> None:
-    """Let the AgentOS serving this component bind Studio toolkits a factory made.
-
-    A callable tools factory cannot be inspected when the OS is constructed --
-    calling it then is not safe -- so the OS stamps the carrier and the binding
-    happens here, the first time the factory actually runs. Without it a Studio
-    toolkit delivered by a factory never learns which OS serves it and resolves
-    the registry-wide declaration instead, which belongs to whichever AgentOS
-    declared first; its writes then land in a catalog the serving OS never
-    reads, and report success.
-    """
-    binding = getattr(entity, "_studio_catalog_os", None)
-    if binding is None:
-        return
-    serving_os = binding()
-    if serving_os is None:
-        # The OS that stamped this carrier is gone; the registry declaration is
-        # the only answer left, which is what an unstamped carrier gets too.
-        return
-    try:
-        serving_os._bind_studio_tools(entity, tools)
-    except Exception as e:
-        # Binding is an optimisation over the registry declaration, never a
-        # precondition for running the tools the factory just produced.
-        log_debug(f"Could not bind a Studio toolkit produced by a tools factory: {e}")
-
-
 def resolve_callable_tools(entity: Any, run_context: "RunContext") -> None:
     """Resolve callable tools factory and populate run_context.tools (sync)."""
     from agno.tools import Toolkit
@@ -254,7 +227,6 @@ def resolve_callable_tools(entity: Any, run_context: "RunContext") -> None:
     # Check cache
     if cache_enabled and cache_key is not None and cache_key in cache:
         log_debug(f"Using cached tools for key: {cache_key}")
-        bind_studio_catalog_db(entity, cache[cache_key])
         run_context.tools = cache[cache_key]
         return
 
@@ -273,7 +245,6 @@ def resolve_callable_tools(entity: Any, run_context: "RunContext") -> None:
         cache[cache_key] = result
         log_debug(f"Cached tools for key: {cache_key}")
 
-    bind_studio_catalog_db(entity, result)
     run_context.tools = result
 
 
@@ -294,7 +265,6 @@ async def aresolve_callable_tools(entity: Any, run_context: "RunContext") -> Non
     # Check cache
     if cache_enabled and cache_key is not None and cache_key in cache:
         log_debug(f"Using cached tools for key: {cache_key}")
-        bind_studio_catalog_db(entity, cache[cache_key])
         run_context.tools = cache[cache_key]
         return
 
@@ -313,7 +283,6 @@ async def aresolve_callable_tools(entity: Any, run_context: "RunContext") -> Non
         cache[cache_key] = result
         log_debug(f"Cached tools for key: {cache_key}")
 
-    bind_studio_catalog_db(entity, result)
     run_context.tools = result
 
 
