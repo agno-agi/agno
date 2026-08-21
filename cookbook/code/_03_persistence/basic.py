@@ -68,9 +68,23 @@ if __name__ == "__main__":
         code.close()  # flush a final snapshot
         code.shutdown(SESSION_ID)  # then kill the kernel
 
-        agent.print_response(
+        output = agent.run(
             "What is in `readings` and `notes`? Report their sum and the note text.",
             session_id=SESSION_ID,
         )
+        print(output.content)
+
+        # The restore notice travels in-band to the model, as the first part of
+        # the next execute result. Show it here so the round trip is visible.
+        for message in output.messages or []:
+            if message.role == "tool" and "<code_mode_restored>" in str(
+                message.content
+            ):
+                print("\n--- what the model was told ---")
+                print(
+                    str(message.content).split("</code_mode_restored>")[0]
+                    + "</code_mode_restored>"
+                )
+                break
     finally:
         code.shutdown()

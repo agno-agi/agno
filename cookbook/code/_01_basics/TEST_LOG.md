@@ -1,14 +1,16 @@
 # Test Log - _01_basics
 
-Tested 2026-08-08 against `gpt-5.5` (OpenAIResponses), agno 3.0.0a1, ipykernel 7.3.0, on `.venvs/demo`.
+Tested 2026-08-21 against `gpt-5.5` (OpenAIResponses), ipykernel 7.3.0, jupyter_client 8.9.1, dill 0.4.1, with the worktree's Python (agno from this branch, `from agno.tools.code import CodeMode`).
+
+Every run prints one ipykernel line on stderr, `[IPKernelApp] WARNING | Kernel is running over TCP without encryption...`. It comes from ipykernel 7 at kernel start, does not apply to the loopback-only kernel CodeMode runs, and is not something this branch changes.
 
 ### basic.py
 
 **Status:** PASS
 
-**Description:** One `CodeMode()` toolkit, no options. The agent was asked to build the first 200 Fibonacci numbers in the kernel, keep them in a variable, and report only how many are even and how many digits the largest has.
+**Description:** An agent with `CodeMode()` builds the first 200 Fibonacci numbers in a kernel variable and reports how many are even and how many digits the largest has.
 
-**Result:** The model wrote a single cell building `fib200`, computing `even_count` and `largest_digit_count`, and printed only the three-key summary dict. Response in 12.0s: "Even: 67. Digits in largest: 42." Both correct (every third Fibonacci number is even; F(199) has 42 digits). The 200-element list never entered the transcript.
+**Result:** One `execute` call; the cell printed `even_count=67, largest_digits=42` and the answer was "67 even; 42 digits." Both are correct for the zero-first sequence the cell built (the largest, 173402521172797813159685037284371942044301, has 42 digits). Exit 0, no traceback.
 
 ---
 
@@ -16,16 +18,9 @@ Tested 2026-08-08 against `gpt-5.5` (OpenAIResponses), agno 3.0.0a1, ipykernel 7
 
 **Status:** PASS
 
-**Description:** `%%bash` cells for shell orchestration. The agent was asked to count Python files in the tree and report the environment's Python version.
+**Description:** A `%%bash` cell counts the Python files in the tree and reports the Python version.
 
-**Result:** Response in 9.4s. The model used a `%%bash` cell for the file count and read the Python version from the kernel, reporting both. Shell orchestration cost no extra tool surface — the model still holds exactly `execute` and `restart`.
-
-### Re-run 2026-08-19, after merging feat/v3.0
-
-**Status:** PASS
-
-**Description:** Both files in this folder were run again on the refreshed branch, against a live model. This is the check that the 47 commits merged in from feat/v3.0 did not break the feature.
-
-**Result:** Same behaviour as the first run. No changes needed.
+**Result:** The first cell called bare `python`, which does not exist on this machine; the agent re-issued it with `python3` on its own. The answer, 4,577 Python files and Python 3.14.6, matches `find . -name '*.py' -type f | wc -l` and `python3 -V` in a bash subshell. Exit 0, no traceback.
 
 ---
+

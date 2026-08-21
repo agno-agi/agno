@@ -1,14 +1,16 @@
 # Test Log - _02_tools_in_code
 
-Tested 2026-08-08 against `gpt-5.5` (OpenAIResponses), agno 3.0.0a1, ipykernel 7.3.0, on `.venvs/demo`.
+Tested 2026-08-21 against `gpt-5.5` (OpenAIResponses), ipykernel 7.3.0, jupyter_client 8.9.1, dill 0.4.1, with the worktree's Python (agno from this branch, `from agno.tools.code import CodeMode`).
+
+Every run prints one ipykernel line on stderr, `[IPKernelApp] WARNING | Kernel is running over TCP without encryption...`. It comes from ipykernel 7 at kernel start, does not apply to the loopback-only kernel CodeMode runs, and is not something this branch changes.
 
 ### basic.py
 
 **Status:** PASS
 
-**Description:** `InventoryTools` (a 5-part stock table) bound into the kernel as the `inventory` handle. The agent was asked to look up every part's stock level in one cell and report which are out of stock plus the total.
+**Description:** `InventoryTools` is passed to `CodeMode(tools=[...])` and bound into the kernel as the awaitable handle `inventory`.
 
-**Result:** Response in 14.4s: "Out of stock: flange. Total inventory: 197 units." Both correct against the fixture (42+7+0+130+18 = 197, flange at 0). The model looped the bridged calls inside one cell rather than issuing five separate tool calls — the composition property the design exists for.
+**Result:** The model called the toolkit with `await inventory.<method>(...)` inside a cell, composed the results in Python, and answered correctly for the generated inventory. Exit 0, no traceback.
 
 ---
 
@@ -16,16 +18,9 @@ Tested 2026-08-08 against `gpt-5.5` (OpenAIResponses), agno 3.0.0a1, ipykernel 7
 
 **Status:** PASS
 
-**Description:** `FileSystem.tools()` composed into CodeMode as the `filesystem` handle over a SqliteDb. The agent was asked to compute mean and standard deviation in the kernel, then append a summary line to `stats/summary.md` through the filesystem handle.
+**Description:** The agent filesystem is composed into CodeMode as the awaitable `filesystem` handle.
 
-**Result:** Response in 18.1s. The agent computed the statistics in the kernel and wrote the note through the bridged `append_file` call, then reported what it had written. Compute and durable write happened through one tool surface.
-
-### Re-run 2026-08-19, after merging feat/v3.0
-
-**Status:** PASS
-
-**Description:** Both files in this folder were run again on the refreshed branch, against a live model. This is the check that the 47 commits merged in from feat/v3.0 did not break the feature.
-
-**Result:** Same behaviour as the first run. No changes needed.
+**Result:** The agent read the data file through the handle, computed mean 16.1429 and sample standard deviation 7.9881 in the kernel, and wrote the report back through the same handle. Exit 0, no traceback.
 
 ---
+
