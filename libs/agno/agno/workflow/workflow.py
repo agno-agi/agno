@@ -4961,6 +4961,9 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream_events: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
@@ -4985,8 +4988,17 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
-        workflow_session, session_state, _ = await self._aload_or_create_session(
+        workflow_session, session_state, session_metadata = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
+        )
+
+        # Resolve run-level params using shared helper
+        resolved = self._resolve_run_params(
+            dependencies=dependencies,
+            metadata=metadata,
+            session_metadata=session_metadata,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
         )
 
         run_context = RunContext(
@@ -4994,7 +5006,10 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
-            dependencies=dependencies,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            dependencies=resolved["dependencies"],
+            metadata=resolved["metadata"],
         )
 
         # Register the run for cancellation tracking before spawning the detached task
@@ -5013,6 +5028,7 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
