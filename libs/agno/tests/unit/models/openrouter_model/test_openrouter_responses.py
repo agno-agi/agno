@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -70,6 +71,26 @@ def test_openrouter_responses_reasoning_model_detection():
     # OpenAI o3 model via OpenRouter
     model = OpenRouterResponses(id="openai/o3-mini", api_key="test-key")
     assert model._using_reasoning_model() is True
+
+
+def test_openrouter_responses_metrics_include_cost():
+    """Test that provider usage cost is preserved in response metrics."""
+    model = OpenRouterResponses(api_key="test-key")
+    response_usage = SimpleNamespace(
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        cost=0.000170412,
+        input_tokens_details=None,
+        output_tokens_details=None,
+    )
+
+    metrics = model._get_metrics(response_usage)
+
+    assert metrics.input_tokens == 10
+    assert metrics.output_tokens == 5
+    assert metrics.total_tokens == 15
+    assert metrics.cost == 0.000170412
 
     # OpenAI o4 model via OpenRouter
     model = OpenRouterResponses(id="openai/o4-mini", api_key="test-key")

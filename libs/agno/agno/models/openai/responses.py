@@ -1377,6 +1377,7 @@ class OpenAIResponses(Model):
         metrics.input_tokens = response_usage.input_tokens or 0
         metrics.output_tokens = response_usage.output_tokens or 0
         metrics.total_tokens = response_usage.total_tokens or 0
+        metrics.cost = getattr(response_usage, "cost", None)
 
         if input_tokens_details := response_usage.input_tokens_details:
             metrics.cache_read_tokens = input_tokens_details.cached_tokens
