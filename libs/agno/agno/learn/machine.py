@@ -12,6 +12,7 @@ Coordinates multiple learning stores to give agents:
 Plus maintenance via the Curator for keeping memories healthy.
 """
 
+import threading
 from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Callable, ClassVar, Dict, List, Optional, Union
@@ -148,6 +149,11 @@ class LearningMachine:
     # Strong refs to fire-and-forget capture tasks (acapture_hook), so the event
     # loop cannot garbage-collect them mid-flight.
     _capture_tasks: set = field(default_factory=set, init=False)
+    # Serializes the first store initialization. A registry machine is one
+    # instance shared by every component that references it, so two first
+    # requests can race here; without the lock each would build its own store
+    # set and the loser's objects would be discarded mid-use.
+    _init_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
 
     # =========================================================================
     # Initialization (Lazy)
@@ -166,7 +172,9 @@ class LearningMachine:
         capture.
         """
         if self._stores is None:
-            self._initialize_stores()
+            with self._init_lock:
+                if self._stores is None:
+                    self._initialize_stores()
         if self.model is not None:
             for store in self._stores.values():  # type: ignore[union-attr]
                 config = getattr(store, "config", None)
@@ -175,47 +183,52 @@ class LearningMachine:
         return self._stores  # type: ignore
 
     def _initialize_stores(self) -> None:
-        """Initialize all configured stores."""
-        self._stores = {}
+        """Initialize all configured stores.
+
+        Builds the full map locally and publishes it in one assignment, so a
+        reader that checks ``_stores is None`` without the lock never sees a
+        partially populated map.
+        """
+        stores: Dict[str, LearningStore] = {}
 
         # User Profile
         if self.user_profile:
-            self._stores["user_profile"] = self._resolve_store(
+            stores["user_profile"] = self._resolve_store(
                 input_value=self.user_profile,
                 store_type="user_profile",
             )
 
         # User Memory
         if self.user_memory:
-            self._stores["user_memory"] = self._resolve_store(
+            stores["user_memory"] = self._resolve_store(
                 input_value=self.user_memory,
                 store_type="user_memory",
             )
 
         # Session Context
         if self.session_context:
-            self._stores["session_context"] = self._resolve_store(
+            stores["session_context"] = self._resolve_store(
                 input_value=self.session_context,
                 store_type="session_context",
             )
 
         # Entity Memory
         if self.entity_memory:
-            self._stores["entity_memory"] = self._resolve_store(
+            stores["entity_memory"] = self._resolve_store(
                 input_value=self.entity_memory,
                 store_type="entity_memory",
             )
 
         # Learned Knowledge (auto-enable if knowledge provided)
         if self.learned_knowledge or self.knowledge is not None:
-            self._stores["learned_knowledge"] = self._resolve_store(
+            stores["learned_knowledge"] = self._resolve_store(
                 input_value=self.learned_knowledge if self.learned_knowledge else True,
                 store_type="learned_knowledge",
             )
 
         # Decision Log
         if self.decision_log:
-            self._stores["decision_log"] = self._resolve_store(
+            stores["decision_log"] = self._resolve_store(
                 input_value=self.decision_log,
                 store_type="decision_log",
             )
@@ -223,9 +236,10 @@ class LearningMachine:
         # Custom stores
         if self.custom_stores:
             for name, store in self.custom_stores.items():
-                self._stores[name] = store
+                stores[name] = store
 
-        log_debug(f"LearningMachine initialized with stores: {list(self._stores.keys())}")
+        self._stores = stores
+        log_debug(f"LearningMachine initialized with stores: {list(stores.keys())}")
 
     def _resolve_store(
         self,

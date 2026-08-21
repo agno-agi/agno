@@ -140,10 +140,13 @@ Every component wired to a machine reads and writes that machine's namespace,
 so `list_learning` shows the namespace (machine-level and per store) first,
 plus each store's mode and whether the machine already binds a `model`, `db`
 or `knowledge`. A registry machine is one shared instance: the framework
-injects a component's db and model into it only when it has none, so declare
-the model on the machine if the deployer, not the first component that runs,
-should decide what it captures with. Namespaces are literal strings; there is
-no per-component templating of a learning namespace.
+injects a component's db and model into it only when it has none, so the first
+component to run binds them, permanently, for every sharer — declare `db` and
+`model` on the machine if the deployer, not the first component, should decide.
+`create_*` / `edit_*` return that as `warnings` in the success envelope when the
+machine you wire declares no db or model, or is bound to a different db than
+the component. Namespaces are literal strings; there is no per-component
+templating of a learning namespace.
 
 A named machine on a code-defined Agent or Team is folded into the Registry the
 way its knowledge is, so the stored reference resolves and `list_learning`

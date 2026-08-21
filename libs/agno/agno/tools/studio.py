@@ -1630,8 +1630,11 @@ class StudioTools(Toolkit):
             stores: {store: {mode[, namespace]}}, model_id, db, knowledge[,
             custom_stores]}; namespace is per store for entity_memory and
             learned_knowledge. Every component wired to a machine reads and
-            writes its namespace, so pick by namespace; model_id or knowledge
-            null means the first component that runs binds its own.
+            writes its namespace, so pick by namespace. db false means no db
+            is declared: the first component to run binds its own db into the
+            machine, permanently, for every component sharing it; model_id or
+            knowledge null likewise bind to the first component's. create/edit
+            return these as warnings when you wire such a machine.
         """
         rows = _learning_rows(self.registry.learning)
         return ok_result("listed", learning=rows, count=len(rows))
@@ -1898,8 +1901,10 @@ class StudioTools(Toolkit):
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        warnings: Optional[List[str]] = None,
     ) -> Optional[str]:
         """Apply the shared agent/team fields. Returns an error envelope or None.
+        Non-fatal disclosures are appended to ``warnings`` for the result envelope.
 
         Edit sentinels: omit (None) keeps the stored value, an empty string
         clears a text field, an empty list clears the tool list.
@@ -1997,18 +2002,15 @@ class StudioTools(Toolkit):
                 component.enable_agentic_memory = False
                 component.memory_manager = None
                 replaced_keys.add("memory_manager")
-                # The framework injects model / knowledge into a shared machine
-                # only when unset, so the first component to run binds them for
-                # every sharer. Say so at wiring time.
-                unbound = ["model"] if getattr(machine, "model", None) is None else []
-                if getattr(machine, "learned_knowledge", False) and getattr(machine, "knowledge", None) is None:
-                    unbound.append("knowledge")
-                if unbound:
-                    log_warning(
-                        f"Learning machine '{learning_name}' declares no {' or '.join(unbound)}: the first "
-                        "component to run binds its own into it for every component sharing it. Declare "
-                        "them on the machine if the deployer, not the first component, should decide."
-                    )
+                # A registry machine is one instance shared by every component
+                # that references it, and the framework injects db / model /
+                # knowledge into it only when unset: the first component to run
+                # binds them for every sharer. Disclose that to the caller in
+                # the result, not only in the server log.
+                for disclosure in _shared_machine_disclosures(learning_name, machine, component):
+                    log_warning(disclosure)
+                    if warnings is not None:
+                        warnings.append(disclosure)
             replaced_keys.add("learning")
         if metadata is not None:
             existing = getattr(component, "metadata", None) or {}
@@ -2020,9 +2022,17 @@ class StudioTools(Toolkit):
             replaced_keys.add("metadata")
         return None
 
-    def _created_payload(self, component: Any, component_type: str, version: Optional[int], stage: str) -> str:
+    def _created_payload(
+        self,
+        component: Any,
+        component_type: str,
+        version: Optional[int],
+        stage: str,
+        warnings: Optional[List[str]] = None,
+    ) -> str:
         return ok_result(
             "created",
+            warnings=warnings,
             id=getattr(component, "id", None),
             name=getattr(component, "name", None),
             component_type=component_type,
@@ -2123,10 +2133,12 @@ class StudioTools(Toolkit):
                 num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
                 add_datetime_to_context=add_datetime_to_context,
             )
+            warnings: List[str] = []
             field_err = self._apply_component_fields(
                 agent,
                 is_edit=False,
                 replaced_keys=set(),
+                warnings=warnings,
                 description=description,
                 tool_names=tool_names,
                 role=role,
@@ -2149,7 +2161,7 @@ class StudioTools(Toolkit):
             stage = "published" if (publish or not self.enable_versions) else "draft"
             version = _persist_only(agent, self.db, stage=stage, user_id=_actor_id(_agno_run_context))
             log_debug(f"StudioTools created agent id={agent_id} version={version} stage={stage}")
-            return self._created_payload(agent, "agent", version, stage)
+            return self._created_payload(agent, "agent", version, stage, warnings=warnings)
         except Exception as e:
             return self._error_from_exception(e, "Failed to create agent")
 
@@ -2263,10 +2275,12 @@ class StudioTools(Toolkit):
                 num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
                 add_datetime_to_context=add_datetime_to_context,
             )
+            warnings: List[str] = []
             field_err = self._apply_component_fields(
                 team,
                 is_edit=False,
                 replaced_keys=set(),
+                warnings=warnings,
                 description=description,
                 markdown=markdown,
                 expected_output=expected_output,
@@ -2291,7 +2305,7 @@ class StudioTools(Toolkit):
                 user_id=_actor_id(_agno_run_context),
             )
             log_debug(f"StudioTools created team id={team_id} members={member_ids} version={version} stage={stage}")
-            result = json.loads(self._created_payload(team, "team", version, stage))
+            result = json.loads(self._created_payload(team, "team", version, stage, warnings=warnings))
             result["data"]["member_ids"] = [getattr(m, "id", None) for m in members]
             return json.dumps(result, default=str)
         except Exception as e:
@@ -2549,9 +2563,12 @@ class StudioTools(Toolkit):
         publish: bool,
         run_context: Optional[RunContext],
         mutate,
+        warnings: Optional[List[str]] = None,
     ) -> str:
         """Shared edit path: resolve for edit, gate ownership, apply ``mutate``,
-        append a new version (draft, or published when ``publish``)."""
+        append a new version (draft, or published when ``publish``). ``warnings``
+        is the list ``mutate`` appends its disclosures to; it rides on the
+        success envelope."""
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -2637,7 +2654,7 @@ class StudioTools(Toolkit):
                 expected_latest_version=expected_version,
             )
             log_debug(f"StudioTools edited {component_type} id={component.id} result={result}")
-            return ok_result("edited", id=resolved_id, component_type=component_type, **result)
+            return ok_result("edited", warnings=warnings, id=resolved_id, component_type=component_type, **result)
         except Exception as e:
             return self._error_from_exception(e, f"Failed to edit {component_type}")
 
@@ -2707,6 +2724,8 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
         """
 
+        warnings: List[str] = []
+
         def mutate(agent, replaced_keys):
             if name is not None:
                 agent.name = name
@@ -2714,6 +2733,7 @@ class StudioTools(Toolkit):
                 agent,
                 is_edit=True,
                 replaced_keys=replaced_keys,
+                warnings=warnings,
                 instructions=instructions,
                 description=description,
                 model_id=model_id,
@@ -2735,7 +2755,9 @@ class StudioTools(Toolkit):
             )
             return err, None
 
-        return self._edit_component("agent", agent_id, expected_version, publish, _agno_run_context, mutate)
+        return self._edit_component(
+            "agent", agent_id, expected_version, publish, _agno_run_context, mutate, warnings=warnings
+        )
 
     def edit_team(
         self,
@@ -2793,6 +2815,8 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
         """
 
+        warnings: List[str] = []
+
         def mutate(team, replaced_keys):
             if name is not None:
                 team.name = name
@@ -2834,6 +2858,7 @@ class StudioTools(Toolkit):
                 team,
                 is_edit=True,
                 replaced_keys=replaced_keys,
+                warnings=warnings,
                 instructions=instructions,
                 description=description,
                 model_id=model_id,
@@ -2851,7 +2876,9 @@ class StudioTools(Toolkit):
             )
             return err, pinned
 
-        return self._edit_component("team", team_id, expected_version, publish, _agno_run_context, mutate)
+        return self._edit_component(
+            "team", team_id, expected_version, publish, _agno_run_context, mutate, warnings=warnings
+        )
 
     def edit_workflow(
         self,
@@ -5212,6 +5239,46 @@ def _component_type(component: Component) -> Any:
 # declaration it never touched -- and quietly lift the dispatch refusal that
 # declaration causes -- so edits carry them forward verbatim.
 _UNRECONSTRUCTED_KEYS = ("reasoning_model", "parser_model", "output_model")
+
+
+def _shared_machine_disclosures(learning_name: str, machine: Any, component: Any) -> List[str]:
+    """What a caller wiring ``machine`` should know about first-component binding.
+
+    The framework injects db / model / knowledge into a shared machine only
+    when unset, so whichever component runs first fixes them for every sharer;
+    and a machine already bound to a different db than the component writes
+    its learning there, not where the component's own data lives.
+    """
+    disclosures: List[str] = []
+    machine_db = getattr(machine, "db", None)
+    component_db = getattr(component, "db", None)
+    component_db_id = getattr(component_db, "id", None)
+    if machine_db is None:
+        bound_to = f" (this component's db is '{component_db_id}')" if component_db_id else ""
+        disclosures.append(
+            f"Learning machine '{learning_name}' declares no db: the first component to run binds its own db "
+            f"into it, permanently, for every component sharing it{bound_to}. Declare db on the machine if "
+            "the deployer should choose."
+        )
+    elif component_db is not None and machine_db is not component_db:
+        machine_db_id = getattr(machine_db, "id", None)
+        if machine_db_id != component_db_id:
+            disclosures.append(
+                f"Learning machine '{learning_name}' is bound to db '{machine_db_id}' while this component uses "
+                f"'{component_db_id}': its learning is read and written there, not in this component's db."
+            )
+    if getattr(machine, "model", None) is None:
+        disclosures.append(
+            f"Learning machine '{learning_name}' declares no model: the first component to run binds its own "
+            "model into it for every component sharing it. Declare model on the machine if the deployer "
+            "should choose."
+        )
+    if getattr(machine, "learned_knowledge", False) and getattr(machine, "knowledge", None) is None:
+        disclosures.append(
+            f"Learning machine '{learning_name}' enables learned_knowledge without a knowledge: the first "
+            "component to run that has one binds it for every component sharing it."
+        )
+    return disclosures
 
 
 def _learning_rows(machines: List[Any]) -> List[Dict[str, Any]]:

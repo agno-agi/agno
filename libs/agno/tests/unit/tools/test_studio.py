@@ -13,7 +13,6 @@ import time
 from datetime import datetime
 from importlib.util import find_spec
 from typing import Any, Dict
-from unittest.mock import patch
 
 import pytest
 
@@ -1754,14 +1753,85 @@ class TestLearningSurface:
         out = _loads(await studio_learning.aedit_team("acrew", learning_name=""))
         assert "learning" not in db.get_config(component_id="acrew", version=_edit_version(out))["config"]
 
-    def test_wiring_a_machine_without_a_model_warns(self, studio_learning):
-        with patch("agno.tools.studio.log_warning") as mock_warn:
-            _data(
-                studio_learning.create_agent(
-                    name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain"
-                )
+    # -- shared-machine binding is disclosed in the result --------------------
+
+    def test_wiring_an_unbound_machine_returns_warnings_on_create_and_edit(self, studio_learning, db):
+        """The fixture machine declares neither db nor model: the caller is told,
+        in the success envelope, that the first component to run binds both for
+        every sharer. Sync and async, create and edit, agent and team."""
+        out = _loads(
+            studio_learning.create_agent(
+                name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain", publish=True
             )
-        assert any("declares no model" in str(call) for call in mock_warn.call_args_list)
+        )
+        assert out["ok"] is True
+        assert any("declares no db" in w and "first component to run" in w for w in out["warnings"])
+        assert any("declares no model" in w for w in out["warnings"])
+        assert any(f"'{db.id}'" in w for w in out["warnings"] if "declares no db" in w)
+
+        out = _loads(studio_learning.edit_agent("learner", learning_name="shared-brain"))
+        assert out["ok"] is True and out["status"] == "edited"
+        assert any("declares no db" in w for w in out["warnings"])
+
+        # An edit that does not touch learning carries no disclosure.
+        out = _loads(studio_learning.edit_agent("learner", description="quiet"))
+        assert out["ok"] is True and out["warnings"] == []
+
+        out = _loads(
+            studio_learning.create_team(
+                name="crew", instructions="i", member_ids=["learner"], learning_name="shared-brain", publish=True
+            )
+        )
+        assert out["ok"] is True
+        assert any("declares no db" in w for w in out["warnings"])
+        out = _loads(studio_learning.edit_team("crew", learning_name="shared-brain"))
+        assert out["ok"] is True and any("declares no db" in w for w in out["warnings"])
+
+    @pytest.mark.asyncio
+    async def test_async_forms_return_the_same_warnings(self, studio_learning):
+        out = _loads(
+            await studio_learning.acreate_agent(
+                name="alearner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain", publish=True
+            )
+        )
+        assert out["ok"] is True and any("declares no db" in w for w in out["warnings"])
+        out = _loads(await studio_learning.aedit_agent("alearner", learning_name="shared-brain"))
+        assert out["ok"] is True and any("declares no model" in w for w in out["warnings"])
+        out = _loads(
+            await studio_learning.acreate_team(
+                name="acrew", instructions="i", member_ids=["alearner"], learning_name="shared-brain", publish=True
+            )
+        )
+        assert out["ok"] is True and any("declares no db" in w for w in out["warnings"])
+        out = _loads(await studio_learning.aedit_team("acrew", learning_name="shared-brain"))
+        assert out["ok"] is True and any("declares no db" in w for w in out["warnings"])
+
+    def test_a_fully_declared_machine_wires_without_warnings(self, registry, db):
+        from agno.learn import LearningMachine
+
+        registry.add_learning(
+            LearningMachine(name="bound", db=db, model=OpenAIResponses(id="gpt-5.5"), user_memory=True)
+        )
+        studio = StudioTools(registry=registry, db=db)
+        out = _loads(studio.create_agent(name="learner", instructions="i", model_id="gpt-5.4", learning_name="bound"))
+        assert out["ok"] is True
+        assert out["warnings"] == []
+
+    def test_a_machine_bound_to_a_different_db_is_disclosed(self, registry, db, tmp_path):
+        from agno.learn import LearningMachine
+
+        other = SqliteDb(id="other-learning-db", db_file=str(tmp_path / "other.db"))
+        registry.add_learning(
+            LearningMachine(name="elsewhere", db=other, model=OpenAIResponses(id="gpt-5.5"), user_memory=True)
+        )
+        studio = StudioTools(registry=registry, db=db)
+        out = _loads(
+            studio.create_agent(name="learner", instructions="i", model_id="gpt-5.4", learning_name="elsewhere")
+        )
+        assert out["ok"] is True
+        assert len(out["warnings"]) == 1
+        assert "bound to db 'other-learning-db'" in out["warnings"][0]
+        assert f"this component uses '{db.id}'" in out["warnings"][0]
 
     # -- zero-config: the default machine ---------------------------------
 
