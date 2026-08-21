@@ -5,7 +5,7 @@
 #    Agno Performance Environment Setup
 #
 #    Usage: ./scripts/perf_setup.sh
-#    Run:   python cookbook/performance/run_all.py --all
+#    Run:   python cookbook/performance/run_all.py
 #
 ############################################################################
 
@@ -81,13 +81,10 @@ fi
 echo ""
 echo -e "    ${BOLD}Done.${NC}"
 echo ""
-echo -e "    ${DIM}Run everything:${NC} ./scripts/perf.sh"
-echo -e "    ${DIM}Quick smoke:${NC}    ./scripts/perf.sh --quick"
-echo -e "    ${DIM}Agno only:${NC}      ./scripts/perf.sh --agno-only"
-echo -e "    ${DIM}Activate:${NC}       ${ACTIVATE_CMD}"
-echo ""
-echo -e "    ${DIM}Benchmarks print rich summary tables; --all also renders the${NC}"
-echo -e "    ${DIM}HTML report to cookbook/performance/report/agno-performance.html${NC}"
+echo -e "    ${DIM}Activate:${NC}            ${ACTIVATE_CMD}"
+echo -e "    ${DIM}Agno benchmarks:${NC}     python cookbook/performance/run_all.py"
+echo -e "    ${DIM}Framework comparison:${NC} python cookbook/performance/comparison/run_all.py"
+echo -e "    ${DIM}HTML report:${NC}         python cookbook/performance/report.py"
 echo ""
 if [[ -n "$CLIPBOARD_MSG" ]]; then
     echo -e "    ${DIM}${CLIPBOARD_MSG}${NC}"

@@ -104,6 +104,7 @@ def comparison_groups(versions: dict) -> list:
     return [
         {
             "key": "cmp_construction",
+            "metric": "Agent construction (1 tool)",
             "title": "Agent construction vs other frameworks",
             "unit": "us",
             "measure": "time",
@@ -123,6 +124,7 @@ def comparison_groups(versions: dict) -> list:
         },
         {
             "key": "cmp_run",
+            "metric": "Single-turn run (mocked model)",
             "title": "Single-turn run vs other frameworks",
             "unit": "us",
             "measure": "time",
@@ -142,6 +144,7 @@ def comparison_groups(versions: dict) -> list:
         },
         {
             "key": "cmp_import",
+            "metric": "Cold import",
             "title": "Cold import vs other frameworks",
             "unit": "ms",
             "measure": "time",
@@ -159,6 +162,7 @@ def comparison_groups(versions: dict) -> list:
         },
         {
             "key": "cmp_memory",
+            "metric": "Construction memory peak",
             "title": "Construction memory peak vs other frameworks",
             "unit": "KiB",
             "measure": "memory",
@@ -172,6 +176,10 @@ def comparison_groups(versions: dict) -> list:
             ],
         },
     ]
+
+
+# Row order for the headline comparison table: most decision-relevant first
+COMPARISON_TABLE_ORDER = ["cmp_run", "cmp_construction", "cmp_memory", "cmp_import"]
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +383,68 @@ def render_import_offenders(benchmarks: dict) -> str:
         + "<thead><tr><th>Module</th><th>Self ms</th><th>Cumulative ms</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></div></details>"
+    )
+
+
+def render_comparison_table(cmp_groups: list, benchmarks: dict) -> str:
+    """The headline table: one row per metric, one column per framework,
+    every non-Agno cell carrying its multiple of the Agno value."""
+    groups_by_key = {group["key"]: group for group in cmp_groups}
+    ordered = [
+        groups_by_key[key] for key in COMPARISON_TABLE_ORDER if key in groups_by_key
+    ]
+    if not ordered:
+        return ""
+
+    # Column labels come from the first group that has all frameworks present
+    framework_labels = [label for _, label, _ in ordered[0]["rows"]]
+
+    header_cells = "<th>Metric</th>" + "".join(
+        '<th class="num">' + html.escape(label) + "</th>" for label in framework_labels
+    )
+
+    body_rows = []
+    for group in ordered:
+        measure = group["measure"]
+        unit = group["unit"]
+        baseline_name = group["rows"][0][0]
+        baseline = stat(benchmarks.get(baseline_name, {}), "median", measure)
+        cells = ["<td>" + html.escape(group["metric"]) + "</td>"]
+        for name, _, series in group["rows"]:
+            bench = benchmarks.get(name)
+            if not bench or not bench.get("result"):
+                cells.append('<td class="num">-</td>')
+                continue
+            median = stat(bench, "median", measure)
+            value_text = fmt(median, unit) + " " + unit
+            if series == "sync" or not baseline:
+                cells.append('<td class="num"><strong>' + value_text + "</strong></td>")
+            else:
+                ratio = median / baseline
+                ratio_text = (
+                    format(ratio, ".1f") if ratio < 10 else format(ratio, ",.0f")
+                ) + "x Agno"
+                cells.append(
+                    '<td class="num">'
+                    + value_text
+                    + '<span class="cell-ratio">'
+                    + ratio_text
+                    + "</span></td>"
+                )
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    return (
+        '<section class="group">'
+        + "<h2>Agno versus other frameworks</h2>"
+        + '<p class="blurb">Medians from one sequential run with every framework in the same '
+        + "environment on the same machine. Per-metric methodology and full statistics follow below.</p>"
+        + '<div class="table-wrap"><table class="headline">'
+        + "<thead><tr>"
+        + header_cells
+        + "</tr></thead><tbody>"
+        + "".join(body_rows)
+        + "</tbody></table></div>"
+        + "</section>"
     )
 
 
@@ -583,6 +653,9 @@ h2 {
 }
 .bar-unit { color: var(--ink-3); font-size: 11px; }
 .bar-ratio { display: block; color: var(--ink-3); font-size: 11px; }
+.cell-ratio { display: block; color: var(--ink-3); font-size: 11px; font-weight: 400; }
+table.headline td, table.headline th { padding: 10px 14px; }
+table.headline td strong { color: var(--accent); }
 .axis-note { font-size: 12px; color: var(--ink-3); margin: 8px 2px 0; }
 .stats { margin-top: 12px; }
 .stats summary { cursor: pointer; font-size: 13.5px; color: var(--ink-2); }
@@ -628,6 +701,7 @@ def render_page(
     if comparison and not comparison.get("quick"):
         cmp_benchmarks = comparison.get("benchmarks", {})
         cmp_groups = comparison_groups(comparison.get("framework_versions") or {})
+        groups_html += render_comparison_table(cmp_groups, cmp_benchmarks)
         groups_html += "".join(
             render_group(group, cmp_benchmarks) for group in cmp_groups
         )
