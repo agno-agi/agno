@@ -1696,6 +1696,21 @@ class FunctionCall(BaseModel):
     # Error while parsing arguments or running the function.
     error: Optional[str] = None
 
+    # Per-invocation overrides. When set, take precedence over Function.show_result /
+    # Function.stop_after_tool_call for this call only (safe under concurrent tool calls).
+    override_show_result: Optional[bool] = None
+    override_stop_after_tool_call: Optional[bool] = None
+
+    def effective_show_result(self) -> bool:
+        if self.override_show_result is not None:
+            return self.override_show_result
+        return self.function.show_result
+
+    def effective_stop_after_tool_call(self) -> bool:
+        if self.override_stop_after_tool_call is not None:
+            return self.override_stop_after_tool_call
+        return self.function.stop_after_tool_call
+
     def get_call_str(self) -> str:
         """Returns a string representation of the function call."""
         import shutil
