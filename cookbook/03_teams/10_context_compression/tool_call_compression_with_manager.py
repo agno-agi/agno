@@ -2,13 +2,13 @@
 Tool Call Compression With Manager
 ==================================
 
-Demonstrates custom tool result compression using CompactionManager.
+Demonstrates custom tool result compression using CompressionManager.
 """
 
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.compression.manager import CompactionManager
+from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
@@ -47,10 +47,10 @@ compression_prompt = """
     - TechCo - Feb 10, 2024: Acquired DataStart for $150M, gaining 500 enterprise customers
 """
 
-compaction_manager = CompactionManager(
+compression_manager = CompressionManager(
     model=OpenAIResponses(id="gpt-5.2"),
-    compact_tool_results_limit=2,  # Keep only last 2 tool call results uncompressed
-    tool_instructions=compression_prompt,
+    compress_tool_results_limit=2,  # Keep only last 2 tool call results uncompressed
+    compress_tool_call_instructions=compression_prompt,
 )
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ research_team = Team(
     """).strip(),
     db=SqliteDb(db_file="tmp/research_team.db"),
     show_members_responses=True,
-    compaction_manager=compaction_manager,
+    compression_manager=compression_manager,
 )
 
 # ---------------------------------------------------------------------------

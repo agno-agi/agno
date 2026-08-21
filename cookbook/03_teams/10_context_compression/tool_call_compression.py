@@ -89,7 +89,7 @@ sync_research_team = Team(
         - Provide comprehensive, well-sourced responses
     """).strip(),
     db=SqliteDb(db_file="tmp/research_team.db"),
-    compact_tool_results=True,
+    compress_tool_results=True,
     show_members_responses=True,
 )
 
@@ -116,7 +116,7 @@ async_research_team = Team(
     db=SqliteDb(db_file="tmp/research_team2.db"),
     markdown=True,
     show_members_responses=True,
-    compact_tool_results=True,
+    compress_tool_results=True,
 )
 
 

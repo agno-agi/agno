@@ -56,11 +56,14 @@ class CompactionManager:
     compact_tools_token_limit: Optional[int] = None
     compact_tools_instructions: Optional[str] = None
 
-    # Deprecated tool aliases
+    # Deprecated tool aliases (backward compat)
     tool_result_limit: Optional[int] = None
     compact_tool_results_limit: Optional[int] = None
     tool_token_limit: Optional[int] = None
     tool_instructions: Optional[str] = None
+    compress_token_limit: Optional[int] = None
+    compress_tool_call_instructions: Optional[str] = None
+    compress_tool_results_limit: Optional[int] = None
 
     # Context compaction settings
     compact_context: bool = False
@@ -86,6 +89,15 @@ class CompactionManager:
         if self.tool_instructions is not None and self.compact_tools_instructions is None:
             log_debug("tool_instructions is deprecated, use compact_tools_instructions")
             self.compact_tools_instructions = self.tool_instructions
+        if self.compress_token_limit is not None and self.compact_tools_token_limit is None:
+            log_debug("compress_token_limit is deprecated, use compact_tools_token_limit")
+            self.compact_tools_token_limit = self.compress_token_limit
+        if self.compress_tool_call_instructions is not None and self.compact_tools_instructions is None:
+            log_debug("compress_tool_call_instructions is deprecated, use compact_tools_instructions")
+            self.compact_tools_instructions = self.compress_tool_call_instructions
+        if self.compress_tool_results_limit is not None and self.compact_tools_limit is None:
+            log_debug("compress_tool_results_limit is deprecated, use compact_tools_limit")
+            self.compact_tools_limit = self.compress_tool_results_limit
 
         # Default tool limit to 3 if neither limit is set
         if self.compact_tools_limit is None and self.compact_tools_token_limit is None:
@@ -257,3 +269,7 @@ class CompactionManager:
         """Merge stats from tool compaction."""
         for key, value in stats.items():
             self.stats[key] = self.stats.get(key, 0) + value
+
+
+# Backward compatibility alias
+CompressionManager = CompactionManager
