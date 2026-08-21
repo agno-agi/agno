@@ -398,6 +398,9 @@ class XAIAuth(Toolkit):
                 if stored is not None:
                     return
                 log_warning("Could not persist the pending SuperGrok login; keeping it in memory for this process")
+                # An older row would otherwise win: the read checks the db first,
+                # and the user would poll a device code they were never shown.
+                self._clear_pending_row(user_id)
             except NotImplementedError:
                 log_warning("Database does not support auth token storage")
             except Exception as e:
@@ -427,11 +430,38 @@ class XAIAuth(Toolkit):
                 if stored is not None:
                     return
                 log_warning("Could not persist the pending SuperGrok login; keeping it in memory for this process")
+                # An older row would otherwise win: the read checks the db first,
+                # and the user would poll a device code they were never shown.
+                await self._aclear_pending_row(user_id)
             except NotImplementedError:
                 log_warning("Database does not support auth token storage")
             except Exception as e:
                 log_debug(f"Could not save the pending SuperGrok login to the DB: {e}")
         self._pending[user_id] = pending
+
+    def _clear_pending_row(self, user_id: str) -> None:
+        """Drop any persisted pending row, so a stale one cannot outlive a failed write."""
+        db = self._pending_db()
+        if db is None:
+            return
+        try:
+            db.delete_auth_token("xai", user_id, _PENDING_SERVICE)
+        except NotImplementedError:
+            log_warning("Database does not support auth token deletion")
+        except Exception as e:
+            log_debug(f"Could not delete the stale pending SuperGrok login: {e}")
+
+    async def _aclear_pending_row(self, user_id: str) -> None:
+        """Drop any persisted pending row, so a stale one cannot outlive a failed write."""
+        db = self.token_manager.db
+        if db is None:
+            return
+        try:
+            await self._await_db(db.delete_auth_token("xai", user_id, _PENDING_SERVICE))
+        except NotImplementedError:
+            log_warning("Database does not support auth token deletion")
+        except Exception as e:
+            log_debug(f"Could not delete the stale pending SuperGrok login: {e}")
 
     def _read_pending(self, user_id: str) -> Optional[Dict[str, Any]]:
         db = self._pending_db()

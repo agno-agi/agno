@@ -288,12 +288,14 @@ class xAIResponses(OpenResponses):
             try:
                 manager.get_access_token(user_id=user_id)
                 return user_id
-            except ModelAuthenticationError:
+            except (ModelAuthenticationError, httpx.HTTPError):
                 pass
         try:
             manager.get_access_token(user_id="")
             return ""
-        except ModelAuthenticationError:
+        except (ModelAuthenticationError, httpx.HTTPError):
+            # No slot could be confirmed - including because the network is down.
+            # The caller re-raises the provider's 401, which is what it needs to see.
             return None
 
     async def _arefresh_slot(self, run_response: Optional[RunOutput]) -> Optional[str]:
@@ -312,12 +314,14 @@ class xAIResponses(OpenResponses):
             try:
                 await manager.aget_access_token(user_id=user_id)
                 return user_id
-            except ModelAuthenticationError:
+            except (ModelAuthenticationError, httpx.HTTPError):
                 pass
         try:
             await manager.aget_access_token(user_id="")
             return ""
-        except ModelAuthenticationError:
+        except (ModelAuthenticationError, httpx.HTTPError):
+            # No slot could be confirmed - including because the network is down.
+            # The caller re-raises the provider's 401, which is what it needs to see.
             return None
 
     async def _awarm_credential(self, run_response: Optional[RunOutput]) -> None:
@@ -347,8 +351,10 @@ class xAIResponses(OpenResponses):
                 if candidate and e.message != _NO_TOKEN_MESSAGE:
                     raise
             except httpx.HTTPError:
-                if candidate:
-                    raise
+                # Not swallowed for the deployment slot either: the sync resolver
+                # would repeat the same call on the event loop, and it cannot reach
+                # the env fallback through a transport error anyway.
+                raise
 
     @staticmethod
     def _uid(run_response: Optional[RunOutput]) -> str:

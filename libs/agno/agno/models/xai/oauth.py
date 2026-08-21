@@ -31,6 +31,10 @@ _INVALID_GRANT_MESSAGE = (
     "SuperGrok session expired or was revoked. Sign in again (run the device login), "
     "or set XAI_API_KEY to use pay-per-token access."
 )
+_UNREADABLE_ROW_MESSAGE = (
+    "A stored SuperGrok session for user '{user_id}' could not be read (the encryption key may have "
+    "changed). Sign in again, or restore the key it was saved with."
+)
 _NO_TOKEN_MESSAGE = (
     "No SuperGrok token found. Sign in with the device login, or set XAI_API_KEY to use pay-per-token access."
 )
@@ -501,13 +505,25 @@ class XAITokenManager:
         payload = self._read_store(user_id)
         if payload is None:
             return self._memory_rows.get(user_id)
-        return self._decrypt_payload(payload)
+        return self._decrypted_or_raise(payload, user_id)
 
     async def _aload(self, user_id: str = "") -> Optional[Dict[str, Any]]:
         payload = await self._aread_store(user_id)
         if payload is None:
             return self._memory_rows.get(user_id)
-        return self._decrypt_payload(payload)
+        return self._decrypted_or_raise(payload, user_id)
+
+    def _decrypted_or_raise(self, payload: Dict[str, Any], user_id: str) -> Optional[Dict[str, Any]]:
+        """Decrypt a stored row; an identified user's unreadable row must not read as absent.
+
+        The deployment slot keeps PR 1's behaviour and degrades to signed-out. For
+        an identified user that same degrade would fall through to the shared
+        subscription and bill it for someone who is signed in, so it surfaces.
+        """
+        token_data = self._decrypt_payload(payload)
+        if token_data is None and user_id:
+            raise ModelAuthenticationError(_UNREADABLE_ROW_MESSAGE.format(user_id=user_id))
+        return token_data
 
     def _read_store(self, user_id: str = "") -> Optional[Dict[str, Any]]:
         if self.db is not None:
