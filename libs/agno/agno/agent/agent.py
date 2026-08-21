@@ -32,7 +32,6 @@ from agno.agent import (
     _tools,
     _utils,
 )
-from agno.compression._context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -404,7 +403,6 @@ class Agent:
         compact_tool_results: Optional[bool] = None,
         compress_tool_results: Optional[bool] = None,
         compression_manager: Optional[CompactionManager] = None,
-        context_compaction_manager: Optional["ContextCompactionManager"] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -540,20 +538,7 @@ class Agent:
 
         self.compact_context = compact_context
 
-        if context_compaction_manager is not None:
-            # Auto-migrate old ContextCompactionManager to new CompactionManager
-            log_debug("context_compaction_manager is deprecated, use compaction_manager with compact_context=True")
-            self.compaction_manager = CompactionManager(
-                model=context_compaction_manager.model,
-                compact_context=True,
-                compact_context_message_limit=context_compaction_manager.message_limit,
-                compact_context_token_limit=context_compaction_manager.token_limit,
-                compact_context_keep_recent=context_compaction_manager.keep_recent,
-                compact_context_preserve_user_budget=context_compaction_manager.preserve_user_budget,
-                compact_context_instructions=context_compaction_manager.instructions,
-            )
-            self.compact_context = True
-        elif compression_manager is not None:
+        if compression_manager is not None:
             log_debug("compression_manager is deprecated, use compaction_manager")
             self.compaction_manager = compression_manager
         else:

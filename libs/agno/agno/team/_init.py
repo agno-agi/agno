@@ -26,7 +26,6 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.compression._context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
@@ -160,7 +159,6 @@ def __init__(
     compact_tool_results: Optional[bool] = None,
     compress_tool_results: Optional[bool] = None,
     compression_manager: Optional["CompactionManager"] = None,
-    context_compaction_manager: Optional["ContextCompactionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
@@ -349,20 +347,7 @@ def __init__(
 
     team.compact_context = compact_context
 
-    if context_compaction_manager is not None:
-        # Auto-migrate old ContextCompactionManager to new CompactionManager
-        log_debug("context_compaction_manager is deprecated, use compaction_manager with compact_context=True")
-        team.compaction_manager = CompactionManager(
-            model=context_compaction_manager.model,
-            compact_context=True,
-            compact_context_message_limit=context_compaction_manager.message_limit,
-            compact_context_token_limit=context_compaction_manager.token_limit,
-            compact_context_keep_recent=context_compaction_manager.keep_recent,
-            compact_context_preserve_user_budget=context_compaction_manager.preserve_user_budget,
-            compact_context_instructions=context_compaction_manager.instructions,
-        )
-        team.compact_context = True
-    elif compression_manager is not None:
+    if compression_manager is not None:
         log_debug("compression_manager is deprecated, use compaction_manager")
         team.compaction_manager = compression_manager
     else:

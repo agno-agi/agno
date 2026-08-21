@@ -15,7 +15,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.compression.context import ContextCompactionManager
+from agno.compression import CompactionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
@@ -80,10 +80,11 @@ review_team = Team(
     db=db,
     add_history_to_context=True,
     # Low token limit to trigger compaction with file reads
-    context_compaction_manager=ContextCompactionManager(
+    compaction_manager=CompactionManager(
+        compact_context=True,
         model=OpenAIResponses(id="gpt-5-mini"),
-        token_limit=25_000,  # Low limit - file reads trigger quickly
-        keep_recent=8,
+        compact_context_token_limit=25_000,  # Low limit - file reads trigger quickly
+        compact_context_keep_recent=8,
     ),
     markdown=True,
     show_members_responses=True,

@@ -22,7 +22,6 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.compression._context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -534,7 +533,6 @@ class Team:
         compact_tool_results: Optional[bool] = None,
         compress_tool_results: Optional[bool] = None,
         compression_manager: Optional["CompactionManager"] = None,
-        context_compaction_manager: Optional["ContextCompactionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -656,7 +654,6 @@ class Team:
             compact_tool_results=compact_tool_results,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
-            context_compaction_manager=context_compaction_manager,
             metadata=metadata,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,

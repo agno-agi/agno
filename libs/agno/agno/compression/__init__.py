@@ -2,7 +2,6 @@ from agno.compression._context import (
     SUMMARY_PREFIX,
     CompactionResult,
     CompactionState,
-    ContextCompactionManager,
     create_summary_message,
 )
 from agno.compression.manager import CompactionManager
@@ -13,7 +12,6 @@ CompressionManager = CompactionManager
 __all__ = [
     "CompactionManager",
     "CompressionManager",  # Deprecated alias
-    "ContextCompactionManager",
     "CompactionState",
     "CompactionResult",
     "SUMMARY_PREFIX",

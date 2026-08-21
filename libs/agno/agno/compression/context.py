@@ -5,12 +5,10 @@ from agno.compression._context import (
     SUMMARY_PREFIX,
     CompactionResult,
     CompactionState,
-    ContextCompactionManager,
     create_summary_message,
 )
 
 __all__ = [
-    "ContextCompactionManager",
     "CompactionState",
     "CompactionResult",
     "SUMMARY_PREFIX",

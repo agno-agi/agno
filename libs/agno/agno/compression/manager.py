@@ -5,7 +5,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.compression._context import CompactionResult, ContextCompactionManager
+from agno.compression._context import (
+    CompactionResult,
+    acompact_context,
+    ashould_compact_context,
+    compact_context,
+    should_compact_context,
+)
 from agno.compression._tool import (
     acompact_tools,
     ashould_compact_tools,
@@ -50,7 +56,7 @@ class CompactionManager:
     compact_tools_token_limit: Optional[int] = None
     compact_tools_instructions: Optional[str] = None
 
-    # Deprecated aliases (use compact_tools_* names above)
+    # Deprecated tool aliases
     tool_result_limit: Optional[int] = None
     compact_tool_results_limit: Optional[int] = None
     tool_token_limit: Optional[int] = None
@@ -66,11 +72,8 @@ class CompactionManager:
 
     stats: Dict[str, Any] = field(default_factory=dict)
 
-    # Internal context compactor (created lazily)
-    _compactor: Optional[ContextCompactionManager] = field(default=None, repr=False)
-
     def __post_init__(self) -> None:
-        # Handle deprecated aliases
+        # Handle deprecated tool aliases
         if self.tool_result_limit is not None and self.compact_tools_limit is None:
             log_debug("tool_result_limit is deprecated, use compact_tools_limit")
             self.compact_tools_limit = self.tool_result_limit
@@ -88,25 +91,20 @@ class CompactionManager:
         if self.compact_tools_limit is None and self.compact_tools_token_limit is None:
             self.compact_tools_limit = 3
 
-        # Create internal compactor if context compaction enabled
+        # Default context message limit if neither specified
         if self.compact_context:
-            self._compactor = ContextCompactionManager(
-                model=self.model,
-                message_limit=self.compact_context_message_limit,
-                token_limit=self.compact_context_token_limit,
-                keep_recent=self.compact_context_keep_recent,
-                preserve_user_budget=self.compact_context_preserve_user_budget,
-                instructions=self.compact_context_instructions,
-            )
+            if self.compact_context_message_limit is None and self.compact_context_token_limit is None:
+                self.compact_context_message_limit = 50
+
+        # Derive preserve_user_budget as 25% of token_limit if not set
+        if self.compact_context_preserve_user_budget is None:
+            if self.compact_context_token_limit is not None:
+                self.compact_context_preserve_user_budget = int(self.compact_context_token_limit * 0.25)
+            else:
+                self.compact_context_preserve_user_budget = 20_000
 
     # --- Backward compatibility ---
 
-    @property
-    def context_compaction_manager(self) -> Optional[ContextCompactionManager]:
-        """Access the internal compactor for backward compatibility."""
-        return self._compactor
-
-    # Alias for old parameter name
     @property
     def compact_history(self) -> bool:
         return self.compact_context
@@ -179,19 +177,29 @@ class CompactionManager:
         )
         self._merge_stats(stats)
 
-    # --- Context compaction (delegates to _compactor) ---
+    # --- Context compaction (delegates to _context.py) ---
 
     def should_compact(self, messages: List[Message]) -> bool:
         """Check if context should be compacted."""
-        if self._compactor is None:
+        if not self.compact_context:
             return False
-        return self._compactor.should_compact(messages)
+        return should_compact_context(
+            messages=messages,
+            model=self.model,
+            message_limit=self.compact_context_message_limit,
+            token_limit=self.compact_context_token_limit,
+        )
 
     async def ashould_compact(self, messages: List[Message]) -> bool:
         """Async check if context should be compacted."""
-        if self._compactor is None:
+        if not self.compact_context:
             return False
-        return await self._compactor.ashould_compact(messages)
+        return await ashould_compact_context(
+            messages=messages,
+            model=self.model,
+            message_limit=self.compact_context_message_limit,
+            token_limit=self.compact_context_token_limit,
+        )
 
     def compact(
         self,
@@ -200,13 +208,23 @@ class CompactionManager:
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
         """Compact context into summary message."""
-        if self._compactor is None:
+        if not self.compact_context:
+            return CompactionResult(compacted_messages=messages)
+
+        if not self.should_compact(messages):
             return CompactionResult(compacted_messages=messages)
 
         log_debug("[COMPACTION_MANAGER] compact()")
-        result = self._compactor.compact(messages, run_response, run_metrics)
-        self._sync_compactor_stats()
-        return result
+        return compact_context(
+            messages=messages,
+            model=self.model,
+            keep_recent=self.compact_context_keep_recent,
+            preserve_user_budget=self.compact_context_preserve_user_budget or 20_000,
+            token_limit=self.compact_context_token_limit,
+            instructions=self.compact_context_instructions,
+            run_response=run_response,
+            run_metrics=run_metrics,
+        )
 
     async def acompact(
         self,
@@ -215,25 +233,27 @@ class CompactionManager:
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
         """Async compact context into summary message."""
-        if self._compactor is None:
+        if not self.compact_context:
+            return CompactionResult(compacted_messages=messages)
+
+        if not await self.ashould_compact(messages):
             return CompactionResult(compacted_messages=messages)
 
         log_debug("[COMPACTION_MANAGER] acompact()")
-        result = await self._compactor.acompact(messages, run_response, run_metrics)
-        self._sync_compactor_stats()
-        return result
+        return await acompact_context(
+            messages=messages,
+            model=self.model,
+            keep_recent=self.compact_context_keep_recent,
+            preserve_user_budget=self.compact_context_preserve_user_budget or 20_000,
+            token_limit=self.compact_context_token_limit,
+            instructions=self.compact_context_instructions,
+            run_response=run_response,
+            run_metrics=run_metrics,
+        )
 
-    # --- Stats helpers ---
+    # --- Stats ---
 
     def _merge_stats(self, stats: Dict[str, Any]) -> None:
         """Merge stats from tool compaction."""
         for key, value in stats.items():
             self.stats[key] = self.stats.get(key, 0) + value
-
-    def _sync_compactor_stats(self) -> None:
-        """Sync stats from internal context compactor."""
-        if self._compactor is not None:
-            compactor_stats = getattr(self._compactor, "stats", None)
-            if compactor_stats:
-                for key, value in compactor_stats.items():
-                    self.stats[f"context_{key}"] = value
