@@ -1,5 +1,4 @@
 import json
-import sys
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 from unittest.mock import Mock, patch
