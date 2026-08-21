@@ -86,8 +86,6 @@ from agno.utils.log import log_debug, logger
 from agno.utils.string import generate_component_id_from_name, validate_component_id
 
 if TYPE_CHECKING:
-    from weakref import ReferenceType
-
     from agno.agent.agent import Agent
     from agno.db.base import BaseDb
     from agno.models.base import Model
@@ -258,16 +256,6 @@ class StudioTools(Toolkit):
         # is filled by AgentOS afterwards, so an __init__ snapshot would leave
         # every write answering db_not_configured forever.
         self._db: Optional["BaseDb"] = db
-        # Set by the AgentOS that SERVES this toolkit (see the db property).
-        # Declared before super().__init__ so a deep copy of the toolkit carries
-        # the field rather than resolving as if it had never been bound.
-        self._os_db: Optional["BaseDb"] = None
-        # Which AgentOS set _os_db, held weakly. Identity is what makes a rebind
-        # decidable: the same OS binding again -- a resync, or its db swapped in
-        # place -- replaces its own binding silently, while a different OS
-        # naming a different db keeps the first binding and warns. A strong
-        # reference would keep a whole served application graph alive.
-        self._os_binding: Optional["ReferenceType[Any]"] = None
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
@@ -563,12 +551,6 @@ class StudioTools(Toolkit):
     def db(self) -> Optional["BaseDb"]:
         if self._db is not None:
             return self._db
-        # The db of the AgentOS that serves this toolkit, when one does. A
-        # registry is shareable, so its declaration alone cannot say which of
-        # several mounted OS instances owns this toolkit's catalog; binding to
-        # the serving OS keeps writes in the db that OS's HTTP surfaces read.
-        if self._os_db is not None:
-            return self._os_db
         # Resolved on every access, never memoized. Studio is built before
         # AgentOS, so a single read before the OS declares its catalog db -- a
         # log line, a debug print, a health check -- would otherwise pin this

@@ -5,7 +5,6 @@ from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 from uuid import uuid4
-from weakref import ReferenceType, ref
 
 from pydantic import BaseModel, ValidationError
 
@@ -116,10 +115,6 @@ class Registry:
     # has no db that can serve the catalog.
     component_db: Optional[BaseDb] = field(default=None, init=False, repr=False)
     component_db_declared: bool = field(default=False, init=False, repr=False)
-    # Which AgentOS made the declaration, held weakly. Identity is what lets
-    # that OS move its own declaration later - a resync, or its db swapped in
-    # place - while a different OS is still refused an existing declaration.
-    component_db_declared_by: Optional["ReferenceType[Any]"] = field(default=None, init=False, repr=False)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
@@ -528,7 +523,7 @@ class Registry:
                 continue
         return False
 
-    def declare_component_db(self, db: Any, declared_by: Any = None) -> None:
+    def declare_component_db(self, db: Any) -> None:
         """State which database backs the component catalog.
 
         AgentOS calls this with its own db. A db that is not a synchronous
@@ -539,12 +534,9 @@ class Registry:
         agent-private session db and write the catalog where no OS surface
         reads it.
 
-        ``declared_by`` records the AgentOS behind the declaration so it can
-        move it later without another OS taking one it never made.
         """
         self.component_db = db if isinstance(db, BaseDb) else None
         self.component_db_declared = True
-        self.component_db_declared_by = ref(declared_by) if declared_by is not None else None
 
     def resolve_component_db(self) -> Optional[BaseDb]:
         """The database a component-catalog toolkit should use when given none.
