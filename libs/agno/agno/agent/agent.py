@@ -22,7 +22,6 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import (
-    _cli,
     _default_tools,
     _init,
     _managers,
@@ -39,7 +38,10 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.learn.machine import LearningMachine
+
+if TYPE_CHECKING:
+    from agno.learn.machine import LearningMachine
+
 from agno.media import Audio, File, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
@@ -1187,6 +1189,8 @@ class Agent:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return _cli.agent_print_response(
             self,
             input=input,
@@ -1243,6 +1247,8 @@ class Agent:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return await _cli.agent_aprint_response(
             self,
             input=input,
@@ -1283,6 +1289,8 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return _cli.cli_app(
             self,
             input=input,
@@ -1308,6 +1316,8 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return await _cli.acli_app(
             self,
             input=input,

@@ -3,9 +3,7 @@ import mimetypes
 import time
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Union
-
-import httpx
+from typing import Any, List, Optional, Union
 
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_info, log_warning
@@ -80,6 +78,8 @@ def download_image(url: str, output_path: str) -> bool:
     - url (str): URL of the image to download.
     - output_path (str): Local filesystem path to save the image
     """
+    import httpx
+
     try:
         # Send HTTP GET request to the image URL
         response = httpx.get(url)
@@ -113,6 +113,8 @@ def download_image(url: str, output_path: str) -> bool:
 
 def download_audio(url: str, output_path: str) -> str:
     """Download audio from URL"""
+    import httpx
+
     response = httpx.get(url)
     response.raise_for_status()
 
@@ -124,6 +126,8 @@ def download_audio(url: str, output_path: str) -> str:
 
 def download_video(url: str, output_path: str) -> str:
     """Download video from URL"""
+    import httpx
+
     response = httpx.get(url)
     response.raise_for_status()
 
@@ -144,6 +148,8 @@ def download_file(url: str, output_path: str) -> None:
     Raises:
         httpx.HTTPError: If the download fails
     """
+    import httpx
+
     try:
         response = httpx.get(url)
         response.raise_for_status()
@@ -197,6 +203,8 @@ def wait_for_media_ready(url: str, timeout: int = 120, interval: int = 5, verbos
     Returns:
         bool: True if media is ready, False if timeout reached
     """
+    import httpx
+
     max_attempts = timeout // interval
 
     if verbose:
@@ -514,3 +522,13 @@ def reconstruct_response_audio(audio: Optional[dict]) -> Optional[Audio]:
     if not audio:
         return None
     return reconstruct_audio_from_dict(audio)
+
+
+def __getattr__(name: str) -> Any:
+    # ``agno.utils.media.httpx`` stays resolvable for callers that patch it,
+    # without the module paying for the httpx import when nothing downloads.
+    if name == "httpx":
+        import httpx
+
+        return httpx
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
