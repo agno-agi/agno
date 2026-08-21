@@ -116,7 +116,14 @@ arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
-code = ["ipykernel>=7.3.0", "jupyter_client>=8.9.1", "dill>=0.4.1"]
+# ipykernel 7.3 and jupyter_client 8.9 require Python >= 3.10; the markers keep
+# `pip install agno[code]` (and the tools/tests chains) resolvable on 3.9,
+# where importing agno.tools.code then raises its readable ImportError.
+code = [
+  "ipykernel>=7.3.0; python_version >= '3.10'",
+  "jupyter_client>=8.9.1; python_version >= '3.10'",
+  "dill>=0.4.1",
+]
 # Pinned below 5.0: that release split Confluence into Cloud and Server classes and left the
 # base ``Confluence`` with no space or page methods, so ConfluenceTools raises AttributeError.
 # Lift once the tools are ported to the split classes.
@@ -475,6 +482,9 @@ include = ["LICENSE"]
 log_cli = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "integration: tests that need live services (kernels, databases)",
+]
 
 [tool.ruff]
 line-length = 120

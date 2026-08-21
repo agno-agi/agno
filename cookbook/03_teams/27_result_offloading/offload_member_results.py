@@ -98,7 +98,7 @@ platform_engineer = Agent(
 # ---------------------------------------------------------------------------
 # The team leader
 #
-# offload_tool_results=True stores results of 16,000 characters or more. A
+# offload_tool_results=True stores results longer than 16,000 characters. A
 # ResultStore sets the threshold and the rest; 8,000 here so the shorter
 # member answers are stored too. Members run on the leader's store, so a
 # member can read back a result another member produced. The read-back tools

@@ -1,4 +1,4 @@
-# Test Log - _03_persistence
+# Test Log - 03_persistence
 
 Tested 2026-08-21 against `gpt-5.5` (OpenAIResponses), ipykernel 7.3.0, jupyter_client 8.9.1, dill 0.4.1, with the worktree's Python (agno from this branch, `from agno.tools.code import CodeMode`).
 

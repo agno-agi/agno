@@ -6,7 +6,7 @@ A long agentic run dies of its own tool output. One large search result sits
 in the message list forever, re-sent on every later model call.
 
 `offload_tool_results=True` makes the transcript hold a pointer instead of a
-payload. A result of 16,000 characters or more is written to the database and
+payload. A result longer than 16,000 characters is written to the database and
 the message gets a short envelope: a head preview and a `result_id`. The agent
 gets two tools to go back for the rest, `read_result` and `search_result`, and
 the full bytes stay recoverable.

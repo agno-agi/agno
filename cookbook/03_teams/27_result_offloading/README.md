@@ -2,7 +2,7 @@
 
 A team leader pays for every member answer twice: once when it arrives, and again on every turn after that, because history replays it. A leader with three members and ten delegations is carrying ten full reports it has already read.
 
-`Team(offload_tool_results=True)` writes any result of 16,000 characters or more to a file and puts a short envelope in the message instead. That covers the leader's own tool results and every member answer.
+`Team(offload_tool_results=True)` writes any result longer than 16,000 characters to a file and puts a short envelope in the message instead. That covers the leader's own tool results and every member answer.
 
 ```
 <result id="res_a91c4f20b3" tool="delegate_task_to_member" lines="1503" size="142.9KB">

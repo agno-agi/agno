@@ -4,7 +4,7 @@ A long agentic run dies of its own tool output. One large search result sits
 in the message list forever, re-sent on every later model call.
 
 `Agent(offload_tool_results=True)` makes the transcript hold a pointer instead
-of a payload. A result of 16,000 characters or more is written to the database
+of a payload. A result longer than 16,000 characters is written to the database
 and the message gets an envelope:
 
 ```
