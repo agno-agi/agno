@@ -547,17 +547,32 @@ def _get_delegate_task_function(
         member_agent: Union[Agent, "Team"],
         member_agent_task: Union[str, Message],
         member_session_state_copy: Dict[str, Any],
+        delegation_tool_args: Optional[Dict[str, Any]] = None,
     ):
         # Add team run id to the member run
 
         if member_agent_run_response is not None:
             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
-        # Update the top-level team run_response tool call to have the run_id of the member run
-        if run_response.tools is not None and member_agent_run_response is not None:
+        # Update the top-level team run_response tool call to have the run_id of the member run.
+        # A single model turn can issue several delegate_task_to_member calls that then run
+        # concurrently, so match the arguments this delegation was called with and skip entries
+        # another delegation already linked, otherwise the last one to finish would overwrite
+        # the child_run_id of every other delegation in the turn.
+        if (
+            run_response.tools is not None
+            and member_agent_run_response is not None
+            and delegation_tool_args is not None
+        ):
             for tool in run_response.tools:
-                if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
+                if (
+                    tool.tool_name
+                    and tool.tool_name.lower() == "delegate_task_to_member"
+                    and tool.child_run_id is None
+                    and tool.tool_args == delegation_tool_args
+                ):
                     tool.child_run_id = member_agent_run_response.run_id  # type: ignore
+                    break
 
         # Update the team run context
         member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"
@@ -724,6 +739,7 @@ def _get_delegate_task_function(
                 member_agent,
                 member_agent_task,  # type: ignore
                 member_session_state_copy,  # type: ignore
+                delegation_tool_args={"member_id": member_id, "task": task},
             )
             raise
 
@@ -736,6 +752,7 @@ def _get_delegate_task_function(
                 member_agent,
                 member_agent_task,  # type: ignore
                 member_session_state_copy,  # type: ignore
+                delegation_tool_args={"member_id": member_id, "task": task},
             )
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
@@ -776,6 +793,7 @@ def _get_delegate_task_function(
             member_agent,
             member_agent_task,  # type: ignore
             member_session_state_copy,  # type: ignore
+            delegation_tool_args={"member_id": member_id, "task": task},
         )
 
     async def adelegate_task_to_member(
@@ -910,6 +928,7 @@ def _get_delegate_task_function(
                 member_agent,
                 member_agent_task,  # type: ignore
                 member_session_state_copy,  # type: ignore
+                delegation_tool_args={"member_id": member_id, "task": task},
             )
             raise
 
@@ -922,6 +941,7 @@ def _get_delegate_task_function(
                 member_agent,
                 member_agent_task,  # type: ignore
                 member_session_state_copy,  # type: ignore
+                delegation_tool_args={"member_id": member_id, "task": task},
             )
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
@@ -959,6 +979,7 @@ def _get_delegate_task_function(
             member_agent,
             member_agent_task,  # type: ignore
             member_session_state_copy,  # type: ignore
+            delegation_tool_args={"member_id": member_id, "task": task},
         )
 
     # When the task should be delegated to all members
