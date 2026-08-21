@@ -87,6 +87,21 @@ section.
 
 ---
 
+### scripts/perf_setup.sh + rich summary tables (2026-08-21)
+
+**Status:** PASS
+
+**Description:** The suite now standardizes on `.venvs/perfenv` built by
+`./scripts/perf_setup.sh` (updated to install agno editable from the checkout, with the
+os extra since `agno.workflow` imports fastapi, plus the comparison frameworks). Both
+runners finish with a rich summary table (median / p95 / memory per benchmark). Smoke ran
+both suites end to end in the fresh perfenv.
+
+**Result:** All benchmarks pass in perfenv, including `instantiate_workflow.py` which fails
+without the os extra. Rich tables render for core and comparison runs.
+
+---
+
 ## Review round (2026-08-21)
 
 A 34-agent adversarial review (methodology, mock fidelity, house rules, report, runner

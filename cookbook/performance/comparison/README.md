@@ -10,18 +10,17 @@ a placeholder API key and no network.
 
 ## Setup
 
-These benchmarks need a dedicated environment with all four frameworks:
+These benchmarks need the performance environment, which holds all four
+frameworks next to an editable install of this checkout's agno:
 
 ```bash
-uv venv .venvs/compare --python 3.12
-uv pip install --python .venvs/compare/bin/python -e libs/agno \
-    langgraph langchain-openai crewai pydantic-ai
+./scripts/perf_setup.sh
 ```
 
 ## Running
 
 ```bash
-.venvs/compare/bin/python cookbook/performance/comparison/run_all.py
+.venvs/perfenv/bin/python cookbook/performance/comparison/run_all.py
 ```
 
 Results land in `cookbook/performance/results/comparison/summary.json`

@@ -6,10 +6,10 @@ Runs every cross-framework comparison benchmark sequentially, each in a
 fresh Python process, and collects results plus framework versions into
 results/comparison/summary.json (relative to the parent suite).
 
-Run with the comparison environment (see _compare.py for setup):
+Run with the performance environment (created by ./scripts/perf_setup.sh):
 
-    .venvs/compare/bin/python cookbook/performance/comparison/run_all.py
-    .venvs/compare/bin/python cookbook/performance/comparison/run_all.py --quick
+    .venvs/perfenv/bin/python cookbook/performance/comparison/run_all.py
+    .venvs/perfenv/bin/python cookbook/performance/comparison/run_all.py --quick
 """
 
 import json
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from time import perf_counter
 
-from _compare import get_machine_info
+from _compare import get_machine_info, print_summary_table
 
 # ---------------------------------------------------------------------------
 # Configuration: benchmarks run in this order, one process at a time
@@ -109,6 +109,12 @@ def run_suite(quick: bool = False) -> int:
     }
     summary_path = results_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
+    print("", flush=True)
+    print_summary_table(
+        benchmarks,
+        machine=summary["machine"],
+        title="Cross-Framework Benchmark Summary",
+    )
     print("", flush=True)
     print("Summary written to " + str(summary_path), flush=True)
 

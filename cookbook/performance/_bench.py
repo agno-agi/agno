@@ -265,6 +265,54 @@ def _mac_chip_name() -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Suite Summary Table
+# ---------------------------------------------------------------------------
+def print_summary_table(
+    benchmarks: dict, machine: Optional[dict] = None, title: str = "Benchmark Summary"
+) -> None:
+    """Print one rich table over a suite's collected benchmark payloads.
+
+    Time benchmarks show median and p95 (ms for import groups, us otherwise)
+    plus their median allocation peak; memory-only benchmarks show KiB.
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title=title, show_header=True, header_style="bold magenta")
+    table.add_column("Benchmark", style="cyan")
+    table.add_column("Median", style="green", justify="right")
+    table.add_column("p95", style="green", justify="right")
+    table.add_column("Memory", style="yellow", justify="right")
+
+    for name in sorted(benchmarks):
+        payload = benchmarks[name]
+        result = payload.get("result") or {}
+        group = payload.get("group", "")
+        mem_median = result.get("median_memory_usage") or 0.0
+        mem_text = format(mem_median * 1024, ",.1f") + " KiB" if mem_median else "-"
+        if result.get("run_times"):
+            unit, scale = ("ms", 1e3) if "import" in group else ("us", 1e6)
+            table.add_row(
+                name,
+                format(result["median_run_time"] * scale, ",.1f") + " " + unit,
+                format(result["p95_run_time"] * scale, ",.1f") + " " + unit,
+                mem_text,
+            )
+        else:
+            table.add_row(name, "-", "-", mem_text)
+
+    console = Console()
+    if machine:
+        parts = [
+            "agno " + str(machine.get("agno_version") or "unknown"),
+            "commit " + str(machine.get("git_commit") or "unknown"),
+            str(machine.get("processor") or machine.get("machine") or ""),
+        ]
+        console.print(" | ".join(part for part in parts if part), style="dim")
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # Benchmark Runner
 # ---------------------------------------------------------------------------
 def iterations(default: int) -> int:

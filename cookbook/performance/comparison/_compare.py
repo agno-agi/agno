@@ -7,12 +7,11 @@ suite's harness (_bench.py) from the parent directory and provides safe
 environment defaults: a placeholder OpenAI key (model clients are constructed
 but never called) and telemetry opt-outs for frameworks that phone home.
 
-Run these benchmarks with the dedicated comparison environment, which has
-langgraph, crewai and pydantic-ai installed next to agno:
+Run these benchmarks with the performance environment, which installs agno
+editable from this checkout next to the comparison frameworks:
 
-    uv venv .venvs/compare --python 3.12
-    uv pip install --python .venvs/compare/bin/python -e libs/agno \
-        langgraph langchain-openai crewai pydantic-ai
+    ./scripts/perf_setup.sh
+    .venvs/perfenv/bin/python cookbook/performance/comparison/run_all.py
 """
 
 import os
@@ -37,6 +36,7 @@ from _bench import (  # noqa: E402,F401
     ensure_completed,
     get_machine_info,
     iterations,
+    print_summary_table,
     run_benchmarks,
     save_result,
 )

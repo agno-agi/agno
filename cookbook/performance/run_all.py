@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from time import perf_counter
 
-from _bench import get_machine_info
+from _bench import get_machine_info, print_summary_table
 
 # ---------------------------------------------------------------------------
 # Configuration: benchmarks run in this order, one process at a time
@@ -100,6 +100,10 @@ def run_suite(quick: bool = False) -> int:
     }
     summary_path = results_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
+    print("")
+    print_summary_table(
+        benchmarks, machine=summary["machine"], title="Agno Benchmark Summary"
+    )
     print("")
     print("Summary written to " + str(summary_path))
 

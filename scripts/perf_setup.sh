@@ -27,7 +27,11 @@ print_info "uv venv --python 3.12 ${VENV_DIR}"
 uv venv --python 3.12 ${VENV_DIR}
 
 print_heading "Installing libraries"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -U agno langgraph langchain_openai openai-agents crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]"
+# agno installs editable from this checkout: the benchmarks measure the local
+# tree, not the last release. The os extra is required because agno.workflow
+# imports fastapi. The other frameworks are the comparison set for
+# cookbook/performance/comparison and cookbook/09_evals/performance/comparison.
+VIRTUAL_ENV=${VENV_DIR} uv pip install -e "${AGNO_DIR}[os]" langgraph langchain_openai openai-agents crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]"
 
 print_heading "uv pip list"
 VIRTUAL_ENV=${VENV_DIR} uv pip list

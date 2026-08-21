@@ -9,8 +9,64 @@ For examples of the `PerformanceEval` API itself (including benchmarks that
 call real models), see `cookbook/09_evals/performance/`.
 
 Cross-framework comparisons (Agno vs LangGraph, PydanticAI, CrewAI: cold
-import, agent construction time and memory) live in `comparison/` — see its
-README for the dedicated environment setup. Results feed the same report.
+import, agent construction, and a mocked single-turn run) live in
+`comparison/`. Results feed the same report.
+
+## 1. Create the environment
+
+One script builds everything the suite needs — agno installed editable from
+this checkout (so benchmarks measure your local tree, not the last release)
+plus the comparison frameworks:
+
+```bash
+./scripts/perf_setup.sh
+```
+
+This creates `.venvs/perfenv`. Rebuilding after switching branches is not
+required (the install is editable), but re-run the script whenever
+dependencies change.
+
+## 2. Run the benchmarks
+
+```bash
+# Full agno suite (a few minutes); results written to results/
+.venvs/perfenv/bin/python cookbook/performance/run_all.py
+
+# Cross-framework comparison (about a minute)
+.venvs/perfenv/bin/python cookbook/performance/comparison/run_all.py
+```
+
+Both runners execute each benchmark in a fresh Python process, one at a
+time, and finish with a rich summary table of every benchmark's median, p95
+and memory. Close CPU-heavy applications first and never run benchmarks
+concurrently: contention skews timings.
+
+Variations:
+
+```bash
+# Quick smoke (about 30 seconds; results isolated in results/quick/)
+.venvs/perfenv/bin/python cookbook/performance/run_all.py --quick
+
+# A single benchmark, with rich per-run tables
+.venvs/perfenv/bin/python cookbook/performance/run_agent.py
+
+# Custom iteration count
+AGNO_BENCH_ITERATIONS=1000 .venvs/perfenv/bin/python cookbook/performance/run_agent.py
+```
+
+## 3. Generate the report
+
+```bash
+.venvs/perfenv/bin/python cookbook/performance/report.py
+open cookbook/performance/report/agno-performance.html
+```
+
+The report is a self-contained HTML page (light and dark themes) rendering
+whatever `results/` holds: the agno sections always, and the cross-framework
+sections whenever `results/comparison/summary.json` exists. Local run output
+(`results/`, `report/`) is gitignored; reference runs are checked in under
+`baselines/` as `<date>-<machine>.json` and any of them renders with
+`report.py --results baselines/<file>`.
 
 ## What is measured
 
@@ -27,37 +83,9 @@ README for the dedicated environment setup. Results feed the same report.
 | `run_agent_with_storage`, `arun_agent_with_storage` | `run_agent_with_storage.py` | One run with an in-memory db and history enabled: session persistence overhead. |
 | `memory_per_agent`, `memory_per_agent_with_tools` | `memory_footprint.py` | Net resident memory per live agent, measured over batches of 1000. |
 
-## Running
-
-```bash
-# Full suite (a few minutes), results written to results/
-.venvs/demo/bin/python cookbook/performance/run_all.py
-
-# Quick smoke run
-.venvs/demo/bin/python cookbook/performance/run_all.py --quick
-
-# Single benchmark, human-readable output
-.venvs/demo/bin/python cookbook/performance/run_agent.py
-```
-
-Unlike most cookbook folders, this suite needs only core agno: any
-environment with `agno` installed works, including the dev `.venv`.
-
-`run_all.py` runs each benchmark in a fresh Python process, one at a time.
-Do not run benchmarks concurrently and close CPU-heavy applications first:
-contention skews timings.
-
-## Reports and baselines
-
-```bash
-# Render results/summary.json into a self-contained HTML report
-.venvs/demo/bin/python cookbook/performance/report.py
-```
-
-The report is written to `report/agno-performance.html`. Local run output
-(`results/`, `report/`) is gitignored; published reference runs are checked
-in under `baselines/` as `<date>-<machine>.json` and can be rendered with
-`report.py --results baselines/<file>`.
+The agno-only benchmarks need nothing beyond core agno, so any environment
+with `agno` installed also works for them (including the dev `.venv`); the
+comparison suite needs `.venvs/perfenv`.
 
 ## Methodology notes
 
