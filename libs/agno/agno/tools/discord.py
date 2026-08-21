@@ -34,16 +34,16 @@ class DiscordTools(Toolkit):
         }
 
         tools: List[Any] = []
-        if enable_send_message or all:
-            tools.append(self.send_message)
-        if enable_get_channel_messages or all:
-            tools.append(self.get_channel_messages)
-        if enable_get_channel_info or all:
-            tools.append(self.get_channel_info)
-        if enable_list_channels or all:
-            tools.append(self.list_channels)
-        if enable_delete_message or all:
-            tools.append(self.delete_message)
+        if send_message or all:
+            tools.append(self.send_discord_message)
+        if get_channel_messages or all:
+            tools.append(self.get_discord_channel_messages)
+        if get_channel_info or all:
+            tools.append(self.get_discord_channel_info)
+        if list_channels or all:
+            tools.append(self.list_discord_channels)
+        if delete_message or all:
+            tools.append(self.delete_discord_message)
 
         super().__init__(name="discord", tools=tools, **kwargs)
 
@@ -54,7 +54,7 @@ class DiscordTools(Toolkit):
         response.raise_for_status()
         return response.json() if response.text else {}
 
-    def send_message(self, channel_id: str, message: str) -> str:
+    def send_discord_message(self, channel_id: str, message: str) -> str:
         """
         Send a message to a Discord channel.
 
@@ -73,7 +73,7 @@ class DiscordTools(Toolkit):
             logger.exception("Error sending message")
             return f"Error sending message: {str(e)}"
 
-    def get_channel_info(self, channel_id: str) -> str:
+    def get_discord_channel_info(self, channel_id: str) -> str:
         """
         Get information about a Discord channel.
 
@@ -90,7 +90,7 @@ class DiscordTools(Toolkit):
             logger.exception("Error getting channel info")
             return f"Error getting channel info: {str(e)}"
 
-    def list_channels(self, guild_id: str) -> str:
+    def list_discord_channels(self, guild_id: str) -> str:
         """
         List all channels in a Discord server.
 
@@ -107,7 +107,7 @@ class DiscordTools(Toolkit):
             logger.exception("Error listing channels")
             return f"Error listing channels: {str(e)}"
 
-    def get_channel_messages(self, channel_id: str, limit: int = 100) -> str:
+    def get_discord_channel_messages(self, channel_id: str, limit: int = 100) -> str:
         """
         Get the message history of a Discord channel.
 
@@ -125,7 +125,7 @@ class DiscordTools(Toolkit):
             logger.exception("Error getting messages")
             return f"Error getting messages: {str(e)}"
 
-    def delete_message(self, channel_id: str, message_id: str) -> str:
+    def delete_discord_message(self, channel_id: str, message_id: str) -> str:
         """
         Delete a message from a Discord channel.
 

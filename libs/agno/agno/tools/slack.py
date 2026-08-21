@@ -45,65 +45,65 @@ class SlackTools(Toolkit):
         enabled = set(tool_names)
         sections: list[str] = []
 
-        if "search_workspace" in enabled:
+        if "search_slack_workspace" in enabled:
             sections.append(
-                "**search_workspace** — semantic and keyword search across the workspace.\n"
+                "**search_slack_workspace** — semantic and keyword search across the workspace.\n"
                 "When to use: finding discussions about a topic, catching up, summarizing activity.\n"
                 "Returns: messages with channel, author, timestamp, and surrounding context."
             )
 
-        if "get_channel_history" in enabled:
+        if "get_slack_channel_history" in enabled:
             text = (
-                "**get_channel_history** — recent top-level messages from a specific channel.\n"
+                "**get_slack_channel_history** — recent top-level messages from a specific channel.\n"
                 "When to use: reading the latest activity in a known channel.\n"
                 "Note: returns only top-level messages, not thread replies."
             )
             # Only reference get_thread if the LLM can actually call it
-            if "get_thread" in enabled:
+            if "get_slack_thread" in enabled:
                 text += "\nLook for thread_ts and reply_count, then use get_thread to expand."
             text += "\nRequires: bot must be a member of the channel."
             sections.append(text)
 
-        if "get_thread" in enabled:
+        if "get_slack_thread" in enabled:
             text = (
-                "**get_thread** — full thread replies given a channel and thread timestamp.\n"
+                "**get_slack_thread** — full thread replies given a channel and thread timestamp.\n"
                 "When to use: expanding a message with replies into its full discussion."
             )
             # Reference chaining sources that are actually available
-            sources = [t for t in ("get_channel_history", "search_workspace") if t in enabled]
+            sources = [t for t in ("get_slack_channel_history", "search_slack_workspace") if t in enabled]
             if sources:
                 text += f"\nChain after {' or '.join(sources)} for complete context."
             sections.append(text)
 
-        if "get_channel_info" in enabled:
+        if "get_slack_channel_info" in enabled:
             sections.append(
-                "**get_channel_info** — channel metadata (topic, purpose, member count).\n"
+                "**get_slack_channel_info** — channel metadata (topic, purpose, member count).\n"
                 "When to use: understanding what a channel is about."
             )
 
-        if "search_messages" in enabled:
-            text = "**search_messages** — legacy search API. Requires a user token."
-            if "search_workspace" in enabled:
+        if "search_slack_messages" in enabled:
+            text = "**search_slack_messages** — legacy search API. Requires a user token."
+            if "search_slack_workspace" in enabled:
                 text += "\nWhen to use: only when search_workspace is unavailable."
             sections.append(text)
 
         # Messaging guidance — critical for thread-aware responses
-        if "send_message" in enabled and "send_message_thread" in enabled:
+        if "send_slack_message" in enabled and "send_slack_message_thread" in enabled:
             sections.append(
-                "**send_message** vs **send_message_thread** — choosing correctly:\n"
+                "**send_slack_message** vs **send_slack_message_thread** — choosing correctly:\n"
                 "- If you have a `Slack thread_ts` in your context/dependencies, "
                 "ALWAYS use send_message_thread with that thread_ts. "
                 "Never use send_message when replying inside a thread.\n"
                 "- Only use send_message for new top-level channel messages."
             )
-        elif "send_message_thread" in enabled:
+        elif "send_slack_message_thread" in enabled:
             sections.append(
-                "**send_message_thread** — reply inside a thread.\n"
+                "**send_slack_message_thread** — reply inside a thread.\n"
                 "When you have a `Slack thread_ts` in your context/dependencies, use it."
             )
 
         # Mention formatting — required for real @mentions in Slack
-        if "send_message" in enabled or "send_message_thread" in enabled:
+        if "send_slack_message" in enabled or "send_slack_message_thread" in enabled:
             sections.append(
                 "**@mentions in Slack messages:**\n"
                 "- To mention a user, use the format `<@USER_ID>` (e.g., `<@U0AQXMJ3FUP>`).\n"
@@ -119,15 +119,15 @@ class SlackTools(Toolkit):
 
         # Routing guidance
         routing: list[str] = []
-        if "search_workspace" in enabled and "get_channel_history" in enabled:
+        if "search_slack_workspace" in enabled and "get_slack_channel_history" in enabled:
             routing.append("- Topic search, catch-up, cross-channel → search_workspace")
             routing.append("- Latest messages in a specific channel → get_channel_history")
-        if "get_thread" in enabled:
+        if "get_slack_thread" in enabled:
             routing.append("- Deep-dive into a message → get_thread with channel_id and ts")
             routing.append("- Always expand threads with high reply_count before summarizing")
-        if "search_messages" in enabled and "search_workspace" in enabled:
+        if "search_slack_messages" in enabled and "search_slack_workspace" in enabled:
             routing.append("- Fallback (user-token only) → search_messages")
-        if "send_message" in enabled and "send_message_thread" in enabled:
+        if "send_slack_message" in enabled and "send_slack_message_thread" in enabled:
             routing.append("- Replying in a thread → send_message_thread (use Slack thread_ts from context)")
             routing.append("- New top-level channel message → send_message")
 
@@ -226,34 +226,34 @@ class SlackTools(Toolkit):
             self.output_directory = None
 
         tools: List[Any] = []
-        if enable_send_message or all:
-            tools.append(self.send_message)
-        if enable_send_message_thread or all:
-            tools.append(self.send_message_thread)
-        if enable_list_channels or all:
-            tools.append(self.list_channels)
-        if enable_get_channel_history or all:
-            tools.append(self.get_channel_history)
-        if enable_upload_file or all:
-            tools.append(self.upload_file)
-        if enable_download_file or all:
-            tools.append(self.download_file)
-        if enable_search_messages or all:
+        if send_message or all:
+            tools.append(self.send_slack_message)
+        if send_message_thread or all:
+            tools.append(self.send_slack_message_thread)
+        if list_channels or all:
+            tools.append(self.list_slack_channels)
+        if get_channel_history or all:
+            tools.append(self.get_slack_channel_history)
+        if upload_file or all:
+            tools.append(self.upload_slack_file)
+        if download_file or all:
+            tools.append(self.download_slack_file)
+        if search_messages or all:
             if self._user_client:
-                tools.append(self.search_messages)
+                tools.append(self.search_slack_messages)
             elif search_messages:
                 # Only warn when explicitly requested, not via all=True
                 log_warning("search_messages disabled: no user token (SLACK_USER_TOKEN) provided")
-        if enable_search_workspace or all:
-            tools.append(self.search_workspace)
-        if enable_get_thread or all:
-            tools.append(self.get_thread)
-        if enable_list_users or all:
-            tools.append(self.list_users)
-        if enable_get_user_info or all:
-            tools.append(self.get_user_info)
-        if enable_get_channel_info or all:
-            tools.append(self.get_channel_info)
+        if search_workspace or all:
+            tools.append(self.search_slack_workspace)
+        if get_thread or all:
+            tools.append(self.get_slack_thread)
+        if list_users or all:
+            tools.append(self.list_slack_users)
+        if get_user_info or all:
+            tools.append(self.get_slack_user_info)
+        if get_channel_info or all:
+            tools.append(self.get_slack_channel_info)
 
         # Build tool instructions dynamically based on enabled tools
         if kwargs.get("instructions") is None:
@@ -520,7 +520,7 @@ class SlackTools(Toolkit):
 
     # ── Public tool methods ──────────────────────────────────────────
 
-    def send_message(self, channel: str, text: str) -> str:
+    def send_slack_message(self, channel: str, text: str) -> str:
         """Send a message to a Slack channel.
 
         Args:
@@ -537,7 +537,7 @@ class SlackTools(Toolkit):
             logger.exception("Error sending message")
             return json.dumps({"error": str(e)})
 
-    def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
+    def send_slack_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
         """Reply to a message thread in a Slack channel.
 
         Args:
@@ -557,7 +557,7 @@ class SlackTools(Toolkit):
             logger.exception("Error sending message")
             return json.dumps({"error": str(e)})
 
-    def list_channels(self, include_private: bool = False) -> str:
+    def list_slack_channels(self, include_private: bool = False) -> str:
         """List all channels in the Slack workspace.
 
         Args:
@@ -597,7 +597,7 @@ class SlackTools(Toolkit):
         except SlackApiError as e:
             return json.dumps(self._slack_error_payload(e, operation="conversations.list"))
 
-    def get_channel_history(self, channel: str, limit: int = 100) -> str:
+    def get_slack_channel_history(self, channel: str, limit: int = 100) -> str:
         """Get the message history of a Slack channel.
 
         Args:
@@ -639,7 +639,7 @@ class SlackTools(Toolkit):
                 )
             )
 
-    def upload_file(
+    def upload_slack_file(
         self,
         channel: str,
         content: Union[str, bytes],
@@ -693,7 +693,7 @@ class SlackTools(Toolkit):
             logger.exception("Error uploading file")
             return json.dumps({"error": str(e)})
 
-    def download_file(self, file_id: str, dest_path: Optional[str] = None) -> str:
+    def download_slack_file(self, file_id: str, dest_path: Optional[str] = None) -> str:
         """Download a file from Slack by its file ID.
 
         Args:
@@ -752,7 +752,7 @@ class SlackTools(Toolkit):
             logger.exception("Error downloading file content")
             return json.dumps({"error": f"HTTP error: {str(e)}"})
 
-    def download_file_bytes(self, file_id: str) -> Optional[bytes]:
+    def download_slack_file_bytes(self, file_id: str) -> Optional[bytes]:
         """Download file content as raw bytes. For internal use by interfaces."""
         try:
             response = self.client.files_info(file=file_id)
@@ -779,7 +779,7 @@ class SlackTools(Toolkit):
             logger.exception("Error downloading file bytes")
             return None
 
-    def search_messages(self, query: str, limit: int = 20) -> str:
+    def search_slack_messages(self, query: str, limit: int = 20) -> str:
         """Search messages across the Slack workspace.
 
         Args:
@@ -809,7 +809,7 @@ class SlackTools(Toolkit):
             logger.exception("Error searching messages")
             return json.dumps({"error": str(e)})
 
-    def search_workspace(
+    def search_slack_workspace(
         self,
         run_context: RunContext,
         query: str,
@@ -863,7 +863,7 @@ class SlackTools(Toolkit):
             logger.exception("Error in search_workspace")
             return json.dumps({"error": str(e)})
 
-    def get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
+    def get_slack_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
         """Get all messages in a thread by the parent message's timestamp.
 
         Args:
@@ -911,7 +911,7 @@ class SlackTools(Toolkit):
                 )
             )
 
-    def list_users(self, limit: int = 100) -> str:
+    def list_slack_users(self, limit: int = 100) -> str:
         """List all users in the Slack workspace.
 
         Args:
@@ -939,7 +939,7 @@ class SlackTools(Toolkit):
             logger.exception("Error listing users")
             return json.dumps({"error": str(e)})
 
-    def get_user_info(self, user_id: str) -> str:
+    def get_slack_user_info(self, user_id: str) -> str:
         """Get detailed information about a Slack user by their user ID.
 
         Args:
@@ -967,7 +967,7 @@ class SlackTools(Toolkit):
             logger.exception("Error getting user info")
             return json.dumps({"error": str(e)})
 
-    def get_channel_info(self, channel: str) -> str:
+    def get_slack_channel_info(self, channel: str) -> str:
         """Get detailed information about a Slack channel by its ID or name.
 
         Args:

@@ -78,32 +78,32 @@ class TelegramTools(Toolkit):
             self.output_directory = None
 
         tools: List[Any] = []
-        if enable_send_message or all:
-            tools.append(self.send_message)
-        if enable_send_photo or all:
-            tools.append(self.send_photo)
-        if enable_send_document or all:
-            tools.append(self.send_document)
-        if enable_send_video or all:
-            tools.append(self.send_video)
-        if enable_send_audio or all:
-            tools.append(self.send_audio)
-        if enable_send_animation or all:
-            tools.append(self.send_animation)
-        if enable_send_sticker or all:
-            tools.append(self.send_sticker)
-        if enable_edit_message or all:
-            tools.append(self.edit_message)
-        if enable_delete_message or all:
-            tools.append(self.delete_message)
-        if enable_react_with_emoji or all:
-            tools.append(self.react_with_emoji)
-        if enable_pin_message or all:
-            tools.append(self.pin_message)
-        if enable_get_chat or all:
-            tools.append(self.get_chat)
-        if enable_get_file or all:
-            tools.append(self.get_file)
+        if send_message or all:
+            tools.append(self.send_telegram_message)
+        if send_photo or all:
+            tools.append(self.send_telegram_photo)
+        if send_document or all:
+            tools.append(self.send_telegram_document)
+        if send_video or all:
+            tools.append(self.send_telegram_video)
+        if send_audio or all:
+            tools.append(self.send_telegram_audio)
+        if send_animation or all:
+            tools.append(self.send_telegram_animation)
+        if send_sticker or all:
+            tools.append(self.send_telegram_sticker)
+        if edit_message or all:
+            tools.append(self.edit_telegram_message)
+        if delete_message or all:
+            tools.append(self.delete_telegram_message)
+        if react_with_emoji or all:
+            tools.append(self.react_telegram_emoji)
+        if pin_message or all:
+            tools.append(self.pin_telegram_message)
+        if get_chat or all:
+            tools.append(self.get_telegram_chat)
+        if get_file or all:
+            tools.append(self.get_telegram_file)
 
         super().__init__(name="telegram", tools=tools, **kwargs)
 
@@ -115,7 +115,7 @@ class TelegramTools(Toolkit):
             )
         return self.chat_id
 
-    def send_message(self, message: str) -> str:
+    def send_telegram_message(self, message: str) -> str:
         """Send a text message to a Telegram chat.
 
         Args:
@@ -131,7 +131,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_photo(self, photo: bytes, caption: Optional[str] = None) -> str:
+    def send_telegram_photo(self, photo: bytes, caption: Optional[str] = None) -> str:
         """Send a photo to a Telegram chat.
 
         Args:
@@ -147,7 +147,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_document(self, document: bytes, filename: str, caption: Optional[str] = None) -> str:
+    def send_telegram_document(self, document: bytes, filename: str, caption: Optional[str] = None) -> str:
         """Send a document to a Telegram chat.
 
         Args:
@@ -164,7 +164,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_video(self, video: bytes, caption: Optional[str] = None) -> str:
+    def send_telegram_video(self, video: bytes, caption: Optional[str] = None) -> str:
         """Send a video to a Telegram chat.
 
         Args:
@@ -180,7 +180,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_audio(self, audio: bytes, caption: Optional[str] = None, title: Optional[str] = None) -> str:
+    def send_telegram_audio(self, audio: bytes, caption: Optional[str] = None, title: Optional[str] = None) -> str:
         """Send an audio file to a Telegram chat.
 
         Args:
@@ -197,7 +197,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_animation(self, animation: bytes, caption: Optional[str] = None) -> str:
+    def send_telegram_animation(self, animation: bytes, caption: Optional[str] = None) -> str:
         """Send an animation (GIF) to a Telegram chat.
 
         Args:
@@ -213,7 +213,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_sticker(self, sticker: bytes) -> str:
+    def send_telegram_sticker(self, sticker: bytes) -> str:
         """Send a sticker to a Telegram chat.
 
         Args:
@@ -228,7 +228,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def edit_message(self, text: str, message_id: int) -> str:
+    def edit_telegram_message(self, text: str, message_id: int) -> str:
         """Edit a previously sent message in a Telegram chat.
 
         Args:
@@ -245,7 +245,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def delete_message(self, message_id: int) -> str:
+    def delete_telegram_message(self, message_id: int) -> str:
         """Delete a message from a Telegram chat.
 
         Args:
@@ -260,7 +260,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def react_with_emoji(self, message_id: int, emoji: str) -> str:
+    def react_telegram_emoji(self, message_id: int, emoji: str) -> str:
         """React to a message with an emoji.
 
         Args:
@@ -280,7 +280,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def pin_message(self, message_id: int, disable_notification: bool = False) -> str:
+    def pin_telegram_message(self, message_id: int, disable_notification: bool = False) -> str:
         """Pin a message in the chat.
 
         Args:
@@ -296,7 +296,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def get_chat(self) -> str:
+    def get_telegram_chat(self) -> str:
         """Get information about the current chat.
 
         Returns:
@@ -319,7 +319,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def get_file(self, file_id: str) -> str:
+    def get_telegram_file(self, file_id: str) -> str:
         """Download a file by its file_id. Returns path if save_downloads=True, else base64.
 
         Args:
