@@ -230,3 +230,68 @@ class TestMetricsHelpersOverSessions:
         db.upsert_session(_agent_session("s2", created_at=1000))
         starting_date = db._get_metrics_calculation_starting_date([])
         assert starting_date == datetime.fromtimestamp(1000, tz=timezone.utc).date()
+
+
+class TestSessionRowAndRuns:
+    """The session row is serialized without runs; the stored runs list is
+    maintained incrementally by upsert_run. Saving the session row must
+    neither drop those runs nor re-serialize them on every save."""
+
+    def test_update_preserves_runs_written_by_upsert_run(self):
+        db = InMemoryDb()
+        db.upsert_session(_agent_session("s1"))
+        db.upsert_run({"run_id": "r1", "content": "one"}, session_id="s1")
+        db.upsert_run({"run_id": "r2", "content": "two"}, session_id="s1")
+
+        # A later session-row update must carry the stored runs forward
+        db.upsert_session(_agent_session("s1"))
+
+        raw = db.get_session("s1", deserialize=False)
+        assert [r["run_id"] for r in raw["runs"]] == ["r1", "r2"]
+
+    def test_update_ignores_stale_runs_on_the_incoming_session(self):
+        from agno.run.agent import RunOutput
+
+        db = InMemoryDb()
+        db.upsert_session(_agent_session("s1"))
+        db.upsert_run({"run_id": "r1", "content": "stored"}, session_id="s1")
+
+        stale = _agent_session("s1")
+        stale.runs = [RunOutput(run_id="stale-run", content="should not land")]
+        db.upsert_session(stale)
+
+        raw = db.get_session("s1", deserialize=False)
+        assert [r["run_id"] for r in raw["runs"]] == ["r1"]
+
+    def test_insert_serializes_incoming_runs(self):
+        from agno.run.agent import RunOutput
+
+        db = InMemoryDb()
+        session = _agent_session("s1")
+        session.runs = [RunOutput(run_id="r1", agent_id="a1", content="imported")]
+        db.upsert_session(session)
+
+        raw = db.get_session("s1", deserialize=False)
+        assert raw["runs"][0]["run_id"] == "r1"
+
+        roundtrip = db.get_session("s1", session_type=SessionType.AGENT)
+        assert roundtrip.runs and roundtrip.runs[0].run_id == "r1"
+
+    def test_upsert_return_carries_stored_runs(self):
+        db = InMemoryDb()
+        db.upsert_session(_agent_session("s1"))
+        db.upsert_run({"run_id": "r1", "content": "one"}, session_id="s1")
+
+        result = db.upsert_session(_agent_session("s1"), deserialize=False)
+        assert [r["run_id"] for r in result["runs"]] == ["r1"]
+
+    def test_stored_runs_are_isolated_from_the_returned_copy(self):
+        db = InMemoryDb()
+        db.upsert_session(_agent_session("s1"))
+        db.upsert_run({"run_id": "r1", "content": "one"}, session_id="s1")
+
+        result = db.upsert_session(_agent_session("s1"), deserialize=False)
+        result["runs"][0]["content"] = "mutated by caller"
+
+        raw = db.get_session("s1", deserialize=False)
+        assert raw["runs"][0]["content"] == "one"

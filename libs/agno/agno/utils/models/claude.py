@@ -518,6 +518,11 @@ def format_messages(
         elif message.role == "user":
             if isinstance(content, str):
                 content = [{"type": "text", "text": content}]
+            elif isinstance(content, list):
+                # Work on a copy: appending media blocks into the live
+                # Message.content would duplicate them on every model round
+                # of the run and persist provider blocks into the message
+                content = list(content)
 
             if message.images is not None:
                 for image in message.images:
@@ -638,6 +643,10 @@ def format_messages(
     # Merge consecutive messages with the same role (Claude requires alternating user/assistant roles).
     # This happens when multiple tool results (mapped to "user") appear in sequence, or when a tool
     # result is followed by a user message.
+    # Merging must always build a NEW content list: a list here can be the
+    # same object as a live Message.content (session history included), and
+    # extending or inserting into it in place would corrupt that message on
+    # every subsequent request.
     merged_messages: List[Dict[str, Union[str, list]]] = []
     for msg in chat_messages:
         if merged_messages and merged_messages[-1]["role"] == msg["role"]:
@@ -645,20 +654,13 @@ def format_messages(
             prev_content = merged_messages[-1]["content"]
             curr_content = msg["content"]
 
-            # Handle different content type combinations
-            if isinstance(prev_content, list) and isinstance(curr_content, list):
-                prev_content.extend(curr_content)
-            elif isinstance(prev_content, list):
-                prev_content.append({"type": "text", "text": str(curr_content)})
-            elif isinstance(curr_content, list):
-                curr_content.insert(0, {"type": "text", "text": str(prev_content)})
-                merged_messages[-1]["content"] = curr_content
-            else:
-                # Both strings, convert to list
-                merged_messages[-1]["content"] = [
-                    {"type": "text", "text": str(prev_content)},
-                    {"type": "text", "text": str(curr_content)},
-                ]
+            prev_blocks = (
+                prev_content if isinstance(prev_content, list) else [{"type": "text", "text": str(prev_content)}]
+            )
+            curr_blocks = (
+                curr_content if isinstance(curr_content, list) else [{"type": "text", "text": str(curr_content)}]
+            )
+            merged_messages[-1]["content"] = [*prev_blocks, *curr_blocks]
         else:
             merged_messages.append(msg)
 
