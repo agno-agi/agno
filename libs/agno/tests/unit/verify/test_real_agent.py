@@ -345,3 +345,60 @@ def test_the_rebind_cannot_blank_the_session_id():
     assert context.session_state["current_user_id"] == "OWNER"
     assert context.session_state["current_run_id"] == "new"
     assert context.run_id == "new"
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_callable_dependencies_resolve_against_the_forked_run(mode):
+    """A dependency factory may derive run-scoped values from run_context. Resolving before the
+    continuation forks hands every factory the PARENT's run_id, so a run-scoped namespace,
+    audit client or output path files the continuation's work under the run before it — and,
+    worse, disagrees with the run_id the tool in the same attempt sees."""
+    seen: List[tuple] = []
+
+    def namespace(run_context: RunContext) -> str:
+        """A run-scoped namespace derived from the run id."""
+        return f"ns::{run_context.run_id}"
+
+    def probe_state(run_context: Optional[RunContext] = None) -> str:
+        """Record the context run id and the resolved dependency together."""
+        deps = (run_context.dependencies or {}) if run_context else {}
+        seen.append((run_context.run_id if run_context else None, deps.get("ns")))
+        return "probed"
+
+    agent = Agent(
+        model=ScriptedModel(_probe_script()),
+        tools=[probe_state],
+        dependencies={"ns": namespace},
+    )
+    kwargs = dict(limits=VerifierLimits(max_continuations=1))
+    if mode == "sync":
+        result = run_verified(agent, "probe twice", [_fail_once()], **kwargs)
+    else:
+        result = asyncio.run(arun_verified(agent, "probe twice", [_fail_once()], **kwargs))
+
+    assert len(seen) == 2
+    assert result.attempts[0].run_id != result.attempts[1].run_id
+    for index, (context_run_id, dependency) in enumerate(seen):
+        expected = result.attempts[index].run_id
+        assert context_run_id == expected
+        assert dependency == f"ns::{expected}", (
+            f"attempt {index}: dependency resolved against {dependency}, context says {expected}"
+        )
+
+
+def test_a_non_callable_dependency_is_untouched_by_the_reordering():
+    seen: List[tuple] = []
+
+    def probe_state(run_context: Optional[RunContext] = None) -> str:
+        """Record a plain dependency value."""
+        deps = (run_context.dependencies or {}) if run_context else {}
+        seen.append((deps.get("plain"), deps.get("nested")))
+        return "probed"
+
+    agent = Agent(
+        model=ScriptedModel(_probe_script()),
+        tools=[probe_state],
+        dependencies={"plain": "a literal", "nested": {"k": [1, 2]}},
+    )
+    run_verified(agent, "probe twice", [_fail_once()], limits=VerifierLimits(max_continuations=1))
+    assert seen == [("a literal", {"k": [1, 2]})] * 2

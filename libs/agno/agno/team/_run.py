@@ -7553,10 +7553,6 @@ def continue_run_dispatch(
     elif run_context.metadata is None:
         run_context.metadata = opts.metadata
 
-    # Resolve dependencies
-    if run_context.dependencies is not None:
-        _resolve_run_dependencies(team, run_context=run_context)
-
     # Resolve run_response from run_id if needed
     if run_response is None and run_id is not None:
         runs = team_session.runs or []
@@ -7605,6 +7601,12 @@ def continue_run_dispatch(
         if replace_original is not False and run_response.forked_from_run_id:
             # Mark the original run REGENERATED so history builders skip it.
             _mark_team_run_regenerated(team, team_session, original_run_id_for_lineage)
+
+    # Resolve dependencies AFTER the fork. A callable dependency may derive run-scoped values
+    # from run_context, and continuing a completed run forks a sibling with a new run_id;
+    # resolving first would hand every factory the PARENT's id. Mirrors the agent twin.
+    if run_context.dependencies is not None:
+        _resolve_run_dependencies(team, run_context=run_context)
 
     # Append the new user-message (from input / additional_instructions) so
     # the model loop picks it up.

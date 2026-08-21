@@ -3472,10 +3472,6 @@ def continue_run_dispatch(
         user_id=user_id,
     )
 
-    # Resolve dependencies
-    if run_context.dependencies is not None:
-        resolve_run_dependencies(agent, run_context=run_context)
-
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
         if run_response.status == RunStatus.cancelled:
@@ -3597,6 +3593,13 @@ def continue_run_dispatch(
             # else: nothing to resolve — fall through to resume from current state
     else:
         raise ValueError("Either run_response or run_id must be provided.")
+
+    # Resolve dependencies AFTER the fork. A callable dependency may derive run-scoped
+    # values from run_context, and continuing a completed run forks a sibling with a new
+    # run_id. Resolving first would hand every factory the PARENT's id, so a run-scoped
+    # namespace, audit client or output path would file this work under the run before it.
+    if run_context.dependencies is not None:
+        resolve_run_dependencies(agent, run_context=run_context)
 
     # If the caller supplied a new user-message string (unified /continue body
     # field ``input``), append it to run_response.messages before building
@@ -4746,10 +4749,6 @@ async def _acontinue_run(
                     if user_id is not None:
                         run_context.user_id = user_id
 
-                # 2. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
-
                 # 3. Update metadata and session state
                 update_metadata(agent, session=agent_session)
 
@@ -4877,6 +4876,13 @@ async def _acontinue_run(
                         # else: nothing to resolve — fall through to resume from current state
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
+
+                # Resolve dependencies AFTER the fork. A callable dependency may derive run-scoped
+                # values from run_context, and continuing a completed run forks a sibling with a new
+                # run_id. Resolving first would hand every factory the PARENT's id, so a run-scoped
+                # namespace, audit client or output path would file this work under the run before it.
+                if run_context.dependencies is not None:
+                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # If the caller supplied a new user-message string (unified /continue
                 # body field ``input``), append it to run_response.messages before
@@ -5248,10 +5254,6 @@ async def _acontinue_run_stream(
                     run_id=run_context.run_id,
                 )
 
-                # 3. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
-
                 # 4. Prepare run response
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
@@ -5364,6 +5366,13 @@ async def _acontinue_run_stream(
                         # else: nothing to resolve — fall through to resume from current state
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
+
+                # Resolve dependencies AFTER the fork. A callable dependency may derive run-scoped
+                # values from run_context, and continuing a completed run forks a sibling with a new
+                # run_id. Resolving first would hand every factory the PARENT's id, so a run-scoped
+                # namespace, audit client or output path would file this work under the run before it.
+                if run_context.dependencies is not None:
+                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # If the caller supplied a new user-message string (unified /continue
                 # body field ``input``), append it to run_response.messages before
