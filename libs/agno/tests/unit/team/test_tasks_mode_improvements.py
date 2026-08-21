@@ -12,7 +12,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.run.team import TaskIterationCompletedEvent, TaskIterationStartedEvent, TeamRunOutput
+from agno.run.team import TaskIterationCompletedEvent, TaskIterationStartedEvent, TaskUpdatedEvent, TeamRunOutput
 from agno.session import TeamSession
 from agno.team import Team
 from agno.team._task_tools import _get_task_management_tools
@@ -205,6 +205,9 @@ def _task_tools(
     *,
     members: list[Agent] | None = None,
     async_mode: bool = False,
+    stream_events: bool = False,
+    store_events: bool = False,
+    run_response: TeamRunOutput | None = None,
 ) -> tuple[dict[str, Function], dict[str, Any], TeamSession]:
     session_state: dict[str, Any] = {}
     save_task_list(session_state, task_list)
@@ -214,16 +217,19 @@ def _task_tools(
         name="Task Team",
         members=members or [],
         mode=TeamMode.tasks,
+        store_events=store_events,
         telemetry=False,
     )
+    task_run_response = run_response or TeamRunOutput(session_id=session.session_id)
     tools = _get_task_management_tools(
         team=team,
         task_list=task_list,
-        run_response=TeamRunOutput(session_id=session.session_id),
+        run_response=task_run_response,
         run_context=RunContext(run_id="task-run", session_id=session.session_id, session_state=session_state),
         session=session,
         team_run_context={},
         async_mode=async_mode,
+        stream_events=stream_events,
     )
     return {tool.name: tool for tool in tools}, session_state, session
 
@@ -308,6 +314,82 @@ class TestDependencyContext:
         assert "The expiry check is missing in auth.py:42." in captured["input"]
         assert captured["input"].endswith("Implement the expiry check.")
         assert load_task_list(session_state).get_task(task_id).status == TaskStatus.completed  # type: ignore[union-attr]
+
+    def test_execute_task_emits_derived_unblocking_updates_sync(self, monkeypatch: pytest.MonkeyPatch):
+        member = Agent(id="worker", name="Worker", telemetry=False)
+
+        def fake_run(**kwargs: Any) -> RunOutput:
+            return RunOutput(
+                run_id="member-sync-events",
+                agent_id=member.id,
+                session_id="task-session",
+                content="Implemented.",
+                status=RunStatus.completed,
+            )
+
+        monkeypatch.setattr(member, "run", fake_run)
+        task_list = TaskList()
+        root = task_list.create_task("Root", assignee="worker")
+        child = task_list.create_task("Child", dependencies=[root.id])
+        run_response = TeamRunOutput(session_id="task-session")
+        tools, _, _ = _task_tools(
+            task_list,
+            members=[member],
+            stream_events=True,
+            store_events=True,
+            run_response=run_response,
+        )
+
+        output = _run_generator_tool(tools["execute_task"], task_id=root.id, member_id="worker")
+
+        live_events = [event for event in output if isinstance(event, TaskUpdatedEvent)]
+        stored_events = [event for event in (run_response.events or []) if isinstance(event, TaskUpdatedEvent)]
+        assert [(event.task_id, event.previous_status, event.status) for event in live_events] == [
+            (root.id, "pending", "in_progress"),
+            (root.id, "in_progress", "completed"),
+            (child.id, "blocked", "pending"),
+        ]
+        assert all(live is stored for live, stored in zip(live_events, stored_events))
+
+    @pytest.mark.asyncio
+    async def test_execute_task_emits_derived_unblocking_updates_async(self, monkeypatch: pytest.MonkeyPatch):
+        member = Agent(id="worker", name="Worker", telemetry=False)
+
+        async def fake_arun(**kwargs: Any) -> RunOutput:
+            return RunOutput(
+                run_id="member-async-events",
+                agent_id=member.id,
+                session_id="task-session",
+                content="Implemented async.",
+                status=RunStatus.completed,
+            )
+
+        monkeypatch.setattr(member, "arun", fake_arun)
+        task_list = TaskList()
+        root = task_list.create_task("Root", assignee="worker")
+        child = task_list.create_task("Child", dependencies=[root.id])
+        run_response = TeamRunOutput(session_id="task-session")
+        tools, _, _ = _task_tools(
+            task_list,
+            members=[member],
+            async_mode=True,
+            stream_events=True,
+            store_events=True,
+            run_response=run_response,
+        )
+        execute_task = tools["execute_task"]
+        assert execute_task.entrypoint is not None
+
+        output = [item async for item in execute_task.entrypoint(task_id=root.id, member_id="worker")]
+
+        live_events = [event for event in output if isinstance(event, TaskUpdatedEvent)]
+        stored_events = [event for event in (run_response.events or []) if isinstance(event, TaskUpdatedEvent)]
+        assert [(event.task_id, event.previous_status, event.status) for event in live_events] == [
+            (root.id, "pending", "in_progress"),
+            (root.id, "in_progress", "completed"),
+            (child.id, "blocked", "pending"),
+        ]
+        assert all(live is stored for live, stored in zip(live_events, stored_events))
 
 
 class TestTaskStatePersistence:
@@ -558,6 +640,48 @@ class TestEditTaskTool:
         assert persisted is not None
         assert (persisted.title, persisted.description, persisted.assignee) == ("Updated", "New", "worker-b")
 
+    def test_edit_task_rejects_normalized_active_title_conflict_atomically(self):
+        task_list = TaskList()
+        existing = task_list.create_task("Research")
+        draft = task_list.create_task("Draft", description="Original", assignee="worker-a")
+        run_response = TeamRunOutput(session_id="task-session")
+        tools, session_state, _ = _task_tools(
+            task_list,
+            stream_events=True,
+            store_events=True,
+            run_response=run_response,
+        )
+
+        output = _run_generator_tool(
+            tools["edit_task"],
+            task_id=draft.id,
+            title=" research ",
+            description="Must not change",
+            assignee="worker-b",
+        )
+
+        assert output == [
+            f"Task already exists: [{existing.id}] Research (status: pending). Use this task instead of creating a duplicate."
+        ]
+        persisted = load_task_list(session_state).get_task(draft.id)
+        assert persisted is not None
+        assert (persisted.title, persisted.description, persisted.assignee) == ("Draft", "Original", "worker-a")
+        assert not [event for event in (run_response.events or []) if isinstance(event, TaskUpdatedEvent)]
+
+    def test_edit_task_allows_normalized_self_title_and_cancelled_duplicate(self):
+        task_list = TaskList()
+        current = task_list.create_task("Research")
+        cancelled = task_list.create_task("Archived title")
+        task_list.update_task(cancelled.id, status=TaskStatus.cancelled, result="Archived")
+        tools, session_state, _ = _task_tools(task_list)
+
+        self_output = _run_generator_tool(tools["edit_task"], task_id=current.id, title=" research ")
+        cancelled_output = _run_generator_tool(tools["edit_task"], task_id=current.id, title=" archived TITLE ")
+
+        assert self_output == [f"Task [{current.id}] updated: title=' research '."]
+        assert cancelled_output == [f"Task [{current.id}] updated: title=' archived TITLE '."]
+        assert load_task_list(session_state).get_task(current.id).title == " archived TITLE "  # type: ignore[union-attr]
+
     @pytest.mark.parametrize(
         "status", [TaskStatus.in_progress, TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled]
     )
@@ -612,6 +736,110 @@ class TestCancelTaskTool:
             "Automatically cancelled: a dependency was cancelled."
         )
         assert persisted.all_terminal()
+
+    @staticmethod
+    def _assert_live_and_stored_updates(
+        output: list[Any],
+        run_response: TeamRunOutput,
+        expected: list[tuple[str, str, str, str | None]],
+    ) -> None:
+        live_events = [event for event in output if isinstance(event, TaskUpdatedEvent)]
+        stored_events = [event for event in (run_response.events or []) if isinstance(event, TaskUpdatedEvent)]
+        assert [(event.task_id, event.previous_status, event.status, event.result) for event in live_events] == expected
+        assert len(stored_events) == len(live_events)
+        assert all(live is stored for live, stored in zip(live_events, stored_events))
+
+    def test_cancel_task_emits_and_stores_every_derived_cascade_update(self):
+        task_list = TaskList()
+        root = task_list.create_task("Root")
+        child = task_list.create_task("Child", dependencies=[root.id])
+        grandchild = task_list.create_task("Grandchild", dependencies=[child.id])
+        run_response = TeamRunOutput(session_id="task-session")
+        tools, _, _ = _task_tools(
+            task_list,
+            stream_events=True,
+            store_events=True,
+            run_response=run_response,
+        )
+
+        output = _run_generator_tool(tools["cancel_task"], task_id=root.id, reason="Replanned")
+
+        self._assert_live_and_stored_updates(
+            output,
+            run_response,
+            [
+                (root.id, "pending", "cancelled", "Cancelled: Replanned"),
+                (child.id, "blocked", "cancelled", "Automatically cancelled: a dependency was cancelled."),
+                (
+                    grandchild.id,
+                    "blocked",
+                    "cancelled",
+                    "Automatically cancelled: a dependency was cancelled.",
+                ),
+            ],
+        )
+
+    def test_update_status_emits_failed_cascade_and_completed_unblocking_updates(self):
+        failed_list = TaskList()
+        failed_root = failed_list.create_task("Failed root")
+        failed_child = failed_list.create_task("Failed child", dependencies=[failed_root.id])
+        failed_grandchild = failed_list.create_task("Failed grandchild", dependencies=[failed_child.id])
+        failed_response = TeamRunOutput(session_id="failed-session")
+        failed_tools, _, _ = _task_tools(
+            failed_list,
+            stream_events=True,
+            store_events=True,
+            run_response=failed_response,
+        )
+
+        failed_output = _run_generator_tool(
+            failed_tools["update_task_status"],
+            task_id=failed_root.id,
+            status="failed",
+            result="Root failed",
+        )
+
+        self._assert_live_and_stored_updates(
+            failed_output,
+            failed_response,
+            [
+                (failed_root.id, "pending", "failed", "Root failed"),
+                (failed_child.id, "blocked", "failed", "Automatically failed: a dependency failed."),
+                (
+                    failed_grandchild.id,
+                    "blocked",
+                    "failed",
+                    "Automatically failed: a dependency failed.",
+                ),
+            ],
+        )
+
+        completed_list = TaskList()
+        completed_root = completed_list.create_task("Completed root")
+        unblocked_child = completed_list.create_task("Unblocked child", dependencies=[completed_root.id])
+        completed_response = TeamRunOutput(session_id="completed-session")
+        completed_tools, _, _ = _task_tools(
+            completed_list,
+            stream_events=True,
+            store_events=True,
+            run_response=completed_response,
+        )
+
+        completed_output = _run_generator_tool(
+            completed_tools["update_task_status"],
+            task_id=completed_root.id,
+            status="completed",
+            result="Done",
+        )
+
+        self._assert_live_and_stored_updates(
+            completed_output,
+            completed_response,
+            [
+                (completed_root.id, "pending", "completed", "Done"),
+                (unblocked_child.id, "blocked", "pending", None),
+            ],
+        )
 
     @pytest.mark.parametrize(
         "status", [TaskStatus.in_progress, TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled]

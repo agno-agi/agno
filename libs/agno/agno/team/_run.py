@@ -919,6 +919,11 @@ def _run_tasks_stream(
             iteration_response_seen = False
             buffered_content_events: List[RunContentEvent] = []
 
+            def reset_iteration_content_for_fallback() -> None:
+                nonlocal iteration_response_seen
+                iteration_response_seen = False
+                buffered_content_events.clear()
+
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
             run_messages.messages = accumulated_messages
@@ -934,6 +939,7 @@ def _run_tasks_stream(
                 stream_events=stream_events,
                 session_state=run_context.session_state,
                 run_context=run_context,
+                on_fallback_activated=reset_iteration_content_for_fallback,
             ):
                 buffered_content = False
                 if _is_task_leader_content_event(event, run_response):
@@ -2929,6 +2935,11 @@ async def _arun_tasks_stream(
             iteration_response_seen = False
             buffered_content_events: List[RunContentEvent] = []
 
+            def reset_iteration_content_for_fallback() -> None:
+                nonlocal iteration_response_seen
+                iteration_response_seen = False
+                buffered_content_events.clear()
+
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
             run_messages.messages = accumulated_messages
@@ -2944,6 +2955,7 @@ async def _arun_tasks_stream(
                 stream_events=stream_events,
                 session_state=run_context.session_state,
                 run_context=run_context,
+                on_fallback_activated=reset_iteration_content_for_fallback,
             ):
                 buffered_content = False
                 if _is_task_leader_content_event(event, run_response):

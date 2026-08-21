@@ -7,6 +7,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -406,6 +407,7 @@ def parse_response_with_output_model(
         )
 
     model_response.content = output_model_response.content
+    model_response.parsed = output_model_response.parsed
 
 
 def generate_response_with_output_model_stream(
@@ -491,6 +493,7 @@ async def agenerate_response_with_output_model(
         )
 
     model_response.content = output_model_response.content
+    model_response.parsed = output_model_response.parsed
 
 
 async def agenerate_response_with_output_model_stream(
@@ -996,6 +999,7 @@ def _handle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    on_fallback_activated: Optional[Callable[[], None]] = None,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     team.model = cast(Model, team.model)
 
@@ -1036,6 +1040,10 @@ def _handle_model_response_stream(
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
+            if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+                if on_fallback_activated is not None:
+                    on_fallback_activated()
+
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -1157,6 +1165,7 @@ async def _ahandle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    on_fallback_activated: Optional[Callable[[], None]] = None,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     team.model = cast(Model, team.model)
 
@@ -1198,6 +1207,10 @@ async def _ahandle_model_response_stream(
     async for model_response_event in model_stream:
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
+            if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+                if on_fallback_activated is not None:
+                    on_fallback_activated()
+
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
                 if stream_events:
                     yield handle_event(  # type: ignore

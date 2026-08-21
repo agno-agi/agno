@@ -6,8 +6,10 @@ from typing import Any, AsyncIterator, Iterator
 import pytest
 from pydantic import BaseModel
 
+from agno.exceptions import ModelProviderError
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
+from agno.models.fallback import FallbackConfig
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.team import IntermediateRunContentEvent, RunCompletedEvent, RunContentEvent, TeamRunOutput
 from agno.team import Team
@@ -102,6 +104,42 @@ class _RecordingScriptedModel(Model):
 
     def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
         return response if isinstance(response, ModelResponse) else ModelResponse()
+
+
+class _PartialFailureModel(_RecordingScriptedModel):
+    """Stream a failed-attempt partial, then optionally recover next call."""
+
+    def __init__(self, partial: str, *, recovery: str | None = None, model_id: str) -> None:
+        super().__init__([], model_id=model_id)
+        self.partial = partial
+        self.recovery = recovery
+
+    def _next_stream(self) -> Iterator[ModelResponse]:
+        attempt = self.invoke_count
+        self.invoke_count += 1
+        if attempt > 0 and self.recovery is not None:
+            yield self._content_response(self.recovery)
+            return
+
+        yield self._content_response(self.partial)
+        raise ModelProviderError("provider stream failed", status_code=500, model_id=self.id)
+
+    @staticmethod
+    def _content_response(content: str) -> ModelResponse:
+        response = ModelResponse(
+            role="assistant",
+            content=content,
+            event=ModelResponseEvent.assistant_response.value,
+        )
+        response.response_usage = MessageMetrics(input_tokens=1, output_tokens=1, total_tokens=2)
+        return response
+
+    def invoke_stream(self, messages: list[Any], *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
+        yield from self._next_stream()
+
+    async def ainvoke_stream(self, messages: list[Any], *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
+        for response in self._next_stream():
+            yield response
 
 
 def _tasks_team(model: Model, *, max_iterations: int = 2) -> Team:
@@ -299,6 +337,72 @@ async def test_async_stream_tasks_mode_does_not_retain_content_when_the_terminat
     assert leader.invoke_count == 4
 
 
+def _fallback_recovery_team() -> tuple[_PartialFailureModel, _RecordingScriptedModel, Team]:
+    primary = _PartialFailureModel(
+        "FAILED PRIMARY PARTIAL",
+        recovery="RECOVERED ON NEXT ITERATION",
+        model_id="primary-with-partial-failure",
+    )
+    fallback = _RecordingScriptedModel([("content", None)], model_id="empty-fallback")
+    team = _tasks_team(primary)
+    team.fallback_config = FallbackConfig(on_error=[fallback])
+    return primary, fallback, team
+
+
+def _assert_only_recovered_content(events: list[Any]) -> None:
+    content_events = [event.content for event in events if isinstance(event, RunContentEvent)]
+    assert content_events == ["RECOVERED ON NEXT ITERATION"]
+    assert _completed_content(events) == "RECOVERED ON NEXT ITERATION"
+
+
+def test_sync_stream_fallback_discards_failed_primary_partial_before_empty_fallback():
+    primary, fallback, team = _fallback_recovery_team()
+
+    events = list(team.run("recover after the fallback", stream=True, stream_events=True))
+
+    _assert_only_recovered_content(events)
+    assert primary.invoke_count == 2
+    assert fallback.invoke_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_stream_fallback_discards_failed_primary_partial_before_empty_fallback():
+    primary, fallback, team = _fallback_recovery_team()
+
+    events = [event async for event in team.arun("recover after the fallback", stream=True, stream_events=True)]
+
+    _assert_only_recovered_content(events)
+    assert primary.invoke_count == 2
+    assert fallback.invoke_count == 1
+
+
+def _multi_fallback_team() -> tuple[_PartialFailureModel, _PartialFailureModel, _RecordingScriptedModel, Team]:
+    primary = _PartialFailureModel("FAILED PRIMARY PARTIAL", model_id="failed-primary")
+    first_fallback = _PartialFailureModel("FAILED FALLBACK PARTIAL", model_id="failed-fallback")
+    final_fallback = _RecordingScriptedModel([("content", "VALID FINAL FALLBACK")], model_id="valid-fallback")
+    team = _tasks_team(primary)
+    team.fallback_config = FallbackConfig(on_error=[first_fallback, final_fallback])
+    return primary, first_fallback, final_fallback, team
+
+
+@pytest.mark.parametrize("async_run", [False, True])
+@pytest.mark.asyncio
+async def test_stream_fallback_discards_every_failed_attempt_before_later_fallback(async_run: bool):
+    primary, first_fallback, final_fallback, team = _multi_fallback_team()
+
+    if async_run:
+        events = [event async for event in team.arun("use the valid fallback", stream=True, stream_events=True)]
+    else:
+        events = list(team.run("use the valid fallback", stream=True, stream_events=True))
+
+    content_events = [event.content for event in events if isinstance(event, RunContentEvent)]
+    assert content_events == ["VALID FINAL FALLBACK"]
+    assert _completed_content(events) == "VALID FINAL FALLBACK"
+    assert primary.invoke_count == 1
+    assert first_fallback.invoke_count == 1
+    assert final_fallback.invoke_count == 1
+
+
 def _fixed_transform_model(model_id: str, content: Any) -> _RecordingScriptedModel:
     script = [("parsed", content)] if isinstance(content, BaseModel) else [("content", content)]
     return _RecordingScriptedModel(script, model_id=model_id)
@@ -380,6 +484,36 @@ async def test_async_output_model_runs_only_for_the_terminating_iteration():
     response = await team.arun("finish the persisted work")
 
     assert response.content == "FORMATTED FINAL ANSWER"
+    assert formatter.invoke_count == 1
+
+
+def _parsed_leader_with_output_model() -> tuple[_RecordingScriptedModel, _RecordingScriptedModel, Team]:
+    leader = _RecordingScriptedModel([("parsed", _ParsedAnswer(answer="RAW LEADER PARSED"))])
+    formatter = _fixed_transform_model("formatter", '{"answer":"FORMATTED OUTPUT"}')
+    team = _tasks_team(leader)
+    team.output_schema = _ParsedAnswer
+    team.output_model = formatter
+    return leader, formatter, team
+
+
+def test_sync_output_model_replaces_stale_leader_parsed_content():
+    leader, formatter, team = _parsed_leader_with_output_model()
+
+    response = team.run("format the parsed response")
+
+    assert response.content == _ParsedAnswer(answer="FORMATTED OUTPUT")
+    assert leader.invoke_count == 1
+    assert formatter.invoke_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_output_model_replaces_stale_leader_parsed_content():
+    leader, formatter, team = _parsed_leader_with_output_model()
+
+    response = await team.arun("format the parsed response")
+
+    assert response.content == _ParsedAnswer(answer="FORMATTED OUTPUT")
+    assert leader.invoke_count == 1
     assert formatter.invoke_count == 1
 
 
