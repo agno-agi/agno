@@ -7701,6 +7701,11 @@ def _continue_run(
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
+                # Generate followups if enabled
+                from agno.team._response import generate_team_followups
+
+                generate_team_followups(team, run_response=run_response)
+
                 # Complete
                 run_response.status = RunStatus.completed
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -7955,6 +7960,11 @@ def _continue_run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
+
+                # Generate followups if enabled
+                from agno.team._response import generate_team_followups_stream
+
+                yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
 
                 run_response.status = RunStatus.completed
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -8941,6 +8951,11 @@ async def _acontinue_run(
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
+                # Generate followups if enabled
+                from agno.team._response import agenerate_team_followups
+
+                await agenerate_team_followups(team, run_response=run_response)
+
                 run_response.status = RunStatus.completed
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 await alog_team_telemetry(team, session_id=team_session.session_id, run_id=run_response.run_id)
@@ -9597,6 +9612,14 @@ async def _acontinue_run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
+
+                # Generate followups if enabled
+                from agno.team._response import agenerate_team_followups_stream
+
+                async for event in agenerate_team_followups_stream(
+                    team, run_response=run_response, stream_events=stream_events
+                ):
+                    yield event
 
                 run_response.status = RunStatus.completed
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
