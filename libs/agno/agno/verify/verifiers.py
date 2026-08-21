@@ -147,7 +147,7 @@ def _map_return(result: Any, name: str) -> Verdict:
     if result is None:
         return Verdict(
             passed=False,
-            report=f"{name} returned None; return True to pass, a str or False to fail",
+            report=f"{name} returned None; return True, False, a str, or a Verdict",
             name=name,
         )
     return Verdict(

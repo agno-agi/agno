@@ -228,7 +228,8 @@ def _label(name: str) -> str:
 
 
 def _first_line(report: str) -> str:
-    line = report.strip().splitlines()[0] if report.strip() else ""
+    stripped = report.strip()
+    line = stripped.splitlines()[0] if stripped else ""
     return cap_text(line, SUMMARY_EXCERPT_BYTES)
 
 
