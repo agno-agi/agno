@@ -867,6 +867,17 @@ class AgentOS:
             # registry.dbs can only hold dbs passed to Registry(...) at this
             # point, never an agent-private one collected from the served tree
             # - and re-running it later must not reach for that list either.
+            #
+            # A db that cannot back a synchronous catalog still gets to be the
+            # one declared: declare_component_db reads it as a refusal, and a
+            # refusal is the honest answer. Reaching for the registry's list
+            # instead whenever this db is async or remote would put the guess
+            # back exactly where this declaration removed it, and would land
+            # the catalog behind the listings an OS turns off for such a db:
+            # /components, and the stored half of /agents, /teams and
+            # /workflows. The Studio toolkits this OS serves would still read
+            # that catalog on the run surface, so the objection is the guess
+            # rather than the reachability.
             declared = self.db if self.db is not None else (self.registry.dbs[0] if self.registry.dbs else None)
             self.registry.declare_component_db(declared, declared_by=self)
         elif self.db is not None:
