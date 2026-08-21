@@ -2383,3 +2383,81 @@ class TestTerminalRowClaim:
             f"an unreadable row must leave the claim stale for the sweep, got {job['status']!r} - "
             "never a manufactured terminal status"
         )
+
+
+class TestLocalWake:
+    """wake(): the accepting replica claims its own submission NOW instead
+    of waiting out the poll tick. Long ticks below make the difference
+    observable: without a wake the job sits queued; with one it completes
+    well inside the tick."""
+
+    @pytest.mark.asyncio
+    async def test_wake_claims_without_waiting_for_the_tick(self):
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config(poll_interval=5.0))
+        await worker.start()
+        try:
+            # Let the start-up claim pass finish and park in its 5s wait
+            await asyncio.sleep(0.1)
+            await store.enqueue_job(make_job("r1"))
+            # Control: no wake, the job waits (the tick is 5s away)
+            await asyncio.sleep(0.3)
+            assert (await store.get_job("r1"))["status"] == "queued"
+            worker.wake()
+            job = await wait_for_status(store, "r1", "completed", timeout=1.0)
+            assert job["status"] == "completed" and len(agent.calls) == 1
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_wake_during_claim_pass_is_not_lost(self):
+        """A wake arriving while the loop is busy claiming must be honoured on
+        the next pass, not swallowed: the flag is checked before waiting."""
+        store, agent = InMemoryQueueStore(), FakeAgent(delay=0.2)
+        worker = make_worker(store, agent, make_config(poll_interval=5.0))
+        await store.enqueue_job(make_job("r1"))
+        await worker.start()
+        try:
+            # r1 is claimed by the start-up pass and executes for 0.2s; r2
+            # lands (with its wake) while that pass is still in flight
+            await asyncio.sleep(0.05)
+            await store.enqueue_job(make_job("r2"))
+            worker.wake()
+            job = await wait_for_status(store, "r2", "completed", timeout=1.5)
+            assert job["status"] == "completed"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_wake_is_a_noop_before_start_and_after_stop(self):
+        store = InMemoryQueueStore()
+        worker = make_worker(store, FakeAgent(), make_config(poll_interval=5.0))
+        worker.wake()  # before start: no event yet, must not raise
+        await worker.start()
+        await worker.stop()
+        worker.wake()  # after stop: must not raise or resurrect the loop
+        assert worker._task is None
+
+
+class TestWakeQueueWorkerHelper:
+    """wake_queue_worker is duck-typed and swallowing on purpose: a wake is
+    a latency optimization and must never be able to fail the request that
+    triggered it."""
+
+    def test_tolerates_none_and_doubles_without_wake(self):
+        from agno.os.job_queue import wake_queue_worker
+
+        wake_queue_worker(None)
+        wake_queue_worker(SimpleNamespace(store=None))
+
+    def test_calls_wake_and_swallows_its_errors(self):
+        from agno.os.job_queue import wake_queue_worker
+
+        calls: list = []
+        wake_queue_worker(SimpleNamespace(wake=lambda: calls.append(1)))
+        assert calls == [1]
+
+        def boom() -> None:
+            raise RuntimeError("no")
+
+        wake_queue_worker(SimpleNamespace(wake=boom))  # must not raise

@@ -343,7 +343,9 @@ class QueueWorker:
       the run row FIRST so pollers never see a stuck RUNNING run,
     - enforces the per-run timeout,
     - drains on stop: in-flight runs get stop_timeout to finish, stragglers
-      are cancelled and requeued/failed via the fenced retry path.
+      are cancelled and requeued/failed via the fenced retry path,
+    - wakes on local enqueue: the replica that accepts a submission claims
+      it on the spot instead of waiting out the poll tick (see wake()).
     """
 
     def __init__(
@@ -376,6 +378,11 @@ class QueueWorker:
             )
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        # Local wake signal: set by wake() after this replica accepts work,
+        # awaited by the poll loop in place of a blind sleep. Created in
+        # start() so it binds to the running loop (Python 3.9 binds Events
+        # to the loop current at construction).
+        self._wake: Optional[asyncio.Event] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._heartbeat_thread: Optional[Any] = None
         self._heartbeat_stop: Optional[Any] = None
@@ -385,6 +392,7 @@ class QueueWorker:
         if self._running:
             return
         self._running = True
+        self._wake = asyncio.Event()
         # Lease renewal runs on a DEDICATED THREAD wherever the store allows
         # it: a liveness signal must not depend on the health of the thing
         # whose liveness it certifies. The old loop-task heartbeat died
@@ -599,9 +607,15 @@ class QueueWorker:
         import time as _time
 
         last_cleanup = _time.time()
+        last_sweep = 0.0
         while self._running:
             try:
-                await self._sweep_exhausted()
+                # The sweep keeps its own cadence (at most once per poll
+                # interval): a local wake exists to claim faster, and under a
+                # submission burst it must not multiply sweep queries too
+                if _time.time() - last_sweep >= self.config.poll_interval:
+                    await self._sweep_exhausted()
+                    last_sweep = _time.time()
                 await self._claim_burst()
                 # Retention: delete old terminal jobs about once an hour
                 if _time.time() - last_cleanup > 3600 and callable(getattr(self.store, "cleanup_jobs", None)):
@@ -609,12 +623,41 @@ class QueueWorker:
                     if removed:
                         log_info(f"Job queue retention: removed {removed} old terminal jobs")
                     last_cleanup = _time.time()
-                await asyncio.sleep(self.config.poll_interval)
+                await self._wait_for_work()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log_error(f"Job queue poll error: {e}")
                 await asyncio.sleep(self.config.poll_interval)
+
+    def wake(self) -> None:
+        """Nudge the poll loop to claim NOW. Called by the accept seams after
+        a ticket commits on this replica, so the accepting replica starts
+        executing its own submission in milliseconds instead of waiting out
+        the poll tick - the one place the durable path's latency was visible
+        (interactive submissions waiting ~poll_interval/2 before their first
+        event). Durability is untouched: the row is committed before anyone
+        is woken, and peers still pick the job up on their own poll if this
+        replica is at capacity. Wakes coalesce (a level-triggered flag): a
+        burst of submissions costs one extra claim pass, not one per submit.
+        Sync, idempotent, a no-op before start() or after stop()."""
+        event = self._wake
+        if event is not None and self._running:
+            event.set()
+
+    async def _wait_for_work(self) -> None:
+        """Sleep out the poll interval, or return early on a local wake. A
+        wake that arrived DURING the preceding claim pass is honoured
+        immediately (the flag is checked before waiting), so a submission
+        landing mid-burst is never deferred a full tick."""
+        event = self._wake
+        if event is None:
+            await asyncio.sleep(self.config.poll_interval)
+            return
+        if not event.is_set():
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(event.wait(), timeout=self.config.poll_interval)
+        event.clear()
 
     async def _heartbeat_loop(self) -> None:
         # FALLBACK only (see start()): sync-wrapped stores and clonable async
@@ -1767,6 +1810,20 @@ class QueueWorker:
                     await slot_cm.__aexit__(None, None, None)
 
 
+def wake_queue_worker(queue_worker: Any) -> None:
+    """Best-effort nudge of the replica's worker after a ticket became
+    claimable here (accepted submission, continuation CAS, operator requeue).
+    Duck-typed and tolerant on purpose: a wake is a latency optimization and
+    must never be able to fail the request that triggered it - a worker
+    double without wake(), or no worker at all, is simply a no-op. The
+    sibling set that calls this: the seven router enqueue seams (agents x2,
+    teams x2, workflows x3), acontinue_via_queue, and the requeue endpoint."""
+    wake = getattr(queue_worker, "wake", None)
+    if callable(wake):
+        with contextlib.suppress(Exception):
+            wake()
+
+
 async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: Any) -> None:
     """Settle a durable PAUSED ticket after an INLINE continue finished.
 
@@ -2008,6 +2065,8 @@ async def acontinue_via_queue(
     # not silent automation. Attempt-scoped intent (roadmap, with the
     # queue/steering ownership convergence) dissolves this entirely.
     result = await queue_worker.store.continue_job(run_id, continue_payload)
+    if result.get("outcome") == "queued":
+        wake_queue_worker(queue_worker)
     if result.get("outcome") == "attach":
         # CAS-race loser: both callers read paused, the other one won. Its
         # boundary is the accepted one - ours may already include the
