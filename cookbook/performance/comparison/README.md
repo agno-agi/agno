@@ -44,7 +44,12 @@ five-turn one; only the length changes, so history-proportional costs
 dominate. Agno does not currently win it: its per-turn session persistence
 re-serializes the conversation each turn (cost quadratic in conversation
 length), while LangGraph's in-memory checkpointer stores state by
-reference. The result is published as measured.
+reference. The result is published as measured. Agno is benchmarked in its
+default configuration; enabling its session cache (`cache_session=True`,
+which skips the per-turn session re-read and is the closer analogue of
+LangGraph's always-cached saver) measures about 19 percent faster at this
+length and still does not close the gap - the remainder is the per-turn
+write-path serialization.
 
 ## Fairness notes (multi-turn conversation)
 
