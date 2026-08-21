@@ -62,6 +62,7 @@ Offloading needs `SqliteDb` or `PostgresDb`. On any other database the setting i
 
 - `offload_member_results.py` - a leader with a platform builder, manager and engineer; prints the leader's transcript size after each turn and lists what is stored.
 - `handing_a_result_to_a_member.py` - the leader passes a result id to the next member instead of the payload.
+- `member_store_settings.py` - one member inherits the team store, one opts out with `offload_tool_results=False`, one keeps its own `ResultStore(...)` settings; prints each member's store and what its stored history holds.
 
 ## Prerequisites
 
