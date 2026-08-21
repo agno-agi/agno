@@ -69,7 +69,7 @@ except ImportError:
 
 try:
     from pymongo import ReturnDocument
-    from pymongo.errors import OperationFailure
+    from pymongo.errors import CollectionInvalid, OperationFailure
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install -U pymongo`")
 
@@ -273,7 +273,7 @@ class AsyncMongoDb(AsyncBaseDb):
         ]
 
         for collection_type, collection_name in collections_to_create:
-            if collection_name and not await self.table_exists(collection_name):
+            if collection_name:
                 await self._get_collection(collection_type, create_collection_if_not_found=True)
 
     async def close(self) -> None:
@@ -394,6 +394,27 @@ class AsyncMongoDb(AsyncBaseDb):
 
         # Check if collections need to be reset due to event loop change
         reset_cache = self._should_reset_collection_cache()
+        collection_bindings = {
+            "sessions": (self.session_table_name, "session_collection"),
+            "runs": (self.runs_table_name, "runs_collection"),
+            "memories": (self.memory_table_name, "memory_collection"),
+            "metrics": (self.metrics_table_name, "metrics_collection"),
+            "evals": (self.eval_table_name, "eval_collection"),
+            "knowledge": (self.knowledge_table_name, "knowledge_collection"),
+            "traces": (self.trace_table_name, "traces_collection"),
+            "spans": (self.span_table_name, "spans_collection"),
+            "learnings": (self.learnings_table_name, "learnings_collection"),
+            "schedules": (self.schedules_table_name, "schedules_collection"),
+            "schedule_runs": (self.schedule_runs_table_name, "schedule_runs_collection"),
+        }
+        binding = collection_bindings.get(table_type)
+        if (
+            not reset_cache
+            and binding is not None
+            and binding[0] is not None
+            and getattr(self, binding[1], None) is not None
+        ):
+            await self._validate_schema_version(binding[0], table_type)
 
         if table_type == "sessions":
             if reset_cache or getattr(self, "session_collection", None) is None:
@@ -531,20 +552,37 @@ class AsyncMongoDb(AsyncBaseDb):
         Returns:
             Union[AsyncIOMotorCollection, AsyncCollection]: The collection object.
         """
+        initialized_attr = f"_{collection_name}_initialized"
         try:
-            collection = self.database[collection_name]
-
-            if not hasattr(self, f"_{collection_name}_initialized"):
-                if not create_collection_if_not_found:
+            async with self._resolve_lock_async:
+                created = False
+                if await self.table_exists(collection_name):
+                    await self._validate_schema_version(collection_name, collection_type)
+                    collection = self.database[collection_name]
+                elif not create_collection_if_not_found:
                     return None
-                # Create indexes asynchronously for async MongoDB collections
-                await create_collection_indexes_async(collection, collection_type)
-                setattr(self, f"_{collection_name}_initialized", True)
-                log_debug(f"Initialized collection '{collection_name}'")
-            else:
-                log_debug(f"Collection '{collection_name}' already initialized")
+                else:
+                    try:
+                        collection = await self.database.create_collection(collection_name)
+                    except (CollectionInvalid, OperationFailure):
+                        if not await self.table_exists(collection_name):
+                            raise
+                        collection = self.database[collection_name]
+                        await self._validate_schema_version(collection_name, collection_type)
+                    else:
+                        created = True
 
-            return collection
+                if create_collection_if_not_found and not hasattr(self, initialized_attr):
+                    await create_collection_indexes_async(collection, collection_type)
+                    setattr(self, initialized_attr, True)
+                    log_debug(f"Initialized collection '{collection_name}'")
+                else:
+                    log_debug(f"Collection '{collection_name}' already initialized")
+
+                if created:
+                    await self._stamp_schema_version(collection_name, collection_type)
+
+                return collection
 
         except Exception as e:
             log_error(f"Error getting collection {collection_name}: {str(e)}")
@@ -577,6 +615,7 @@ class AsyncMongoDb(AsyncBaseDb):
             {"$set": {"table_name": table_name, "version": version, "updated_at": int(time.time())}},
             upsert=True,
         )
+        self._invalidate_schema_version_check(table_name)
 
     async def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
         """Unset the legacy ``runs`` field from session documents.

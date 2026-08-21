@@ -6,6 +6,7 @@ adapter via mongomock so no real MongoDB instance is needed.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Dict, List
 
@@ -14,7 +15,9 @@ import pytest
 mongomock = pytest.importorskip("mongomock")
 
 from agno.db.base import SessionType  # noqa: E402
+from agno.db.migrations.manager import MigrationManager  # noqa: E402
 from agno.db.mongo.mongo import MongoDb  # noqa: E402
+from agno.exceptions import MigrationRequiredError  # noqa: E402
 from agno.models.message import Message  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
 from agno.run.base import RunStatus  # noqa: E402
@@ -47,7 +50,9 @@ def _new_db() -> MongoDb:
     return db
 
 
-def _insert_legacy_session(db: MongoDb, session_id: str, runs: List[Dict[str, Any]]) -> None:
+def _insert_legacy_session(
+    db: MongoDb, session_id: str, runs: List[Dict[str, Any]], *, stamp_current: bool = True
+) -> None:
     """Directly write a session document with a legacy `runs` array (simulates v2.x)."""
     db._database["agno_sessions"].insert_one(
         {
@@ -61,6 +66,8 @@ def _insert_legacy_session(db: MongoDb, session_id: str, runs: List[Dict[str, An
             "updated_at": int(time.time()),
         }
     )
+    if stamp_current:
+        db.upsert_schema_version(db.session_table_name, "3.0.0")
 
 
 def test_fresh_schema_round_trip():
@@ -78,9 +85,10 @@ def test_fresh_schema_round_trip():
     loaded = db.get_session("s1", SessionType.AGENT)
     assert [r.run_id for r in loaded.runs] == ["r1", "r2"]
     assert loaded.runs[0].messages[0].content == "q-one"
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
-def test_legacy_blob_fallback_on_read():
+def test_migrated_legacy_blob_fallback_on_read():
     db = _new_db()
     runs = [_make_run(f"r{i}", "s2", f"c{i}").to_dict() for i in range(3)]
     _insert_legacy_session(db, "s2", runs)
@@ -160,16 +168,18 @@ def test_partial_state_collection_wins_over_blob_on_conflict():
 def test_v3_migration_is_non_destructive():
     db = _new_db()
     legacy = [_make_run(f"r{i}", "s6", f"c{i}").to_dict() for i in range(2)]
-    _insert_legacy_session(db, "s6", legacy)
+    _insert_legacy_session(db, "s6", legacy, stamp_current=False)
 
-    from agno.db.migrations.versions.v3_0_0 import up as v3_up
+    with pytest.raises(MigrationRequiredError):
+        db.get_session("s6", SessionType.AGENT)
 
-    v3_up(db, table_type="sessions", table_name="agno_sessions")
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
 
     assert db._database["agno_runs"].count_documents({"session_id": "s6"}) == 2
 
     raw = db._database["agno_sessions"].find_one({"session_id": "s6"})
     assert raw is not None and raw.get("runs") is not None
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
 def test_cleanup_refuses_when_legacy_runs_still_present():
@@ -190,11 +200,9 @@ def test_cleanup_after_migration_requires_force():
     as a frozen backup. Non-force cleanup refuses; force=True reclaims it."""
     db = _new_db()
     legacy = [_make_run("r1", "s8", "x").to_dict()]
-    _insert_legacy_session(db, "s8", legacy)
+    _insert_legacy_session(db, "s8", legacy, stamp_current=False)
 
-    from agno.db.migrations.versions.v3_0_0 import up as v3_up
-
-    v3_up(db, table_type="sessions", table_name="agno_sessions")
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
 
     # Touching the session no longer unsets the legacy field (frozen backup).
     session = db.get_session("s8", SessionType.AGENT)

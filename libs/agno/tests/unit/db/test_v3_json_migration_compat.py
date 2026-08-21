@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from agno.db.base import SessionType
+import pytest
+
+from agno.db.base import SessionType, suspend_schema_version_checks
 from agno.db.json.json_db import JsonDb
+from agno.db.migrations.manager import MigrationManager
+from agno.exceptions import MigrationRequiredError
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -34,7 +39,9 @@ def _new_db() -> JsonDb:
     return JsonDb(db_path=tempfile.mkdtemp())
 
 
-def _insert_legacy_session(db: JsonDb, session_id: str, runs: List[Dict[str, Any]]) -> None:
+def _insert_legacy_session(
+    db: JsonDb, session_id: str, runs: List[Dict[str, Any]], *, stamp_current: bool = True
+) -> None:
     sessions_path = Path(db.db_path) / f"{db.session_table_name}.json"
     sessions_path.parent.mkdir(parents=True, exist_ok=True)
     existing = []
@@ -55,6 +62,8 @@ def _insert_legacy_session(db: JsonDb, session_id: str, runs: List[Dict[str, Any
     )
     with open(sessions_path, "w") as f:
         json.dump(existing, f, default=str)
+    if stamp_current:
+        db.upsert_schema_version(db.session_table_name, "3.0.0")
 
 
 def test_fresh_schema_round_trip():
@@ -79,9 +88,10 @@ def test_fresh_schema_round_trip():
     loaded = db.get_session("s1", SessionType.AGENT)
     assert [r.run_id for r in loaded.runs] == ["r1", "r2"]
     assert loaded.runs[0].messages[0].content == "q-one"
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
-def test_legacy_blob_fallback_on_read():
+def test_migrated_legacy_blob_fallback_on_read():
     db = _new_db()
     runs = [_make_run(f"r{i}", "s2", f"c{i}").to_dict() for i in range(3)]
     _insert_legacy_session(db, "s2", runs)
@@ -120,23 +130,23 @@ def test_partial_state_merges():
 def test_v3_migration_is_non_destructive():
     db = _new_db()
     legacy = [_make_run(f"r{i}", "s6", f"c{i}").to_dict() for i in range(2)]
-    _insert_legacy_session(db, "s6", legacy)
+    _insert_legacy_session(db, "s6", legacy, stamp_current=False)
 
-    from agno.db.migrations.versions.v3_0_0 import up as v3_up
+    with pytest.raises(MigrationRequiredError):
+        db.get_session("s6", SessionType.AGENT)
 
-    v3_up(db, table_type="sessions", table_name=db.session_table_name)
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
 
     assert len(db._read_runs_file()) == 2
 
     sessions = db._read_json_file(db.session_table_name)
     assert sessions[0].get("runs") is not None
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
 def test_cleanup_refuses_when_legacy_runs_still_present():
     db = _new_db()
     _insert_legacy_session(db, "s7", [_make_run("r1", "s7", "x").to_dict()])
-
-    import pytest
 
     with pytest.raises(RuntimeError, match="Refusing to unset"):
         db.cleanup_legacy_runs_field()
@@ -166,15 +176,10 @@ def test_get_run_get_runs_apis():
     assert len(db._read_runs_file()) == 0
 
 
-def test_upgrade_without_migration_preserves_runs_on_write():
-    """Regression: upgrading to v3 and continuing a pre-v3 session before running
-    the migration must not silently drop the legacy runs blob.
+def test_current_store_preserves_migrated_legacy_backup_on_write():
+    """A current-version store may retain the legacy runs blob as a backup.
 
-    Bug shape: session.to_dict(include_runs=False) omits `runs`; a bare
-    ``sessions[i] = session_dict`` replace erases anything the legacy blob
-    was holding. Read then merges an empty legacy blob with an empty runs
-    table -> history gone. Only cleanup_legacy_runs_field() should drop it,
-    explicitly.
+    Normal v3 writes must not erase that backup before explicit cleanup.
     """
     db = _new_db()
     legacy = [_make_run(f"r{i}", "s_upgrade", f"c{i}").to_dict() for i in range(3)]
@@ -202,3 +207,54 @@ def test_upgrade_without_migration_preserves_runs_on_write():
     )
     # And the metadata write actually landed.
     assert after.metadata == {"touched_by_v3": True}
+
+
+def test_schema_version_read_is_side_effect_free() -> None:
+    db = _new_db()
+    versions_path = Path(db.db_path) / f"{db.versions_table_name}.json"
+
+    assert db.get_latest_schema_version(db.session_table_name) == "2.0.0"
+    assert not versions_path.exists()
+
+
+def test_successful_schema_check_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = _new_db()
+    db._read_json_file(db.session_table_name)
+    second_instance = JsonDb(db_path=str(db.db_path))
+    calls = 0
+    original = second_instance.get_latest_schema_version
+
+    def counted_get_latest(table_name: str = ""):
+        nonlocal calls
+        calls += 1
+        return original(table_name)
+
+    monkeypatch.setattr(second_instance, "get_latest_schema_version", counted_get_latest)
+
+    second_instance._read_json_file(second_instance.session_table_name)
+    second_instance._read_json_file(second_instance.session_table_name)
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_migration_bypass_is_context_local() -> None:
+    db = _new_db()
+    _insert_legacy_session(db, "stale", [], stamp_current=False)
+    bypass_entered = asyncio.Event()
+    normal_finished = asyncio.Event()
+
+    async def migration_task() -> None:
+        with suspend_schema_version_checks():
+            bypass_entered.set()
+            await normal_finished.wait()
+            assert db._read_json_file(db.session_table_name, create_table_if_not_found=False)
+
+    async def normal_task() -> None:
+        await bypass_entered.wait()
+        try:
+            with pytest.raises(MigrationRequiredError):
+                db._read_json_file(db.session_table_name, create_table_if_not_found=False)
+        finally:
+            normal_finished.set()
+
+    await asyncio.gather(migration_task(), normal_task())

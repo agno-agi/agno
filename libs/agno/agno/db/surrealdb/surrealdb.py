@@ -199,8 +199,15 @@ class SurrealDb(BaseDb):
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
 
-        if create_table_if_not_found and not self.table_exists(table_name):
-            self._create_table(table_type, table_name)
+        with self._resolve_lock:
+            if self.table_exists(table_name):
+                self._validate_schema_version(table_name, table_type)
+            elif create_table_if_not_found:
+                # The local lock prevents two callers on this instance from
+                # both claiming creation. Surreal DEFINE TABLE is idempotent,
+                # so peer instances converge on the same current-version stamp.
+                self._create_table(table_type, table_name)
+                self._stamp_schema_version(table_name, table_type)
 
         return table_name
 
@@ -227,6 +234,7 @@ class SurrealDb(BaseDb):
                 "content": {"table_name": table_name, "version": version, "updated_at": int(time.time())},
             },
         )
+        self._invalidate_schema_version_check(table_name)
 
     def _query(
         self,

@@ -8,6 +8,7 @@ adapter code can run unchanged.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Dict, List
 
@@ -79,6 +80,16 @@ def _patched_batch(self):
 
 MockFirestore.batch = _patched_batch  # type: ignore[method-assign]
 
+# Newer google-cloud-firestore exposes atomic DocumentReference.create().
+# Add the same surface to older mock-firestore releases used by this suite.
+_mock_document_type = type(MockFirestore().collection("_probe").document("_probe"))
+if not hasattr(_mock_document_type, "create"):
+
+    def _create(self, data):
+        return self.set(data)
+
+    _mock_document_type.create = _create
+
 # The adapter imports `DELETE_FIELD` and `FieldFilter` from google.cloud.firestore.
 # Provide a stand-in if google-cloud-firestore isn't installed in the dev env.
 try:
@@ -106,6 +117,8 @@ except ImportError:
 
 from agno.db.base import SessionType  # noqa: E402
 from agno.db.firestore.firestore import FirestoreDb  # noqa: E402
+from agno.db.migrations.manager import MigrationManager  # noqa: E402
+from agno.exceptions import MigrationRequiredError  # noqa: E402
 from agno.models.message import Message  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
 from agno.run.base import RunStatus  # noqa: E402
@@ -131,7 +144,9 @@ def _new_db() -> FirestoreDb:
     return FirestoreDb(db_client=client, session_collection="agno_sessions", runs_collection="agno_runs")
 
 
-def _insert_legacy_session(db: FirestoreDb, session_id: str, runs: List[Dict[str, Any]]) -> None:
+def _insert_legacy_session(
+    db: FirestoreDb, session_id: str, runs: List[Dict[str, Any]], *, stamp_current: bool = True
+) -> None:
     db.db_client.collection("agno_sessions").add(
         {
             "session_id": session_id,
@@ -144,6 +159,34 @@ def _insert_legacy_session(db: FirestoreDb, session_id: str, runs: List[Dict[str
             "updated_at": int(time.time()),
         }
     )
+    if stamp_current:
+        db.upsert_schema_version(db.session_table_name, "3.0.0")
+
+
+@pytest.mark.parametrize("method_name", ["collections", "list_collections"])
+def test_table_exists_supports_official_and_legacy_collection_enumeration(method_name):
+    class Collection:
+        def __init__(self, collection_id):
+            self.id = collection_id
+
+    class Client:
+        def collection(self, name):
+            raise AssertionError(f"collection({name}) should not be needed")
+
+    client = Client()
+    setattr(
+        client,
+        method_name,
+        lambda: [Collection("agno_sessions"), Collection("agno_runs")],
+    )
+    db = FirestoreDb(
+        db_client=client,  # type: ignore[arg-type]
+        session_collection="agno_sessions",
+        runs_collection="agno_runs",
+    )
+
+    assert db.table_exists("agno_sessions") is True
+    assert db.table_exists("missing") is False
 
 
 def test_fresh_schema_round_trip():
@@ -165,9 +208,10 @@ def test_fresh_schema_round_trip():
     loaded = db.get_session("s1", SessionType.AGENT)
     assert [r.run_id for r in loaded.runs] == ["r1", "r2"]
     assert loaded.runs[0].messages[0].content == "q-one"
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
-def test_legacy_blob_fallback_on_read():
+def test_migrated_legacy_blob_fallback_on_read():
     db = _new_db()
     runs = [_make_run(f"r{i}", "s2", f"c{i}").to_dict() for i in range(3)]
     _insert_legacy_session(db, "s2", runs)
@@ -203,17 +247,19 @@ def test_partial_state_merges_collection_and_blob():
 def test_v3_migration_is_non_destructive():
     db = _new_db()
     legacy = [_make_run(f"r{i}", "s6", f"c{i}").to_dict() for i in range(2)]
-    _insert_legacy_session(db, "s6", legacy)
+    _insert_legacy_session(db, "s6", legacy, stamp_current=False)
 
-    from agno.db.migrations.versions.v3_0_0 import up as v3_up
+    with pytest.raises(MigrationRequiredError):
+        db.get_session("s6", SessionType.AGENT)
 
-    v3_up(db, table_type="sessions", table_name="agno_sessions")
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
 
     assert len(list(db.db_client.collection("agno_runs").stream())) == 2
 
     raw_docs = list(db.db_client.collection("agno_sessions").stream())
     raw = raw_docs[0].to_dict()
     assert raw is not None and raw.get("runs") is not None
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
 def test_get_run_get_runs_apis():

@@ -1,11 +1,41 @@
 import asyncio
-from unittest.mock import AsyncMock, Mock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, patch
 
 import pytest
 from pymongo import AsyncMongoClient
 
 from agno.db.base import SessionType
 from agno.db.mongo import AsyncMongoDb
+
+
+def _install_offline_database(db: AsyncMongoDb) -> None:
+    """Give event-loop tests a Mongo surface without requiring a live server."""
+    collections = {}
+
+    def get_collection(name):
+        if name not in collections:
+            collection = MagicMock()
+            collection.index_information = AsyncMock(return_value={})
+            collection.create_index = AsyncMock(return_value="index")
+            collection.find_one = AsyncMock(return_value=None)
+            collection.update_one = AsyncMock(return_value=None)
+            collections[name] = collection
+        return collections[name]
+
+    async def create_collection(name):
+        return get_collection(name)
+
+    database = MagicMock()
+    database.__getitem__.side_effect = get_collection
+    database.list_collection_names = AsyncMock(side_effect=lambda: list(collections))
+    database.create_collection = AsyncMock(side_effect=create_collection)
+
+    client = MagicMock()
+    client.close.return_value = None
+
+    db._client = client
+    db._database = database
+    db._event_loop = asyncio.get_running_loop()
 
 
 def test_id_is_deterministic():
@@ -97,6 +127,7 @@ async def test_initialization_flags_cleared_on_event_loop_change():
     calls were made.
     """
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_event_loop_fix")
+    _install_offline_database(db)
 
     # First operation - create collections
     await db._get_collection("sessions", create_collection_if_not_found=True)
@@ -139,6 +170,7 @@ async def test_indexes_awaited_properly():
     unawaited futures from being left on the event loop.
     """
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_await_indexes")
+    _install_offline_database(db)
 
     # This should complete without hanging or leaving pending futures
     collection = await db._get_collection("sessions", create_collection_if_not_found=True)
@@ -168,6 +200,7 @@ async def test_indexes_awaited_properly():
 async def test_collection_cache_reset_on_event_loop_change():
     """Test that all collection caches are reset on event loop change"""
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_cache_reset")
+    _install_offline_database(db)
 
     # Create collections
     await db._get_collection("sessions", create_collection_if_not_found=True)
