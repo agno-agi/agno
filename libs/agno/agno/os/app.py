@@ -1051,6 +1051,13 @@ class AgentOS:
             # serving OS never reads, reporting success either way.
             if not isinstance(tools, list):
                 if tools is not None:
+                    # Keyed by id on the shared registry, not stored on the
+                    # component: a per-request copy is rebuilt through
+                    # __init__ and drops private attributes, so a note left on
+                    # the component would be gone by the time the factory that
+                    # needs it actually runs.
+                    if self.registry is not None:
+                        self.registry.declare_studio_serving_os(getattr(component, "id", None), self)
                     # First stamp wins, exactly as the first binding does for a
                     # materialized list: two OS instances serving one component
                     # must not have the answer decided by which constructed

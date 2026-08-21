@@ -221,20 +221,30 @@ def bind_studio_catalog_db(entity: Any, tools: Any) -> None:
     declared first; its writes then land in a catalog the serving OS never
     reads, and report success.
     """
-    binding = getattr(entity, "_studio_catalog_os", None)
-    if binding is None:
+    component_id = getattr(entity, "id", None)
+    if component_id is None:
         return
-    serving_os = binding()
-    if serving_os is None:
-        # The OS that stamped this carrier is gone; the registry declaration is
-        # the only answer left, which is what an unstamped carrier gets too.
+    # The registry is the object a component and its per-request copies share,
+    # so it holds which OS serves this id. Reached through the toolkits the
+    # factory just produced, because the component itself carries no registry.
+    for tool in tools:
+        registry = getattr(tool, "registry", None)
+        lookup = getattr(registry, "studio_serving_os", None)
+        if lookup is None:
+            continue
+        serving_os = lookup(component_id)
+        if serving_os is None:
+            # No OS serves this id, or the one that did is gone; the registry
+            # declaration is the answer, which is what an unrecorded component
+            # gets too.
+            continue
+        try:
+            serving_os._bind_studio_tools(entity, tools)
+        except Exception as e:
+            # Binding is an improvement on the registry declaration, never a
+            # precondition for running the tools the factory just produced.
+            log_debug(f"Could not bind a Studio toolkit produced by a tools factory: {e}")
         return
-    try:
-        serving_os._bind_studio_tools(entity, tools)
-    except Exception as e:
-        # Binding is an optimisation over the registry declaration, never a
-        # precondition for running the tools the factory just produced.
-        log_debug(f"Could not bind a Studio toolkit produced by a tools factory: {e}")
 
 
 def resolve_callable_tools(entity: Any, run_context: "RunContext") -> None:

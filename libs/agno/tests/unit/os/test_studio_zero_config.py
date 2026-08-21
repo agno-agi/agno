@@ -705,9 +705,14 @@ class TestACallableToolsFactoryBindsWhenItRuns:
         studio, builder, db_a, db_b, _os_a, _os_b = self._wiring(tmp_path, tools_are_a_factory=True)
         run_context = RunContext(run_id="r1", session_id="s1", user_id="u1")
 
-        # The factory runs on the first dispatch, which is where the binding
-        # it could not get at construction time has to happen.
-        resolve_callable_tools(builder, run_context)
+        # The production path, not the template: a run rebuilds the component
+        # through __init__, which drops every private attribute, so anything
+        # left ON the component at construction time is gone by the time the
+        # factory that needs it runs. Exercising the template instead hides
+        # exactly this.
+        fresh = builder.deep_copy()
+        assert not hasattr(fresh, "_studio_catalog_os"), "a private stamp would make this test prove nothing"
+        resolve_callable_tools(fresh, run_context)
         created = _loads(studio.create_agent(name="Probe", instructions="i", _agno_run_context=run_context))
 
         assert created["ok"] is True, created
@@ -733,4 +738,4 @@ class TestACallableToolsFactoryBindsWhenItRuns:
         first = AgentOS(agents=[builder], registry=registry, db=db_a)
         AgentOS(agents=[builder], registry=registry, db=db_b)
 
-        assert builder._studio_catalog_os() is first
+        assert registry.studio_serving_os("builder") is first

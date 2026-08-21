@@ -120,6 +120,11 @@ class Registry:
     # that OS move its own declaration later - a resync, or its db swapped in
     # place - while a different OS is still refused an existing declaration.
     component_db_declared_by: Optional["ReferenceType[Any]"] = field(default=None, init=False, repr=False)
+    # Which AgentOS serves a component whose tools arrive from a callable
+    # factory, keyed by component id and held weakly (see
+    # declare_studio_serving_os). Keyed by id rather than kept on the
+    # component because a per-request copy drops private attributes.
+    _studio_serving_os: Dict[str, "ReferenceType[Any]"] = field(default_factory=dict, init=False, repr=False)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
@@ -545,6 +550,35 @@ class Registry:
         self.component_db = db if isinstance(db, BaseDb) else None
         self.component_db_declared = True
         self.component_db_declared_by = ref(declared_by) if declared_by is not None else None
+
+    def declare_studio_serving_os(self, component_id: Optional[str], serving_os: Any) -> None:
+        """Record which AgentOS serves a component whose tools are a factory.
+
+        A callable tools factory cannot be inspected while the OS is being
+        constructed, so the Studio toolkit inside one is bound the first time
+        the factory runs. The component itself cannot carry that pointer: a
+        per-request copy is rebuilt through ``__init__`` and drops every
+        private attribute, so the copy that actually runs would arrive
+        unbound. The registry is the object both the template and its copies
+        already share, so the note lives here, keyed by an id that survives
+        the copy.
+
+        First writer wins, matching the binding it stands in for, and the OS
+        that made an entry may replace its own.
+        """
+        if component_id is None:
+            return
+        existing = self._studio_serving_os.get(component_id)
+        stamped_by = existing() if existing is not None else None
+        if existing is None or stamped_by is serving_os:
+            self._studio_serving_os[component_id] = ref(serving_os)
+
+    def studio_serving_os(self, component_id: Optional[str]) -> Optional[Any]:
+        """The AgentOS serving this component, or None once it is gone."""
+        if component_id is None:
+            return None
+        existing = self._studio_serving_os.get(component_id)
+        return existing() if existing is not None else None
 
     def resolve_component_db(self) -> Optional[BaseDb]:
         """The database a component-catalog toolkit should use when given none.
