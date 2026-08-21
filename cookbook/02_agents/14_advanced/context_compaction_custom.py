@@ -17,7 +17,7 @@ See also: context_compaction.py for basic usage.
 """
 
 from agno.agent import Agent
-from agno.compression.context import ContextCompactionManager
+from agno.compression import CompactionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.toolkit import Toolkit
@@ -75,7 +75,8 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/support_agent.db"),
     add_history_to_context=True,
     # Context compaction with custom config
-    compaction_manager=ContextCompactionManager(
+    compaction_manager=CompactionManager(
+        compact_history=True,
         model=OpenAIResponses(id="gpt-5-mini"),
         message_limit=30,  # Trigger by message count (support = many short turns)
         keep_recent=8,  # Keep more recent context for support

@@ -14,7 +14,7 @@ the conversation within limits while preserving key insights.
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.compression.context import ContextCompactionManager
+from agno.compression import CompactionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.file import FileTools
@@ -40,7 +40,8 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/codebase_explorer.db"),
     add_history_to_context=True,
     # Low token limit to trigger compaction quickly with file reads
-    compaction_manager=ContextCompactionManager(
+    compaction_manager=CompactionManager(
+        compact_history=True,
         model=OpenAIResponses(id="gpt-5-mini"),
         token_limit=20_000,  # Low limit - 2-3 file reads will trigger
         keep_recent=6,
@@ -61,7 +62,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Read compression/context.py and explain what ContextCompactionManager does.",
+        "Read compression/context.py and explain what CompactionManager does.",
         session_id=session_id,
         stream=True,
     )

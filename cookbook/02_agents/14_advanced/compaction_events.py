@@ -11,7 +11,7 @@ emitting CompactionStarted and CompactionCompleted events.
 import asyncio
 
 from agno.agent import Agent
-from agno.compression.context import ContextCompactionManager
+from agno.compression import CompactionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.run.agent import RunEvent
@@ -28,7 +28,8 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/compaction_events_test.db"),
     add_history_to_context=True,
     # Enable context compaction with low threshold for testing
-    compaction_manager=ContextCompactionManager(
+    compaction_manager=CompactionManager(
+        compact_history=True,
         model=OpenAIResponses(id="gpt-5-mini"),
         message_limit=5,  # Low limit to trigger compaction quickly
         keep_recent=2,

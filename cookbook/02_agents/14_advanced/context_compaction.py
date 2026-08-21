@@ -15,7 +15,7 @@ See also: context_compaction_custom.py for custom summarization prompts.
 """
 
 from agno.agent import Agent
-from agno.compression.context import ContextCompactionManager
+from agno.compression import CompactionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -36,7 +36,8 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/research_assistant.db"),
     add_history_to_context=True,
     # Context compaction with minimal config
-    compaction_manager=ContextCompactionManager(
+    compaction_manager=CompactionManager(
+        compact_history=True,
         model=OpenAIResponses(id="gpt-5-mini"),
         token_limit=50_000,
     ),
