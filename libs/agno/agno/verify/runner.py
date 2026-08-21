@@ -23,9 +23,9 @@ from agno.verify.fingerprints import (
 from agno.verify.types import (
     REPORT_CAP_BYTES,
     Verdict,
-    VerifiedRun,
     Verification,
     VerificationAttempt,
+    VerifiedRun,
     VerifierLimits,
     cap_text,
 )

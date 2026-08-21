@@ -35,8 +35,8 @@ from agno.verify.types import (
     VERIFICATION_NOTICE,
     StopReason,
     Verdict,
-    VerificationAttempt,
     Verification,
+    VerificationAttempt,
     VerifiedRun,
     VerifierLimits,
 )
