@@ -12,6 +12,7 @@ from fastapi import (
 from agno import __version__ as agno_version
 from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
+from agno.db.base import BaseDb
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import (
     get_authentication_dependency,
@@ -177,6 +178,27 @@ def get_base_router(
             workflow_summaries = (
                 [WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else []
             )
+
+            if os.db and isinstance(os.db, BaseDb):
+                from agno.agent.agent import get_agents
+                from agno.team.team import get_teams
+
+                registry = os.registry
+                agent_ids = registry.get_agent_ids() if registry else None
+                team_ids = registry.get_team_ids() if registry else None
+
+                db_agents = get_agents(
+                    db=os.db,
+                    registry=registry,
+                    exclude_component_ids=agent_ids or None,
+                )
+                db_teams = get_teams(
+                    db=os.db,
+                    registry=registry,
+                    exclude_component_ids=team_ids or None,
+                )
+                agent_summaries.extend(AgentSummaryResponse.from_agent(agent) for agent in db_agents)
+                team_summaries.extend(TeamSummaryResponse.from_team(team) for team in db_teams)
         except RemoteServerUnavailableError as e:
             raise HTTPException(
                 status_code=502,

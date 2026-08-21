@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from agno.agent.agent import Agent
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import AgentOSConfig, ChatConfig, Manifest
@@ -259,6 +260,22 @@ class TestConfigEndpointSerialization:
         assert resp.status_code == 200
         # response_model_exclude_none=True on the route - so None manifest is omitted.
         assert "manifest" not in resp.json()
+
+    def test_config_includes_database_components(self, tmp_path):
+        db = SqliteDb(db_file=str(tmp_path / "components.db"))
+        agent = Agent(id="database-agent", name="Database Agent", telemetry=False)
+        member = Agent(id="database-team-member", name="Database Team Member", telemetry=False)
+        team = Team(id="database-team", name="Database Team", members=[member], telemetry=False)
+        agent.save(db=db)
+        team.save(db=db)
+
+        client = TestClient(AgentOS(db=db, agents=[], teams=[], telemetry=False).get_app())
+        response = client.get("/config")
+
+        assert response.status_code == 200
+        config = response.json()
+        assert "database-agent" in [summary["id"] for summary in config["agents"]]
+        assert "database-team" in [summary["id"] for summary in config["teams"]]
 
 
 class TestAgentSummaryModelField:

@@ -33,6 +33,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
+from agno.registry import Registry
 from agno.remote.base import RemoteDb
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_warning
@@ -45,6 +46,8 @@ def get_eval_router(
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
+    os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
 ) -> APIRouter:
     """Create eval router with comprehensive OpenAPI documentation for agent/team evaluation endpoints."""
     router = APIRouter(
@@ -58,7 +61,14 @@ def get_eval_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=router, dbs=dbs, agents=agents, teams=teams)
+    return attach_routes(
+        router=router,
+        dbs=dbs,
+        agents=agents,
+        teams=teams,
+        os_db=os_db,
+        registry=registry,
+    )
 
 
 def attach_routes(
@@ -66,6 +76,8 @@ def attach_routes(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
 ) -> APIRouter:
     @router.get(
         "/eval-runs",
@@ -415,7 +427,13 @@ def attach_routes(
         if eval_run_input.agent_id:
             # create_fresh: the eval mutates the resolved agent (e.g. agent.model below), so
             # it must run on a per-request deep_copy, never the shared singleton instance.
-            agent = get_agent_by_id(agent_id=eval_run_input.agent_id, agents=agents, create_fresh=True)
+            agent = get_agent_by_id(
+                agent_id=eval_run_input.agent_id,
+                agents=agents,
+                db=os_db,
+                registry=registry,
+                create_fresh=True,
+            )
             if not agent:
                 raise HTTPException(status_code=404, detail=f"Agent with id '{eval_run_input.agent_id}' not found")
             if isinstance(agent, RemoteAgent):
@@ -444,7 +462,13 @@ def attach_routes(
 
         elif eval_run_input.team_id:
             # create_fresh: mirror the agent path -- eval runs must not share the singleton.
-            team = get_team_by_id(team_id=eval_run_input.team_id, teams=teams, create_fresh=True)
+            team = get_team_by_id(
+                team_id=eval_run_input.team_id,
+                teams=teams,
+                db=os_db,
+                registry=registry,
+                create_fresh=True,
+            )
             if not team:
                 raise HTTPException(status_code=404, detail=f"Team with id '{eval_run_input.team_id}' not found")
             if isinstance(team, RemoteTeam):
