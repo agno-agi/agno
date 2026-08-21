@@ -73,6 +73,7 @@ class MySQLDb(BaseDb):
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         create_schema: bool = True,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a MySQL database.
@@ -84,6 +85,7 @@ class MySQLDb(BaseDb):
 
         Args:
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
             db_url (Optional[str]): The database URL to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
@@ -120,6 +122,7 @@ class MySQLDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            auto_migrate=auto_migrate,
         )
 
         _engine: Optional[Engine] = db_engine

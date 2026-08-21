@@ -57,6 +57,7 @@ class GcsJsonDb(BaseDb):
         project: Optional[str] = None,
         credentials: Optional[Any] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with JSON files stored in Google Cloud Storage as database.
@@ -76,6 +77,7 @@ class GcsJsonDb(BaseDb):
             location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
         """
         if id is None:
             prefix_suffix = prefix or "agno/"
@@ -92,6 +94,7 @@ class GcsJsonDb(BaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            auto_migrate=auto_migrate,
         )
 
         self.bucket_name = bucket_name

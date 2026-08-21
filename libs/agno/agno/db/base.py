@@ -17,7 +17,7 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_info
 
 
 class SessionType(str, Enum):
@@ -248,8 +248,15 @@ class BaseDb(ABC):
         mcp_oauth_refresh_tokens_table: Optional[str] = None,
         mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         self.id = id or str(uuid4())
+        # Opt-in: apply pending schema migrations the first time this db resolves a
+        # table, before that table is validated. Off by default: migrations can
+        # move data and take time, so production deployments should run them as
+        # an explicit step. See MigrationManager.
+        self.auto_migrate = auto_migrate
+        self._auto_migrate_done = False
         self.session_table_name = session_table or "agno_sessions"
         # The runs table foreign-keys to THIS db's session table. If the caller
         # customized session_table but not runs_table, defaulting to the shared
@@ -315,10 +322,27 @@ class BaseDb(ABC):
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
+            self._auto_migrate_if_enabled()
             log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
             return self._resolve_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
+
+    def _auto_migrate_if_enabled(self) -> None:
+        """Run pending migrations once, on the first cold table resolution, when opted in.
+
+        The done-flag is set before migrating: migrations resolve tables themselves
+        (the versions table at least), and must not re-enter this hook. Failures
+        propagate; a db that asked for auto-migration and cannot migrate is not
+        quietly left on a stale schema.
+        """
+        if not self.auto_migrate or self._auto_migrate_done:
+            return
+        self._auto_migrate_done = True
+        from agno.db.migrations.manager import MigrationManager
+
+        log_info(f"auto_migrate: applying pending schema migrations for {self.__class__.__name__} (id: {self.id})")
+        MigrationManager(self).up_sync()
 
     def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
@@ -2003,8 +2027,12 @@ class AsyncBaseDb(ABC):
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         self.id = id or str(uuid4())
+        # See BaseDb.auto_migrate: same contract for async adapters.
+        self.auto_migrate = auto_migrate
+        self._auto_migrate_done = False
         self.session_table_name = session_table or "agno_sessions"
         # The runs table foreign-keys to THIS db's session table. If the caller
         # customized session_table but not runs_table, defaulting to the shared
@@ -2063,10 +2091,21 @@ class AsyncBaseDb(ABC):
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
+            await self._auto_migrate_if_enabled()
             log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
             return await self._resolve_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
+
+    async def _auto_migrate_if_enabled(self) -> None:
+        """Async twin of ``BaseDb._auto_migrate_if_enabled``; same contract."""
+        if not self.auto_migrate or self._auto_migrate_done:
+            return
+        self._auto_migrate_done = True
+        from agno.db.migrations.manager import MigrationManager
+
+        log_info(f"auto_migrate: applying pending schema migrations for {self.__class__.__name__} (id: {self.id})")
+        await MigrationManager(self).up()
 
     async def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False

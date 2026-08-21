@@ -72,6 +72,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         create_schema: bool = True,
+        auto_migrate: bool = False,
     ):
         """
         Async interface for interacting with a MySQL database.
@@ -83,6 +84,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             id (Optional[str]): The ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
             db_url (Optional[str]): The database URL to connect to. Should use asyncmy driver (e.g. mysql+asyncmy://...)
             db_engine (Optional[AsyncEngine]): The SQLAlchemy async database engine to use.
             db_schema (Optional[str]): The database schema to use.
@@ -119,6 +121,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            auto_migrate=auto_migrate,
         )
 
         _engine: Optional[AsyncEngine] = db_engine

@@ -148,6 +148,7 @@ class PostgresDb(BaseDb):
         mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a PostgreSQL database.
@@ -183,6 +184,7 @@ class PostgresDb(BaseDb):
             mcp_oauth_refresh_tokens_table (Optional[str]): Name of the table to store MCP OAuth refresh tokens.
             mcp_oauth_keys_table (Optional[str]): Name of the table to store MCP OAuth signing keys.
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
 
@@ -236,6 +238,7 @@ class PostgresDb(BaseDb):
             mcp_oauth_codes_table=mcp_oauth_codes_table,
             mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
             mcp_oauth_keys_table=mcp_oauth_keys_table,
+            auto_migrate=auto_migrate,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"

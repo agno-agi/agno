@@ -67,6 +67,7 @@ class RedisDb(BaseDb):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a Redis database.
@@ -80,6 +81,7 @@ class RedisDb(BaseDb):
 
         Args:
             id (Optional[str]): The ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
             redis_client (Optional[Redis]): Redis client instance to use. If not provided a new client will be created.
             db_url (Optional[str]): Redis connection URL (e.g., "redis://localhost:6379/0" or "rediss://user:pass@host:port/db")
             db_prefix (str): Prefix for all Redis keys
@@ -111,6 +113,7 @@ class RedisDb(BaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            auto_migrate=auto_migrate,
         )
 
         self.db_prefix = db_prefix

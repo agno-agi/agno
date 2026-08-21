@@ -75,6 +75,7 @@ class MongoDb(BaseDb):
         schedule_runs_collection: Optional[str] = None,
         learnings_collection: Optional[str] = None,
         id: Optional[str] = None,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a MongoDB database.
@@ -95,6 +96,7 @@ class MongoDb(BaseDb):
             schedule_runs_collection (Optional[str]): Name of the collection to store schedule runs.
             learnings_collection (Optional[str]): Name of the collection to store learnings.
             id (Optional[str]): ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
 
         Raises:
             ValueError: If neither db_url nor db_client is provided.
@@ -118,6 +120,7 @@ class MongoDb(BaseDb):
             schedules_table=schedules_collection,
             schedule_runs_table=schedule_runs_collection,
             learnings_table=learnings_collection,
+            auto_migrate=auto_migrate,
         )
 
         _client: Optional[MongoClient] = db_client

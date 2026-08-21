@@ -72,6 +72,7 @@ class SingleStoreDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         create_schema: bool = True,
+        auto_migrate: bool = False,
     ):
         """
         Interface for interacting with a SingleStore database.
@@ -83,6 +84,7 @@ class SingleStoreDb(BaseDb):
 
         Args:
             id (Optional[str]): The ID of the database.
+            auto_migrate (bool): Apply pending schema migrations the first time this db resolves a table. Defaults to False.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
             db_url (Optional[str]): The database URL to connect to.
@@ -116,6 +118,7 @@ class SingleStoreDb(BaseDb):
             versions_table=versions_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            auto_migrate=auto_migrate,
         )
 
         _engine: Optional[Engine] = db_engine
