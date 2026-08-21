@@ -18,13 +18,14 @@ with the same code the in-process scan uses.
 import json
 import re
 import sys
+from typing import List
 
 
 def main() -> None:
     request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     compiled = re.compile(request["pattern"])
     limit = int(request["limit"])
-    positions = []
+    positions: List[List[int]] = []
     more = False
     for index, line in enumerate(request["content"].split("\n")):
         found = compiled.search(line)

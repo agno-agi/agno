@@ -4,13 +4,12 @@ Tested 2026-08-20 against `gpt-5.5` (OpenAIResponses), SQLite, with the worktree
 
 ### offload_member_results.py
 
-**Status:** PASS
+**Status:** PASS (re-tested 2026-08-21 against `gpt-5.5`, SQLite)
 
-**Description:** A leader with a platform builder, manager and engineer. Two turns: a deployment log question, then a component inventory question. Both member tools return large payloads (a 1,500-line log of 69,861 bytes and a 1,200-line inventory of 51,499 bytes).
+**Description:** A leader with three members over two turns: the engineer reads a 1,500-line deployment log, then the builder answers with the full component inventory. `ResultStore(threshold_chars=1500)` so both sides of the threshold show in one run, and `store_member_responses=True` so the last line can print what the caller reads.
 
-**Result:** Both answers are correct: event 01180 failed with `ERROR connection refused`, and team-3 owns 134 components. Two results were stored for the session, one per member tool call, and 121,360 bytes of tool payload stayed out of the leader's transcript. The leader's whole transcript was 2,564 characters after turn one and 4,556 after turn two. The members' own answers were short enough to stay inline under the 8,000-character threshold; with a lower threshold they are stored as well, once as the delegation result and once as the member's stored run (the duplication the README describes). The members and the leader read back through `read_result` and `search_result` without any instruction beyond the line the framework adds. No warnings, no traceback.
+**Result:** Two consecutive runs behaved identically. Turn one: the engineer's short answer stayed inline in the leader's transcript (353 and 335 characters across the two runs) while its own 69,861-byte tool result was stored. Turn two: the builder's inventory answer crossed the threshold and reached the leader as a 1,053-character envelope, and the leader read it back with `read_result` / `search_result`; the same answer measured 5,745 and 6,656 characters through `RunOutput.member_responses`, so offloading changed what the model read and not what the caller reads. Four results were stored per run (the two members' tool results at 51,499 and 69,861 bytes, the member answer as the delegation result, and the member's own stored run). Answers were correct both times (failing event 01180 on worker-4; team-3 component count). No warnings, no traceback.
 
----
 
 ### handing_a_result_to_a_member.py
 

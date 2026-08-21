@@ -66,8 +66,9 @@ platform_builder = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[list_platform_components],
     instructions=dedent("""
-        You build and inventory platform components. Report the components
-        and counts that answer the task.
+        You build and inventory platform components. When you are asked for an
+        inventory, answer with the full component list, one per line, exactly
+        as the tool returned it, followed by the counts that answer the task.
     """).strip(),
 )
 
@@ -99,8 +100,9 @@ platform_engineer = Agent(
 # The team leader
 #
 # offload_tool_results=True stores results longer than 16,000 characters. A
-# ResultStore sets the threshold and the rest; 8,000 here so the shorter
-# member answers are stored too. Members run on the leader's store, so a
+# ResultStore sets the threshold and the rest; 1,500 here so both sides show
+# in one run: a member's short answer stays inline, and the one carrying the
+# inventory becomes an envelope the leader reads back on demand. Members run on the leader's store, so a
 # member can read back a result another member produced. The read-back tools
 # and the instruction that explains the envelope are added for you.
 # ---------------------------------------------------------------------------
@@ -110,7 +112,10 @@ platform_team = Team(
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     members=[platform_builder, platform_manager, platform_engineer],
-    offload_tool_results=ResultStore(threshold_chars=8000),
+    offload_tool_results=ResultStore(threshold_chars=1500),
+    # Keep the member runs on the team row, so the last line of
+    # report_transcript_size can show what the caller reads.
+    store_member_responses=True,
     add_history_to_context=True,
     num_history_runs=5,
     instructions=dedent("""
@@ -129,8 +134,18 @@ def report_transcript_size(session_id: str) -> None:
         size = len(message.content or "")
         total += size
         if message.role == "tool":
-            print(f"  tool {message.tool_name}: {size} characters")
+            stored = (
+                "envelope"
+                if str(message.content or "").startswith("<result id=")
+                else "inline"
+            )
+            print(f"  tool {message.tool_name}: {size} characters ({stored})")
     print(f"  total: {total} characters")
+    # Offloading changes what a model reads, never what a caller reads.
+    for member_run in run.member_responses or []:
+        print(
+            f"  the same answer as the caller reads it: {len(str(member_run.content or ''))} characters"
+        )
 
 
 if __name__ == "__main__":
@@ -144,6 +159,9 @@ if __name__ == "__main__":
     )
     report_transcript_size(session_id)
 
+    # The builder answers with the whole inventory, so the answer itself - the
+    # result of the delegation tool, which is what the leader reads - crosses
+    # the threshold and becomes an envelope in the leader's transcript.
     platform_team.print_response(
         "Now ask the platform builder for the full component inventory, "
         "then tell me how many components team-3 owns.",
