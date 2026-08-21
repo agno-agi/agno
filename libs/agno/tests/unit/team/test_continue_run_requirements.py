@@ -1,8 +1,11 @@
 """Tests for Team continue_run helpers (propagation, routing, normalization)."""
 
 import asyncio
+from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from agno.models.response import ToolExecution
 from agno.run import RunStatus
@@ -1004,6 +1007,436 @@ class TestContinueRunApprovalResolution:
 
             assert events == ["paused-event"]
             mock_apply.assert_called_once_with(team.db, "run-1", run_response)
+
+        asyncio.run(_exercise())
+
+
+# ===========================================================================
+# 15. respond_directly member continuation
+# ===========================================================================
+
+
+class TestRespondDirectlyMemberContinuation:
+    cancellation = "Tool execution cancelled by the user: operation not approved."
+
+    def _make_case(self, *, respond_directly=True):
+        tool = _make_tool_execution(
+            tool_call_id="member-tool-1",
+            requires_confirmation=True,
+        )
+        requirement = RunRequirement(tool)
+        requirement.member_agent_id = "member-id-1"
+        requirement.member_agent_name = "Member 1"
+        requirement.member_run_id = "member-run-1"
+        requirement.reject("Not approved")
+
+        delegate_tool = _make_tool_execution(
+            tool_call_id="delegate-tool-1",
+            tool_name="delegate_task_to_member",
+            result="Member requires human input",
+        )
+
+        member_run_output = MagicMock()
+        member_run_output.run_id = "member-run-1"
+        member_run_output.tools = [tool]
+        requirement._member_run_response = member_run_output
+
+        member_response = MagicMock()
+        member_response.is_paused = False
+        member_response.content = self.cancellation
+        member_response.content_type = "str"
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member.continue_run = MagicMock(return_value=member_response)
+        member.acontinue_run = AsyncMock(return_value=member_response)
+
+        run_response = TeamRunOutput(
+            run_id="team-run-1",
+            session_id="session-1",
+            status=RunStatus.paused,
+            requirements=[requirement],
+            tools=[delegate_tool],
+            content="stale paused content",
+        )
+
+        team = MagicMock()
+        team.id = "team-1"
+        team.name = "Team 1"
+        team.session_id = None
+        team.add_history_to_context = False
+        team.parser_model = None
+        team.output_model = None
+        team._member_response_model = None
+        team.initialize_team = MagicMock()
+        team.db = MagicMock()
+        team.model = MagicMock()
+        team.respond_directly = respond_directly
+        team.determine_input_for_members = False
+        team.post_hooks = None
+        team.session_summary_manager = None
+        team.events_to_skip = []
+        team.store_events = False
+        team.stream_member_events = False
+        team.retries = 0
+        team.exponential_backoff = False
+        team.delay_between_retries = 0
+
+        team_session = MagicMock()
+        team_session.session_id = "session-1"
+        team_session.runs = [run_response]
+
+        return team, team_session, run_response, requirement, member, member_run_output, member_response
+
+    @staticmethod
+    def _sync_opts(*, stream=False, stream_events=False, yield_run_output=False):
+        return SimpleNamespace(
+            stream=stream,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+        )
+
+    @contextmanager
+    def _sync_dispatch_patches(self, session, member, member_run_output, requirement, opts):
+        with ExitStack() as stack:
+            stack.enter_context(patch("agno.team._init._has_async_db", return_value=False))
+            stack.enter_context(patch("agno.team._init._initialize_session", return_value=("session-1", None)))
+            stack.enter_context(patch("agno.team._storage._read_or_create_session", return_value=session))
+            stack.enter_context(patch("agno.team._storage._update_metadata"))
+            stack.enter_context(patch("agno.team._storage._load_session_state", return_value={}))
+            stack.enter_context(patch("agno.team._run_options.resolve_run_options", return_value=opts))
+            stack.enter_context(patch("agno.run.approval.check_and_apply_approval_resolution"))
+            stack.enter_context(
+                patch("agno.team._run._reclaim_own_requirements", side_effect=lambda _t, reqs, _rid: reqs)
+            )
+            stack.enter_context(
+                patch(
+                    "agno.team._run._group_requirements_for_continue",
+                    return_value=[(member, member_run_output, [requirement])],
+                )
+            )
+            stack.enter_context(patch("agno.team._run.register_member_run"))
+            stack.enter_context(patch("agno.team._response.get_response_format", return_value=None))
+            stack.enter_context(patch("agno.team._tools._determine_tools_for_model", return_value=[]))
+            stack.enter_context(patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])))
+            yield
+
+    @contextmanager
+    def _async_dispatch_patches(self, session, member, member_run_output, requirement):
+        with ExitStack() as stack:
+            stack.enter_context(patch("agno.team._run._asetup_session", new=AsyncMock(return_value=session)))
+            stack.enter_context(patch("agno.run.approval.acheck_and_apply_approval_resolution", new=AsyncMock()))
+            stack.enter_context(patch("agno.team._run.aregister_run", new=AsyncMock()))
+            stack.enter_context(patch("agno.team._run.aregister_member_run", new=AsyncMock()))
+            stack.enter_context(patch("agno.team._run.acleanup_run", new=AsyncMock()))
+            stack.enter_context(patch("agno.team._init._disconnect_connectable_tools"))
+            stack.enter_context(patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()))
+            stack.enter_context(
+                patch("agno.team._run._reclaim_own_requirements", side_effect=lambda _t, reqs, _rid: reqs)
+            )
+            stack.enter_context(
+                patch(
+                    "agno.team._run._group_requirements_for_continue",
+                    return_value=[(member, member_run_output, [requirement])],
+                )
+            )
+            stack.enter_context(patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()))
+            stack.enter_context(patch("agno.team._tools._aget_learning_tools", new=AsyncMock(return_value=[])))
+            stack.enter_context(patch("agno.team._tools._determine_tools_for_model", return_value=[]))
+            stack.enter_context(patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])))
+            yield
+
+    def test_sync_respond_directly_returns_member_cancellation_without_leader(self):
+        from agno.team._run import continue_run_dispatch
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.retries = 1
+
+        with (
+            self._sync_dispatch_patches(session, member, member_run_output, requirement, self._sync_opts()),
+            patch("agno.team._run.register_run"),
+            patch("agno.team._run.cleanup_run"),
+            patch("agno.team._init._disconnect_connectable_tools"),
+            patch("agno.team._run.handle_event"),
+            patch("agno.team._run.call_model_with_fallback") as leader_model,
+            patch(
+                "agno.team._run._cleanup_and_store",
+                side_effect=[RuntimeError("transient storage failure"), None],
+            ) as cleanup,
+            patch("agno.team._telemetry.log_team_telemetry"),
+        ):
+            result = continue_run_dispatch(team, run_response=run_response, stream=False)
+
+        assert result is run_response
+        assert result.status == RunStatus.completed
+        assert result.content == self.cancellation
+        assert self.cancellation in str(result.tools[0].result)
+        member.continue_run.assert_called_once()
+        leader_model.assert_not_called()
+        assert cleanup.call_count == 2
+
+    def test_sync_coordinate_mode_still_runs_leader_after_member_continue(self):
+        from agno.team._run import continue_run_dispatch
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case(respond_directly=False)
+        leader_result = object()
+
+        with (
+            self._sync_dispatch_patches(session, member, member_run_output, requirement, self._sync_opts()),
+            patch("agno.team._run._prepare_member_hitl_continuation"),
+            patch("agno.team._run._continue_run", return_value=leader_result) as leader_continue,
+        ):
+            result = continue_run_dispatch(team, run_response=run_response, stream=False)
+
+        assert result is leader_result
+        member.continue_run.assert_called_once()
+        leader_continue.assert_called_once()
+
+    def test_sync_direct_stream_forwards_member_content_without_stream_events(self):
+        from agno.run.agent import RunContentEvent, RunOutput
+        from agno.team._run import _route_requirements_to_members_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        content_event = RunContentEvent(
+            run_id="member-run-1",
+            session_id="session-1",
+            content=self.cancellation,
+        )
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content=self.cancellation,
+        )
+        member.continue_run = MagicMock(return_value=iter([content_event, member_final]))
+        member_results = []
+
+        with (
+            patch(
+                "agno.team._run._group_requirements_for_continue",
+                return_value=[(member, member_run_output, [requirement])],
+            ),
+            patch("agno.team._run.register_member_run"),
+        ):
+            events = list(
+                _route_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=session,
+                    member_results=member_results,
+                    stream_events=False,
+                )
+            )
+
+        assert events == [content_event]
+        assert member_results == [f"[Member 1]: {self.cancellation}"]
+
+    def test_sync_stream_respond_directly_emits_team_terminal_without_leader(self):
+        from agno.run.agent import RunOutput
+        from agno.run.team import RunCompletedEvent, RunContentCompletedEvent, RunContinuedEvent
+        from agno.team._run import continue_run_dispatch
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content=self.cancellation,
+        )
+        member.continue_run = MagicMock(return_value=iter([member_final]))
+        team.retries = 1
+
+        with (
+            self._sync_dispatch_patches(
+                session,
+                member,
+                member_run_output,
+                requirement,
+                self._sync_opts(stream=True, stream_events=True, yield_run_output=True),
+            ),
+            patch("agno.team._run.register_run"),
+            patch("agno.team._run.cleanup_run"),
+            patch("agno.team._init._disconnect_connectable_tools"),
+            patch("agno.team._run._handle_team_tool_call_updates_stream") as team_tool_updates,
+            patch("agno.team._response._handle_model_response_stream") as leader_stream,
+            patch("agno.team._response.parse_response_with_parser_model_stream") as parser_stream,
+            patch(
+                "agno.team._run._cleanup_and_store",
+                side_effect=[RuntimeError("transient storage failure"), None],
+            ) as cleanup,
+            patch("agno.team._telemetry.log_team_telemetry"),
+        ):
+            events = list(
+                continue_run_dispatch(
+                    team,
+                    run_response=run_response,
+                    stream=True,
+                    stream_events=True,
+                    yield_run_output=True,
+                )
+            )
+
+        assert any(isinstance(event, RunContentCompletedEvent) for event in events)
+        assert any(isinstance(event, RunContinuedEvent) for event in events)
+        assert any(isinstance(event, RunCompletedEvent) for event in events)
+        assert events[-1] is run_response
+        assert run_response.status == RunStatus.completed
+        assert run_response.content == self.cancellation
+        member.continue_run.assert_called_once()
+        team_tool_updates.assert_not_called()
+        leader_stream.assert_not_called()
+        parser_stream.assert_not_called()
+        assert cleanup.call_count == 2
+
+    @pytest.mark.parametrize("respond_directly", [True, False])
+    def test_async_member_continuation_respects_response_mode(self, respond_directly):
+        from agno.team._run import _acontinue_run
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case(
+            respond_directly=respond_directly
+        )
+        run_context = MagicMock()
+
+        async def _exercise():
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._run.handle_event"),
+                patch(
+                    "agno.team._run._ahandle_model_response_for_continue",
+                    new=AsyncMock(return_value=None),
+                ) as leader_continue,
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()) as cleanup,
+                patch("agno.team._telemetry.alog_team_telemetry", new=AsyncMock()),
+            ):
+                if respond_directly:
+                    team.retries = 1
+                    cleanup.side_effect = [RuntimeError("transient storage failure"), None]
+                result = await _acontinue_run(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                )
+
+            assert result is run_response
+            assert result.status == RunStatus.completed
+            member.acontinue_run.assert_awaited_once()
+            if respond_directly:
+                assert result.content == self.cancellation
+                assert self.cancellation in str(result.tools[0].result)
+                leader_continue.assert_not_awaited()
+            else:
+                leader_continue.assert_awaited_once()
+            assert cleanup.await_count == (2 if respond_directly else 1)
+
+        asyncio.run(_exercise())
+
+    def test_async_stream_respond_directly_emits_team_terminal_without_leader(self):
+        from agno.run.agent import RunOutput
+        from agno.run.team import RunCompletedEvent, RunContentCompletedEvent, RunContinuedEvent
+        from agno.team._run import _acontinue_run_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        run_context = MagicMock()
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content=self.cancellation,
+        )
+
+        async def _member_stream(*args, **kwargs):
+            yield member_final
+
+        async def _empty_stream(*args, **kwargs):
+            if False:
+                yield None
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+        leader_stream = MagicMock(side_effect=_empty_stream)
+        team.retries = 1
+
+        async def _exercise():
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._response._ahandle_model_response_stream", new=leader_stream),
+                patch("agno.team._response.aparse_response_with_parser_model_stream", new=_empty_stream),
+                patch(
+                    "agno.team._run._acleanup_and_store",
+                    new=AsyncMock(side_effect=[RuntimeError("transient storage failure"), None]),
+                ) as cleanup,
+                patch("agno.team._telemetry.alog_team_telemetry", new=AsyncMock()),
+            ):
+                events = []
+                async for event in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                    stream_events=True,
+                    yield_run_output=True,
+                ):
+                    events.append(event)
+
+            assert any(isinstance(event, RunContentCompletedEvent) for event in events)
+            assert any(isinstance(event, RunContinuedEvent) for event in events)
+            assert any(isinstance(event, RunCompletedEvent) for event in events)
+            assert events[-1] is run_response
+            assert run_response.status == RunStatus.completed
+            assert run_response.content == self.cancellation
+            member.acontinue_run.assert_called_once()
+            leader_stream.assert_not_called()
+            assert cleanup.await_count == 2
+
+        asyncio.run(_exercise())
+
+    def test_async_direct_stream_forwards_member_content_without_stream_events(self):
+        from agno.run.agent import RunContentEvent, RunOutput
+        from agno.team._run import _aroute_requirements_to_members_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        content_event = RunContentEvent(
+            run_id="member-run-1",
+            session_id="session-1",
+            content=self.cancellation,
+        )
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content=self.cancellation,
+        )
+
+        async def _member_stream(*args, **kwargs):
+            yield content_event
+            yield member_final
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+        member_results = []
+
+        async def _exercise():
+            with (
+                patch(
+                    "agno.team._run._group_requirements_for_continue",
+                    return_value=[(member, member_run_output, [requirement])],
+                ),
+                patch("agno.team._run.aregister_member_run", new=AsyncMock()),
+            ):
+                events = []
+                async for event in _aroute_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=session,
+                    member_results=member_results,
+                    stream_events=False,
+                ):
+                    events.append(event)
+
+            assert events == [content_event]
+            assert member_results == [f"[Member 1]: {self.cancellation}"]
 
         asyncio.run(_exercise())
 
