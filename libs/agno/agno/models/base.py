@@ -2255,6 +2255,10 @@ class Model(ABC):
                     function_execution_result.audios = tool_result.audios
                 if tool_result.files:
                     function_execution_result.files = tool_result.files
+                # Host-only MCP (and similar) fields — not fed to the LLM
+                if tool_result.metadata:
+                    function_execution_result.structured_content = tool_result.metadata.get("structured_content")
+                    function_execution_result.meta = tool_result.metadata.get("meta")
             else:
                 function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
 
@@ -2294,6 +2298,8 @@ class Model(ABC):
                     tool_args=function_call_result.tool_args,
                     tool_call_error=function_call_result.tool_call_error,
                     result=str(function_call_result.content),
+                    structured_content=function_execution_result.structured_content,
+                    meta=function_execution_result.meta,
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
                     metrics=tool_metrics,
                 )
@@ -2936,6 +2942,10 @@ class Model(ABC):
                         function_execution_result.audios = tool_result.audios
                     if tool_result.files:
                         function_execution_result.files = tool_result.files
+                    # Host-only MCP (and similar) fields — not fed to the LLM
+                    if tool_result.metadata:
+                        function_execution_result.structured_content = tool_result.metadata.get("structured_content")
+                        function_execution_result.meta = tool_result.metadata.get("meta")
                 else:
                     function_call_output = str(function_call.result)
 
@@ -2975,6 +2985,8 @@ class Model(ABC):
                         tool_args=function_call_result.tool_args,
                         tool_call_error=function_call_result.tool_call_error,
                         result=str(function_call_result.content),
+                        structured_content=function_execution_result.structured_content,
+                        meta=function_execution_result.meta,
                         stop_after_tool_call=function_call_result.stop_after_tool_call,
                         metrics=tool_metrics,
                     )
