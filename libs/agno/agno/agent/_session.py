@@ -222,12 +222,7 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
     if _init.has_async_db(agent):
         raise ValueError("Cannot use sync save_session() with an async database. Use asave_session() instead.")
     # If the agent is a member of a team, do not save the session to the database
-    if (
-        agent.db is not None
-        and agent.team_id is None
-        and agent.workflow_id is None
-        and session.session_data is not None
-    ):
+    if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
             session.session_data["session_state"].pop("current_session_id", None)
             session.session_data["session_state"].pop("current_user_id", None)
@@ -244,12 +239,7 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
     from agno.agent import _init, _storage
 
     # If the agent is a member of a team, do not save the session to the database
-    if (
-        agent.db is not None
-        and agent.team_id is None
-        and agent.workflow_id is None
-        and session.session_data is not None
-    ):
+    if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
             session.session_data["session_state"].pop("current_session_id", None)
             session.session_data["session_state"].pop("current_user_id", None)
