@@ -150,6 +150,12 @@ class MoonShot(OpenAILike):
             filename = Path(urlparse(media.url).path).name
         if not filename:
             filename = "file"
+        # Moonshot's file-extract picks the type from the filename extension and ignores the
+        # tuple's mime type, so an extension-less name is rejected. Supply one from the mime.
+        if not Path(filename).suffix and media.mime_type:
+            guessed = mimetypes.guess_extension(media.mime_type)
+            if guessed:
+                filename += guessed
 
         try:
             data = media.get_content_bytes()

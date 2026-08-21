@@ -120,7 +120,12 @@ def reference_matches_storage(ref: Optional[MediaReference], storage: Union[Medi
     if ref is None:
         return False
     backend_name = getattr(storage, "backend_name", None)
-    return bool(backend_name) and ref.storage_backend == backend_name and ref.bucket == getattr(storage, "bucket", None)
+    if not backend_name or ref.storage_backend != backend_name or ref.bucket != getattr(storage, "bucket", None):
+        return False
+    # Two deployments can share a bucket name, so a region both sides name has to agree.
+    # Only one side naming it is the common case of relying on the environment's default.
+    storage_region = getattr(storage, "region", None)
+    return not (ref.region and storage_region) or ref.region == storage_region
 
 
 def _attach_reference(media: Union[Image, Audio, Video, File], ref: MediaReference) -> None:
