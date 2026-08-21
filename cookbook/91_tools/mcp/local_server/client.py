@@ -24,7 +24,7 @@ async def run_agent(message: str) -> None:
         ) as mcp_tools,
     ):
         agent = Agent(
-            model=Groq(id="llama-3.3-70b-versatile"),
+            model=Groq(id="openai/gpt-oss-120b"),
             tools=[mcp_tools],
             markdown=True,
         )

@@ -165,7 +165,7 @@ async def main():
         return
 
     # Initialize model
-    model = Gemini(id="gemini-2.5-flash")
+    model = Gemini(id="gemini-3.7-flash")
 
     # Step 1: Create and populate store
     print("\n" + "=" * 80)

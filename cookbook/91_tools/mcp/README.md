@@ -40,6 +40,10 @@ This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to se
 
 This example connects to the hosted DeepWiki MCP server (public, no API key) to answer questions about GitHub repositories. It shows how a tool's `structuredContent` is preserved on `ToolResult.metadata["structured_content"]` and read back through a tool hook.
 
+10. emem Agent (`emem.py`)
+
+This example connects to the hosted emem MCP server (public, no API key) for shared, signed memory of the physical world. It shows an agent answering a plain-language question about a place by calling emem's MCP tools directly.
+
 
 ## Getting Started
 
@@ -66,6 +70,7 @@ python filesystem.py
 python github.py
 python bgpt.py
 python structured_content.py
+python emem.py
 ```
 
 ## How It Works
