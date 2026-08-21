@@ -40,7 +40,7 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/codebase_explorer.db"),
     add_history_to_context=True,
     # Low token limit to trigger compaction quickly with file reads
-    context_compaction_manager=ContextCompactionManager(
+    compaction_manager=ContextCompactionManager(
         model=OpenAIResponses(id="gpt-5-mini"),
         token_limit=20_000,  # Low limit - 2-3 file reads will trigger
         keep_recent=6,
@@ -72,7 +72,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Now read agent/agent.py and find where context_compaction_manager is wired up.",
+        "Now read agent/agent.py and find where compaction_manager is wired up.",
         session_id=session_id,
         stream=True,
     )

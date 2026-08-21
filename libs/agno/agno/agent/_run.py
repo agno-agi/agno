@@ -2457,9 +2457,9 @@ async def _arun_stream(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Pre-loop compaction: compress history BEFORE first model call
-                if agent.context_compaction_manager is not None:
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
                     messages_before = len(run_messages.messages)
-                    compaction_result = await agent.context_compaction_manager.acompact(
+                    compaction_result = await agent.compaction_manager.acompact(
                         run_messages.messages,
                         run_response=run_response,
                         run_metrics=run_response.metrics,
@@ -2477,7 +2477,9 @@ async def _arun_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
@@ -4017,9 +4019,9 @@ def _continue_run_stream(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 3. Pre-loop compaction: compress history BEFORE model call
-                if agent.context_compaction_manager is not None:
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
                     messages_before = len(run_messages.messages)
-                    compaction_result = agent.context_compaction_manager.compact(
+                    compaction_result = agent.compaction_manager.compact(
                         run_messages.messages,
                         run_response=run_response,
                         run_metrics=run_response.metrics,
@@ -4037,7 +4039,9 @@ def _continue_run_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
@@ -5526,9 +5530,9 @@ async def _acontinue_run_stream(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 8. Pre-loop compaction: compress history BEFORE model call
-                if agent.context_compaction_manager is not None:
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
                     messages_before = len(run_messages.messages)
-                    compaction_result = await agent.context_compaction_manager.acompact(
+                    compaction_result = await agent.compaction_manager.acompact(
                         run_messages.messages,
                         run_response=run_response,
                         run_metrics=run_response.metrics,
@@ -5546,7 +5550,9 @@ async def _acontinue_run_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(

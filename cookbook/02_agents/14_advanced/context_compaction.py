@@ -36,7 +36,7 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/research_assistant.db"),
     add_history_to_context=True,
     # Context compaction with minimal config
-    context_compaction_manager=ContextCompactionManager(
+    compaction_manager=ContextCompactionManager(
         model=OpenAIResponses(id="gpt-5-mini"),
         token_limit=50_000,
     ),

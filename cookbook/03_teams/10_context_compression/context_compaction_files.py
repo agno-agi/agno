@@ -80,7 +80,7 @@ review_team = Team(
     db=db,
     add_history_to_context=True,
     # Low token limit to trigger compaction with file reads
-    context_compaction_manager=ContextCompactionManager(
+    compaction_manager=ContextCompactionManager(
         model=OpenAIResponses(id="gpt-5-mini"),
         token_limit=25_000,  # Low limit - file reads trigger quickly
         keep_recent=8,

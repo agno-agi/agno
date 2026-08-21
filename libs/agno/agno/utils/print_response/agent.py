@@ -494,11 +494,11 @@ def build_panels_stream(
             if stats.get("tool_results_compressed", 0) > 0:
                 tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
 
-        # Add compaction stats if available
-        if context_compaction_manager is not None and context_compaction_manager.stats:
-            stats = context_compaction_manager.stats
-            if stats.get("messages_compacted", 0) > 0:
-                tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
+        # Add history compaction stats if available
+        if compaction_manager is not None and compaction_manager.stats:
+            stats = compaction_manager.stats
+            if stats.get("history_messages_compacted", 0) > 0:
+                tool_calls_text += f"\n\ncompacted: {stats.get('history_messages_compacted', 0)} msgs | Saved: {stats.get('history_tokens_saved', 0):,} tokens"
 
         tool_calls_panel = create_panel(
             content=tool_calls_text,

@@ -75,7 +75,7 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/support_agent.db"),
     add_history_to_context=True,
     # Context compaction with custom config
-    context_compaction_manager=ContextCompactionManager(
+    compaction_manager=ContextCompactionManager(
         model=OpenAIResponses(id="gpt-5-mini"),
         message_limit=30,  # Trigger by message count (support = many short turns)
         keep_recent=8,  # Keep more recent context for support
