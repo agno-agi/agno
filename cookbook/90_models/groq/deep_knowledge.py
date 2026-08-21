@@ -58,7 +58,7 @@ def create_agent(session_id: Optional[str] = None) -> Agent:
     return Agent(
         name="DeepKnowledge",
         session_id=session_id,
-        model=Groq(id="llama-3.3-70b-versatile"),
+        model=Groq(id="openai/gpt-oss-120b"),
         description=dedent("""\
         You are DeepKnowledge, an advanced reasoning agent designed to provide thorough,
         well-researched answers to any query by searching your knowledge base.

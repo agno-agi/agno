@@ -11,12 +11,9 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.gcs_json.utils import (
     apply_sorting,
     calculate_date_metrics,
-    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -25,8 +22,10 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -53,7 +52,6 @@ class GcsJsonDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         project: Optional[str] = None,
@@ -72,7 +70,6 @@ class GcsJsonDb(BaseDb):
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
-            culture_table (Optional[str]): Name of the JSON file to store cultural knowledge.
             traces_table (Optional[str]): Name of the JSON file to store traces.
             spans_table (Optional[str]): Name of the JSON file to store spans.
             project (Optional[str]): GCP project ID. If None, uses default project.
@@ -93,7 +90,6 @@ class GcsJsonDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
         )
@@ -179,18 +175,24 @@ class GcsJsonDb(BaseDb):
             raise
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+        """Get the schema version stamped for the given table.
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract, but this adapter has no per-table versioning
-        (each table is a single blob), so it is ignored.
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
+        for row in rows:
+            if row.get("table_name") == table_name:
+                return row.get("version") or "2.0.0"
+        return "2.0.0"
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table."""
+        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
+        entry = {"table_name": table_name, "version": version, "updated_at": int(time.time())}
+        rows = [row for row in rows if row.get("table_name") != table_name]
+        rows.append(entry)
+        self._write_json_file(self.versions_table_name, rows)
 
     # -- Run methods --
 
@@ -1106,9 +1108,13 @@ class GcsJsonDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(start_timestamp, end_timestamp)
@@ -1129,24 +1135,24 @@ class GcsJsonDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                # One metrics record per user_id. Upsert each by (user_id, date, period).
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                    existing_record_idx = None
+                    for i, existing_metric in enumerate(metrics):
+                        if (
+                            existing_metric.get("user_id") == metrics_record["user_id"]
+                            and existing_metric.get("date") == str(date_to_process)
+                            and existing_metric.get("aggregation_period") == "daily"
+                        ):
+                            existing_record_idx = i
+                            break
 
-                # Upsert metrics record
-                existing_record_idx = None
-                for i, existing_metric in enumerate(metrics):
-                    if (
-                        existing_metric.get("date") == str(date_to_process)
-                        and existing_metric.get("aggregation_period") == "daily"
-                    ):
-                        existing_record_idx = i
-                        break
+                    if existing_record_idx is not None:
+                        metrics[existing_record_idx] = metrics_record
+                    else:
+                        metrics.append(metrics_record)
 
-                if existing_record_idx is not None:
-                    metrics[existing_record_idx] = metrics_record
-                else:
-                    metrics.append(metrics_record)
-
-                results.append(metrics_record)
+                    results.append(metrics_record)
 
             if results:
                 self._write_json_file(self.metrics_table_name, metrics)
@@ -1159,16 +1165,9 @@ class GcsJsonDb(BaseDb):
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
-        if metrics:
-            # Sort by date in descending order
-            sorted_metrics = sorted(metrics, key=lambda x: x.get("date", ""), reverse=True)
-            latest_metric = sorted_metrics[0]
-
-            if latest_metric.get("completed", False):
-                latest_date = datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
-                return latest_date + timedelta(days=1)
-            else:
-                return datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
+        resume_date = metrics_starting_date_from_records(metrics)
+        if resume_date is not None:
+            return resume_date
 
         # No metrics records. Return the date of the first recorded session.
         # We need to get sessions of all types, so we'll read directly from the file
@@ -1231,10 +1230,21 @@ class GcsJsonDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): The ID of the user to filter by. If not provided, all metrics are returned.
+        """
         try:
             metrics = self._read_json_file(self.metrics_table_name)
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                metrics = drop_legacy_metrics(metrics)
 
             filtered_metrics = []
             latest_updated_at = None
@@ -1246,8 +1256,14 @@ class GcsJsonDb(BaseDb):
                     continue
                 if ending_date and metric_date > ending_date:
                     continue
+                if user_id is not None and metric.get("user_id") != user_id:
+                    continue
 
-                filtered_metrics.append(metric)
+                row = dict(metric)
+                # The empty-string bucket holds unowned sessions. Report it as None.
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                filtered_metrics.append(row)
 
                 updated_at = metric.get("updated_at")
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
@@ -1260,23 +1276,46 @@ class GcsJsonDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
+
+    @staticmethod
+    def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
+        """Check if the given knowledge row is owned by the given user or unowned (shared)."""
+        if user_id is None:
+            return True
+        owner = item.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
+        """Delete knowledge content by ID.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only rows owned by that user are deleted.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
-            knowledge_items = [item for item in knowledge_items if item.get("id") != id]
+            knowledge_items = [
+                item
+                for item in knowledge_items
+                if not (item.get("id") == id and (user_id is None or item.get("user_id") == user_id))
+            ]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
         except Exception as e:
             log_warning(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
+        """Get knowledge content by ID.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): The ID of the user. If provided, only their rows and unowned rows are visible.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
             for item in knowledge_items:
-                if item.get("id") == id:
+                if item.get("id") == id and self._knowledge_item_is_visible(item, user_id):
                     return KnowledgeRow.model_validate(item)
 
             return None
@@ -1291,6 +1330,7 @@ class GcsJsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the GCS JSON file.
 
@@ -1300,6 +1340,7 @@ class GcsJsonDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): The ID of the user. If provided, only their rows and unowned rows are returned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1310,6 +1351,10 @@ class GcsJsonDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
+
+            # Apply owner scoping if provided
+            if user_id is not None:
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -1339,6 +1384,9 @@ class GcsJsonDb(BaseDb):
             item_updated = False
             for i, existing_item in enumerate(knowledge_items):
                 if existing_item.get("id") == knowledge_row.id:
+                    # A scoped write must not overwrite an item it does not own
+                    if knowledge_row.user_id is not None and existing_item.get("user_id") != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
                     knowledge_items[i] = knowledge_dict
                     item_updated = True
                     break
@@ -1541,190 +1589,6 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
-            raise e
-
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            self._write_json_file(self.culture_table_name, [])
-        except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            cultural_knowledge = self._read_json_file(self.culture_table_name)
-            cultural_knowledge = [item for item in cultural_knowledge if item.get("id") != id]
-            self._write_json_file(self.culture_table_name, cultural_knowledge)
-            log_debug(f"Deleted cultural knowledge with ID: {id}")
-        except Exception as e:
-            log_warning(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            cultural_knowledge = self._read_json_file(self.culture_table_name)
-
-            for item in cultural_knowledge:
-                if item.get("id") == id:
-                    if not deserialize:
-                        return item
-                    return deserialize_cultural_knowledge_from_db(item)
-
-            return None
-        except Exception as e:
-            log_warning(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            cultural_knowledge = self._read_json_file(self.culture_table_name)
-
-            # Apply filters
-            filtered_items = []
-            for item in cultural_knowledge:
-                if agent_id is not None and item.get("agent_id") != agent_id:
-                    continue
-                if team_id is not None and item.get("team_id") != team_id:
-                    continue
-                if name is not None and name.lower() not in item.get("name", "").lower():
-                    continue
-
-                filtered_items.append(item)
-
-            total_count = len(filtered_items)
-
-            # Apply sorting
-            filtered_items = apply_sorting(filtered_items, sort_by, sort_order)
-
-            # Apply pagination
-            if limit is not None:
-                start_idx = 0
-                if page is not None:
-                    start_idx = (page - 1) * limit
-                filtered_items = filtered_items[start_idx : start_idx + limit]
-
-            if not deserialize:
-                return filtered_items, total_count
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in filtered_items]
-
-        except Exception as e:
-            log_warning(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in the GCS JSON file.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            cultural_knowledge_list = self._read_json_file(self.culture_table_name, create_table_if_not_found=True)
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the item dict with serialized content
-            cultural_knowledge_dict = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            # Find existing item to update
-            item_updated = False
-            for i, existing_item in enumerate(cultural_knowledge_list):
-                if existing_item.get("id") == cultural_knowledge.id:
-                    cultural_knowledge_list[i] = cultural_knowledge_dict
-                    item_updated = True
-                    break
-
-            if not item_updated:
-                cultural_knowledge_list.append(cultural_knowledge_dict)
-
-            self._write_json_file(self.culture_table_name, cultural_knowledge_list)
-
-            if not deserialize:
-                return cultural_knowledge_dict
-
-            return deserialize_cultural_knowledge_from_db(cultural_knowledge_dict)
-
-        except Exception as e:
-            log_warning(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # --- Traces ---

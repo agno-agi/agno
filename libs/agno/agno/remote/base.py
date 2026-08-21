@@ -60,7 +60,6 @@ class RemoteDb:
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
-    culture_table_name: Optional[str] = None
 
     @classmethod
     def from_config(

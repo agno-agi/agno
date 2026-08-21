@@ -2,9 +2,11 @@
 
 With QueueConfig(durable=True), a background run (background=True) is
 accepted as a committed row in the job queue table. Whichever replica's worker
-claims the job executes it - across process restarts and deploys. A crashed
-run is never silently re-executed (max_attempts=1 by default): it is failed
-visibly, and an operator can requeue it.
+claims the job executes it - across process restarts and deploys. What
+happens to a run whose worker CRASHES is a choice: with the default
+max_attempts=1 it fails visibly and is never silently re-executed (its side
+effects may already have happened); with max_attempts=2+ a live replica
+reclaims and re-executes it automatically. See "Try it" step 3.
 
 Try it:
 1. Start this app and submit a background run:
@@ -13,8 +15,20 @@ Try it:
         -F "stream=false"
    -> 202 with run_id and session_id; the run row is committed before the response.
 2. Poll GET /agents/durable-agent/runs/{run_id}?session_id={session_id} for the result.
-3. Kill the server mid-run and restart it: the job is reclaimed or failed
-   visibly - never lost, never stuck at RUNNING forever.
+3. Kill the server mid-run and restart it. What happens next is the most
+   important knob in this cookbook:
+   - max_attempts=1 (the default, at-most-once): the run is NOT re-executed.
+     After lock_grace_seconds the sweeper fails it visibly - the poll shows
+     ERROR with the reason, /queue/jobs lists it as failed, and an operator
+     can requeue it. This is the right default for runs with side effects
+     (emails, payments): a killed run may have already acted, and silent
+     re-execution would act twice.
+   - max_attempts=2 or higher (at-least-once): the restarted worker (or any
+     other replica) reclaims the stale job and re-executes it automatically -
+     kill the server mid-run and watch the run complete anyway. Retries are
+     safe: a still-alive "dead" worker is fenced from corrupting the retry's
+     run row or event stream.
+   Either way the run is never lost and never stuck at RUNNING forever.
 4. Operations surface:
    GET  /queue/stats                 - counts by status, oldest queued age
    GET  /queue/jobs?status=failed    - the dead-letter list
@@ -70,6 +84,11 @@ agent_os = AgentOS(
         durable=True,  # queue table lives in the Postgres above
         max_concurrency=8,  # per replica
         max_queue_depth=1000,  # global bound -> 429 beyond it
+        # At-most-once by default: a run killed mid-flight FAILS VISIBLY and
+        # is never silently re-executed (its side effects may already have
+        # happened). Set 2+ to have a crashed run reclaimed and re-executed
+        # automatically by any live replica - see "Try it" step 3.
+        max_attempts=1,
     ),
 )
 app = agent_os.get_app()

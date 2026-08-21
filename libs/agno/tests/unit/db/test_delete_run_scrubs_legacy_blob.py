@@ -49,7 +49,7 @@ def json_db_partially_migrated():
     sessions_file = os.path.join(tmp, "agno_sessions.json")
     with open(sessions_file, "w") as f:
         json.dump([session_row], f)
-    _migrate_jsondb(db, "agno_sessions")
+    _migrate_jsondb(db, "sessions", "agno_sessions")
     return db, tmp, sessions_file
 
 
@@ -218,6 +218,8 @@ class TestSqliteDbDeleteRunScrubsLegacyBlob:
         db.metadata.reflect(bind=db.db_engine)
         if hasattr(db, "_tables"):
             db._tables = {}
+        # The manual ALTER above bypassed the adapter, so bust its resolution cache too
+        db._table_cache.clear()
 
         return db
 

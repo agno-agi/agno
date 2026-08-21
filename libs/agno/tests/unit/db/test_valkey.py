@@ -422,13 +422,21 @@ class TestMemory:
 
 
 class TestSchemaVersion:
-    def test_get_latest_schema_version_is_noop(self, valkey_db):
+    def test_get_latest_schema_version_defaults_to_2_0_0(self, valkey_db, mock_client):
+        # Unstamped must report "2.0.0" — None makes the manager skip the table.
+        mock_client.get.return_value = None
         result = valkey_db.get_latest_schema_version(table_name="sessions")
-        assert result is None
+        assert result == "2.0.0"
 
-    def test_upsert_schema_version_is_noop(self, valkey_db):
-        # Should not raise
-        valkey_db.upsert_schema_version(table_name="sessions", version="1.0.0")
+    def test_get_latest_schema_version_returns_stamp(self, valkey_db, mock_client):
+        mock_client.get.return_value = b"3.0.0"
+        result = valkey_db.get_latest_schema_version(table_name="sessions")
+        assert result == "3.0.0"
+        mock_client.get.assert_called_with(valkey_db._schema_version_key("sessions"))
+
+    def test_upsert_schema_version_writes_stamp(self, valkey_db, mock_client):
+        valkey_db.upsert_schema_version(table_name="sessions", version="3.0.0")
+        mock_client.set.assert_called_with(valkey_db._schema_version_key("sessions"), "3.0.0")
 
 
 # -- Trace tests --
@@ -496,6 +504,25 @@ class TestKnowledge:
         mock_client.delete.return_value = 1
         valkey_db.delete_knowledge_content(id="k1")
         assert mock_client.delete.called
+
+    def test_delete_knowledge_content_leaves_shared_row_to_admin(self, valkey_db, mock_client):
+        # An unowned row is org-wide content: a scoped caller cannot remove it
+        mock_client.get.return_value = _serialize({"id": "k1", "name": "test"})
+        mock_client.delete.return_value = 1
+        valkey_db.delete_knowledge_content(id="k1", user_id="alice")
+        assert not mock_client.delete.called
+
+    def test_delete_knowledge_content_scoped_to_owner(self, valkey_db, mock_client):
+        mock_client.get.return_value = _serialize({"id": "k1", "name": "test", "user_id": "alice"})
+        mock_client.delete.return_value = 1
+        valkey_db.delete_knowledge_content(id="k1", user_id="alice")
+        assert mock_client.delete.called
+
+    def test_delete_knowledge_content_blocks_other_users_row(self, valkey_db, mock_client):
+        mock_client.get.return_value = _serialize({"id": "k1", "name": "test", "user_id": "bob"})
+        mock_client.delete.return_value = 1
+        valkey_db.delete_knowledge_content(id="k1", user_id="alice")
+        assert not mock_client.delete.called
 
 
 # -- Table exists test --

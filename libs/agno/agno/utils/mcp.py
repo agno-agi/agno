@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_error, log_exception
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from agno.run import RunContext
     from agno.team.team import Team
     from agno.tools.mcp.mcp import MCPTools
-    from agno.tools.mcp.multi_mcp import MultiMCPTools
 
 
 def get_default_toolkit_name(
@@ -88,8 +87,7 @@ def _strip_url_for_name(url: str) -> str:
 def get_entrypoint_for_tool(
     tool: MCPTool,
     session: ClientSession,
-    mcp_tools_instance: Optional[Union["MCPTools", "MultiMCPTools"]] = None,
-    server_idx: int = 0,
+    mcp_tools_instance: Optional["MCPTools"] = None,
 ):
     """
     Return an entrypoint for an MCP tool.
@@ -97,8 +95,7 @@ def get_entrypoint_for_tool(
     Args:
         tool: The MCP tool to create an entrypoint for
         session: The MCP ClientSession to use
-        mcp_tools_instance: Optional MCPTools or MultiMCPTools instance
-        server_idx: Index of the server (for MultiMCPTools)
+        mcp_tools_instance: Optional MCPTools instance
 
     Returns:
         Callable: The entrypoint function for the tool
@@ -226,19 +223,6 @@ def get_entrypoint_for_tool(
             # If mcp_tools_instance has header_provider and run_context is provided,
             # this will create/reuse a session with dynamic headers.
             if mcp_tools_instance and hasattr(mcp_tools_instance, "get_session_for_run"):
-                # Import here to avoid circular imports
-                from agno.tools.mcp.multi_mcp import MultiMCPTools
-
-                # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context.
-                if isinstance(mcp_tools_instance, MultiMCPTools):
-                    active_session = await mcp_tools_instance.get_session_for_run(
-                        run_context=_agno_run_context,
-                        server_idx=server_idx,
-                        agent=_agno_agent,
-                        team=_agno_team,
-                    )
-                    return await _call_with_session(active_session)
-
                 if (
                     hasattr(mcp_tools_instance, "should_use_temporary_run_session")
                     and mcp_tools_instance.should_use_temporary_run_session(_agno_run_context)

@@ -17,21 +17,19 @@ from agno.db.dynamo.utils import (
     build_topic_filter_expression,
     calculate_date_metrics,
     create_table_if_not_exists,
-    deserialize_cultural_knowledge_from_db,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
+    deserialize_metrics_date,
     deserialize_session_result,
     execute_query_with_pagination,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     merge_with_existing_session,
     prepare_session_data,
-    serialize_cultural_knowledge_for_db,
     serialize_eval_record,
     serialize_knowledge_row,
     serialize_to_dynamo_item,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -40,8 +38,10 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -70,7 +70,6 @@ class DynamoDb(BaseDb):
         aws_secret_access_key: Optional[str] = None,
         session_table: Optional[str] = None,
         runs_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -88,7 +87,6 @@ class DynamoDb(BaseDb):
             aws_access_key_id: AWS access key ID.
             aws_secret_access_key: AWS secret access key.
             session_table: The name of the session table.
-            culture_table: The name of the culture table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
             eval_table: The name of the eval table.
@@ -105,7 +103,6 @@ class DynamoDb(BaseDb):
             id=id,
             session_table=session_table,
             runs_table=runs_table,
-            culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -158,7 +155,6 @@ class DynamoDb(BaseDb):
             ("metrics", self.metrics_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
-            ("culture", self.culture_table_name),
         ]
 
         for table_type, table_name in tables_to_create:
@@ -172,7 +168,7 @@ class DynamoDb(BaseDb):
         Get table name and ensure the table exists, creating it if needed.
 
         Args:
-            table_type: Type of table ("sessions", "memories", "metrics", "evals", "knowledge", "culture", "traces", "spans")
+            table_type: Type of table ("sessions", "memories", "metrics", "evals", "knowledge", "traces", "spans")
 
         Returns:
             str: The table name
@@ -194,8 +190,6 @@ class DynamoDb(BaseDb):
             table_name = self.eval_table_name
         elif table_type == "knowledge":
             table_name = self.knowledge_table_name
-        elif table_type == "culture":
-            table_name = self.culture_table_name
         elif table_type == "traces":
             table_name = self.trace_table_name
         elif table_type == "spans":
@@ -213,19 +207,41 @@ class DynamoDb(BaseDb):
 
         return table_name
 
-    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+    def _ensure_schema_versions_table(self) -> None:
+        from agno.db.dynamo.schemas import SCHEMA_VERSIONS_TABLE_SCHEMA
+        from agno.db.dynamo.utils import create_table_if_not_exists
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; DynamoDB has no per-table versioning here so it
-        is ignored.
+        schema = SCHEMA_VERSIONS_TABLE_SCHEMA.copy()
+        schema["TableName"] = self.versions_table_name
+        create_table_if_not_exists(self.client, self.versions_table_name, schema)
+
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
+
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        self._ensure_schema_versions_table()
+        response = self.client.get_item(
+            TableName=self.versions_table_name,
+            Key={"table_name": {"S": table_name}},
+        )
+        item = response.get("Item")
+        if not item:
+            return "2.0.0"
+        return item.get("version", {}).get("S") or "2.0.0"
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table."""
+        self._ensure_schema_versions_table()
+        self.client.put_item(
+            TableName=self.versions_table_name,
+            Item={
+                "table_name": {"S": table_name},
+                "version": {"S": version},
+                "updated_at": {"N": str(int(time.time()))},
+            },
+        )
 
     # --- Runs ---
 
@@ -1637,9 +1653,13 @@ class DynamoDb(BaseDb):
                 return None
 
             # Get timestamp range for session data
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             # Get all sessions for the date range
@@ -1670,8 +1690,8 @@ class DynamoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per user_id, plus the empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             # Store metrics in DynamoDB
             if metrics_records:
@@ -1719,26 +1739,11 @@ class DynamoDb(BaseDb):
                 metrics_items.extend(response.get("Items", []))
 
             if metrics_items:
-                # Find the latest date with metrics
-                latest_complete_date = None
-                incomplete_dates = []
-
-                for item in metrics_items:
-                    metrics_data = deserialize_from_dynamodb_item(item)
-                    record_date = datetime.fromisoformat(metrics_data["date"]).date()
-                    is_completed = metrics_data.get("completed", False)
-
-                    if is_completed:
-                        if latest_complete_date is None or record_date > latest_complete_date:
-                            latest_complete_date = record_date
-                    else:
-                        incomplete_dates.append(record_date)
-
-                # Return the earliest incomplete date, or the day after the latest complete date
-                if incomplete_dates:
-                    return min(incomplete_dates)
-                elif latest_complete_date:
-                    return latest_complete_date + timedelta(days=1)
+                resume_date = metrics_starting_date_from_records(
+                    [deserialize_from_dynamodb_item(item) for item in metrics_items]
+                )
+                if resume_date is not None:
+                    return resume_date
 
             # 2. No metrics records. Return the date of the first recorded session.
             sessions_table_name = self._get_table("sessions")
@@ -1869,7 +1874,10 @@ class DynamoDb(BaseDb):
             raise e
 
     def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Upsert a single metrics record, checking for existing records with the same date.
+        """Upsert a single metrics record.
+
+        Do not dedupe via the ``date-aggregation_period-index`` GSI: it lacks ``user_id``,
+        so a Query collapses every per-user record for a date into one.
 
         Args:
             table_name: The DynamoDB table name
@@ -1879,116 +1887,22 @@ class DynamoDb(BaseDb):
             Optional[Dict[str, Any]]: The upserted record or None if failed
         """
         try:
-            date_str = record.get("date")
-            if not date_str:
-                log_error("Metrics record missing date field")
+            if not record.get("id"):
+                log_error("Metrics record missing id field")
                 return None
 
-            # Convert date object to string if needed
-            if hasattr(date_str, "isoformat"):
-                date_str = date_str.isoformat()
+            record["updated_at"] = int(time.time())
 
-            # Check if a record already exists for this date
-            existing_record = self._get_existing_metrics_record(table_name, date_str)
-
-            if existing_record:
-                return self._update_existing_metrics_record(table_name, existing_record, record)
-            else:
-                return self._create_new_metrics_record(table_name, record)
-
-        except Exception as e:
-            log_error(f"Failed to upsert single metrics record: {str(e)}")
-            raise e
-
-    def _get_existing_metrics_record(self, table_name: str, date_str: str) -> Optional[Dict[str, Any]]:
-        """Get existing metrics record for a given date.
-
-        Args:
-            table_name: The DynamoDB table name
-            date_str: The date string to search for
-
-        Returns:
-            Optional[Dict[str, Any]]: The existing record or None if not found
-        """
-        try:
-            # Query using the date-aggregation_period-index
-            response = self.client.query(
-                TableName=table_name,
-                IndexName="date-aggregation_period-index",
-                KeyConditionExpression="#date = :date AND aggregation_period = :period",
-                ExpressionAttributeNames={"#date": "date"},
-                ExpressionAttributeValues={
-                    ":date": {"S": date_str},
-                    ":period": {"S": "daily"},
-                },
-                Limit=1,
-            )
-
-            items = response.get("Items", [])
-            if items:
-                return deserialize_from_dynamodb_item(items[0])
-            return None
-
-        except Exception as e:
-            log_error(f"Failed to get existing metrics record for date {date_str}: {str(e)}")
-            raise e
-
-    def _update_existing_metrics_record(
-        self,
-        table_name: str,
-        existing_record: Dict[str, Any],
-        new_record: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """Update an existing metrics record.
-
-        Args:
-            table_name: The DynamoDB table name
-            existing_record: The existing record
-            new_record: The new record data
-
-        Returns:
-            Optional[Dict[str, Any]]: The updated record or None if failed
-        """
-        try:
-            # Use the existing record's ID
-            new_record["id"] = existing_record["id"]
-            new_record["updated_at"] = int(time.time())
-
-            # Prepare and serialize the record
-            prepared_record = self._prepare_metrics_record_for_dynamo(new_record)
-            item = self._serialize_metrics_to_dynamo_item(prepared_record)
-
-            # Update the record
-            self.client.put_item(TableName=table_name, Item=item)
-
-            return new_record
-
-        except Exception as e:
-            log_error(f"Failed to update existing metrics record: {str(e)}")
-            raise e
-
-    def _create_new_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create a new metrics record.
-
-        Args:
-            table_name: The DynamoDB table name
-            record: The record to create
-
-        Returns:
-            Optional[Dict[str, Any]]: The created record or None if failed
-        """
-        try:
-            # Prepare and serialize the record
             prepared_record = self._prepare_metrics_record_for_dynamo(record)
             item = self._serialize_metrics_to_dynamo_item(prepared_record)
 
-            # Create the record
+            # The id is deterministic per (date, user_id, period), so put_item is itself the upsert
             self.client.put_item(TableName=table_name, Item=item)
 
             return record
 
         except Exception as e:
-            log_error(f"Failed to create new metrics record: {str(e)}")
+            log_error(f"Failed to upsert single metrics record: {str(e)}")
             raise e
 
     def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -2052,6 +1966,7 @@ class DynamoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Any], Optional[int]]:
         """
         Get metrics from the database.
@@ -2059,6 +1974,8 @@ class DynamoDb(BaseDb):
         Args:
             starting_date: The starting date to filter metrics by.
             ending_date: The ending date to filter metrics by.
+            user_id: When set, returns only that user's bucket. ``None`` returns every bucket,
+                including the unowned one.
 
         Returns:
             Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the total count.
@@ -2102,13 +2019,30 @@ class DynamoDb(BaseDb):
                 items.extend(response.get("Items", []))
 
             # Convert to metrics data
-            metrics_data = []
-            for item in items:
-                metric_data = deserialize_from_dynamodb_item(item)
-                if metric_data:
-                    metrics_data.append(metric_data)
+            records = [record for record in (deserialize_from_dynamodb_item(item) for item in items) if record]
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                records = drop_legacy_metrics(records)
 
-            return metrics_data, len(metrics_data)
+            metrics_data = []
+            for metric_data in records:
+                # Filter by user_id in-memory (user_id is not a key attribute)
+                if user_id is not None and metric_data.get("user_id") != user_id:
+                    continue
+                # The empty-string bucket holds unowned sessions
+                if metric_data.get("user_id") == "":
+                    metric_data["user_id"] = None
+                # Stored as an ISO string, and a string renders timezone-naive at the API layer
+                metric_data["date"] = deserialize_metrics_date(metric_data.get("date"))
+                metrics_data.append(metric_data)
+
+            # Latest updated_at across the returned rows, like every other adapter
+            latest_updated_at = None
+            if metrics_data:
+                latest_updated_at = max(metric.get("updated_at") or 0 for metric in metrics_data)
+
+            return metrics_data, latest_updated_at
 
         except Exception as e:
             log_error(f"Failed to get metrics: {str(e)}")
@@ -2116,11 +2050,21 @@ class DynamoDb(BaseDb):
 
     # --- Knowledge methods ---
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        """Unscoped callers see every row. Scoped callers see their own rows and unowned ones."""
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only rows owned by this user are deleted. Unowned
+                rows are shared content and are left alone.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2128,19 +2072,27 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("knowledge")
 
-            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+            kwargs: Dict[str, Any] = {"TableName": table_name, "Key": {"id": {"S": id}}}
+            if user_id is not None:
+                kwargs["ConditionExpression"] = "user_id = :user_id"
+                kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
+            self.client.delete_item(**kwargs)
 
             log_debug(f"Deleted knowledge content {id}")
+
+        except self.client.exceptions.ConditionalCheckFailedException:
+            log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
 
         except Exception as e:
             log_error(f"Failed to delete knowledge content {id}: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, the row is only returned if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2150,10 +2102,13 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
 
             item = response.get("Item")
-            if item:
-                return deserialize_knowledge_row(item)
+            if not item:
+                return None
 
-            return None
+            row = deserialize_knowledge_row(item)
+            if not self._knowledge_row_is_visible(row, user_id):
+                return None
+            return row
 
         except Exception as e:
             log_error(f"Failed to get knowledge content {id}: {str(e)}")
@@ -2166,6 +2121,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2175,6 +2131,7 @@ class DynamoDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, only rows owned by this user or unowned rows are returned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2206,6 +2163,10 @@ class DynamoDb(BaseDb):
                     knowledge_rows.append(knowledge_row)
                 except Exception as e:
                     log_error(f"Failed to deserialize knowledge row: {str(e)}")
+
+            # Filter by user_id if provided
+            if user_id is not None:
+                knowledge_rows = [row for row in knowledge_rows if self._knowledge_row_is_visible(row, user_id)]
 
             # Apply linked_to filter if provided
             if linked_to is not None:
@@ -2247,6 +2208,14 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("knowledge", create_table_if_not_found=True)
+
+            # A scoped write must not overwrite an item it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                response = self.client.get_item(TableName=table_name, Key={"id": {"S": knowledge_row.id}})
+                stored = response.get("Item")
+                if stored is not None and stored.get("user_id", {}).get("S") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             item = serialize_knowledge_row(knowledge_row)
 
             self.client.put_item(TableName=table_name, Item=item)
@@ -2310,8 +2279,6 @@ class DynamoDb(BaseDb):
                     delete_requests.append({"DeleteRequest": {"Key": {"run_id": {"S": eval_run_id}}}})
 
                 batch_write_with_retry(self.client, {self.eval_table_name: delete_requests})
-                if delete_requests:
-                    self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete eval runs: {str(e)}")
@@ -2487,9 +2454,12 @@ class DynamoDb(BaseDb):
                 },
                 ReturnValues="ALL_NEW",
             )
-            # Only rename if owned by this user (also fails when the run is absent).
+            # Avoid upserting a phantom item when the run doesn't exist. Such an item carries
+            # no eval_type, and every later read of the table fails on it.
+            update_kwargs["ConditionExpression"] = "attribute_exists(run_id)"
+            # Only rename if owned by this user.
             if user_id is not None:
-                update_kwargs["ConditionExpression"] = "user_id = :user_id"
+                update_kwargs["ConditionExpression"] += " AND user_id = :user_id"
                 update_kwargs["ExpressionAttributeValues"][":user_id"] = {"S": user_id}
 
             try:
@@ -2535,160 +2505,6 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to set owner on eval run {eval_run_id}: {str(e)}")
-            raise e
-
-    # -- Culture methods --
-
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database."""
-        try:
-            table_name = self._get_table("culture")
-            response = self.client.scan(TableName=table_name, ProjectionExpression="id")
-
-            with self.client.batch_writer(table_name) as batch:
-                for item in response.get("Items", []):
-                    batch.delete_item(Key={"id": item["id"]})
-        except Exception as e:
-            log_error(f"Failed to clear cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural knowledge entry from the database."""
-        try:
-            table_name = self._get_table("culture")
-            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
-        except Exception as e:
-            log_error(f"Failed to delete cultural knowledge {id}: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural knowledge entry from the database."""
-        try:
-            table_name = self._get_table("culture")
-            response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
-
-            item = response.get("Item")
-            if not item:
-                return None
-
-            db_row = deserialize_from_dynamodb_item(item)
-            if not deserialize:
-                return db_row
-
-            return deserialize_cultural_knowledge_from_db(db_row)
-        except Exception as e:
-            log_error(f"Failed to get cultural knowledge {id}: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge from the database."""
-        try:
-            table_name = self._get_table("culture")
-
-            # Build filter expression
-            filter_expressions = []
-            expression_values = {}
-
-            if name:
-                filter_expressions.append("#name = :name")
-                expression_values[":name"] = {"S": name}
-            if agent_id:
-                filter_expressions.append("agent_id = :agent_id")
-                expression_values[":agent_id"] = {"S": agent_id}
-            if team_id:
-                filter_expressions.append("team_id = :team_id")
-                expression_values[":team_id"] = {"S": team_id}
-
-            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
-            if filter_expressions:
-                scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
-                scan_kwargs["ExpressionAttributeValues"] = expression_values
-                if name:
-                    scan_kwargs["ExpressionAttributeNames"] = {"#name": "name"}
-
-            # Execute scan
-            response = self.client.scan(**scan_kwargs)
-            items = response.get("Items", [])
-
-            # Continue scanning if there's more data
-            while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
-                items.extend(response.get("Items", []))
-
-            # Deserialize items from DynamoDB format
-            db_rows = [deserialize_from_dynamodb_item(item) for item in items]
-
-            # Apply sorting
-            if sort_by:
-                reverse = sort_order == "desc" if sort_order else False
-                db_rows.sort(key=lambda x: x.get(sort_by, ""), reverse=reverse)
-
-            # Apply pagination
-            total_count = len(db_rows)
-            if limit and page:
-                start = (page - 1) * limit
-                db_rows = db_rows[start : start + limit]
-            elif limit:
-                db_rows = db_rows[:limit]
-
-            if not deserialize:
-                return db_rows, total_count
-
-            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
-        except Exception as e:
-            log_error(f"Failed to get all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural knowledge entry into the database."""
-        try:
-            from uuid import uuid4
-
-            table_name = self._get_table("culture", create_table_if_not_found=True)
-
-            if not cultural_knowledge.id:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the item dict with serialized content
-            item_dict = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            # Convert to DynamoDB format
-            item = serialize_to_dynamo_item(item_dict)
-            self.client.put_item(TableName=table_name, Item=item)
-
-            return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
-
-        except Exception as e:
-            log_error(f"Failed to upsert cultural knowledge: {str(e)}")
             raise e
 
     # --- Traces ---

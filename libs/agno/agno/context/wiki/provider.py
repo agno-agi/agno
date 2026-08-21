@@ -209,6 +209,17 @@ class WikiContextProvider(ContextProvider):
         return self._ensure_read_agent()
 
     def _update_tool(self):
+        """Override base _update_tool for wiki's sync → run → commit lifecycle.
+
+        Base class _update_tool just runs the sub-agent and returns. Wiki needs:
+        1. Sync before writing (pull latest from remote)
+        2. Hold git_lock during write (prevent race with scheduled syncs)
+        3. Commit after writing (auto-generate commit message, push)
+        4. Append commit note to the result
+
+        Uses the same streaming gating as base: stream_sub_agent_events=True
+        streams via _arun_sub_agent_stream, False runs via _arun_sub_agent.
+        """
         from agno.context.provider import serialize_answer
 
         provider = self
@@ -218,16 +229,16 @@ class WikiContextProvider(ContextProvider):
             try:
                 await provider.asetup()
 
-                answer: Answer | None = None
                 async with provider._git_lock:
                     await provider.backend.sync()
 
                     agent = provider._ensure_write_agent()
-                    async for chunk in provider._stream_from_agent(agent, instruction, run_context):
-                        if isinstance(chunk, Answer):
-                            answer = chunk
-                        else:
+                    if provider.stream_sub_agent_events:
+                        async for chunk in provider._arun_sub_agent_stream(agent, instruction, run_context):
                             yield chunk
+                        answer = None
+                    else:
+                        answer = await provider._arun_sub_agent(agent, instruction, run_context)
 
                     commit = await provider.backend.commit_after_write(model=provider.model)
 
@@ -237,13 +248,16 @@ class WikiContextProvider(ContextProvider):
                         f"({commit.files_changed} file(s)): {commit.message}"
                     )
                     note = f"\n\nCommitted {commit.sha[:8]} ({commit.files_changed} file(s)): {commit.message}"
-                    if answer is not None:
+                    if provider.stream_sub_agent_events:
+                        yield note
+                    elif answer is not None:
                         answer = Answer(results=answer.results, text=(answer.text or "") + note)
 
-                if answer is not None:
-                    yield json.dumps(serialize_answer(answer))
-                else:
-                    yield json.dumps({})
+                if not provider.stream_sub_agent_events:
+                    if answer is not None:
+                        yield json.dumps(serialize_answer(answer))
+                    else:
+                        yield json.dumps({})
 
             except Exception as exc:
                 yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})

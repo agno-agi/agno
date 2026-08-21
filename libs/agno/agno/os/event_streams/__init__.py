@@ -13,6 +13,13 @@ from agno.os.event_streams.in_memory import InMemoryEventStream
 from agno.os.event_streams.redis import RedisEventStream
 
 _event_stream: Optional[BaseEventStream] = None
+# True once set_event_stream() has been called. The lazily-created in-memory
+# default does NOT set this - it is what lets queue wiring distinguish "the
+# process default nobody chose" (replaceable) from an explicitly configured
+# stream (never replaced). An isinstance check cannot make that distinction:
+# an explicitly passed InMemoryEventStream, or a subclass such as a test
+# double, is indistinguishable by type from the default.
+_event_stream_explicitly_set: bool = False
 
 
 def get_event_stream() -> BaseEventStream:
@@ -33,13 +40,24 @@ def set_event_stream(stream: BaseEventStream) -> None:
     the other carries events back out. Configure both with the same Redis
     clients.
     """
-    global _event_stream
+    global _event_stream, _event_stream_explicitly_set
     _event_stream = stream
+    _event_stream_explicitly_set = True
+
+
+def event_stream_explicitly_set() -> bool:
+    """Whether a stream was ever installed via ``set_event_stream()``.
+
+    False means the process is running on (or will lazily create) the
+    in-memory default, which coordination wiring may replace.
+    """
+    return _event_stream_explicitly_set
 
 
 __all__ = [
     "BaseEventStream",
     "InMemoryEventStream",
+    "event_stream_explicitly_set",
     "get_event_stream",
     "set_event_stream",
 ]
