@@ -29,7 +29,7 @@ from agno.models.google import Gemini
 # Create an agent with Parallel web search grounding
 agent = Agent(
     model=Gemini(
-        id="gemini-2.0-flash",
+        id="gemini-3.7-flash",
         vertexai=True,  # Required for Parallel grounding
         parallel_search=True,
         # Optional: provide API key directly instead of env var.

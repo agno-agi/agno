@@ -1,7 +1,6 @@
 from dataclasses import asdict, dataclass, field
 from inspect import iscoroutinefunction
 from os import getenv
-from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
@@ -36,6 +35,23 @@ class BinaryJudgeResponse(BaseModel):
 
     passed: bool = Field(..., description="Pass/fail result.")
     reason: str = Field(..., description="Detailed reasoning for the evaluation.")
+
+
+def _build_judge_prompt(input: str, output: str) -> str:
+    """The prompt for one input/output evaluation, shared by the sync and async judge
+    sites so they cannot drift apart.
+
+    The judged output is untrusted: it is fenced behind a per-call random nonce, and
+    the untrusted-data instruction lives inside the prompt itself -- a caller-supplied
+    evaluator_agent bypasses instruction building, so prompt-carried protection is the
+    only kind that holds there.
+    """
+    # Function-level import: pulling agno.scorer at module scope would re-enter the
+    # Agent import cycle the eval package's lazy __getattr__ exists to avoid.
+    from agno.scorer._fence import fence_untrusted
+
+    fenced_output = fence_untrusted(output, label="output")
+    return f"<input>\n{input}\n</input>\n\n{fenced_output}\n"
 
 
 @dataclass
@@ -282,15 +298,7 @@ class AgentAsJudgeEval(BaseEval):
     ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair."""
         try:
-            prompt = dedent(f"""\
-                <input>
-                {input}
-                </input>
-
-                <output>
-                {output}
-                </output>
-            """)
+            prompt = _build_judge_prompt(input=input, output=output)
 
             response = evaluator_agent.run(prompt, stream=False)
 
@@ -347,15 +355,7 @@ class AgentAsJudgeEval(BaseEval):
     ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair asynchronously."""
         try:
-            prompt = dedent(f"""\
-                <input>
-                {input}
-                </input>
-
-                <output>
-                {output}
-                </output>
-            """)
+            prompt = _build_judge_prompt(input=input, output=output)
 
             response = await evaluator_agent.arun(prompt, stream=False)  # type: ignore[misc]
 

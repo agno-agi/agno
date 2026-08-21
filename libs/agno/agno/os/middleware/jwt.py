@@ -39,18 +39,53 @@ INTERNAL_SCHEDULER_USER_ID = "__scheduler__"
 _AUTH_COMPLETE_ATTR = "_agno_auth_complete"
 
 
+# The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
+# A double-underscore sentinel (like ``__scheduler__``), not a bare ``oauth:`` prefix, so
+# it can never collide with a real IdP subject -- ``oauth:`` could match a hand-namespaced
+# customer sub and 401 it. Single source of truth: the built-in AS mints with this exact
+# constant (agno.os.mcp_auth_builtin imports it), so the minting and the reserved-guard
+# below cannot drift.
+MCP_OAUTH_PRINCIPAL_PREFIX = "__oauth__:"
+
+# Server-assigned identity namespaces a human JWT must never claim as its subject.
+# Service accounts live in ``sa:``, the scheduler is ``__scheduler__``, and the built-in
+# MCP OAuth server assigns ``__oauth__:`` to its connected clients.
+RESERVED_PRINCIPAL_PREFIXES = (SERVICE_ACCOUNT_PRINCIPAL_PREFIX, MCP_OAUTH_PRINCIPAL_PREFIX)
+
+
 def is_reserved_principal(user_id: Any) -> bool:
     """Whether a JWT subject is trying to claim a system-reserved identity.
 
-    Service-account principals live in the ``sa:`` namespace and the scheduler runs as
-    ``__scheduler__``; both are first-party identities the server assigns, never something
-    a human JWT should present. Copying such a ``sub`` into ``request.state.user_id`` would
-    let any JWT holder impersonate a service account (or the scheduler) in run attribution,
-    session-ownership checks, and audit trails. Callers reject the token instead.
+    Service-account principals live in the ``sa:`` namespace, the scheduler runs as
+    ``__scheduler__``, and MCP-OAuth clients live in ``__oauth__:``; all are first-party
+    identities the server assigns, never something a human JWT should present. Copying
+    such a ``sub`` into ``request.state.user_id`` would let any JWT holder impersonate
+    that principal in run attribution, session-ownership checks, and audit trails.
+    Callers reject the token instead.
     """
     return isinstance(user_id, str) and (
-        user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX) or user_id == INTERNAL_SCHEDULER_USER_ID
+        user_id.startswith(RESERVED_PRINCIPAL_PREFIXES) or user_id == INTERNAL_SCHEDULER_USER_ID
     )
+
+
+def resolve_expected_audience(
+    *,
+    verify_audience: bool,
+    audience: Optional[Union[str, Iterable[str]]],
+    os_id: Optional[str],
+) -> Optional[Union[str, Iterable[str]]]:
+    """The expected JWT audience for ``JWTValidator.validate_token``.
+
+    The configured audience, falling back to the AgentOS id, and only when audience
+    verification is enabled. Single source of this rule so every JWT-verifying surface --
+    the parent ``AuthMiddleware`` (REST), the MCP ``JWTBearerTokenVerifier``, and the
+    WebSocket auth path -- resolves it identically. (The MCP copy once lacked the fallback,
+    enforcing ``verify_audience=True`` on REST but not ``/mcp``; keeping it here stops that
+    class of drift recurring across the three call sites.)
+    """
+    if not verify_audience:
+        return None
+    return audience or os_id
 
 
 class TokenSource(str, Enum):
@@ -995,9 +1030,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         try:
             # Validate token and extract claims (with audience verification if configured)
-            expected_audience = None
-            if self.verify_audience:
-                expected_audience = self.audience or agent_os_id
+            expected_audience = resolve_expected_audience(
+                verify_audience=self.verify_audience, audience=self.audience, os_id=agent_os_id
+            )
             payload: Dict[str, Any] = self.validator.validate_token(token, expected_audience)  # type: ignore
 
             # Extract standard claims and store in request.state

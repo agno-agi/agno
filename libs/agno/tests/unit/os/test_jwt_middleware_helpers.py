@@ -707,6 +707,24 @@ def test_is_reserved_principal_matches_reserved_namespaces():
     assert not is_reserved_principal(123)
 
 
+def test_resolve_expected_audience():
+    """The single source of the audience-fallback rule shared by REST, /mcp, and WS.
+
+    verify_audience off => no check; on => configured audience, else the AgentOS id. The
+    third case is the invariant that once drifted (enforced on REST but not /mcp).
+    """
+    from agno.os.middleware.jwt import resolve_expected_audience
+
+    # verify_audience off: never checked, regardless of audience/os_id.
+    assert resolve_expected_audience(verify_audience=False, audience="a", os_id="os-1") is None
+    # on + explicit audience: the audience wins.
+    assert resolve_expected_audience(verify_audience=True, audience="a", os_id="os-1") == "a"
+    # on + no audience: fall back to the AgentOS id (the drift-bug guard).
+    assert resolve_expected_audience(verify_audience=True, audience=None, os_id="os-1") == "os-1"
+    # on + neither: nothing to check against.
+    assert resolve_expected_audience(verify_audience=True, audience=None, os_id=None) is None
+
+
 def _bearer_request(sub, secret, path="/agents"):
     from datetime import UTC, datetime, timedelta
     from types import SimpleNamespace

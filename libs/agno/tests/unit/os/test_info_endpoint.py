@@ -42,18 +42,31 @@ class TestInfoEndpointBasics:
         assert body["team_count"] == 0
         assert body["workflow_count"] == 0
 
+    def test_returns_name_and_os_id(self):
+        client = _build_client(name="Customer Support", id="os-123")
+        body = client.get("/info").json()
+        assert body["name"] == "Customer Support"
+        assert body["os_id"] == "os-123"
+
+    def test_name_omitted_and_os_id_generated(self):
+        client = _build_client()
+        body = client.get("/info").json()
+        assert body["name"] is None
+        # AgentOS auto-generates an id when none is passed, so os_id is always present.
+        assert body["os_id"]
+
 
 class TestInfoEndpointMcpDiscovery:
     def test_mcp_disabled_by_default(self):
         client = _build_client()
         body = client.get("/info").json()
-        assert body["mcp"] == {"enabled": False, "path": None}
+        assert body["mcp"] == {"enabled": False, "path": None, "oauth": None}
 
     def test_mcp_enabled_reports_path(self):
         pytest.importorskip("fastmcp")
-        client = _build_client(enable_mcp_server=True)
+        client = _build_client(mcp_server=True)
         body = client.get("/info").json()
-        assert body["mcp"] == {"enabled": True, "path": "/mcp"}
+        assert body["mcp"] == {"enabled": True, "path": "/mcp", "oauth": None}
 
 
 class TestInfoEndpointAuthMode:

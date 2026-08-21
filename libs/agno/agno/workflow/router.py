@@ -16,9 +16,9 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_error, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import (
     HumanReview,
     OnReject,
@@ -27,6 +27,7 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
+    warn_session_state_param_deprecated,
 )
 
 WorkflowSteps = List[
@@ -301,26 +302,41 @@ class Router:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Router":
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.steps import Steps
 
-        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+                return Loop.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Parallel":
-                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+                return Parallel.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Steps":
-                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+                return Steps.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Condition":
-                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+                return Condition.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Router":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
 
         # Deserialize selector
         selector_data = data.get("selector")
@@ -337,13 +353,21 @@ class Router:
                 selector = selector_data
             else:
                 # Function name - look up in registry
-                if registry:
-                    func = registry.get_function(selector_data)
-                    if func is None:
-                        raise ValueError(f"Selector function '{selector_data}' not found in registry")
-                    selector = func
-                else:
-                    raise ValueError(f"Registry required to deserialize selector function '{selector_data}'")
+                func = registry.get_function(selector_data) if registry else None
+                if func is None:
+                    if registry:
+                        message = f"Selector function '{selector_data}' not found in registry"
+                    else:
+                        message = f"Registry required to deserialize selector function '{selector_data}'"
+                    if strict:
+                        from agno.exceptions import ComponentRehydrationError
+
+                        raise ComponentRehydrationError(message)
+                    from agno.workflow.step import _unresolvable_callable_placeholder
+
+                    log_warning(message)
+                    func = _unresolvable_callable_placeholder("Router selector", selector_data)
+                selector = func
         else:
             raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
 
@@ -563,7 +587,12 @@ class Router:
         except Exception:
             return False
 
-    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
+    def _route_steps(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> List[Step]:  # type: ignore[return-value]
         """Route to the appropriate steps based on input."""
         # Handle CEL expression selector
         if isinstance(self.selector, str):
@@ -582,13 +611,17 @@ class Router:
 
         # Handle callable selector
         if callable(self.selector):
+            has_run_context = run_context is not None and self._selector_has_run_context_param()
             has_session_state = session_state is not None and self._selector_has_session_state_param()
             has_step_choices = self._selector_has_step_choices_param()
 
             # Build kwargs based on what parameters the selector accepts
             kwargs: Dict[str, Any] = {}
+            if has_run_context:
+                kwargs["run_context"] = run_context
             if has_session_state:
                 kwargs["session_state"] = session_state
+                warn_session_state_param_deprecated(self.selector, "Router selector functions")
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
@@ -598,7 +631,12 @@ class Router:
 
         return []
 
-    async def _aroute_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
+    async def _aroute_steps(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> List[Step]:  # type: ignore[return-value]
         """Async version of step routing."""
         # Handle CEL expression selector (CEL evaluation is synchronous)
         if isinstance(self.selector, str):
@@ -617,13 +655,17 @@ class Router:
 
         # Handle callable selector
         if callable(self.selector):
+            has_run_context = run_context is not None and self._selector_has_run_context_param()
             has_session_state = session_state is not None and self._selector_has_session_state_param()
             has_step_choices = self._selector_has_step_choices_param()
 
             # Build kwargs based on what parameters the selector accepts
             kwargs: Dict[str, Any] = {}
+            if has_run_context:
+                kwargs["run_context"] = run_context
             if has_session_state:
                 kwargs["session_state"] = session_state
+                warn_session_state_param_deprecated(self.selector, "Router selector functions")
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
@@ -644,6 +686,17 @@ class Router:
         try:
             sig = inspect.signature(self.selector)
             return "session_state" in sig.parameters
+        except Exception:
+            return False
+
+    def _selector_has_run_context_param(self) -> bool:
+        """Check if the selector function has a run_context parameter."""
+        if not callable(self.selector):
+            return False
+
+        try:
+            sig = inspect.signature(self.selector)
+            return "run_context" in sig.parameters
         except Exception:
             return False
 
@@ -672,9 +725,11 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = self._route_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = self._route_steps(
+                step_input, session_state=run_context.session_state, run_context=run_context
+            )
         else:
-            steps_to_execute = self._route_steps(step_input, session_state=session_state)
+            steps_to_execute = self._route_steps(step_input, session_state=session_state, run_context=run_context)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
@@ -756,6 +811,10 @@ class Router:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} failed")
@@ -809,9 +868,11 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = self._route_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = self._route_steps(
+                step_input, session_state=run_context.session_state, run_context=run_context
+            )
         else:
-            steps_to_execute = self._route_steps(step_input, session_state=session_state)
+            steps_to_execute = self._route_steps(step_input, session_state=session_state, run_context=run_context)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if stream_events and workflow_run_response:
@@ -922,6 +983,10 @@ class Router:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} streaming failed")
@@ -987,9 +1052,13 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = await self._aroute_steps(
+                step_input, session_state=run_context.session_state, run_context=run_context
+            )
         else:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
+            steps_to_execute = await self._aroute_steps(
+                step_input, session_state=session_state, run_context=run_context
+            )
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
@@ -1075,6 +1144,10 @@ class Router:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} async failed")
@@ -1128,9 +1201,13 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = await self._aroute_steps(
+                step_input, session_state=run_context.session_state, run_context=run_context
+            )
         else:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
+            steps_to_execute = await self._aroute_steps(
+                step_input, session_state=session_state, run_context=run_context
+            )
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if stream_events and workflow_run_response:
@@ -1242,6 +1319,10 @@ class Router:
                         )
 
             except RunCancelledException:
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
                 raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")

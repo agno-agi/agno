@@ -25,9 +25,19 @@ class MCPVerifyResult:
     tools: List[str] = field(default_factory=list)
     status_code: Optional[int] = None
     error: Optional[str] = None
+    # True when the endpoint answered with an OAuth challenge (401 + WWW-Authenticate):
+    # for an OAuth-protected server that IS the healthy outcome -- the client completes
+    # the sign-in itself -- so ok is True but no tools could be listed.
+    oauth_challenge: bool = False
 
     def public_dict(self) -> Dict[str, Any]:
-        return {"ok": self.ok, "tools": len(self.tools), "status_code": self.status_code, "error": self.error}
+        return {
+            "ok": self.ok,
+            "tools": len(self.tools),
+            "status_code": self.status_code,
+            "error": self.error,
+            "oauth_challenge": self.oauth_challenge,
+        }
 
 
 def _parse_jsonrpc_body(response: httpx.Response) -> Optional[Dict[str, Any]]:
@@ -54,19 +64,24 @@ def _parse_jsonrpc_body(response: httpx.Response) -> Optional[Dict[str, Any]]:
     return parsed if isinstance(parsed, dict) else None
 
 
-def verify_mcp(mcp_url: str, token: Optional[str] = None, timeout: float = 15.0) -> MCPVerifyResult:
+def verify_mcp(
+    mcp_url: str, token: Optional[str] = None, timeout: float = 15.0, expect_oauth_challenge: bool = False
+) -> MCPVerifyResult:
     """Handshake with an MCP streamable-HTTP endpoint and list its tools.
 
-    Never raises: connection problems and malformed payloads come back as a failed
-    MCPVerifyResult so callers can report per-client outcomes.
+    With ``expect_oauth_challenge``, a 401 that carries a WWW-Authenticate header is the
+    healthy outcome (the endpoint is OAuth-protected and the client will run the sign-in
+    flow itself); the CLI cannot list tools in that case. Never raises: connection
+    problems and malformed payloads come back as a failed MCPVerifyResult so callers can
+    report per-client outcomes.
     """
     try:
-        return _verify_mcp(mcp_url, token, timeout)
+        return _verify_mcp(mcp_url, token, timeout, expect_oauth_challenge)
     except Exception as e:  # never-raises contract
         return MCPVerifyResult(ok=False, error="MCP verification failed: " + str(e))
 
 
-def _verify_mcp(mcp_url: str, token: Optional[str], timeout: float) -> MCPVerifyResult:
+def _verify_mcp(mcp_url: str, token: Optional[str], timeout: float, expect_oauth_challenge: bool) -> MCPVerifyResult:
     headers = {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
@@ -91,6 +106,17 @@ def _verify_mcp(mcp_url: str, token: Optional[str], timeout: float) -> MCPVerify
                 },
             )
             if init_response.status_code in (401, 403):
+                if expect_oauth_challenge:
+                    if init_response.headers.get("www-authenticate"):
+                        return MCPVerifyResult(ok=True, status_code=init_response.status_code, oauth_challenge=True)
+                    return MCPVerifyResult(
+                        ok=False,
+                        status_code=init_response.status_code,
+                        error=(
+                            "The MCP endpoint rejected the request without an OAuth challenge "
+                            "(no WWW-Authenticate header); clients will not be able to sign in."
+                        ),
+                    )
                 return MCPVerifyResult(
                     ok=False,
                     status_code=init_response.status_code,

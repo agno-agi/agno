@@ -1,3 +1,5 @@
+import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1115,7 +1117,31 @@ async def test_mcp_tool_result_preserves_structured_content():
     entrypoint = get_entrypoint_for_tool(mock_tool, session)
     result = await entrypoint()
 
+    assert result.content == "hello"
     assert result.metadata["structured_content"] == {"id": "u1", "name": "Ada"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_result_uses_structured_content_when_content_is_empty():
+    mock_tool = MagicMock()
+    mock_tool.name = "get_data"
+    structured_content = {"id": "u1", "name": "Ada", "role": "EMPLOYEE"}
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[],
+            isError=False,
+            structuredContent=structured_content,
+        )
+    )
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert json.loads(result.content) == structured_content
+    assert result.metadata["structured_content"] == structured_content
 
 
 @pytest.mark.asyncio
@@ -1247,6 +1273,69 @@ def test_tool_result_model_dump_roundtrip_preserves_metadata():
 
 
 # =============================================================================
+# Connection-failure error surfacing
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_mcperror_returns_actionable_tool_result():
+    """When the MCP server dies mid-call, call_tool raises McpError. The wrapper
+    must return a short, actionable ToolResult."""
+    from mcp.shared.exceptions import McpError
+    from mcp.types import ErrorData
+
+    mock_tool = MagicMock()
+    mock_tool.name = "slow_tool"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        side_effect=McpError(ErrorData(code=-32001, message="Timed out while waiting for response to ClientRequest."))
+    )
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert isinstance(result, ToolResult)
+    assert "slow_tool" in result.content
+    assert "MCP server may be unreachable" in result.content
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_cancelled_error_propagates():
+    """CancelledError must propagate so cooperative cancellation still works."""
+    mock_tool = MagicMock()
+    mock_tool.name = "slow_tool"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(side_effect=asyncio.CancelledError())
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+
+    with pytest.raises(asyncio.CancelledError):
+        await entrypoint()
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_generic_exception_still_returns_tool_result():
+    """Non-MCP, non-cancellation exceptions must be caught and surfaced
+    as a ToolResult so the agent run loop keeps moving."""
+    mock_tool = MagicMock()
+    mock_tool.name = "flaky_tool"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(side_effect=RuntimeError("something else broke"))
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert isinstance(result, ToolResult)
+    assert "something else broke" in result.content
+
+
+# =============================================================================
 # Tool-argument-name collision tests
 # =============================================================================
 
@@ -1339,6 +1428,97 @@ async def test_mcp_tool_with_run_context_argument_does_not_collide():
     called_name, called_kwargs = session.call_tool.await_args.args
     assert called_name == "log_event"
     assert called_kwargs == {"event": "click", "run_context": "from-llm"}
+
+
+# =============================================================================
+# tool_name pinning tests (security)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_model_supplied_tool_name_cannot_override_executed_tool():
+    """A model-supplied tool_name argument must not change which tool the MCP
+    server executes: the entrypoint is pinned to the tool it was built for."""
+    tool = _make_mcp_tool_mock("list_issues")
+    session = _make_session_returning("issues listed")
+
+    entrypoint = get_entrypoint_for_tool(tool, session)
+    await entrypoint(tool_name="delete_repo", repo="agno")
+
+    session.call_tool.assert_awaited_once()
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "list_issues"
+
+
+@pytest.mark.asyncio
+async def test_model_supplied_tool_name_is_forwarded_as_plain_argument():
+    """tool_name has no special meaning to the entrypoint: it is forwarded to
+    the server as an ordinary argument of the declared tool, so MCP tools that
+    legitimately declare a tool_name parameter keep working."""
+    tool = _make_mcp_tool_mock("call_helper")
+    session = _make_session_returning("done")
+
+    entrypoint = get_entrypoint_for_tool(tool, session)
+    await entrypoint(tool_name="format_disk")
+
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "call_helper"
+    assert called_kwargs == {"tool_name": "format_disk"}
+
+
+@pytest.mark.asyncio
+async def test_function_call_arguments_cannot_override_executed_tool():
+    """FunctionCall.aexecute merges model arguments into the entrypoint call;
+    a smuggled tool_name must not change the executed tool on that path."""
+    tool = _make_mcp_tool_mock("list_issues")
+    session = _make_session_returning("issues listed")
+
+    fn = Function(
+        name="list_issues",
+        entrypoint=get_entrypoint_for_tool(tool, session),
+        skip_entrypoint_processing=True,
+    )
+    fc = FunctionCall(function=fn, arguments={"tool_name": "delete_repo", "repo": "agno"})
+
+    result = await fc.aexecute()
+
+    assert result.status == "success", f"Expected success, got error: {result.error}"
+    session.call_tool.assert_awaited_once()
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "list_issues"
+    assert called_kwargs == {"tool_name": "delete_repo", "repo": "agno"}
+
+
+@pytest.mark.asyncio
+async def test_hitl_confirmation_gates_the_tool_that_executes():
+    """requires_confirmation resolves from the Function's declared name, so the
+    tool that executes must be that same name: calling an ungated tool with a
+    smuggled tool_name must not reach the confirmation-gated tool."""
+    session = _make_session_returning("ok")
+
+    gated_fn = Function(
+        name="delete_repo",
+        entrypoint=get_entrypoint_for_tool(_make_mcp_tool_mock("delete_repo"), session),
+        skip_entrypoint_processing=True,
+        requires_confirmation=True,
+    )
+    ungated_fn = Function(
+        name="list_issues",
+        entrypoint=get_entrypoint_for_tool(_make_mcp_tool_mock("list_issues"), session),
+        skip_entrypoint_processing=True,
+        requires_confirmation=False,
+    )
+
+    # The model calls the unconfirmed tool but smuggles tool_name="delete_repo"
+    fc = FunctionCall(function=ungated_fn, arguments={"tool_name": "delete_repo"})
+    result = await fc.aexecute()
+
+    assert result.status == "success", f"Expected success, got error: {result.error}"
+    # Only the declared, unconfirmed tool reached the server; the gated tool
+    # can only execute through its own Function, which pauses for confirmation.
+    executed_names = [call.args[0] for call in session.call_tool.await_args_list]
+    assert executed_names == ["list_issues"]
+    assert gated_fn.requires_confirmation is True
 
 
 # =============================================================================
@@ -1530,3 +1710,69 @@ async def test_agent_refresh_does_not_call_build_tools_after_reconnect():
     # No forced reconnect; build_tools() called to refresh definitions
     assert not any(call.kwargs.get("force") for call in alive_tool.connect.await_args_list)
     alive_tool.build_tools.assert_awaited_once()
+
+
+# =============================================================================
+# Cache identity tests (_agno_run_context channel)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_mcp_cached_results_key_per_user_and_stay_per_run(tmp_path):
+    """MCP entrypoints receive identity via _agno_run_context, so the cache
+    keys per user. The injected object stays in the key material, so an MCP
+    cache entry is scoped to its run: a header provider that reads the agent,
+    the team, or run-context metadata cannot serve one caller's result to
+    another."""
+    from agno.run.base import RunContext
+
+    tool = _make_mcp_tool_mock("get_data")
+    session = _make_session_returning("payload")
+
+    fn = Function(
+        name="get_data",
+        entrypoint=get_entrypoint_for_tool(tool, session),
+        skip_entrypoint_processing=True,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+    )
+
+    fn._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+    await FunctionCall(function=fn).aexecute()
+
+    # A different user must execute again, not be served alice's result
+    fn._run_context = RunContext(run_id="r2", session_id="s2", user_id="bob")
+    await FunctionCall(function=fn).aexecute()
+    assert session.call_tool.await_count == 2
+
+    # A new run executes again: the run's own context is part of the key
+    fn._run_context = RunContext(run_id="r3", session_id="s1", user_id="alice")
+    result = await FunctionCall(function=fn).aexecute()
+    assert session.call_tool.await_count == 3
+    assert result.status == "success"
+
+
+@pytest.mark.asyncio
+async def test_mcp_cached_hit_returns_tool_result(tmp_path):
+    """A cache hit for an MCP tool must return a ToolResult, not the plain
+    dict it was serialized to, so downstream result handling keeps working."""
+    from agno.run.base import RunContext
+
+    tool = _make_mcp_tool_mock("get_data")
+    session = _make_session_returning("payload")
+
+    fn = Function(
+        name="get_data",
+        entrypoint=get_entrypoint_for_tool(tool, session),
+        skip_entrypoint_processing=True,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+    )
+    fn._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+
+    await FunctionCall(function=fn).aexecute()
+    second = await FunctionCall(function=fn).aexecute()
+
+    assert session.call_tool.await_count == 1
+    assert isinstance(second.result, ToolResult)
+    assert second.result.content == "payload"

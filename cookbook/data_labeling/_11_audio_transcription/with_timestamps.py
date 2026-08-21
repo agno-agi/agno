@@ -10,10 +10,10 @@ chunked playback.
 from typing import List
 
 import requests
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from agno.media import Audio
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

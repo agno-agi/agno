@@ -1,12 +1,13 @@
+import asyncio
 import json
-from functools import partial
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import uuid4
 
-from agno.utils.log import log_debug, log_exception
+from agno.utils.log import log_debug, log_error, log_exception
 
 try:
     from mcp import ClientSession
+    from mcp.shared.exceptions import McpError
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
 except (ImportError, ModuleNotFoundError):
@@ -104,7 +105,6 @@ def get_entrypoint_for_tool(
     """
 
     async def call_tool(
-        tool_name: str,
         _agno_run_context: Optional["RunContext"] = None,
         _agno_agent: Optional["Agent"] = None,
         _agno_team: Optional["Team"] = None,
@@ -113,6 +113,11 @@ def get_entrypoint_for_tool(
         # Framework-injected params use the `_agno_` prefix so they cannot
         # collide with MCP tool arguments named "run_context", "agent" and
         # "team".
+        # The executed tool is pinned to the tool this entrypoint was built
+        # for: call-time arguments cannot change it. A model-supplied
+        # "tool_name" argument stays in **kwargs and is forwarded to the
+        # server as an ordinary argument of the declared tool.
+        tool_name = tool.name
 
         async def _call_with_session(active_session: ClientSession) -> ToolResult:
             try:
@@ -206,6 +211,9 @@ def get_entrypoint_for_tool(
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
 
+            if not response_str.strip():
+                response_str = _serialize_structured_content(result) or ""
+
             return ToolResult(
                 content=response_str.strip(),
                 metadata=_build_mcp_metadata(result),
@@ -249,11 +257,17 @@ def get_entrypoint_for_tool(
                 return await _call_with_session(active_session)
 
             return await _call_with_session(session)
+        except asyncio.CancelledError:
+            raise
+        except McpError as e:
+            msg = f"MCP tool '{tool_name}' failed: {e}. The MCP server may be unreachable or the request timed out."
+            log_error(msg)
+            return ToolResult(content=msg)
         except Exception as e:
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
             return ToolResult(content=f"Error: {e}")
 
-    return partial(call_tool, tool_name=tool.name)
+    return call_tool
 
 
 def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
@@ -272,6 +286,18 @@ def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
     if structured_content is not None:
         metadata["structured_content"] = structured_content
     return metadata or None
+
+
+def _serialize_structured_content(result: "CallToolResult") -> Optional[str]:
+    """Serialize structuredContent so structured-only MCP responses reach the model loop."""
+    structured_content = getattr(result, "structuredContent", None)
+    if structured_content is None:
+        return None
+
+    try:
+        return json.dumps(structured_content, ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return str(structured_content)
 
 
 def prepare_command(command: str) -> list[str]:

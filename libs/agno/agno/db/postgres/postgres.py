@@ -1,11 +1,12 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
+from agno.db import mcp_oauth_store
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -24,12 +25,20 @@ from agno.db.postgres.utils import (
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.mcp_oauth import (
+    MCP_OAUTH_CLIENTS,
+    MCP_OAUTH_CODES,
+    MCP_OAUTH_KEYS,
+    MCP_OAUTH_REFRESH_TOKENS,
+    MCP_OAUTH_TABLE_NAME_ATTRS,
+    MCP_OAUTH_TRANSACTIONS,
+)
 from agno.db.schemas.memory import UserMemory
 from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
-from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer
+from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer, learning_search_patterns
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -45,6 +54,7 @@ try:
         UniqueConstraint,
         and_,
         case,
+        distinct,
         func,
         or_,
         select,
@@ -85,6 +95,11 @@ class PostgresDb(BaseDb):
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -115,6 +130,11 @@ class PostgresDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
+            mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
+            mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
+            mcp_oauth_refresh_tokens_table (Optional[str]): Name of the table to store MCP OAuth refresh tokens.
+            mcp_oauth_keys_table (Optional[str]): Name of the table to store MCP OAuth signing keys.
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -163,6 +183,11 @@ class PostgresDb(BaseDb):
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
+            mcp_oauth_clients_table=mcp_oauth_clients_table,
+            mcp_oauth_transactions_table=mcp_oauth_transactions_table,
+            mcp_oauth_codes_table=mcp_oauth_codes_table,
+            mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
+            mcp_oauth_keys_table=mcp_oauth_keys_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -171,6 +196,8 @@ class PostgresDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
+        self._metrics_refreshed_at: float = 0.0
 
     # -- Serialization methods --
     def to_dict(self):
@@ -622,6 +649,13 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.service_accounts_table
+
+        if table_type in MCP_OAUTH_TABLE_NAME_ATTRS:
+            return self._get_or_create_table(
+                table_name=getattr(self, MCP_OAUTH_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -1949,6 +1983,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
+            # Stamp first so failed runs are throttled too instead of retried on every read
+            self._metrics_refreshed_at = time.time()
+
             table = self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return None
@@ -2018,6 +2055,9 @@ class PostgresDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
+        Metrics are refreshed lazily, at most once per minute per process, so results
+        stay current even on deployments where nothing calls the refresh endpoint.
+
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
@@ -2029,6 +2069,14 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read.
+            if time.time() - self._metrics_refreshed_at >= 60:
+                try:
+                    self.calculate_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh metrics before reading them: {str(e)}")
+
             table = self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return [], None
@@ -3123,8 +3171,9 @@ class PostgresDb(BaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
-        """Get trace statistics grouped by session.
+        """Get trace statistics grouped by session or by component.
 
         Args:
             user_id: Filter by user ID.
@@ -3133,15 +3182,29 @@ class PostgresDb(BaseDb):
             workflow_id: Filter by workflow ID.
             start_time: Filter sessions with traces created after this datetime.
             end_time: Filter sessions with traces created before this datetime.
-            limit: Maximum number of sessions to return per page.
+            limit: Maximum number of groups to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            group_by: Grouping key. "session" (default) groups by session_id and keeps
+                the original output shape, ordered by last activity. "agent", "team" and
+                "workflow" group by the corresponding component id, add duration and
+                error aggregates, and are ordered by total_traces descending; traces
+                without the grouping id are excluded. "endpoint" groups traces that
+                carry no component id at all (HTTP/MCP entrypoint wrappers) by trace
+                name, with the same aggregates.
 
         Returns:
-            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
-                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
-                first_trace_at, last_trace_at.
+            tuple[List[Dict], int]: Tuple of (list of stats dicts, total count).
+                With group_by="session", each dict contains: session_id, user_id,
+                agent_id, team_id, workflow_id, total_traces, first_trace_at, last_trace_at.
+                With a component grouping, each dict contains: <group>_id, total_traces,
+                total_sessions, avg_duration_ms, p95_duration_ms, max_duration_ms,
+                error_traces (traces with status ERROR), first_trace_at, last_trace_at.
+                With group_by="endpoint", the grouping key is name instead of <group>_id.
         """
+        if group_by not in ("session", "agent", "team", "workflow", "endpoint"):
+            raise ValueError(f"Invalid group_by value: {group_by!r}. Allowed: session, agent, team, workflow, endpoint")
+
         try:
             table = self._get_table(table_type="traces")
             if table is None:
@@ -3149,21 +3212,55 @@ class PostgresDb(BaseDb):
                 return [], 0
 
             with self.Session() as sess:
-                # Build base query grouped by session_id
-                base_stmt = (
-                    select(
-                        table.c.session_id,
-                        func.max(table.c.user_id).label("user_id"),
-                        func.max(table.c.agent_id).label("agent_id"),
-                        func.max(table.c.team_id).label("team_id"),
-                        func.max(table.c.workflow_id).label("workflow_id"),
-                        func.count(table.c.trace_id).label("total_traces"),
-                        func.min(table.c.created_at).label("first_trace_at"),
-                        func.max(table.c.created_at).label("last_trace_at"),
+                if group_by == "session":
+                    # Build base query grouped by session_id
+                    base_stmt = (
+                        select(
+                            table.c.session_id,
+                            func.max(table.c.user_id).label("user_id"),
+                            func.max(table.c.agent_id).label("agent_id"),
+                            func.max(table.c.team_id).label("team_id"),
+                            func.max(table.c.workflow_id).label("workflow_id"),
+                            func.count(table.c.trace_id).label("total_traces"),
+                            func.min(table.c.created_at).label("first_trace_at"),
+                            func.max(table.c.created_at).label("last_trace_at"),
+                        )
+                        .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                        .group_by(table.c.session_id)
                     )
-                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(table.c.session_id)
-                )
+                else:
+                    if group_by == "endpoint":
+                        # Endpoint-level traces (HTTP/MCP entrypoint wrappers) carry no component ids
+                        group_column = table.c.name
+                        group_label = "name"
+                        group_filter = and_(
+                            table.c.agent_id.is_(None),
+                            table.c.team_id.is_(None),
+                            table.c.workflow_id.is_(None),
+                        )
+                    else:
+                        group_column = {
+                            "agent": table.c.agent_id,
+                            "team": table.c.team_id,
+                            "workflow": table.c.workflow_id,
+                        }[group_by]
+                        group_label = f"{group_by}_id"
+                        group_filter = group_column.isnot(None)  # Only traces attributed to the grouping component
+                    base_stmt = (
+                        select(
+                            group_column.label(group_label),
+                            func.count(table.c.trace_id).label("total_traces"),
+                            func.count(distinct(table.c.session_id)).label("total_sessions"),
+                            func.avg(table.c.duration_ms).label("avg_duration_ms"),
+                            func.percentile_cont(0.95).within_group(table.c.duration_ms).label("p95_duration_ms"),
+                            func.max(table.c.duration_ms).label("max_duration_ms"),
+                            func.sum(case((table.c.status == "ERROR", 1), else_=0)).label("error_traces"),
+                            func.min(table.c.created_at).label("first_trace_at"),
+                            func.max(table.c.created_at).label("last_trace_at"),
+                        )
+                        .where(group_filter)
+                        .group_by(group_column)
+                    )
 
                 # Apply filters
                 if user_id is not None:
@@ -3195,39 +3292,59 @@ class PostgresDb(BaseDb):
                     except (KeyError, TypeError) as e:
                         raise ValueError(f"Invalid filter expression: {e}") from e
 
-                # Get total count of sessions
+                # Get total count of groups
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+                order_by: List[Any] = (
+                    [func.max(table.c.created_at).desc()]
+                    if group_by == "session"
+                    else [func.count(table.c.trace_id).desc(), group_column]
+                )
+                paginated_stmt = base_stmt.order_by(*order_by).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
 
                 # Convert to list of dicts with datetime objects
                 stats_list = []
                 for row in results:
-                    # Convert ISO strings to datetime objects
-                    first_trace_at_str = row.first_trace_at
-                    last_trace_at_str = row.last_trace_at
-
                     # Parse ISO format strings to datetime objects
-                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
-                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+                    first_trace_at = datetime.fromisoformat(row.first_trace_at.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(row.last_trace_at.replace("Z", "+00:00"))
 
-                    stats_list.append(
-                        {
-                            "session_id": row.session_id,
-                            "user_id": row.user_id,
-                            "agent_id": row.agent_id,
-                            "team_id": row.team_id,
-                            "workflow_id": row.workflow_id,
-                            "total_traces": row.total_traces,
-                            "first_trace_at": first_trace_at,
-                            "last_trace_at": last_trace_at,
-                        }
-                    )
+                    if group_by == "session":
+                        stats_list.append(
+                            {
+                                "session_id": row.session_id,
+                                "user_id": row.user_id,
+                                "agent_id": row.agent_id,
+                                "team_id": row.team_id,
+                                "workflow_id": row.workflow_id,
+                                "total_traces": row.total_traces,
+                                "first_trace_at": first_trace_at,
+                                "last_trace_at": last_trace_at,
+                            }
+                        )
+                    else:
+                        stats_list.append(
+                            {
+                                group_label: getattr(row, group_label),
+                                "total_traces": row.total_traces,
+                                "total_sessions": row.total_sessions,
+                                "avg_duration_ms": round(float(row.avg_duration_ms), 1)
+                                if row.avg_duration_ms is not None
+                                else None,
+                                "p95_duration_ms": round(float(row.p95_duration_ms), 1)
+                                if row.p95_duration_ms is not None
+                                else None,
+                                "max_duration_ms": row.max_duration_ms,
+                                "error_traces": row.error_traces,
+                                "first_trace_at": first_trace_at,
+                                "last_trace_at": last_trace_at,
+                            }
+                        )
 
                 return stats_list, total_count
 
@@ -3361,6 +3478,150 @@ class PostgresDb(BaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
+    def get_span_stats(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        name: Optional[str] = None,
+        span_type: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        sort_by: str = "total_calls",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get span statistics aggregated SQL-side by span name and span type.
+
+        Only span names, durations and status are aggregated. The span attributes
+        payload, which can hold full conversation content, is never selected — the
+        single "openinference.span.kind" key is extracted in SQL as the span type.
+
+        Args:
+            agent_id: Only include spans belonging to traces of this agent.
+            team_id: Only include spans belonging to traces of this team.
+            workflow_id: Only include spans belonging to traces of this workflow.
+            start_time: Only include spans starting after this datetime.
+            end_time: Only include spans starting before this datetime.
+            name: Filter by exact span name.
+            span_type: Filter by span type (e.g. AGENT, LLM, TOOL, CHAIN).
+            limit: Maximum number of groups to return per page.
+            page: Page number (1-indexed).
+            sort_by: Aggregate to sort by: total_calls, avg_duration_ms,
+                p95_duration_ms, max_duration_ms, error_count or last_called_at.
+            sort_order: "asc" or "desc".
+
+        Returns:
+            Tuple[List[Dict], int]: Tuple of (list of stats dicts, total count of groups).
+                Each dict contains: name, span_type, total_calls, avg_duration_ms,
+                p95_duration_ms, max_duration_ms, error_count, last_called_at (datetime).
+        """
+        try:
+            table = self._get_table(table_type="spans")
+            if table is None:
+                log_debug("Spans table not found")
+                return [], 0
+
+            span_type_col = table.c.attributes["openinference.span.kind"].astext
+
+            total_calls_col = func.count(table.c.span_id)
+            avg_duration_col = func.avg(table.c.duration_ms)
+            p95_duration_col = func.percentile_cont(0.95).within_group(table.c.duration_ms)
+            max_duration_col = func.max(table.c.duration_ms)
+            error_count_col = func.sum(case((table.c.status_code == "ERROR", 1), else_=0))
+            last_called_at_col = func.max(table.c.start_time)
+
+            with self.Session() as sess:
+                stmt = select(
+                    table.c.name,
+                    span_type_col.label("span_type"),
+                    total_calls_col.label("total_calls"),
+                    avg_duration_col.label("avg_duration_ms"),
+                    p95_duration_col.label("p95_duration_ms"),
+                    max_duration_col.label("max_duration_ms"),
+                    error_count_col.label("error_count"),
+                    last_called_at_col.label("last_called_at"),
+                ).group_by(table.c.name, span_type_col)
+
+                # Component filters live on the traces table
+                if agent_id or team_id or workflow_id:
+                    traces_table = self._get_table(table_type="traces")
+                    if traces_table is None:
+                        log_debug("Traces table not found")
+                        return [], 0
+                    stmt = stmt.select_from(table.join(traces_table, table.c.trace_id == traces_table.c.trace_id))
+                    if agent_id:
+                        stmt = stmt.where(traces_table.c.agent_id == agent_id)
+                    if team_id:
+                        stmt = stmt.where(traces_table.c.team_id == team_id)
+                    if workflow_id:
+                        stmt = stmt.where(traces_table.c.workflow_id == workflow_id)
+
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    stmt = stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    stmt = stmt.where(table.c.start_time <= end_time.isoformat())
+                if name:
+                    stmt = stmt.where(table.c.name == name)
+                if span_type:
+                    stmt = stmt.where(span_type_col == span_type)
+
+                # Get total count of groups
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                sort_columns = {
+                    "total_calls": total_calls_col,
+                    "avg_duration_ms": avg_duration_col,
+                    "p95_duration_ms": p95_duration_col,
+                    "max_duration_ms": max_duration_col,
+                    "error_count": error_count_col,
+                    "last_called_at": last_called_at_col,
+                }
+                sort_col = sort_columns.get(sort_by)
+                if sort_col is None:
+                    log_debug(f"Invalid sort field: '{sort_by}'. Sorting by total_calls.")
+                    sort_col = total_calls_col
+                order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = stmt.order_by(order_by, table.c.name, span_type_col).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+
+                stats_list = []
+                for row in results:
+                    last_called_at = (
+                        datetime.fromisoformat(row.last_called_at.replace("Z", "+00:00"))
+                        if row.last_called_at
+                        else None
+                    )
+                    stats_list.append(
+                        {
+                            "name": row.name,
+                            "span_type": row.span_type,
+                            "total_calls": row.total_calls,
+                            "avg_duration_ms": round(float(row.avg_duration_ms), 1)
+                            if row.avg_duration_ms is not None
+                            else None,
+                            "p95_duration_ms": round(float(row.p95_duration_ms), 1)
+                            if row.p95_duration_ms is not None
+                            else None,
+                            "max_duration_ms": row.max_duration_ms,
+                            "error_count": row.error_count,
+                            "last_called_at": last_called_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting span stats: {str(e)}")
+            return [], 0
+
     # --- Components ---
     def get_component(
         self,
@@ -3419,12 +3680,7 @@ class PostgresDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(
-                    select(table).where(
-                        table.c.component_id == component_id,
-                        table.c.deleted_at.is_(None),
-                    )
-                ).fetchone()
+                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
                 if existing is None:
                     # Create new component
                     if component_type is None:
@@ -3560,6 +3816,7 @@ class PostgresDb(BaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -3569,6 +3826,8 @@ class PostgresDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            name: Exact-match filter on the component name; the returned total
+                counts the filtered set.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -3587,6 +3846,8 @@ class PostgresDb(BaseDb):
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:
                     where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
+                if name is not None:
+                    where_clauses.append(table.c.name == name)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(table)
@@ -4672,6 +4933,72 @@ class PostgresDb(BaseDb):
             log_debug(f"Error getting learnings: {e}")
             return []
 
+    def search_learnings(
+        self,
+        query: str,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search learning records by text query. See BaseDb.search_learnings.
+
+        The content column is JSONB, which has no ILIKE operator - it is cast
+        to TEXT first (the same shape get_user_memories uses for
+        search_content). The query matches in both its space and underscore
+        forms. Errors are raised, never swallowed.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return []
+
+            patterns = learning_search_patterns(query)
+            if not patterns:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                content_text = func.cast(table.c.content, postgresql.TEXT)
+                stmt = stmt.where(or_(*[content_text.ilike(pattern, escape="\\") for pattern in patterns]))
+
+                stmt = stmt.order_by(table.c.updated_at.desc().nulls_last())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in result]
+
+        except Exception as e:
+            log_error(f"Error searching learnings: {e}")
+            raise e
+
     def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="learnings")
@@ -5178,6 +5505,105 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # --- Built-in MCP OAuth server store ---
+    # Thin delegations to agno.db.mcp_oauth_store (shared with SqliteDb); each fetches the
+    # table via the normal schema-aware _get_table path, so the store is created on first
+    # use like every other agno table.
+
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.create_client(
+            self.db_engine,
+            table,
+            client_id=client_id,
+            client_metadata=client_metadata,
+            now=now,
+            unconsumed_ttl=unconsumed_ttl,
+            max_clients=max_clients,
+        )
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        mcp_oauth_store.store_transaction(
+            self.db_engine,
+            table,
+            txn_id=txn_id,
+            client_id=client_id,
+            params=params,
+            expires_at=expires_at,
+            now=now,
+            max_pending=max_pending,
+        )
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        mcp_oauth_store.store_code(
+            self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
+        )
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        mcp_oauth_store.store_refresh(
+            self.db_engine,
+            table,
+            token_hash=token_hash,
+            client_id=client_id,
+            scopes=scopes,
+            expires_at=expires_at,
+            now=now,
+            family_id=family_id,
+        )
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_keys(self.db_engine, table)
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
 
     # --- Auth Tokens ---
 

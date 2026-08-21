@@ -46,6 +46,6 @@ if __name__ == "__main__":
     current_session_state["shopping_list"].append("chocolate")
     agent.update_session_state(current_session_state)
 
-    agent.print_response("What's on my list?", stream=True, debug_mode=True)
+    agent.print_response("What's on my list?", stream=True)
 
     print(f"Final session state: {agent.get_session_state()}")

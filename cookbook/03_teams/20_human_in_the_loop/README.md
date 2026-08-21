@@ -13,3 +13,4 @@ Examples for team workflows in human_in_the_loop.
 - confirmation_required.py - Demonstrates confirmation required.
 - external_tool_execution.py - Demonstrates external tool execution.
 - user_input_required.py - Demonstrates user input required.
+- multi_round_user_input.py - Demonstrates multi-round HITL (member pauses multiple times).
