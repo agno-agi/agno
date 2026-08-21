@@ -108,11 +108,13 @@ approval, and `[]` clears confirmation entirely.
 ## Identity and ownership
 
 The framework injects the caller's `RunContext` into every StudioTools call.
-Components (and schedules) created under a `user_id` are owned by that user:
-other scoped users get `component_not_found` for them and cannot edit or
-archive them. Calls without a run context (direct Python, tests) write
-unowned, shared rows. The AgentOS demos pass `user_id` on the run request to
-show this.
+Components (and schedules) created under a `user_id` are owned by that user.
+While a component is draft-only, other scoped users get `component_not_found`
+for it; publishing puts it on the platform, where every user can read and run
+it. Editing, archiving, and version writes stay owner-scoped throughout
+(`not_owner` for other users), and schedules are never shared on publish.
+Calls without a run context (direct Python, tests) write unowned, shared
+rows. The AgentOS demos pass `user_id` on the run request to show this.
 
 ## Palette policy
 

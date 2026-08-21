@@ -1841,8 +1841,11 @@ def get_agent_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
 
-            # Exclude agents whose IDs are owned by the registry
-            exclude_ids = registry.get_agent_ids() if registry else None
+            # Exclude the ids this OS serves, which is what the code half
+            # above renders. The registry is a superset - it also carries
+            # rehydration context this route never lists - so subtracting it
+            # would drop a stored agent with nothing left to list it back.
+            exclude_ids = {aid for a in os.agents or [] if (aid := getattr(a, "id", None)) is not None}
             db_agents = get_agents(
                 db=os.db,
                 registry=registry,
