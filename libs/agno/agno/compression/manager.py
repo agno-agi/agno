@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.compression._tool import (
+from agno.compression.tool import (
     acompact_tools,
     ashould_compact_tools,
     compact_tools,
@@ -121,7 +121,7 @@ class CompactionManager:
     def compact_history(self) -> bool:
         return self.compact_context
 
-    # --- Tool compaction (delegates to _tool.py) ---
+    # --- Tool compaction (delegates to tool.py) ---
 
     def should_compact_tools(
         self,
