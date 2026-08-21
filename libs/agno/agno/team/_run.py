@@ -105,6 +105,8 @@ from agno.utils.agent import (
 )
 from agno.utils.events import (
     add_team_error_event,
+    create_team_compaction_completed_event,
+    create_team_compaction_started_event,
     create_team_run_cancelled_event,
     create_team_run_completed_event,
     create_team_run_content_completed_event,
@@ -363,6 +365,7 @@ def _run_tasks(
         # Pre-loop compaction: compress history BEFORE first iteration
         if team.compaction_manager is not None and team.compaction_manager.compact_history:
             log_debug(f"[TEAM-TASKS-SYNC] Pre-loop compaction check: {len(accumulated_messages)} messages")
+            messages_before = len(accumulated_messages)
             compaction_result = team.compaction_manager.compact(
                 accumulated_messages,
                 run_response=run_response,
@@ -372,7 +375,30 @@ def _run_tasks(
                 log_debug(
                     f"[TEAM-TASKS-SYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
                 )
+                handle_event(
+                    create_team_compaction_started_event(
+                        from_run_response=run_response,
+                        messages_before=messages_before,
+                        messages_to_compact=messages_before - len(compaction_result.compacted_messages),
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
                 run_messages.compacted_messages = compaction_result.compacted_messages
+                tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                handle_event(
+                    create_team_compaction_completed_event(
+                        from_run_response=run_response,
+                        messages_after=len(compaction_result.compacted_messages),
+                        messages_compacted=messages_before - len(compaction_result.compacted_messages),
+                        tokens_saved=tokens_saved,
+                        summary_preview=compaction_result.summary[:200],
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
 
         model_response: Optional[ModelResponse] = None
 
@@ -1239,6 +1265,7 @@ def _run(
                 # Pre-loop compaction: compress history BEFORE first model call
                 if team.compaction_manager is not None and team.compaction_manager.compact_history:
                     log_debug(f"[TEAM-RUN-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    messages_before = len(run_messages.messages)
                     compaction_result = team.compaction_manager.compact(
                         run_messages.messages,
                         run_response=run_response,
@@ -1248,7 +1275,32 @@ def _run(
                         log_debug(
                             f"[TEAM-RUN-SYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
                         )
+                        handle_event(
+                            create_team_compaction_started_event(
+                                from_run_response=run_response,
+                                messages_before=messages_before,
+                                messages_to_compact=messages_before - len(compaction_result.compacted_messages),
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
                         run_messages.compacted_messages = compaction_result.compacted_messages
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
+                        handle_event(
+                            create_team_compaction_completed_event(
+                                from_run_response=run_response,
+                                messages_after=len(compaction_result.compacted_messages),
+                                messages_compacted=messages_before - len(compaction_result.compacted_messages),
+                                tokens_saved=tokens_saved,
+                                summary_preview=compaction_result.summary[:200],
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
                     else:
                         log_debug("[TEAM-RUN-SYNC] Pre-loop compaction: no compaction needed")
 
@@ -2255,6 +2307,7 @@ async def _arun_tasks(
         # Pre-loop compaction: compress history BEFORE first iteration
         if team.compaction_manager is not None and team.compaction_manager.compact_history:
             log_debug(f"[TEAM-TASKS-ASYNC] Pre-loop compaction check: {len(accumulated_messages)} messages")
+            messages_before = len(accumulated_messages)
             compaction_result = await team.compaction_manager.acompact(
                 accumulated_messages,
                 run_response=run_response,
@@ -2264,7 +2317,30 @@ async def _arun_tasks(
                 log_debug(
                     f"[TEAM-TASKS-ASYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
                 )
+                handle_event(
+                    create_team_compaction_started_event(
+                        from_run_response=run_response,
+                        messages_before=messages_before,
+                        messages_to_compact=messages_before - len(compaction_result.compacted_messages),
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
                 run_messages.compacted_messages = compaction_result.compacted_messages
+                tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                handle_event(
+                    create_team_compaction_completed_event(
+                        from_run_response=run_response,
+                        messages_after=len(compaction_result.compacted_messages),
+                        messages_compacted=messages_before - len(compaction_result.compacted_messages),
+                        tokens_saved=tokens_saved,
+                        summary_preview=compaction_result.summary[:200],
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
 
         model_response: Optional[ModelResponse] = None
 
@@ -3222,6 +3298,7 @@ async def _arun(
                 # Pre-loop compaction: compress history BEFORE first model call
                 if team.compaction_manager is not None and team.compaction_manager.compact_history:
                     log_debug(f"[TEAM-RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    messages_before = len(run_messages.messages)
                     compaction_result = await team.compaction_manager.acompact(
                         run_messages.messages,
                         run_response=run_response,
@@ -3231,7 +3308,32 @@ async def _arun(
                         log_debug(
                             f"[TEAM-RUN-ASYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
                         )
+                        handle_event(
+                            create_team_compaction_started_event(
+                                from_run_response=run_response,
+                                messages_before=messages_before,
+                                messages_to_compact=messages_before - len(compaction_result.compacted_messages),
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
                         run_messages.compacted_messages = compaction_result.compacted_messages
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
+                        handle_event(
+                            create_team_compaction_completed_event(
+                                from_run_response=run_response,
+                                messages_after=len(compaction_result.compacted_messages),
+                                messages_compacted=messages_before - len(compaction_result.compacted_messages),
+                                tokens_saved=tokens_saved,
+                                summary_preview=compaction_result.summary[:200],
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
                     else:
                         log_debug("[TEAM-RUN-ASYNC] Pre-loop compaction: no compaction needed")
 
