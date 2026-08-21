@@ -185,3 +185,37 @@
 **Observation:** Running the earlier version of this cookbook (all runs sharing the agent's default session) reproduced the known shared-session status-clobbering bug on cue - runs stuck at PENDING forever with free slots (different victims each run: 1 then 2). The transition-site fix ships in the durable run queue PR chain; the cookbook now uses one session per run, which is also the realistic shape.
 
 ---
+
+### compression_events.py
+
+**Status:** FAIL
+**Date:** 2026-08-20
+**Timeout:** 60s
+
+**What was tested:**
+- Started the compression events cookbook with `.venvs/demo/bin/python`.
+- Verified event stream startup through `RunStarted` and `ModelRequestStarted`.
+
+**Observations:**
+- Exited in about 4s without timing out.
+
+**Issues found:**
+- OpenAI API returned an organization spend-limit error before tool calls or compression events could complete.
+
+---
+
+### context_compaction.py
+
+**Status:** FAIL
+**Date:** 2026-08-20
+
+**What was tested:**
+- Reviewed context compaction manager wiring.
+
+**Observations:**
+- The cookbook passes `ContextCompactionManager` directly to `Agent(compaction_manager=...)`.
+
+**Issues found:**
+- `Agent.compaction_manager` is typed for `CompactionManager`; direct `ContextCompactionManager` construction leaves `agent.compact_context` false and does not use the unified manager path correctly.
+
+---

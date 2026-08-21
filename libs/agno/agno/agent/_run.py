@@ -2526,7 +2526,9 @@ async def _arun_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
@@ -4161,7 +4163,9 @@ def _continue_run_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
@@ -5740,7 +5744,9 @@ async def _acontinue_run_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
