@@ -18,21 +18,17 @@ network connection, and results reproduce anywhere.
 
 ## Run it yourself
 
-Two commands from the repo root:
+One command from the repo root:
 
 ```bash
-./scripts/perf_setup.sh
+./scripts/perf.sh
 ```
 
-```bash
-.venvs/perfenv/bin/python cookbook/performance/run_all.py --all
-```
-
-That is the whole flow. The first command builds `.venvs/perfenv` (agno
+That is the whole flow. It creates `.venvs/perfenv` on first run (agno
 installed editable from your checkout, plus LangGraph, PydanticAI and
-CrewAI). The second runs the full agno suite and the cross-framework
-comparison — each benchmark in its own fresh process — prints rich summary
-tables in the terminal, and renders a self-contained HTML report:
+CrewAI), runs the full agno suite and the cross-framework comparison — each
+benchmark in its own fresh process — prints rich summary tables in the
+terminal, and renders a self-contained HTML report:
 
 ```bash
 open cookbook/performance/report/agno-performance.html
@@ -44,11 +40,14 @@ timings.
 ## Useful variations
 
 ```bash
-# Agno suite only, no comparison (this is the regression-tracking set)
-.venvs/perfenv/bin/python cookbook/performance/run_all.py
-
 # 30-second smoke of everything (results isolated in results/quick/)
-.venvs/perfenv/bin/python cookbook/performance/run_all.py --all --quick
+./scripts/perf.sh --quick
+
+# Agno suite only, no comparison (this is the regression-tracking set)
+./scripts/perf.sh --agno-only
+
+# Rebuild the environment (dependencies changed, or a fresh start)
+./scripts/perf_setup.sh
 
 # One benchmark, with rich per-run tables
 .venvs/perfenv/bin/python cookbook/performance/run_agent.py
