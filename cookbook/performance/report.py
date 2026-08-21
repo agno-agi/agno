@@ -143,6 +143,28 @@ def comparison_groups(versions: dict) -> list:
             ],
         },
         {
+            "key": "cmp_multi_turn",
+            "metric": "5-turn conversation (mocked model)",
+            "title": "Five-turn conversation vs other frameworks",
+            "unit": "ms",
+            "measure": "time",
+            "ratio_to": "multi_turn_compare_agno",
+            "blurb": (
+                "One five-turn conversation with history carried by each "
+                "framework's native mechanism: Agno persists the session to an "
+                "in-memory database each turn, LangGraph checkpoints graph state "
+                "per thread, PydanticAI passes message_history explicitly, and "
+                "CrewAI chains five tasks through task context. Each variant "
+                "asserts the history actually accumulated."
+            ),
+            "rows": [
+                ("multi_turn_compare_agno", agno, "sync"),
+                ("multi_turn_compare_langgraph", langgraph, "other"),
+                ("multi_turn_compare_pydantic_ai", pydantic_ai, "other"),
+                ("multi_turn_compare_crewai", crewai, "other"),
+            ],
+        },
+        {
             "key": "cmp_import",
             "metric": "Cold import",
             "title": "Cold import vs other frameworks",
@@ -179,7 +201,13 @@ def comparison_groups(versions: dict) -> list:
 
 
 # Row order for the headline comparison table: most decision-relevant first
-COMPARISON_TABLE_ORDER = ["cmp_run", "cmp_construction", "cmp_memory", "cmp_import"]
+COMPARISON_TABLE_ORDER = [
+    "cmp_run",
+    "cmp_multi_turn",
+    "cmp_construction",
+    "cmp_memory",
+    "cmp_import",
+]
 
 
 # ---------------------------------------------------------------------------

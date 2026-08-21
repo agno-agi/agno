@@ -27,6 +27,23 @@ Results land in `cookbook/performance/results/comparison/summary.json`
 (with framework versions recorded) and are picked up automatically by
 `report.py`.
 
+## Fairness notes (multi-turn conversation)
+
+The five-turn benchmark carries history through each framework's native
+mechanism: Agno persists the session to a fresh in-memory database per
+conversation with `add_history_to_context` (its default history cap of
+three runs is raised so the full conversation stays in context, matching
+the others); LangGraph uses an `InMemorySaver` checkpointer with one thread
+per conversation; PydanticAI passes `message_history` explicitly; CrewAI
+chains five tasks through `Task.context` in one crew, its native
+sequential-context pattern — it has no lightweight conversation primitive,
+and its memory feature requires an embedding provider, which would violate
+the no-network constraint. Note the mechanisms differ in what they do per
+turn: Agno's number includes reading and persisting the session every turn,
+PydanticAI's includes no persistence at all. Every variant asserts after
+the final turn that history actually accumulated, so a silently stateless
+conversation fails instead of producing a flattering number.
+
 ## Fairness notes (run overhead)
 
 The single-turn run benchmark replaces the model at each framework's own

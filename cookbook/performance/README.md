@@ -21,10 +21,11 @@ Agno at the feat/v3.0 tip.
 
 | Metric | Agno | LangGraph | PydanticAI | CrewAI |
 |---|---|---|---|---|
-| Single-turn run (mocked model) | 65 us | 310 us (4.8x) | 2,258 us (35x) | 6,283 us (97x) |
-| Agent construction (1 tool) | 4.7 us | 1,440 us (306x) | 10,303 us (2,192x) | 20,792 us (4,424x) |
-| Construction memory peak | 7.1 KiB | 146 KiB (20x) | 39 KiB (5.5x) | 24 KiB (3.4x) |
-| Cold import | 254 ms | 383 ms (1.5x) | 515 ms (2.0x) | 986 ms (3.9x) |
+| Single-turn run (mocked model) | 65 us | 320 us (4.9x) | 1,592 us (24x) | 5,234 us (80x) |
+| 5-turn conversation (mocked model) | 2.2 ms | 3.4 ms (1.6x) | 8.3 ms (3.9x) | 24.4 ms (11x) |
+| Agent construction (1 tool) | 4.6 us | 1,105 us (239x) | 9,664 us (2,090x) | 19,323 us (4,178x) |
+| Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.6x) | 24 KiB (3.4x) |
+| Cold import | 250 ms | 390 ms (1.6x) | 533 ms (2.1x) | 1,105 ms (4.4x) |
 
 Multipliers are relative to Agno. The committed reference runs, including
 per-benchmark distributions, are under `baselines/`; the definition of each
@@ -155,6 +156,12 @@ call real models, see `cookbook/09_evals/performance/`.
   because a crew kickoff is that framework's unit of request execution; its
   `Agent` is reused, as in the other frameworks. See
   `comparison/README.md` for all per-framework accounting decisions.
+- The five-turn conversation uses each framework's native history mechanism,
+  and those mechanisms do different amounts of work per turn: Agno's figure
+  includes reading and persisting the session on every turn, LangGraph's
+  includes graph-state checkpointing, PydanticAI's includes no persistence
+  at all. The comparison is between each framework's idiomatic multi-turn
+  path, not between identical operations.
 
 ## Environment variables
 

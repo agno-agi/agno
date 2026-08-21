@@ -102,6 +102,26 @@ without the os extra. Rich tables render for core and comparison runs.
 
 ---
 
+### comparison/multi_turn_comparison.py (new)
+
+**Status:** PASS
+
+**Description:** Five-turn conversation per framework with history carried by each
+framework's native mechanism (Agno session + in-memory db persistence per turn with the
+history cap raised to cover the conversation; LangGraph InMemorySaver checkpointer per
+thread; PydanticAI message_history; CrewAI five tasks chained via Task.context). Every
+variant asserts post-conversation that history actually accumulated. During construction,
+two silent-statelessness traps were caught by the guards: Agno's default num_history_runs=3
+capped context (raised for parity), and LangGraph's message reducer dedupes by message id,
+so a cycled shared AIMessage silently dropped responses (fixed with fresh objects per turn).
+
+**Result:** Clean-run medians: agno 2.2 ms, LangGraph 3.4 ms (1.6x), PydanticAI 8.3 ms
+(3.9x), CrewAI 24.4 ms (11x) per conversation. Note the multi-turn gap versus LangGraph is
+narrower than single-turn (1.6x vs 4.9x): Agno's turns include full session persistence,
+LangGraph's checkpointer is an in-memory dict. Published as measured.
+
+---
+
 ## Review round (2026-08-21)
 
 A 34-agent adversarial review (methodology, mock fidelity, house rules, report, runner
