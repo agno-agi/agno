@@ -10,18 +10,19 @@ class ShellTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Union[Path, str]] = None,
-        run_shell_command: bool = True,
+        run_shell_command: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize ShellTools.
 
         .. warning::
             ``run_shell_command`` runs an arbitrary command on the host OS with no
-            sandboxing — an RCE sink if the agent is prompt-injected. To require
-            human approval before any command executes, gate the tool through the
+            sandboxing — an RCE sink if the agent is prompt-injected. Disabled by
+            default for security. Enable explicitly and consider gating through the
             toolkit's confirmation mechanism::
 
-                ShellTools(requires_confirmation_tools=["run_shell_command"])
+                ShellTools(run_shell_command=True, requires_confirmation_tools=["run_shell_command"])
         """
         # Backwards compat: enable_X -> X
         if "enable_run_shell_command" in kwargs:
@@ -32,7 +33,7 @@ class ShellTools(Toolkit):
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir
 
         tools: List[Callable] = []
-        if run_shell_command:
+        if all or run_shell_command:
             tools.append(self.run_shell_command)
 
         super().__init__(name="shell_tools", tools=tools, **kwargs)

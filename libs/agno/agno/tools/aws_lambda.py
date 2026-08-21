@@ -14,7 +14,7 @@ class AWSLambdaTools(Toolkit):
         self,
         region_name: str = "us-east-1",
         list_functions: bool = True,
-        invoke_function: bool = True,
+        invoke_function: bool = False,
         all: bool = False,
         **kwargs,
     ):

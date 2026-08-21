@@ -61,7 +61,7 @@ class DoclingTools(Toolkit):
         pdf_picture_classification: Optional[bool] = None,
         pdf_document_timeout: Optional[float] = None,
         pdf_remote_services: Optional[bool] = None,
-        convert_to_markdown: bool = False,
+        convert_to_markdown: bool = True,
         convert_to_text: bool = False,
         convert_to_html: bool = False,
         convert_to_html_split_page: bool = False,

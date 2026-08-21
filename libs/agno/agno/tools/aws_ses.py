@@ -16,7 +16,7 @@ class AWSSESTool(Toolkit):
         sender_email: Optional[str] = None,
         sender_name: Optional[str] = None,
         region_name: str = "us-east-1",
-        send_email: bool = True,
+        send_email: bool = False,
         all: bool = False,
         **kwargs,
     ):

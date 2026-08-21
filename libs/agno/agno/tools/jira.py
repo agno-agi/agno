@@ -19,10 +19,10 @@ class JiraTools(Toolkit):
         password: Optional[str] = None,
         token: Optional[str] = None,
         get_issue: bool = True,
-        create_issue: bool = True,
+        create_issue: bool = False,
         search_issues: bool = True,
-        add_comment: bool = True,
-        add_worklog: bool = True,
+        add_comment: bool = False,
+        add_worklog: bool = False,
         all: bool = False,
         **kwargs,
     ):

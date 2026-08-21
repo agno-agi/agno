@@ -21,10 +21,10 @@ class CalComTools(Toolkit):
         user_timezone: Optional[str] = None,
         timeout: int = 30,
         get_available_slots: bool = True,
-        create_booking: bool = True,
+        create_booking: bool = False,
         get_upcoming_bookings: bool = True,
-        reschedule_booking: bool = True,
-        cancel_booking: bool = True,
+        reschedule_booking: bool = False,
+        cancel_booking: bool = False,
         all: bool = False,
         **kwargs,
     ):

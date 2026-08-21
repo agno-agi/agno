@@ -18,7 +18,7 @@ class DiscordTools(Toolkit):
         get_channel_messages: bool = True,
         get_channel_info: bool = True,
         list_channels: bool = True,
-        delete_message: bool = True,
+        delete_message: bool = False,
         all: bool = False,
         **kwargs,
     ):

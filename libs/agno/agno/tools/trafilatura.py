@@ -45,8 +45,8 @@ class TrafilaturaTools(Toolkit):
         max_tree_size: Maximum tree size for processing.
         max_crawl_urls: Maximum number of URLs to crawl per website.
         max_known_urls: Maximum number of known URLs during crawling.
-        scrape: Enable scrape tool (fetch URL, extract text). Defaults to False (token heavy).
-        get_metadata: Enable get_metadata tool. Defaults to False (token heavy).
+        scrape: Enable scrape tool (fetch URL, extract text). Defaults to True.
+        get_metadata: Enable get_metadata tool. Defaults to True.
         convert_html: Enable convert_html tool (local HTML to text). Defaults to False.
         scrape_batch: Enable scrape_batch tool. Defaults to False (token heavy).
         crawl: Enable crawl tool (spider a website). Defaults to False (token heavy).
@@ -69,8 +69,8 @@ class TrafilaturaTools(Toolkit):
         max_tree_size: Optional[int] = None,
         max_crawl_urls: int = 10,
         max_known_urls: int = 100000,
-        scrape: bool = False,
-        get_metadata: bool = False,
+        scrape: bool = True,
+        get_metadata: bool = True,
         convert_html: bool = False,
         scrape_batch: bool = False,
         crawl: bool = False,

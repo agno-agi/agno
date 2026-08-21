@@ -22,7 +22,7 @@ class EvmTools(Toolkit):
         self,
         private_key: Optional[str] = None,
         rpc_url: Optional[str] = None,
-        send_transaction: bool = True,
+        send_transaction: bool = False,
         all: bool = False,
         **kwargs,
     ):

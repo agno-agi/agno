@@ -14,7 +14,7 @@ class EmailTools(Toolkit):
         sender_name: Optional[str] = None,
         sender_email: Optional[str] = None,
         sender_passkey: Optional[str] = None,
-        email_user: bool = True,
+        email_user: bool = False,
         all: bool = False,
         **kwargs,
     ):

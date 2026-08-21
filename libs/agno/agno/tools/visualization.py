@@ -11,22 +11,22 @@ class VisualizationTools(Toolkit):
 
     Args:
         output_dir: Directory to save charts. Defaults to "charts".
-        create_bar_chart: Enable create_bar_chart tool. Defaults to False.
-        create_line_chart: Enable create_line_chart tool. Defaults to False.
-        create_pie_chart: Enable create_pie_chart tool. Defaults to False.
-        create_scatter_plot: Enable create_scatter_plot tool. Defaults to False.
-        create_histogram: Enable create_histogram tool. Defaults to False.
+        create_bar_chart: Enable create_bar_chart tool. Defaults to True.
+        create_line_chart: Enable create_line_chart tool. Defaults to True.
+        create_pie_chart: Enable create_pie_chart tool. Defaults to True.
+        create_scatter_plot: Enable create_scatter_plot tool. Defaults to True.
+        create_histogram: Enable create_histogram tool. Defaults to True.
         all: Enable all tools. Defaults to False.
     """
 
     def __init__(
         self,
         output_dir: str = "charts",
-        create_bar_chart: bool = False,
-        create_line_chart: bool = False,
-        create_pie_chart: bool = False,
-        create_scatter_plot: bool = False,
-        create_histogram: bool = False,
+        create_bar_chart: bool = True,
+        create_line_chart: bool = True,
+        create_pie_chart: bool = True,
+        create_scatter_plot: bool = True,
+        create_histogram: bool = True,
         all: bool = False,
         **kwargs,
     ):

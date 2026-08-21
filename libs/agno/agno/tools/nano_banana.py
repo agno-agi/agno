@@ -45,7 +45,7 @@ class NanoBananaTools(Toolkit):
         aspect_ratio: str = "1:1",
         api_key: Optional[str] = None,
         all: bool = False,
-        create_image: bool = False,
+        create_image: bool = True,
         **kwargs,
     ):
         """Initialize NanoBananaTools for image generation using Google's Gemini models.
