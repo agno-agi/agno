@@ -41,10 +41,10 @@ agent = Agent(
     add_history_to_context=True,
     # Low token limit to trigger compaction quickly with file reads
     compaction_manager=CompactionManager(
-        compact_history=True,
+        compact_context=True,
         model=OpenAIResponses(id="gpt-5-mini"),
-        token_limit=20_000,  # Low limit - 2-3 file reads will trigger
-        keep_recent=6,
+        compact_context_token_limit=20_000,  # Low limit - 2-3 file reads will trigger
+        compact_context_keep_recent=6,
     ),
     markdown=True,
 )
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Read compression/context.py and explain what CompactionManager does.",
+        "Read compression/context.py and explain what ContextCompactionManager does.",
         session_id=session_id,
         stream=True,
     )
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Now read agent/agent.py and find where compaction_manager is wired up.",
+        "Now read agent/agent.py and find where context_compaction_manager is wired up.",
         session_id=session_id,
         stream=True,
     )

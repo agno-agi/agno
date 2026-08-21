@@ -766,8 +766,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["store_history_messages"] = team.store_history_messages
 
     # --- Compression settings ---
-    if team.compact_tool_results:
-        config["compact_tool_results"] = team.compact_tool_results
+    if team.compact_tools:
+        config["compact_tools"] = team.compact_tools
     # TODO: implement compaction manager serialization
     # if team.compaction_manager is not None:
     #     config["compaction_manager"] = team.compaction_manager.to_dict()
@@ -1336,7 +1336,7 @@ def from_dict(
             num_history_messages=config.get("num_history_messages"),
             max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
             # --- Compression settings ---
-            compact_tool_results=config.get("compact_tool_results", False),
+            compact_tools=config.get("compact_tools", False),
             # compaction_manager=config.get("compaction_manager"),  # TODO
             # --- Reasoning settings ---
             reasoning_model=config.get("reasoning_model"),

@@ -1058,8 +1058,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["metadata"] = agent.metadata
 
     # --- Context compression settings ---
-    if agent.compact_tool_results:
-        config["compact_tool_results"] = agent.compact_tool_results
+    if agent.compact_tools:
+        config["compact_tools"] = agent.compact_tools
     # TODO: implement compaction manager serialization
     # if agent.compaction_manager is not None:
     #     config["compaction_manager"] = agent.compaction_manager.to_dict()
@@ -1364,7 +1364,7 @@ def from_dict(
         # --- Metadata ---
         metadata=strip_reserved_run_metadata(config.get("metadata")),
         # --- Compression settings ---
-        compact_tool_results=config.get("compact_tool_results", False),
+        compact_tools=config.get("compact_tools", False),
         # compaction_manager=config.get("compaction_manager"),  # TODO
         # --- Debug and telemetry settings ---
         debug_mode=config.get("debug_mode", False),

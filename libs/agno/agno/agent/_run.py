@@ -531,7 +531,7 @@ def _run(
                 # Two-list architecture:
                 #   - messages: canonical list for DB storage (always full history)
                 #   - compacted_messages: compressed view for model (summary + recent)
-                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
                     log_debug(f"[RUN-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
                     compaction_result = agent.compaction_manager.compact(
                         run_messages.messages,
@@ -559,7 +559,7 @@ def _run(
                     response_format=response_format,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compaction_manager=agent.compaction_manager if agent.compact_tool_results else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tools else None,
                     compaction_callback=build_compaction_callback(
                         agent,
                         run_messages=run_messages,
@@ -1681,7 +1681,7 @@ async def _arun(
                 # Two-list architecture:
                 #   - messages: canonical list for DB storage (always full history)
                 #   - compacted_messages: compressed view for model (summary + recent)
-                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
                     log_debug(f"[RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
                     compaction_result = await agent.compaction_manager.acompact(
                         run_messages.messages,
@@ -1707,7 +1707,7 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
-                    compaction_manager=agent.compaction_manager if agent.compact_tool_results else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tools else None,
                     compaction_callback=await abuild_compaction_callback(
                         agent,
                         run_messages=run_messages,
@@ -3784,7 +3784,7 @@ def _continue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compaction_manager=agent.compaction_manager if agent.compact_tool_results else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tools else None,
                     compaction_callback=build_compaction_callback(
                         agent,
                         run_messages=run_messages,
@@ -5028,7 +5028,7 @@ async def _acontinue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compaction_manager=agent.compaction_manager if agent.compact_tool_results else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tools else None,
                     compaction_callback=await abuild_compaction_callback(
                         agent,
                         run_messages=run_messages,

@@ -81,10 +81,10 @@ review_team = Team(
     add_history_to_context=True,
     # Low token limit to trigger compaction with file reads
     compaction_manager=CompactionManager(
-        compact_history=True,
+        compact_context=True,
         model=OpenAIResponses(id="gpt-5-mini"),
-        token_limit=25_000,  # Low limit - file reads trigger quickly
-        keep_recent=8,
+        compact_context_token_limit=25_000,  # Low limit - file reads trigger quickly
+        compact_context_keep_recent=8,
     ),
     markdown=True,
     show_members_responses=True,

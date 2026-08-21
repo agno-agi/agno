@@ -343,7 +343,7 @@ class Agent:
 
     # --- Context Compaction ---
     # If True, compact tool call results to save context
-    compact_tool_results: bool = False
+    compact_tools: bool = False
     # If True, compact conversation history to save context
     compact_context: bool = False
     # Compaction manager for tool results and/or conversation history
@@ -396,10 +396,11 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        compact_tool_results: bool = False,
+        compact_tools: bool = False,
         compact_context: bool = False,
         compaction_manager: Optional[CompactionManager] = None,
-        # Deprecated aliases (use compact_tool_results and compaction_manager)
+        # Deprecated aliases (use compact_tools and compaction_manager)
+        compact_tool_results: Optional[bool] = None,
         compress_tool_results: Optional[bool] = None,
         compression_manager: Optional[CompactionManager] = None,
         add_history_to_context: bool = False,
@@ -526,11 +527,14 @@ class Agent:
         self.add_session_summary_to_context = add_session_summary_to_context
 
         # Context compaction settings (with backward compat for old names)
-        if compress_tool_results is not None:
-            log_debug("compress_tool_results is deprecated, use compact_tool_results")
-            self.compact_tool_results = compress_tool_results
+        if compact_tool_results is not None:
+            log_debug("compact_tool_results is deprecated, use compact_tools")
+            self.compact_tools = compact_tool_results
+        elif compress_tool_results is not None:
+            log_debug("compress_tool_results is deprecated, use compact_tools")
+            self.compact_tools = compress_tool_results
         else:
-            self.compact_tool_results = compact_tool_results
+            self.compact_tools = compact_tools
 
         self.compact_context = compact_context
 

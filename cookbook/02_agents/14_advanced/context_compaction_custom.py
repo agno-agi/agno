@@ -4,10 +4,10 @@ Context Compaction with Custom Instructions
 Advanced context compaction with custom summarization prompts.
 
 This example shows how to customize the compaction behavior:
-- Custom instructions for domain-specific summarization
-- preserve_user_budget: Token budget for preserving user messages verbatim
-- keep_recent: How many recent messages to keep intact
-- message_limit: Trigger by message count instead of tokens
+- compact_context_instructions: Custom prompts for domain-specific summarization
+- compact_context_preserve_user_budget: Token budget for preserving user messages verbatim
+- compact_context_keep_recent: How many recent messages to keep intact
+- compact_context_message_limit: Trigger by message count instead of tokens
 
 Use case: IT support agent working a ticket across days. Turns are short but
 numerous. Custom instructions ensure ticket IDs, error codes, and tried steps
@@ -76,12 +76,12 @@ agent = Agent(
     add_history_to_context=True,
     # Context compaction with custom config
     compaction_manager=CompactionManager(
-        compact_history=True,
+        compact_context=True,
         model=OpenAIResponses(id="gpt-5-mini"),
-        message_limit=30,  # Trigger by message count (support = many short turns)
-        keep_recent=8,  # Keep more recent context for support
-        preserve_user_budget=15_000,  # Keep user messages verbatim
-        instructions=SUPPORT_COMPACTION_PROMPT,  # Custom summarization prompt
+        compact_context_message_limit=30,  # Trigger by message count (support = many short turns)
+        compact_context_keep_recent=8,  # Keep more recent context for support
+        compact_context_preserve_user_budget=15_000,  # Keep user messages verbatim
+        compact_context_instructions=SUPPORT_COMPACTION_PROMPT,  # Custom summarization prompt
     ),
     markdown=True,
 )

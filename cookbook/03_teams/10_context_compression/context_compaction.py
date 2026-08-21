@@ -80,9 +80,9 @@ research_team = Team(
     add_history_to_context=True,
     # Context compaction with minimal config
     compaction_manager=CompactionManager(
-        compact_history=True,
+        compact_context=True,
         model=OpenAIResponses(id="gpt-5-mini"),
-        token_limit=60_000,
+        compact_context_token_limit=60_000,
     ),
     markdown=True,
     show_members_responses=True,

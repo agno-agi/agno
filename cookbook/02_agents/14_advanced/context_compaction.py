@@ -37,9 +37,9 @@ agent = Agent(
     add_history_to_context=True,
     # Context compaction with minimal config
     compaction_manager=CompactionManager(
-        compact_history=True,
         model=OpenAIResponses(id="gpt-5-mini"),
-        token_limit=50_000,
+        compact_context=True,
+        compact_context_token_limit=50_000,
     ),
     markdown=True,
 )

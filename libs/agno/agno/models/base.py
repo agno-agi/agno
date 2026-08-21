@@ -694,7 +694,7 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tool_results
+        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tools
         _compaction_manager = compaction_manager if _compact_tool_results else None
 
         while True:
@@ -702,7 +702,7 @@ class Model(ABC):
             if _compaction_manager is not None and _compaction_manager.should_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
-                _compaction_manager.compact_tools(
+                _compaction_manager.compact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
 
@@ -937,7 +937,7 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tool_results
+        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tools
         _compaction_manager = compaction_manager if _compact_tool_results else None
 
         function_call_count = 0
@@ -947,7 +947,7 @@ class Model(ABC):
             if _compaction_manager is not None and await _compaction_manager.ashould_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
-                await _compaction_manager.acompact_tools(
+                await _compaction_manager.acompact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
 
@@ -1449,7 +1449,7 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tool_results
+        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tools
         _compaction_manager = compaction_manager if _compact_tool_results else None
 
         function_call_count = 0
@@ -1461,7 +1461,7 @@ class Model(ABC):
             ):
                 # Emit compression started event
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                _compaction_manager.compact_tools(
+                _compaction_manager.compact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
                 # Emit compression completed event with stats
@@ -1752,7 +1752,7 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tool_results
+        _compact_tool_results = compaction_manager is not None and compaction_manager.compact_tools
         _compaction_manager = compaction_manager if _compact_tool_results else None
 
         function_call_count = 0
@@ -1764,7 +1764,7 @@ class Model(ABC):
             ):
                 # Emit compression started event
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                await _compaction_manager.acompact_tools(
+                await _compaction_manager.acompact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
                 # Emit compression completed event with stats
