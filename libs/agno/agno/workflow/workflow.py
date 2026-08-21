@@ -30,11 +30,12 @@ if TYPE_CHECKING:
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -122,7 +123,7 @@ from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.steps import Steps
 from agno.workflow.types import (
     OnError,
@@ -335,11 +336,158 @@ def _create_skipped_step_output(
     )
 
 
+class WorkflowLinkCollisionError(ValueError):
+    """Raised when a save produces two different pins for one link key."""
+
+
+# Container step types, as serialized by each container's ``to_dict``. A
+# config walked from the db has dicts where an in-process workflow has step
+# objects, and both must produce the same links.
+_CONTAINER_STEP_TYPES = {"parallel", "loop", "steps", "condition"}
+
+
+def _step_link_children(step: Any) -> Optional[Tuple[List[Any], List[Any]]]:
+    """The nested steps of a container step, as (steps, else_steps).
+
+    Returns None for a leaf step, which is what carries the links. Accepts
+    either a step object or its serialized dict.
+    """
+    if isinstance(step, dict):
+        step_type = str(step.get("type") or "Step").strip().lower()
+        if step_type == "router":
+            return list(step.get("choices") or []), []
+        if step_type in _CONTAINER_STEP_TYPES:
+            return list(step.get("steps") or []), list(step.get("else_steps") or [])
+        return None
+    if isinstance(step, Router):
+        return list(getattr(step, "choices", None) or []), []
+    if isinstance(step, (Parallel, Loop, Steps, Condition)):
+        return list(getattr(step, "steps", None) or []), list(getattr(step, "else_steps", None) or [])
+    return None
+
+
+def _step_link_specs(step: Any, position: int) -> List[Dict[str, Any]]:
+    """Unpinned links for one leaf step, from a step object or its dict.
+
+    The dict branch mirrors ``Step.get_links`` exactly - same order, same
+    ``step_id or name`` key - so a workflow written from a config produces the
+    same rows as one written from live objects.
+    """
+    if isinstance(step, Step):
+        return step.get_links(position=position)
+    if not isinstance(step, dict):
+        return []
+    link_key = step.get("step_id") or step.get("name")
+    links: List[Dict[str, Any]] = []
+    for config_key, link_kind in (
+        ("agent_id", "step_agent"),
+        ("team_id", "step_team"),
+        ("workflow_id", "step_workflow"),
+    ):
+        child_component_id = step.get(config_key)
+        if not child_component_id:
+            continue
+        links.append(
+            {
+                "link_kind": link_kind,
+                "link_key": link_key,
+                "child_component_id": child_component_id,
+                "child_version": None,
+                "position": position,
+            }
+        )
+    return links
+
+
+def derive_step_links(
+    steps: Any,
+    *,
+    pin_child: Callable[[Dict[str, Any]], Optional[Dict[str, Any]]],
+    on_step: Optional[Callable[[Any], None]] = None,
+    workflow_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Build a workflow version's ``component_links`` rows from its steps.
+
+    Every surface that persists a workflow config - the SDK save, the studio
+    tools and the REST config routes - must derive the same rows, or the same
+    workflow pins different children depending on how it was written and the
+    archive/publish guards that read those rows disagree with each other. The
+    traversal, the link keys, the positions and the collision rule live here so
+    there is one answer; each caller supplies only how a child is pinned.
+
+    Args:
+        steps: The workflow's steps, as step objects or serialized dicts.
+        pin_child: Called with each unpinned link; returns the link to keep
+            (usually with ``child_version`` filled in) or None to drop it.
+        on_step: Called with each leaf step before its links are pinned, for
+            callers that persist a step's children first.
+        workflow_id: The parent workflow id, named in the collision error.
+
+    Returns:
+        The links to persist, deduplicated on (link_kind, link_key).
+
+    Raises:
+        WorkflowLinkCollisionError: If one link key would pin two different
+            children or versions.
+    """
+    collected: List[Dict[str, Any]] = []
+
+    def walk(step: Any, position: int, key_suffix: str) -> None:
+        children = _step_link_children(step)
+        if children is None:
+            if on_step is not None:
+                on_step(step)
+            for link in _step_link_specs(step, position):
+                if key_suffix:
+                    link["link_key"] = f"{link.get('link_key')}{key_suffix}"
+                pinned = pin_child(link)
+                if pinned is not None:
+                    collected.append(pinned)
+            return
+        nested_steps, else_steps = children
+        for nested_position, nested_step in enumerate(nested_steps):
+            walk(nested_step, nested_position, key_suffix)
+        # The links table keys on (link_kind, link_key); an else-step that
+        # shares a name with an if-step must not collide with it.
+        for nested_position, nested_step in enumerate(else_steps):
+            walk(nested_step, nested_position, f"{key_suffix}#else")
+
+    for position, step in enumerate(steps if isinstance(steps, list) else []):
+        walk(step, position, "")
+
+    # A remaining duplicate (steps sharing a name across containers) would fail
+    # the whole write, and silently dropping one of two different pins would
+    # float that child to its latest version forever.
+    seen_links: Dict[tuple, Dict[str, Any]] = {}
+    deduped_links: List[Dict[str, Any]] = []
+    for link in collected:
+        dedupe_key = (link.get("link_kind"), link.get("link_key"))
+        existing = seen_links.get(dedupe_key)
+        if existing is not None:
+            if (existing.get("child_component_id"), existing.get("child_version")) == (
+                link.get("child_component_id"),
+                link.get("child_version"),
+            ):
+                continue
+            raise WorkflowLinkCollisionError(
+                f"Workflow '{workflow_id}' produces two different links for key "
+                f"'{link.get('link_key')}' ('{existing.get('child_component_id')}' "
+                f"v{existing.get('child_version')} and "
+                f"'{link.get('child_component_id')}' v{link.get('child_version')}); "
+                "give steps distinct names so every pin is kept."
+            )
+        seen_links[dedupe_key] = link
+        deduped_links.append(link)
+    return deduped_links
+
+
 def _step_from_dict(
     data: Dict[str, Any],
     registry: Optional["Registry"] = None,
     db: Optional["BaseDb"] = None,
     links: Optional[List[Dict[str, Any]]] = None,
+    strict: bool = False,
+    branch_suffix: str = "",
 ) -> Union[Step, Steps, Loop, Parallel, Condition, Router]:
     """
     Deserialize a step from a dictionary based on its type.
@@ -356,17 +504,21 @@ def _step_from_dict(
     step_type = data.get("type", "Step")
 
     if step_type == "Loop":
-        return Loop.from_dict(data, registry=registry, db=db, links=links)
+        return Loop.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
     elif step_type == "Parallel":
-        return Parallel.from_dict(data, registry=registry, db=db, links=links)
+        return Parallel.from_dict(
+            data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix
+        )
     elif step_type == "Steps":
-        return Steps.from_dict(data, registry=registry, db=db, links=links)
+        return Steps.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
     elif step_type == "Condition":
-        return Condition.from_dict(data, registry=registry, db=db, links=links)
+        return Condition.from_dict(
+            data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix
+        )
     elif step_type == "Router":
-        return Router.from_dict(data, registry=registry, db=db, links=links)
+        return Router.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
     elif step_type == "Step":
-        return Step.from_dict(data, registry=registry, db=db, links=links)
+        return Step.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
     else:
         raise ValueError(f"Unknown step type: {step_type}")
 
@@ -471,6 +623,7 @@ class Workflow:
 
     def __init__(
         self,
+        *,
         id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -949,6 +1102,7 @@ class Workflow:
         db: Optional["BaseDb"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         registry: Optional[Registry] = None,
+        strict: bool = False,
     ) -> "Workflow":
         """
         Create a Workflow from a dictionary.
@@ -958,11 +1112,24 @@ class Workflow:
             db: Optional database for loading agents/teams in steps
             links: Optional links for this workflow version
             registry: Optional registry for rehydrating executors
+            strict: If True, unresolvable references raise
+                ComponentRehydrationError instead of degrading: the workflow's
+                input schema, and the step-level agents, teams and callable
+                refs (executors, evaluators, selectors, end conditions) the
+                flag is passed down to. An unresolvable serialized db config
+                warns and falls back to the caller's db in both modes.
 
         Returns:
             Workflow: Reconstructed workflow instance
+
+        Raises:
+            ComponentRehydrationError: If strict and a registry reference cannot be resolved.
         """
+        from agno.exceptions import ComponentRehydrationError
+
         config = data.copy()
+
+        component_label = f"Workflow '{config.get('id') or config.get('name') or '<unknown>'}'"
 
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
@@ -970,6 +1137,9 @@ class Workflow:
             if resolved is not None:
                 config["db"] = resolved
             else:
+                # Only postgres, sqlite and clickhouse serialize a type; on other
+                # backends the caller's own db is the fallback, in both modes.
+                log_warning(f"{component_label} has a serialized db config that could not be resolved.")
                 del config["db"]
 
         # --- Handle Schema reconstruction ---
@@ -977,6 +1147,12 @@ class Workflow:
             schema_cls = registry.get_schema(config["input_schema"]) if registry else None
             if schema_cls:
                 config["input_schema"] = schema_cls
+            elif strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} references input schema '{config['input_schema']}' which was "
+                    "not found in the registry. Register the schema, or pass strict=False to load "
+                    "the component without it."
+                )
             else:
                 log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
                 del config["input_schema"]
@@ -984,7 +1160,10 @@ class Workflow:
         # --- Handle steps reconstruction ---
         steps: Optional[WorkflowSteps] = None
         if "steps" in config and config["steps"]:
-            steps = [_step_from_dict(step_data, db=db, links=links, registry=registry) for step_data in config["steps"]]
+            steps = [
+                _step_from_dict(step_data, db=db, links=links, registry=registry, strict=strict)
+                for step_data in config["steps"]
+            ]
             del config["steps"]
 
         return cls(
@@ -1012,7 +1191,7 @@ class Workflow:
             # --- Schema settings ---
             input_schema=config.get("input_schema"),
             # --- Metadata and run-level params ---
-            metadata=config.get("metadata"),
+            metadata=strip_reserved_run_metadata(config.get("metadata")),
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context"),
             add_session_state_to_context=config.get("add_session_state_to_context"),
@@ -1054,54 +1233,49 @@ class Workflow:
         # Track saved entity versions for pinning links
         saved_versions: Dict[str, int] = {}
 
-        # Collect all links
-        all_links: List[Dict[str, Any]] = []
+        def _save_step_children(step: Any) -> None:
+            """Save a step's agent/team/workflow so its link can pin a version."""
+            if not isinstance(step, Step):
+                return
 
-        def _save_step_agents(
-            step: Any,
-            position: int,
-            saved_versions: Dict[str, int],
-            all_links: List[Dict[str, Any]],
-        ) -> None:
-            """Recursively save agents/teams in steps, including nested containers."""
-            if isinstance(step, Step):
-                # Save agent if present
-                if step.agent and isinstance(step.agent, Agent):
-                    agent_version = step.agent.save(
-                        db=db_,
-                        stage=stage,
-                        label=label,
-                        notes=notes,
-                    )
-                    if step.agent.id is not None and agent_version is not None:
-                        saved_versions[step.agent.id] = agent_version
+            # Save agent if present
+            if step.agent and isinstance(step.agent, Agent):
+                agent_version = step.agent.save(
+                    db=db_,
+                    stage=stage,
+                    label=label,
+                    notes=notes,
+                )
+                if step.agent.id is not None and agent_version is not None:
+                    saved_versions[step.agent.id] = agent_version
 
-                # Save team if present
-                if step.team and isinstance(step.team, Team):
-                    team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
-                    if step.team.id is not None and team_version is not None:
-                        saved_versions[step.team.id] = team_version
+            # Save team if present
+            if step.team and isinstance(step.team, Team):
+                team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
+                if step.team.id is not None and team_version is not None:
+                    saved_versions[step.team.id] = team_version
 
-                # Add links with position and pinned version
-                for link in step.get_links(position=position):
-                    if link["child_component_id"] in saved_versions:
-                        link["child_version"] = saved_versions[link["child_component_id"]]
-                    all_links.append(link)
+            # Save nested workflow if present; without a saved version its
+            # step_workflow link cannot be written and the save would fail.
+            if step.workflow is not None and isinstance(step.workflow, Workflow):
+                workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
+                if step.workflow.id is not None and workflow_version is not None:
+                    saved_versions[step.workflow.id] = workflow_version
 
-            elif isinstance(step, (Parallel, Loop, Steps, Condition)):
-                # Recursively process nested steps
-                for nested_position, nested_step in enumerate(step.steps):
-                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
-
-            elif isinstance(step, Router):
-                # Router uses 'choices' instead of 'steps'
-                for nested_position, nested_step in enumerate(step.choices):
-                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
+        def _pin_saved_version(link: Dict[str, Any]) -> Dict[str, Any]:
+            """Pin a link at the version this save just wrote for that child."""
+            child_component_id = link.get("child_component_id")
+            if child_component_id in saved_versions:
+                link["child_version"] = saved_versions[child_component_id]
+            return link
 
         try:
-            steps_to_save = self.steps if isinstance(self.steps, list) else []
-            for position, step in enumerate(steps_to_save):
-                _save_step_agents(step, position, saved_versions, all_links)
+            all_links = derive_step_links(
+                self.steps,
+                pin_child=_pin_saved_version,
+                on_step=_save_step_children,
+                workflow_id=self.id,
+            )
 
             db_.upsert_component(
                 component_id=self.id,
@@ -1121,6 +1295,10 @@ class Workflow:
 
             return config.get("version")
 
+        except WorkflowLinkCollisionError:
+            # The refusal must reach the caller: returning None here would
+            # read as an I/O failure and hide that the snapshot was rejected.
+            raise
         except Exception as e:
             log_error(f"Error saving workflow: {str(e)}")
             return None
@@ -1134,6 +1312,8 @@ class Workflow:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        strict: bool = False,
+        published_only: bool = False,
     ) -> Optional["Workflow"]:
         """
         Load a workflow by id.
@@ -1142,10 +1322,21 @@ class Workflow:
             id: The id of the workflow to load.
             db: The database to load the workflow from.
             label: The label of the workflow to load.
+            strict: If True, unresolvable registry references
+                raise ComponentRehydrationError instead of being silently dropped.
 
         Returns:
             The workflow loaded from the database or None if not found.
         """
+        if published_only and version is None and label is None:
+            # Dispatch semantics on demand: resolve strictly through the live
+            # pointer instead of the current-or-latest-draft read fallback.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            version = current_version
+
         # TODO: Use db.load_component_graph instead of get_config
         data: Optional[Dict[str, Any]] = db.get_config(component_id=id, label=label, version=version)
         if data is None:
@@ -1155,7 +1346,15 @@ class Workflow:
         if config is None:
             return None
 
-        workflow = cls.from_dict(config, db=db, registry=registry)
+        # Links for this config version carry the step-member versions pinned
+        # at save time, so step agents/teams load at those versions.
+        resolved_version = data.get("version")
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        except NotImplementedError:
+            links = []
+
+        workflow = cls.from_dict(config, db=db, links=links, registry=registry, strict=strict)
 
         workflow.id = id
         # Only fall back to the caller-provided db if the config didn't
@@ -1163,6 +1362,10 @@ class Workflow:
         # (session_table, memory_table, ...) that were serialized with the
         # workflow.
         if workflow.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(config, db, "workflow", id)
             workflow.db = db
 
         return workflow
@@ -1172,6 +1375,7 @@ class Workflow:
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
         """
         Delete the workflow component.
@@ -1191,7 +1395,9 @@ class Workflow:
         if self.id is None:
             raise ValueError("Cannot delete workflow without an id")
 
-        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
+        return db_.delete_component(
+            component_id=self.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+        )
 
     async def aget_run_output(
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
@@ -2316,6 +2522,10 @@ class Workflow:
                         )
                     except RunCancelledException:
                         raise
+                    except UnresolvableCallableError:
+                        # A placeholder for an unresolved reference executed: skipping
+                        # would silently complete a run that could not do its work.
+                        raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
                         step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
@@ -2823,6 +3033,10 @@ class Workflow:
                                 ):
                                     yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                     except RunCancelledException:
+                        raise
+                    except UnresolvableCallableError:
+                        # A placeholder for an unresolved reference executed: skipping
+                        # would silently complete a run that could not do its work.
                         raise
                     except Exception as step_error:
                         step_error_occurred = True
@@ -3340,6 +3554,10 @@ class Workflow:
                             add_session_state_to_context=add_session_state_to_context,
                         )
                     except RunCancelledException:
+                        raise
+                    except UnresolvableCallableError:
+                        # A placeholder for an unresolved reference executed: skipping
+                        # would silently complete a run that could not do its work.
                         raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -3894,6 +4112,10 @@ class Workflow:
                             raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                     except RunCancelledException:
                         raise
+                    except UnresolvableCallableError:
+                        # A placeholder for an unresolved reference executed: skipping
+                        # would silently complete a run that could not do its work.
+                        raise
                     except Exception as step_error:
                         step_error_occurred = True
                         step_error_exception = step_error
@@ -4292,6 +4514,10 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            # Caller metadata persists on the run, as agents and teams already
+            # do: the run routes read it back, e.g. the pinned component
+            # version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -4491,6 +4717,10 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            # Caller metadata persists on the run, as agents and teams already
+            # do: the run routes read it back, e.g. the pinned component
+            # version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -5138,6 +5368,10 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            # Caller metadata persists on the run, as the non-agent workflow
+            # paths already do: the run routes read it back, e.g. the pinned
+            # component version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Yield WorkflowAgentStartedEvent at the beginning (stored in direct_reply_run_response)
@@ -5327,6 +5561,10 @@ class Workflow:
                 content=agent_response.content,
                 status=RunStatus.completed,
                 workflow_agent_run=agent_response,
+                # Caller metadata persists on the run, as the non-agent workflow
+                # paths already do: the run routes read it back, e.g. the pinned
+                # component version a draft preview must continue on.
+                metadata=run_context.metadata,
             )
 
             # Store the full agent RunOutput and establish parent-child relationship
@@ -5377,6 +5615,7 @@ class Workflow:
                     created_at=int(datetime.now().timestamp()),
                     content="Error: Workflow execution failed",
                     status=RunStatus.error,
+                    metadata=run_context.metadata,
                 )
 
     def _async_initialize_workflow_agent(
@@ -5535,6 +5774,10 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            # Caller metadata persists on the run, as the non-agent workflow
+            # paths already do: the run routes read it back, e.g. the pinned
+            # component version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Yield WorkflowAgentStartedEvent at the beginning (stored in direct_reply_run_response)
@@ -5741,6 +5984,10 @@ class Workflow:
                 content=agent_response.content,
                 status=RunStatus.completed,
                 workflow_agent_run=agent_response,
+                # Caller metadata persists on the run, as the non-agent workflow
+                # paths already do: the run routes read it back, e.g. the pinned
+                # component version a draft preview must continue on.
+                metadata=run_context.metadata,
             )
 
             # Store the full agent RunOutput and establish parent-child relationship
@@ -5810,6 +6057,7 @@ class Workflow:
                     created_at=int(datetime.now().timestamp()),
                     content="Error: Workflow execution failed",
                     status=RunStatus.error,
+                    metadata=run_context.metadata,
                 )
 
     def cancel_run(self, run_id: str) -> bool:
@@ -6640,6 +6888,10 @@ class Workflow:
                         **extra_kwargs,
                     )
                 except RunCancelledException:
+                    raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference executed: skipping
+                    # would silently complete a run that could not do its work.
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
@@ -7668,6 +7920,10 @@ class Workflow:
                         raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                 except RunCancelledException:
                     raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference executed: skipping
+                    # would silently complete a run that could not do its work.
+                    raise
                 except Exception as step_error:
                     step_error_occurred = True
                     step_error_exception = step_error
@@ -8654,6 +8910,10 @@ class Workflow:
                     )
                 except RunCancelledException:
                     raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference executed: skipping
+                    # would silently complete a run that could not do its work.
+                    raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
                     step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
@@ -9394,6 +9654,10 @@ class Workflow:
                         raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                 except RunCancelledException:
                     raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference executed: skipping
+                    # would silently complete a run that could not do its work.
+                    raise
                 except Exception as step_error:
                     step_error_occurred = True
                     step_error_exception = step_error
@@ -9935,6 +10199,7 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -10199,6 +10464,7 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -11046,6 +11312,7 @@ class Workflow:
                 description=step.description,
                 max_iterations=step.max_iterations,
                 end_condition=step.end_condition,
+                forward_iteration_output=step.forward_iteration_output,
                 human_review=step.human_review,
             )
 
@@ -11101,6 +11368,9 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
+    strict: bool = False,
+    published_only: bool = True,
 ) -> Optional["Workflow"]:
     """
     Get a Workflow by id from the database (new entities/configs schema).
@@ -11116,12 +11386,37 @@ def get_workflow_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the workflow when owned by this user or shared.
+        strict: If True, unresolvable registry references raise
+            ComponentRehydrationError; None strictly means the workflow was not found.
 
     Returns:
         Workflow instance or None.
+
+    Raises:
+        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
     """
+    from agno.exceptions import ComponentRehydrationError
+
     try:
-        row = db.get_config(component_id=id, version=version, label=label)
+        from agno.utils.component_scope import component_owner_scope
+
+        # Only resolve the workflow if owned by this user or shared.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
+        if published_only and version is None and label is None:
+            # Dispatch surfaces resolve only a published version; a draft-only
+            # component is not runnable. Uses the
+            # component row rather than get_current_config so third-party
+            # adapters with only the old surface keep working.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            row = db.get_config(component_id=id, version=current_version)
+        else:
+            row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
 
@@ -11131,16 +11426,32 @@ def get_workflow_by_id(
 
         resolved_version = row.get("version")
 
-        # Get links for this workflow version
-        links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        # Links for this workflow version; adapters without link support load unpinned.
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        except NotImplementedError:
+            links = []
 
-        workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry)
+        # Resolve DB-backed step executors under the same owner scope as the workflow.
+        with component_owner_scope(user_id):
+            workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry, strict=strict)
 
         # Ensure workflow.id is set to the component_id
         workflow.id = id
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one, matching Workflow.load.
+        if workflow.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(cfg, db, "workflow", id)
+            workflow.db = db
 
         return workflow
 
+    except ComponentRehydrationError:
+        # A rehydration failure is not "workflow not found"; propagate it.
+        raise
     except Exception as e:
         log_error(f"Error loading Workflow {id} from database: {str(e)}")
         return None
@@ -11149,15 +11460,23 @@ def get_workflow_by_id(
 def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
 ) -> List["Workflow"]:
     """
     Get all workflows from the database.
 
     Sets _version and _stage on each workflow from the component metadata.
+
+    Args:
+        db: Database to load workflows from
+        registry: Optional registry for rehydrating tools
+        user_id: If set, only load workflows owned by this user or shared.
     """
     workflows: List[Workflow] = []
     try:
-        components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
+        from agno.utils.component_scope import component_owner_scope
+
+        components, _ = db.list_components(component_type=ComponentType.WORKFLOW, user_id=user_id)
         for component in components:
             try:
                 config = db.get_config(component_id=component["component_id"])
@@ -11167,7 +11486,10 @@ def get_workflows(
                         component_id = component["component_id"]
                         if "id" not in workflow_config:
                             workflow_config["id"] = component_id
-                        workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                        # Resolve DB-backed step executors under the workflow's owner scope.
+                        with component_owner_scope(user_id):
+                            # Lenient on purpose: listings must show degraded components so they stay fixable.
+                            workflow = Workflow.from_dict(workflow_config, db=db, registry=registry, strict=False)
                         workflow.id = component_id
                         workflow._version = component.get("current_version")
                         workflow._stage = config.get("stage")

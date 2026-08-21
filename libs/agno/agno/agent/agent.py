@@ -34,9 +34,7 @@ from agno.agent import (
 )
 from agno.compression.context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
-from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
@@ -131,7 +129,7 @@ class Agent:
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     # --- Checkpointing ---
-    # When to persist run state to the database. See specs/agno/features/checkpointing/.
+    # When to persist run state to the database.
     #   "runs"  — default, write only at terminal states (today's behavior)
     #   "tool-batch" — write after each model turn (post-gather barrier)
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
@@ -196,12 +194,9 @@ class Agent:
     _run_hooks_in_background: Optional[bool] = None
 
     # --- Agent Reasoning ---
-    # Enable reasoning by working through the problem step by step.
-    reasoning: bool = False
+    # Enable reasoning by providing a reasoning_model (must be a native reasoning model).
     reasoning_model: Optional[Model] = None
     reasoning_agent: Optional[Agent] = None
-    reasoning_min_steps: int = 1
-    reasoning_max_steps: int = 10
 
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
@@ -347,17 +342,6 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
-    # --- Experimental Features ---
-    # --- Agent Culture ---
-    # Culture manager to use for this agent
-    culture_manager: Optional[CultureManager] = None
-    # Enable the agent to manage cultural knowledge
-    enable_agentic_culture: bool = False
-    # Update cultural knowledge after every run
-    update_cultural_knowledge: bool = False
-    # If True, the agent adds cultural knowledge in the response
-    add_culture_to_context: Optional[bool] = None
-
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compact_tool_results: bool = False
@@ -437,11 +421,8 @@ class Agent:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
-        reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
-        reasoning_min_steps: int = 1,
-        reasoning_max_steps: int = 10,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -490,10 +471,6 @@ class Agent:
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
-        culture_manager: Optional[CultureManager] = None,
-        enable_agentic_culture: bool = False,
-        update_cultural_knowledge: bool = False,
-        add_culture_to_context: Optional[bool] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
@@ -598,11 +575,8 @@ class Agent:
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
 
-        self.reasoning = reasoning
         self.reasoning_model = reasoning_model  # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent
-        self.reasoning_min_steps = reasoning_min_steps
-        self.reasoning_max_steps = reasoning_max_steps
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
@@ -663,11 +637,6 @@ class Agent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
 
-        self.culture_manager = culture_manager
-        self.enable_agentic_culture = enable_agentic_culture
-        self.update_cultural_knowledge = update_cultural_knowledge
-        self.add_culture_to_context = add_culture_to_context
-
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:
             log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
@@ -694,7 +663,7 @@ class Agent:
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
 
-        # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+        # Lazy-initialized shared thread pool executor for background tasks (memory, learning, etc.)
         self._background_executor: Optional[Any] = None
 
         # Callable factory settings
@@ -939,8 +908,8 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry)
+    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False) -> "Agent":
+        return _storage.from_dict(cls, data=data, registry=registry, strict=strict)
 
     def save(
         self,
@@ -961,16 +930,28 @@ class Agent:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        strict: bool = False,
+        published_only: bool = False,
     ) -> Optional["Agent"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version)
+        return _storage.load(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            published_only=published_only,
+        )
 
     def delete(
         self,
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
-        return _storage.delete(self, db=db, hard_delete=hard_delete)
+        return _storage.delete(self, db=db, hard_delete=hard_delete, require_no_dependents=require_no_dependents)
 
     def get_run_output(
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
@@ -1126,12 +1107,6 @@ class Agent:
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         return await _managers.aget_user_memories(self, user_id=user_id)
 
-    def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return _managers.get_culture_knowledge(self)
-
-    async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return await _managers.aget_culture_knowledge(self)
-
     # ---------------------------------------------------------------
     # _response module delegates
     # ---------------------------------------------------------------
@@ -1148,7 +1123,7 @@ class Agent:
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _default_tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result, user_id=self.user_id)
 
     # ---------------------------------------------------------------
     # _cli module delegates
@@ -1725,6 +1700,9 @@ def get_agent_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
+    strict: bool = False,
+    published_only: bool = True,
 ) -> Optional["Agent"]:
     """
     Get an Agent by id from the database (new entities/configs schema).
@@ -1738,14 +1716,36 @@ def get_agent_by_id(
         id: Agent entity_id.
         label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the agent when owned by this user or shared.
+        strict: If True, unresolvable registry references raise
+            ComponentRehydrationError; None strictly means the agent was not found.
 
     Returns:
         Agent instance or None.
+
+    Raises:
+        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
     """
+    from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_error
 
     try:
-        row = db.get_config(component_id=id, label=label, version=version)
+        # Only resolve the agent if owned by this user or shared.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
+        if published_only and version is None and label is None:
+            # Dispatch surfaces resolve only a published version; a draft-only
+            # component is not runnable. Uses the
+            # component row rather than get_current_config so third-party
+            # adapters with only the old surface keep working.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            row = db.get_config(component_id=id, version=current_version)
+        else:
+            row = db.get_config(component_id=id, label=label, version=version)
         if row is None:
             return None
 
@@ -1753,11 +1753,22 @@ def get_agent_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
 
-        agent = Agent.from_dict(cfg, registry=registry)
+        agent = Agent.from_dict(cfg, registry=registry, strict=strict)
         agent.id = id
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one, matching Agent.load.
+        if agent.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(cfg, db, "agent", id)
+            agent.db = db
 
         return agent
 
+    except ComponentRehydrationError:
+        # A rehydration failure is not "agent not found"; propagate it.
+        raise
     except Exception as e:
         log_error(f"Error loading Agent {id} from database: {str(e)}")
         return None
@@ -1767,18 +1778,25 @@ def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     exclude_component_ids: Optional[Set[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List["Agent"]:
     """
     Get all agents from the database.
 
     Sets _version and _stage on each agent from the component metadata.
+
+    Args:
+        db: Database to load agents from
+        registry: Optional registry for rehydrating tools
+        exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load agents owned by this user or shared.
     """
     from agno.utils.log import log_error
 
     agents: List[Agent] = []
     try:
         components, _ = db.list_components(
-            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
+            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids, user_id=user_id
         )
         for component in components:
             try:
@@ -1789,7 +1807,9 @@ def get_agents(
                         component_id = component["component_id"]
                         if "id" not in agent_config:
                             agent_config["id"] = component_id
-                        agent = Agent.from_dict(agent_config, registry=registry)
+                        # Lenient on purpose: listings must show degraded
+                        # components so they stay visible and fixable.
+                        agent = Agent.from_dict(agent_config, registry=registry, strict=False)
                         agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")

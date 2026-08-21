@@ -15,17 +15,14 @@ from agno.db.redis.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_index_entries,
-    deserialize_cultural_knowledge_from_db,
     deserialize_data,
     fetch_all_sessions_data,
     generate_redis_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
     remove_index_entries,
-    serialize_cultural_knowledge_for_db,
     serialize_data,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -34,8 +31,11 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metric_record_day,
+    metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -65,7 +65,6 @@ class RedisDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
     ):
@@ -91,7 +90,6 @@ class RedisDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
-            culture_table (Optional[str]): Name of the table to store cultural knowledge
             traces_table (Optional[str]): Name of the table to store traces
             spans_table (Optional[str]): Name of the table to store spans
 
@@ -111,7 +109,6 @@ class RedisDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
         )
@@ -151,9 +148,6 @@ class RedisDb(BaseDb):
 
         elif table_type == "knowledge":
             return self.knowledge_table_name
-
-        elif table_type == "culture":
-            return self.culture_table_name
 
         elif table_type == "traces":
             return self.trace_table_name
@@ -289,19 +283,27 @@ class RedisDb(BaseDb):
             log_error(f"Error getting all records for {table_type}: {str(e)}")
             return []
 
-    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
-        """Get the latest version of the database schema.
+    def _schema_version_key(self, table_name: str) -> str:
+        """Key holding the schema version stamp for the given table."""
+        return f"{self.db_prefix}:{self.versions_table_name}:{table_name}"
 
-        ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; Redis has no per-table versioning here so it is
-        ignored.
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
+
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
         """
-        return None
+        value = self.redis_client.get(self._schema_version_key(table_name))
+        if value is None:
+            return "2.0.0"
+        return value.decode() if isinstance(value, bytes) else str(value)
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
-        """Upsert the schema version. ``table_name`` is ignored — see
-        ``get_latest_schema_version``."""
-        pass
+        """Record the schema version stamp for the given table.
+
+        No TTL: the stamp must outlive ``self.expire``.
+        """
+        self.redis_client.set(self._schema_version_key(table_name), version)
 
     # -- Run methods --
 
@@ -1417,18 +1419,9 @@ class RedisDb(BaseDb):
         try:
             all_metrics = self._get_all_records("metrics")
 
-            if all_metrics:
-                # Find the latest completed metric
-                completed_metrics = [m for m in all_metrics if m.get("completed", False)]
-                if completed_metrics:
-                    latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    return datetime.fromisoformat(latest_completed["date"]).date() + timedelta(days=1)
-                else:
-                    # Find the earliest incomplete metric
-                    incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
-                    if incomplete_metrics:
-                        earliest_incomplete = min(incomplete_metrics, key=lambda x: x.get("date", ""))
-                        return datetime.fromisoformat(earliest_incomplete["date"]).date()
+            resume_date = metrics_starting_date_from_records(all_metrics)
+            if resume_date is not None:
+                return resume_date
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1462,9 +1455,13 @@ class RedisDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1486,17 +1483,16 @@ class RedisDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                # Check if a record already exists for this date and aggregation period
-                existing_record = self._get_record("metrics", metrics_record["id"])
-                if existing_record:
+                # One record per distinct user_id, plus the empty-string bucket for unowned sessions
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
                     # Update the existing record while preserving created_at
-                    metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
+                    existing_record = self._get_record("metrics", metrics_record["id"])
+                    if existing_record:
+                        metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
 
-                success = self._store_record("metrics", metrics_record["id"], metrics_record)
-                if success:
-                    results.append(metrics_record)
+                    success = self._store_record("metrics", metrics_record["id"], metrics_record)
+                    if success:
+                        results.append(metrics_record)
 
             log_debug("Updated metrics calculations")
 
@@ -1510,12 +1506,14 @@ class RedisDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter by.
             ending_date (Optional[date]): The ending date to filter by.
+            user_id (Optional[str]): The ID of the user to filter by. When None, all buckets are returned.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the list of metrics and the latest updated_at.
@@ -1530,7 +1528,9 @@ class RedisDb(BaseDb):
             if starting_date is not None or ending_date is not None:
                 filtered_metrics = []
                 for metric in all_metrics:
-                    metric_date = datetime.fromisoformat(metric.get("date", "")).date()
+                    metric_date = metric_record_day(metric)
+                    if metric_date is None:
+                        continue
                     if starting_date is not None and metric_date < starting_date:
                         continue
                     if ending_date is not None and metric_date > ending_date:
@@ -1538,12 +1538,27 @@ class RedisDb(BaseDb):
                     filtered_metrics.append(metric)
                 all_metrics = filtered_metrics
 
+            # Filter by user_id
+            if user_id is not None:
+                all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
+            else:
+                # Records written before ownership existed hold a whole day, and only an
+                # unscoped read sees them: an owner filter excludes them already
+                all_metrics = drop_legacy_metrics(all_metrics)
+
             # Get latest updated_at
             latest_updated_at = None
             if all_metrics:
                 latest_updated_at = max(metric.get("updated_at", 0) for metric in all_metrics)
 
-            return all_metrics, latest_updated_at
+            # Map the sentinel empty-string user_id back to None
+            cleaned: List[dict] = []
+            for metric in all_metrics:
+                row = dict(metric)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
@@ -1551,27 +1566,42 @@ class RedisDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_doc_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        """Whether the given knowledge row is owned by ``user_id`` or unowned. Unscoped callers see everything."""
+        if user_id is None:
+            return True
+        owner = doc.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes the row if it belongs to this user.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
         """
         try:
+            if user_id is not None:
+                existing = self._get_record("knowledge", id)
+                if existing is None or existing.get("user_id") != user_id:
+                    log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
+                    return
             self._delete_record("knowledge", id)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1582,6 +1612,8 @@ class RedisDb(BaseDb):
         try:
             document_raw = self._get_record("knowledge", id)
             if document_raw is None:
+                return None
+            if not self._knowledge_doc_is_visible(document_raw, user_id):
                 return None
 
             return KnowledgeRow.model_validate(document_raw)
@@ -1597,6 +1629,7 @@ class RedisDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1606,6 +1639,7 @@ class RedisDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1621,6 +1655,10 @@ class RedisDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 all_documents = [doc for doc in all_documents if doc.get("linked_to") == linked_to]
+
+            # Apply owner filter if provided
+            if user_id is not None:
+                all_documents = [doc for doc in all_documents if self._knowledge_doc_is_visible(doc, user_id)]
 
             total_count = len(all_documents)
 
@@ -1649,6 +1687,12 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while upserting the knowledge content.
         """
         try:
+            # A scoped write must not overwrite a record it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = self._get_record("knowledge", knowledge_row.id)
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             data = knowledge_row.model_dump()
             success = self._store_record("knowledge", knowledge_row.id, data)  # type: ignore
 
@@ -1914,178 +1958,6 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise
-
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="culture")
-
-            if keys:
-                self.redis_client.delete(*keys)
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            if self._delete_record("culture", id, index_fields=["name", "agent_id", "team_id"]):
-                log_debug(f"Successfully deleted cultural knowledge id: {id}")
-            else:
-                log_debug(f"No cultural knowledge found with id: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            cultural_knowledge = self._get_record("culture", id)
-
-            if cultural_knowledge is None:
-                return None
-
-            if not deserialize:
-                return cultural_knowledge
-
-            return deserialize_cultural_knowledge_from_db(cultural_knowledge)
-
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            all_cultural_knowledge = self._get_all_records("culture")
-
-            # Apply filters
-            filtered_items = []
-            for item in all_cultural_knowledge:
-                if agent_id is not None and item.get("agent_id") != agent_id:
-                    continue
-                if team_id is not None and item.get("team_id") != team_id:
-                    continue
-                if name is not None and name.lower() not in item.get("name", "").lower():
-                    continue
-
-                filtered_items.append(item)
-
-            sorted_items = apply_sorting(records=filtered_items, sort_by=sort_by, sort_order=sort_order)
-            paginated_items = apply_pagination(records=sorted_items, limit=limit, page=page)
-
-            if not deserialize:
-                return paginated_items, len(filtered_items)
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_items]
-
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in Redis.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-            item_id = cultural_knowledge.id or str(uuid4())
-
-            # Create the item dict with serialized content
-            data = {
-                "id": item_id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            success = self._store_record("culture", item_id, data, index_fields=["name", "agent_id", "team_id"])
-
-            if not success:
-                return None
-
-            if not deserialize:
-                return data
-
-            return deserialize_cultural_knowledge_from_db(data)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
 
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
@@ -2610,6 +2482,26 @@ class RedisDb(BaseDb):
     def _q_job_key(self, job_id: str) -> str:
         return self._q_key(f"job:{job_id}")
 
+    def _q_server_now(self) -> int:
+        """Redis server time as an integer epoch, for LEASE math.
+
+        Lease decisions must be anchored to ONE clock (the Postgres store
+        anchors to the database's NOW() for exactly this reason). With
+        worker wall clocks, a replica whose clock runs fast sees healthy
+        leases as expired and sweeps live runs - and since the sweep steals
+        the lock, the victim's own completion is fenced out and its run is
+        reported failed despite having finished; with multi-attempt budgets
+        that skew-triggered false sweep means duplicate side-effect
+        execution. TIME is the Redis server's clock, identical for every
+        worker on the shared store, so claim/heartbeat/sweep all agree.
+
+        Not applied to queue_stats' age arithmetic or the retention
+        cleanup cutoff; those only shift reporting/retention by the skew,
+        never ownership (mirroring the Postgres store's scope).
+        """
+        seconds, _microseconds = self.redis_client.time()
+        return int(seconds)
+
     def _q_idem_key(self, user_id: Optional[str], idempotency_key: str) -> str:
         """Collision-free dedup key for the (user, idempotency-key) tuple.
 
@@ -2652,11 +2544,16 @@ class RedisDb(BaseDb):
         # attach to another tenant's run) - mirrors the Postgres index
         idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
 
+        job_key = self._q_job_key(job["id"])
+
         for _ in range(10):
             with self.redis_client.pipeline() as pipe:
                 try:
+                    # The job key is always WATCHed: the MULTI below SETs it,
+                    # and a racing enqueue of the same id must not silently
+                    # overwrite (see the existence check further down).
                     if idem_key is not None:
-                        pipe.watch(idem_key)
+                        pipe.watch(job_key, idem_key)
                         existing_id = pipe.get(idem_key)
                         if existing_id is not None:
                             existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
@@ -2670,13 +2567,24 @@ class RedisDb(BaseDb):
                             # attach hands the caller that job's identifiers
                             # and live event stream) - never attach; fall
                             # through and take the key over inside the MULTI
+                    else:
+                        pipe.watch(job_key)
 
                     if max_depth and max_depth > 0:
                         queued = int(self.redis_client.zcard(self._q_key("queued")))
                         if queued >= max_depth:
-                            if idem_key is not None:
-                                pipe.unwatch()
+                            pipe.unwatch()
                             return {"accepted": False, "reason": "queue_full", "job": None}
+
+                    # Existing document under this id: mirror Postgres, where
+                    # id is the primary key - a collision is a programming
+                    # error (ids are server-minted uuid4), never a client
+                    # dedup. Silently SETting would reset a live ticket to
+                    # queued/attempt-0 - two executors, the first one's
+                    # completion fenced out.
+                    if pipe.exists(job_key):
+                        pipe.unwatch()
+                        raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
 
                     pipe.multi()
                     if idem_key is not None:
@@ -2704,7 +2612,7 @@ class RedisDb(BaseDb):
         them indefinitely (foreign entries stay queued at the front). Each
         page is pre-filtered with one pipelined MGET; the CAS inside
         _q_try_claim remains the only authority."""
-        now = int(time.time())
+        now = self._q_server_now()
         stale = now - lock_grace_seconds
 
         job = self._q_scan_claim(
@@ -2859,7 +2767,7 @@ class RedisDb(BaseDb):
                     # was status="running" but in NO zset: invisible to reclaim
                     # and sweep alike, a permanent zombie.
                     if job["status"] == "running":
-                        pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or int(time.time())})
+                        pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or self._q_server_now()})
                     else:
                         pipe.zrem(self._q_key("running"), job_id)
                     if job["status"] == "queued":
@@ -2875,7 +2783,7 @@ class RedisDb(BaseDb):
         from agno.db.schemas.jobs import QueueWriteOutcome
 
         count = 0
-        now = int(time.time())
+        now = self._q_server_now()
         for job_id in job_ids:
             job = self._q_load_job(job_id)
             if job is None:
@@ -2892,7 +2800,7 @@ class RedisDb(BaseDb):
     def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
         from agno.db.schemas.jobs import QueueWriteOutcome
 
-        now = int(time.time())
+        now = self._q_server_now()
 
         def _complete(job: Dict[str, Any]) -> None:
             job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
@@ -2905,7 +2813,7 @@ class RedisDb(BaseDb):
     ) -> Optional[str]:
         from agno.db.schemas.jobs import QueueWriteOutcome
 
-        now = int(time.time())
+        now = self._q_server_now()
         outcome_status: Dict[str, str] = {}
 
         def _retry(job: Dict[str, Any]) -> None:
@@ -2938,7 +2846,7 @@ class RedisDb(BaseDb):
         if status not in ("completed", "cancelled", "failed"):
             return False
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -2966,7 +2874,7 @@ class RedisDb(BaseDb):
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -2988,20 +2896,35 @@ class RedisDb(BaseDb):
             return False
 
     def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
-        stale = int(time.time()) - lock_grace_seconds
+        stale = self._q_server_now() - lock_grace_seconds
         exhausted: List[Dict[str, Any]] = []
-        for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=limit * 2):
-            job = self._q_load_job(_q_to_str(raw_id))
-            if (
-                job is not None
-                and job["status"] == "running"
-                and job.get("locked_at") is not None
-                and job["locked_at"] <= stale
-                and job["attempt"] >= job["max_attempts"]
-            ):
-                exhausted.append(job)
-                if len(exhausted) >= limit:
-                    break
+        # PAGE through the whole stale range: a fixed window (the old
+        # num=limit*2) made exhausted jobs sitting behind that many
+        # stale-but-reclaimable ones invisible on every tick - after a mass
+        # crash under a retry budget, terminal failures were starved
+        # indefinitely by the reclaim queue ahead of them. The stale range is
+        # finite and normally tiny (live jobs' heartbeats advance their zset
+        # score out of it), so walking it fully is bounded by the size of the
+        # very backlog the sweep exists to clear.
+        start = 0
+        page = max(limit * 2, 50)
+        while len(exhausted) < limit:
+            raw_ids = self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=start, num=page)
+            if not raw_ids:
+                break
+            for raw_id in raw_ids:
+                job = self._q_load_job(_q_to_str(raw_id))
+                if (
+                    job is not None
+                    and job["status"] == "running"
+                    and job.get("locked_at") is not None
+                    and job["locked_at"] <= stale
+                    and job["attempt"] >= job["max_attempts"]
+                ):
+                    exhausted.append(job)
+                    if len(exhausted) >= limit:
+                        break
+            start += len(raw_ids)
         return exhausted
 
     def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
@@ -3013,7 +2936,7 @@ class RedisDb(BaseDb):
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         stale = now - lock_grace_seconds
         try:
             with self.redis_client.pipeline() as pipe:
@@ -3042,15 +2965,16 @@ class RedisDb(BaseDb):
         except WatchError:
             return False
 
-    def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Replaces the old staleness
-        recheck - after acquire_sweep refreshed locked_at, staleness can no
-        longer serve as the fence."""
+    def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the sweeper - see the in-memory store's
+        docstring: the sweep reconciles the ticket with what the run row
+        says (completed/cancelled/paused/failed), never blind-fails it."""
         from redis.exceptions import WatchError
 
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -3062,9 +2986,7 @@ class RedisDb(BaseDb):
                 if job["status"] != "running" or job.get("locked_by") != worker_id:
                     pipe.unwatch()
                     return False
-                job.update(
-                    status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now
-                )
+                job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
                 pipe.multi()
                 self._q_save_job_in_pipe(pipe, job)
                 pipe.zrem(self._q_key("running"), job_id)
@@ -3073,31 +2995,41 @@ class RedisDb(BaseDb):
         except WatchError:
             return False
 
-    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket. strict=True demands failure-propagating
+        semantics for fail-closed consumers (see the in-memory store's
+        docstring); this load propagates Redis errors in both modes."""
         return self._q_load_job(job_id)
 
     def count_queued_jobs(self) -> int:
         return int(self.redis_client.zcard(self._q_key("queued")))
 
-    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        """Newest-first job listing. With a status filter, pages through the
-        FULL index in chunks until the limit is satisfied - a fixed window
-        would hide older matches behind newer non-matching jobs (e.g. failed
-        jobs older than a burst of completed ones)."""
+    def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Paginated job listing: (page of jobs, total matching count).
+
+        status accepts one value or a list (match any). Loads the full index
+        and filters/sorts in Python, like the other Redis list APIs -
+        total_count and arbitrary sort fields need the whole set anyway, and
+        the index stays small by construction (bounded by max_queue_depth
+        plus the retention sweep)."""
+        statuses = [status] if isinstance(status, str) else status
         jobs: List[Dict[str, Any]] = []
-        chunk = max(limit * 4, 100)
-        offset = 0
-        while True:
-            raw_ids = self.redis_client.zrevrange(self._q_key("all"), offset, offset + chunk - 1)
-            if not raw_ids:
-                return jobs
-            for raw_id in raw_ids:
-                job = self._q_load_job(_q_to_str(raw_id))
-                if job is not None and (status is None or job["status"] == status):
-                    jobs.append(job)
-                    if len(jobs) >= limit:
-                        return jobs
-            offset += chunk
+        raw_ids = self.redis_client.zrevrange(self._q_key("all"), 0, -1)
+        for raw_id in raw_ids:
+            job = self._q_load_job(_q_to_str(raw_id))
+            if job is not None and (statuses is None or job["status"] in statuses):
+                jobs.append(job)
+        total_count = len(jobs)
+        jobs = apply_sorting(records=jobs, sort_by=sort_by, sort_order=sort_order)
+        start = max(page - 1, 0) * limit
+        return jobs[start : start + limit], total_count
 
     def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
@@ -3105,7 +3037,7 @@ class RedisDb(BaseDb):
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
-        now = int(time.time())
+        now = self._q_server_now()
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -3157,7 +3089,7 @@ class RedisDb(BaseDb):
 
         job_key = self._q_job_key(job_id)
         for _ in range(10):
-            now = int(time.time())
+            now = self._q_server_now()
             try:
                 with self.redis_client.pipeline() as pipe:
                     pipe.watch(job_key)

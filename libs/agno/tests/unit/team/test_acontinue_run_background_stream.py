@@ -161,12 +161,21 @@ class TestAcontinueRunBackgroundStream:
             raise RuntimeError("boom")
             yield  # pragma: no cover  (make it an async generator)
 
+        stored_run = MagicMock()
+        stored_run.run_id = "r-1"
+        stored_run.status = RunStatus.running
         team_session = MagicMock()
+        team_session.runs = [stored_run]
 
         with (
             patch("agno.team._run._acontinue_run_stream", side_effect=failing_stream),
             patch(
                 "agno.team._storage._aread_or_create_session",
+                new_callable=AsyncMock,
+                return_value=team_session,
+            ),
+            patch(
+                "agno.team._storage._aread_session",
                 new_callable=AsyncMock,
                 return_value=team_session,
             ),
@@ -186,7 +195,9 @@ class TestAcontinueRunBackgroundStream:
 
         # The error path must have set RunStatus.error on the run_response
         assert run_response.status == RunStatus.error, "background helper must persist RunStatus.error on failure"
-        # asave_session is called at least twice: once for RUNNING, once for ERROR
+        # asave_session is called at least twice: once for RUNNING, once for
+        # ERROR, which is only written over a stored run still carrying the
+        # RUNNING marker step 1 wrote
         assert mock_save.await_count >= 2
         # The event stream must be marked terminal even on failure (call_count
         # covers either direct await or asyncio.shield-wrapped await)

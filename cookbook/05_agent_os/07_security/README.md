@@ -24,6 +24,7 @@ the documented construction smoke.
 | `cookie_auth.py` | Read a JWT from a secure HTTP-only cookie |
 | `jwt_claims.py` | Move trusted claims through request state into agent dependencies |
 | `user_isolation.py` | Restrict sessions and other user-owned data to the JWT subject |
+| `user_isolation_knowledge.py` | Read shared and owned knowledge content, but modify only owned rows |
 | `service_accounts.py` | Mint, use, list, and revoke opaque `agno_pat_` machine credentials |
 | `workos_byot.py` | Verify WorkOS JWKS tokens and read scopes from `permissions` |
 | `test_scopes.py` | Executable and pytest enforcement matrix |
@@ -121,6 +122,24 @@ RBAC controls routes; `user_isolation=True` also scopes user-owned database
 operations. A non-admin JWT caller is pinned to its `sub` value for session
 reads and writes. The configured admin scope bypasses isolation. Unauthenticated
 requests remain rejected because the example enables JWT authentication.
+
+Knowledge content adds a shared arm on top of that pinning: a content row with
+no owner is org-wide. A non-admin reads their own rows plus the shared ones but
+may only modify or delete rows they own, so a scoped `PATCH` or `DELETE` on
+shared content returns 403 and a bulk delete clears only the caller's own rows.
+Another user's row is invisible, so acting on it returns 404. Only an admin can
+remove shared content.
+
+Metrics are stored one bucket per user, with the empty string as the bucket for
+unowned sessions. A scoped caller reads only its own bucket. An unscoped read
+folds every bucket into one row per date and aggregation period, returned under
+a synthesised `{date}_{period}` id.
+
+Schedules have a nullable owner but no shared arm: a scoped caller sees,
+updates, and deletes only the schedules it owns, and a schedule name is unique
+per owner rather than globally. An unowned schedule is invisible to every
+scoped caller but still fires, because the poller claims due schedules across
+all users.
 
 ## Service Accounts
 
