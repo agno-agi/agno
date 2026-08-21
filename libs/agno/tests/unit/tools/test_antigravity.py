@@ -39,7 +39,21 @@ def test_init_requires_api_key():
 
 
 def test_init_registers_expected_tools():
+    # Default registration: destructive/write tools disabled, read-only enabled
     tools = AntigravityTools(api_key="dummy")
+    tool_names = {f.name for f in tools.functions.values()}
+    assert tool_names == {
+        "run_antigravity_task",
+        "run_custom_antigravity_agent",
+        "get_custom_antigravity_agent",
+        "list_antigravity_agents",
+        "list_antigravity_agent_versions",
+    }
+
+
+def test_init_all_registers_all_tools():
+    # all=True enables all tools including destructive ones
+    tools = AntigravityTools(api_key="dummy", all=True)
     tool_names = {f.name for f in tools.functions.values()}
     assert tool_names == {
         "run_antigravity_task",
