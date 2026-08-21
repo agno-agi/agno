@@ -40,6 +40,10 @@ This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to se
 
 This example connects to the hosted DeepWiki MCP server (public, no API key) to answer questions about GitHub repositories. It shows how a tool's `structuredContent` is preserved on `ToolResult.metadata["structured_content"]` and read back through a tool hook.
 
+10. Unstructured Transform Agent (`unstructured_transform.py`)
+
+This example connects an Agno agent to the hosted Unstructured Transform MCP server to partition, enrich, chunk, and embed 60+ document formats (PDFs, Office docs, HTML, images, email, CSV, and more). Combines Transform's four MCP tools with a small local `upload_file` tool so the agent orchestrates the full request-upload-run-poll-download flow end-to-end. Uses `mcp-remote` for browser-based OAuth on first run.
+
 
 ## Getting Started
 
@@ -66,6 +70,7 @@ python filesystem.py
 python github.py
 python bgpt.py
 python structured_content.py
+python unstructured_transform.py
 ```
 
 ## How It Works
