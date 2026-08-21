@@ -137,6 +137,10 @@ class QueueConfig:
     # keeping in threads regardless. Residual: a C extension that holds the
     # GIL without releasing it can still starve the heartbeat thread.
     lock_grace_seconds: int = 60
+    # How often an IDLE worker looks for work. Submissions accepted on this
+    # replica wake its worker immediately (QueueWorker.wake), so the tick
+    # only bounds pickup latency for jobs enqueued by OTHER replicas, for
+    # retries becoming available, and for the sweep cadence.
     poll_interval: float = 1.0
     # Terminal jobs older than this are deleted by the worker's retention
     # sweep; the queue table must not grow unboundedly. PAUSED tickets are
