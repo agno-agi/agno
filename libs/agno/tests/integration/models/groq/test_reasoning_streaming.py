@@ -17,7 +17,7 @@ from agno.run.agent import RunEvent
 @pytest.fixture(scope="module")
 def groq_model():
     """Fixture that provides a Groq model and reuses it across all tests in the module."""
-    return Groq(id="llama-3.3-70b-versatile")
+    return Groq(id="openai/gpt-oss-120b")
 
 
 @pytest.fixture(scope="module")

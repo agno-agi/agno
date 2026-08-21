@@ -691,3 +691,529 @@ class TestGetWorkflows:
 
         assert len(workflows) == 1
         assert workflows[0].db == mock_db
+
+
+# =============================================================================
+# strict threading through steps
+# =============================================================================
+
+
+class TestWorkflowStrictThreading:
+    """strict must flow from Workflow.from_dict into step-level member loads."""
+
+    def _save_agent_with_tools(self, db):
+        from agno.agent.agent import Agent
+        from agno.models.openai import OpenAIChat
+
+        def search(query: str) -> str:
+            """Search for a query."""
+            return f"results for {query}"
+
+        agent = Agent(id="step-agent", name="Step Agent", model=OpenAIChat(id="gpt-4o-mini"), tools=[search])
+        agent.save(db=db)
+        return agent
+
+    def test_strict_from_dict_raises_for_step_agent_with_broken_refs(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.exceptions import ComponentRehydrationError
+
+        db = SqliteDb(db_file=str(tmp_path / "wf_strict.db"))
+        self._save_agent_with_tools(db)
+        config = {"id": "wf1", "name": "WF", "steps": [{"type": "Step", "name": "s1", "agent_id": "step-agent"}]}
+
+        # The step agent exists but its tools cannot be rehydrated without a registry
+        with pytest.raises(ComponentRehydrationError):
+            Workflow.from_dict(config, db=db, strict=True)
+
+    def test_lenient_from_dict_degrades_step_agent_instead_of_raising(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "wf_lenient.db"))
+        self._save_agent_with_tools(db)
+        config = {"id": "wf1", "name": "WF", "steps": [{"type": "Step", "name": "s1", "agent_id": "step-agent"}]}
+
+        workflow = Workflow.from_dict(config, db=db, strict=False)
+
+        assert workflow.steps[0].agent is not None
+        assert workflow.steps[0].agent.id == "step-agent"
+
+    def test_listing_still_shows_workflow_with_degraded_step_agent(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflows
+
+        db = SqliteDb(db_file=str(tmp_path / "wf_listing.db"))
+        agent = self._save_agent_with_tools(db)
+        workflow = Workflow(id="wf1", name="WF", steps=[Step(name="s1", agent=agent)], db=db)
+        workflow.save(db=db)
+
+        listed = get_workflows(db=db)
+
+        assert [w.id for w in listed] == ["wf1"]
+
+
+class TestStepMemberPins:
+    def test_strict_load_honors_step_agent_pin_when_current_version_is_broken(self, tmp_path):
+        """The workflow pinned a clean agent version at save time; a broken
+        newer agent version must not make the workflow refuse."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        def broken_tool(q: str) -> str:
+            """Tool."""
+            return q
+
+        db = SqliteDb(db_file=str(tmp_path / "step_pin.db"))
+        member = Agent(id="sp-agent", name="SP")
+        Workflow(id="sp-wf", name="WF", steps=[Step(name="s1", agent=member)]).save(db=db)
+        from agno.models.openai import OpenAIChat
+
+        member.model = OpenAIChat(id="gpt-4o-mini")
+        member.tools = [broken_tool]
+        member.save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="sp-wf", registry=Registry(), strict=True)
+
+        assert loaded is not None
+        assert loaded.steps[0].agent.id == "sp-agent"
+
+    def test_workflow_load_fetches_links_for_step_pins(self, tmp_path):
+        """Workflow.load resolves step members at their pinned versions, like
+        get_workflow_by_id."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+
+        db = SqliteDb(db_file=str(tmp_path / "load_pin.db"))
+        member = Agent(id="lp-agent", name="LP", description="v1 desc")
+        Workflow(id="lp-wf", name="WF", steps=[Step(name="s1", agent=member)]).save(db=db)
+        member.description = "v2 desc"
+        member.save(db=db)
+
+        loaded = Workflow.load(id="lp-wf", db=db)
+
+        assert loaded is not None
+        assert loaded.steps[0].agent.description == "v1 desc"
+
+
+class TestStepPinFailures:
+    def test_lenient_load_degrades_deleted_step_pin_to_current_version(self, tmp_path):
+        """A deleted pinned version must not make the workflow vanish from
+        lenient reads; it degrades to the agent's current version with a
+        warning, and strict refuses naming the pin."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.exceptions import ComponentPinError
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "step_pin_del.db"))
+        member = Agent(id="dp-agent", name="DP", description="v1")
+        Workflow(id="dp-wf", name="WF", steps=[Step(name="s1", agent=member)]).save(db=db)
+        member.description = "v2"
+        member.save(db=db)
+        links = db.get_links(component_id="dp-wf", version=1)
+        pinned = next(link for link in links if link["link_kind"] == "step_agent")["child_version"]
+        assert db.delete_config(component_id="dp-agent", version=pinned)
+
+        lenient = get_workflow_by_id(db=db, id="dp-wf", strict=False)
+        assert lenient is not None
+        assert lenient.steps[0].agent.description == "v2"
+
+        with pytest.raises(ComponentPinError, match=f"pins agent 'dp-agent' at version {pinned}"):
+            get_workflow_by_id(db=db, id="dp-wf", strict=True)
+
+
+class TestElseBranchPersistence:
+    def test_save_persists_and_pins_else_branch_agents(self, tmp_path):
+        """Condition else-branch agents cascade-save and pin like if-branch
+        agents, so a strict reload works immediately after a save."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "else_save.db"))
+        if_agent = Agent(id="if-agent", name="If")
+        else_agent = Agent(id="else-agent", name="Else", description="v1")
+        workflow = Workflow(
+            id="else-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[Step(name="if-step", agent=if_agent)],
+                    else_steps=[Step(name="else-step", agent=else_agent)],
+                )
+            ],
+        )
+        workflow.save(db=db)
+
+        links = db.get_links(component_id="else-wf", version=1)
+        pinned_children = {link["child_component_id"]: link["child_version"] for link in links}
+        assert "else-agent" in pinned_children
+
+        # A later publish of the else agent must not change the pinned load
+        else_agent.description = "v2"
+        else_agent.save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="else-wf", strict=True)
+        assert loaded is not None
+        else_step = loaded.steps[0].else_steps[0]
+        assert else_step.agent.description == "v1"
+
+
+class TestWritePathFidelity:
+    def test_unnamed_degraded_step_round_trips_without_a_placeholder_name(self, tmp_path):
+        """A nameless step whose reference degrades must stay nameless: the
+        placeholder must never become the step's stored display name."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+
+        db = SqliteDb(db_file=str(tmp_path / "noname.db"))
+        Workflow(id="nn-wf", name="WF", steps=[Step(agent=Agent(id="nn-agent", name="A"))]).save(db=db)
+        db.delete_component("nn-agent", hard_delete=True)
+
+        loaded = Workflow.load(id="nn-wf", db=db, strict=False)
+
+        assert loaded is not None
+        assert loaded.steps[0].name is None
+        assert loaded.steps[0].to_dict().get("agent_id") == "nn-agent"
+
+    def test_deep_copy_preserves_container_review_config(self):
+        """deep_copy must not reset container HITL/error config: the per-request
+        AgentOS path deep-copies every workflow before it runs."""
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.step import Step, StepInput, StepOutput
+        from agno.workflow.types import HumanReview
+
+        def go(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="x")
+
+        workflow = Workflow(
+            id="hr-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="c",
+                    evaluator=True,
+                    steps=[Step(name="s", executor=go)],
+                    human_review=HumanReview(requires_confirmation=True, on_error="cancel", max_retries=9),
+                ),
+                Loop(name="l", steps=[Step(name="s2", executor=go)], forward_iteration_output=True),
+            ],
+        )
+
+        copied = workflow.deep_copy()
+
+        assert copied.steps[0].human_review.on_error == workflow.steps[0].human_review.on_error
+        assert copied.steps[0].human_review.max_retries == 9
+        assert copied.steps[1].forward_iteration_output is True
+
+    def test_save_persists_a_nested_workflow_step_and_pins_it(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step, StepInput, StepOutput
+
+        def leaf(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="x")
+
+        db = SqliteDb(db_file=str(tmp_path / "nested_save.db"))
+        sub = Workflow(id="sub-wf", name="Sub", steps=[Step(name="x", executor=leaf)])
+        parent = Workflow(id="parent-wf", name="Parent", steps=[Step(name="n", workflow=sub)])
+
+        version = parent.save(db=db)
+
+        assert version == 1
+        links = db.get_links(component_id="parent-wf", version=1)
+        nested = [link for link in links if link["child_component_id"] == "sub-wf"]
+        assert nested and nested[0]["child_version"] is not None
+
+
+def _honesty_enrich(step_input):
+    from agno.workflow.step import StepOutput
+
+    return StepOutput(content="x")
+
+
+def _honesty_cases():
+    from agno.workflow.condition import Condition
+    from agno.workflow.parallel import Parallel
+    from agno.workflow.step import Step
+    from agno.workflow.steps import Steps
+
+    return {
+        "plain": lambda: [Step(name="s1", executor=_honesty_enrich)],
+        "skip_on_failure": lambda: [Step(name="s1", executor=_honesty_enrich, skip_on_failure=True)],
+        "condition_on_error_skip": lambda: [
+            Condition(name="c", evaluator=True, steps=[Step(name="s1", executor=_honesty_enrich)], on_error="skip")
+        ],
+        "steps_container": lambda: [Steps(name="grp", steps=[Step(name="s1", executor=_honesty_enrich)])],
+        "parallel_container": lambda: [Parallel(Step(name="s1", executor=_honesty_enrich), name="par")],
+    }
+
+
+class TestLenientRunHonesty:
+    """A run over an unresolved placeholder must refuse on every entry path
+    and through every tolerance knob; skipping a step that could not do its
+    work is not error tolerance."""
+
+    def _load_broken(self, tmp_path, tag):
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+
+        db = SqliteDb(db_file=str(tmp_path / f"{tag}.db"))
+        Workflow(id=f"{tag}-wf", name="WF", steps=_honesty_cases()[tag]()).save(db=db)
+        loaded = Workflow.load(id=f"{tag}-wf", db=db, registry=Registry())
+        assert loaded is not None
+        return loaded
+
+    @pytest.mark.parametrize("tag", list(_honesty_cases().keys()))
+    def test_sync_run_refuses(self, tmp_path, tag):
+        from agno.workflow.step import UnresolvableCallableError
+
+        loaded = self._load_broken(tmp_path, tag)
+        with pytest.raises(UnresolvableCallableError):
+            loaded.run(input="go")
+
+    @pytest.mark.parametrize("tag", list(_honesty_cases().keys()))
+    def test_sync_stream_refuses(self, tmp_path, tag):
+        from agno.workflow.step import UnresolvableCallableError
+
+        loaded = self._load_broken(tmp_path, tag)
+        with pytest.raises(UnresolvableCallableError):
+            for _ in loaded.run(input="go", stream=True):
+                pass
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tag", list(_honesty_cases().keys()))
+    async def test_async_run_refuses(self, tmp_path, tag):
+        from agno.workflow.step import UnresolvableCallableError
+
+        loaded = self._load_broken(tmp_path, tag)
+        with pytest.raises(UnresolvableCallableError):
+            await loaded.arun(input="go")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tag", list(_honesty_cases().keys()))
+    async def test_async_stream_refuses(self, tmp_path, tag):
+        from agno.workflow.step import UnresolvableCallableError
+
+        loaded = self._load_broken(tmp_path, tag)
+        with pytest.raises(UnresolvableCallableError):
+            async for _ in loaded.arun(input="go", stream=True):
+                pass
+
+
+class TestSaveCollisions:
+    def test_save_fails_loudly_when_two_pins_collide_on_one_key(self, tmp_path):
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.loop import Loop
+        from agno.workflow.step import Step
+
+        db = SqliteDb(db_file=str(tmp_path / "collide.db"))
+        # Auto-generated step_ids keep link keys unique; an explicit shared
+        # step_id is the collision the save must refuse to half-persist.
+        workflow = Workflow(
+            id="col-wf",
+            name="WF",
+            steps=[
+                Loop(name="l1", steps=[Step(step_id="dup", name="dup", agent=Agent(id="col-a", name="A"))]),
+                Loop(name="l2", steps=[Step(step_id="dup", name="dup", agent=Agent(id="col-b", name="B"))]),
+            ],
+        )
+
+        with pytest.raises(ValueError, match="give steps distinct names"):
+            workflow.save(db=db)
+
+        # The parent snapshot was refused whole: no config version exists.
+        assert db.get_config(component_id="col-wf") is None
+
+    def test_else_branch_pin_resolves_to_its_own_version(self, tmp_path):
+        """The same child id pinned differently in the if and else branches
+        must reload each branch at its own pin."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "else_pin.db"))
+        if_agent = Agent(id="eb-agent", name="A", description="if-version")
+        else_agent = Agent(id="eb-agent", name="A", description="else-version")
+        Workflow(
+            id="eb-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    # Explicit ordered step_ids: with the '#else' lookup broken
+                    # the fallback returns the FIRST link (the if pin), so this
+                    # test fails on a revert instead of passing by row order.
+                    steps=[Step(step_id="aaa-if", name="if-step", agent=if_agent)],
+                    else_steps=[Step(step_id="bbb-else", name="else-step", agent=else_agent)],
+                )
+            ],
+        ).save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="eb-wf", strict=True)
+
+        assert loaded is not None
+        condition = loaded.steps[0]
+        assert condition.steps[0].agent.description == "if-version"
+        assert condition.else_steps[0].agent.description == "else-version"
+
+
+class TestNestedElsePins:
+    def test_doubly_nested_else_branch_resolves_its_own_pin(self, tmp_path):
+        """Nested else branches accumulate '#else' per level; the lookup must
+        match the whole chain so each branch reloads its own pinned version."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "nested_else.db"))
+        outer_if = Agent(id="ne-agent", name="A", description="outer-if")
+        inner_else = Agent(id="ne-agent", name="A", description="inner-else")
+        Workflow(
+            id="ne-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="outer",
+                    evaluator=True,
+                    steps=[Step(step_id="aaa-oif", name="oif", agent=outer_if)],
+                    else_steps=[
+                        Condition(
+                            name="inner",
+                            evaluator=True,
+                            steps=[],
+                            else_steps=[Step(step_id="bbb-iel", name="iel", agent=inner_else)],
+                        )
+                    ],
+                )
+            ],
+        ).save(db=db)
+
+        links = {link["link_key"]: link["child_version"] for link in db.get_links(component_id="ne-wf", version=1)}
+        assert "bbb-iel#else#else" in links
+
+        loaded = get_workflow_by_id(db=db, id="ne-wf", strict=True)
+        assert loaded is not None
+        inner_condition = loaded.steps[0].else_steps[0]
+        assert inner_condition.else_steps[0].agent.description == "inner-else"
+        assert loaded.steps[0].steps[0].agent.description == "outer-if"
+
+
+class TestBranchQualifiedPins:
+    def test_duplicate_step_ids_across_branches_resolve_their_own_pins(self, tmp_path):
+        """Explicit duplicate step_ids in the if and else branches must each
+        reload their own pinned version via the branch-qualified key."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "dup_branch.db"))
+        if_agent = Agent(id="db-agent", name="A", description="if-v")
+        else_agent = Agent(id="db-agent", name="A", description="else-v")
+        Workflow(
+            id="db-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[Step(step_id="dup", name="dup", agent=if_agent)],
+                    else_steps=[Step(step_id="dup", name="dup", agent=else_agent)],
+                )
+            ],
+        ).save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="db-wf", strict=True)
+
+        assert loaded is not None
+        condition = loaded.steps[0]
+        assert condition.steps[0].agent.description == "if-v"
+        assert condition.else_steps[0].agent.description == "else-v"
+
+    def test_lookalike_link_key_never_satisfies_another_step(self, tmp_path):
+        """A step_id like 'x#else-other' is its own exact key; it must not be
+        claimed by step 'x' via prefix matching."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "lookalike.db"))
+        first = Agent(id="la-agent", name="A", description="x-v")
+        second = Agent(id="la-agent", name="A", description="other-v")
+        Workflow(
+            id="la-wf",
+            name="WF",
+            steps=[
+                Step(step_id="x", name="x", agent=first),
+                Step(step_id="x#else-other", name="other", agent=second),
+            ],
+        ).save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="la-wf", strict=True)
+
+        assert loaded is not None
+        assert loaded.steps[0].agent.description == "x-v"
+        assert loaded.steps[1].agent.description == "other-v"
+
+    def test_strict_refuses_ambiguous_legacy_pins(self, tmp_path):
+        """With no exact key match and multiple disagreeing pins for a child,
+        strict refuses instead of silently picking the first link."""
+        from agno.agent.agent import Agent
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+        from agno.exceptions import ComponentRehydrationError
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "legacy_amb.db"))
+        agent = Agent(id="am-agent", name="A", description="v1")
+        agent.save(db=db)
+        agent.description = "v2"
+        agent.save(db=db)
+        db.upsert_component(component_id="am-wf", component_type=ComponentType.WORKFLOW, name="WF")
+        db.upsert_config(
+            component_id="am-wf",
+            config={
+                "id": "am-wf",
+                "name": "WF",
+                "steps": [{"type": "Step", "step_id": "renamed", "name": "renamed", "agent_id": "am-agent"}],
+            },
+            links=[
+                {
+                    "link_kind": "step_agent",
+                    "link_key": "old-key-1",
+                    "child_component_id": "am-agent",
+                    "child_version": 1,
+                    "position": 0,
+                },
+                {
+                    "link_kind": "step_agent",
+                    "link_key": "old-key-2",
+                    "child_component_id": "am-agent",
+                    "child_version": 2,
+                    "position": 1,
+                },
+            ],
+            stage="published",
+        )
+
+        with pytest.raises(ComponentRehydrationError, match="multiple versions"):
+            get_workflow_by_id(db=db, id="am-wf", strict=True)
