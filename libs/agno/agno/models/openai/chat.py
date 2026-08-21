@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
@@ -388,6 +389,26 @@ class OpenAIChat(Model):
         normalized = reformat_tool_call_ids(messages, provider="openai_chat")
         return [self._format_message(m, compress_tool_results) for m in normalized]
 
+    @staticmethod
+    def _is_json_response(response: httpx.Response) -> bool:
+        content_type = response.headers.get("content-type", "")
+        media_type = content_type.partition(";")[0].strip()
+        return media_type.lower() == "application/json"
+
+    def _parse_json_stream_response(
+        self,
+        response_body: bytes,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> ModelResponse:
+        response_data = json.loads(response_body)
+        if isinstance(response_data, dict) and response_data.get("error"):
+            error = response_data["error"]
+            error_message = error.get("message", "Unknown model error") if isinstance(error, dict) else str(error)
+            raise ModelProviderError(message=str(error_message), model_name=self.name, model_id=self.id)
+
+        provider_response = ChatCompletion.model_validate(response_data)
+        return self._parse_provider_response(provider_response, response_format=response_format)
+
     def invoke(
         self,
         messages: List[Message],
@@ -593,7 +614,7 @@ class OpenAIChat(Model):
         try:
             assistant_message.metrics.start_timer()
 
-            for chunk in self.get_client().chat.completions.create(
+            provider_stream = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
@@ -601,8 +622,18 @@ class OpenAIChat(Model):
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
-            ):
-                yield self._parse_provider_response_delta(chunk)
+            )
+
+            # Some OpenAI-compatible providers ignore stream=True and return a batch completion.
+            if self._is_json_response(provider_stream.response):
+                try:
+                    response_body = provider_stream.response.read()
+                finally:
+                    provider_stream.close()
+                yield self._parse_json_stream_response(response_body, response_format=response_format)
+            else:
+                for chunk in provider_stream:
+                    yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
 
@@ -652,6 +683,8 @@ class OpenAIChat(Model):
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -690,8 +723,16 @@ class OpenAIChat(Model):
                 ),
             )
 
-            async for chunk in async_stream:
-                yield self._parse_provider_response_delta(chunk)
+            # Some OpenAI-compatible providers ignore stream=True and return a batch completion.
+            if self._is_json_response(async_stream.response):
+                try:
+                    response_body = await async_stream.response.aread()
+                finally:
+                    await async_stream.close()
+                yield self._parse_json_stream_response(response_body, response_format=response_format)
+            else:
+                async for chunk in async_stream:
+                    yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
 
@@ -741,6 +782,8 @@ class OpenAIChat(Model):
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
