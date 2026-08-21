@@ -48,12 +48,22 @@ class CustomApiTools(Toolkit):
     def _get_headers(
         self,
         additional_headers: Optional[Dict[str, str]] = None,
-        include_api_key: bool = True,
+        include_configured_headers: bool = True,
     ) -> Dict[str, str]:
-        """Combine default headers with additional headers."""
-        headers = self.default_headers.copy()
-        if self.api_key and include_api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        """Combine configured headers with per-request headers.
+
+        The operator-configured ``default_headers`` and API key are attached only
+        when ``include_configured_headers`` is True. ``make_request`` sets it to
+        False when no ``base_url`` is configured, because the endpoint is then used
+        as the full (model-controlled) URL and pre-configured credentials must not
+        be sent to an arbitrary host. Per-request ``additional_headers`` are always
+        applied.
+        """
+        headers: Dict[str, str] = {}
+        if include_configured_headers:
+            headers.update(self.default_headers)
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
         if additional_headers:
             headers.update(additional_headers)
         return headers
@@ -87,14 +97,19 @@ class CustomApiTools(Toolkit):
                 url = endpoint
             log_debug(f"Making {method} request to {url}")
 
+            # Without a base_url the endpoint is used as the full URL, which the model
+            # controls. Configured credentials (API key, default headers, basic auth)
+            # must not ride along to an arbitrary host — attach them only when the
+            # request targets the configured base_url.
+            send_configured_credentials = bool(self.base_url)
             response = requests.request(
                 method=method,
                 url=url,
                 params=params,
                 data=data,
                 json=json_data,
-                headers=self._get_headers(headers, include_api_key=bool(self.base_url)),
-                auth=self._get_auth(),
+                headers=self._get_headers(headers, include_configured_headers=send_configured_credentials),
+                auth=self._get_auth() if send_configured_credentials else None,
                 verify=self.verify_ssl,
                 timeout=self.timeout,
             )
