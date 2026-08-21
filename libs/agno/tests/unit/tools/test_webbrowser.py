@@ -1,5 +1,6 @@
 """Unit tests for WebBrowserTools class."""
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -9,60 +10,52 @@ from agno.tools.webbrowser import WebBrowserTools
 
 @pytest.fixture
 def webbrowser_tools():
-    """Create a WebBrowserTools instance."""
-    return WebBrowserTools()
+    """Create a WebBrowserTools instance with open_page enabled."""
+    return WebBrowserTools(open_page=True)
 
 
-def test_initialization(webbrowser_tools):
+def test_initialization():
     """Test initialization of WebBrowserTools."""
-    # Check if the tool name is correct
-    assert webbrowser_tools.name == "webbrowser_tools"
+    # Default: open_page disabled
+    tools = WebBrowserTools()
+    assert tools.name == "webbrowser_tools"
+    function_names = [func.name for func in tools.functions.values()]
+    assert "open_page" not in function_names
 
-    # Check if open_page function is registered
-    function_names = [func.name for func in webbrowser_tools.functions.values()]
+    # With open_page enabled
+    tools = WebBrowserTools(open_page=True)
+    function_names = [func.name for func in tools.functions.values()]
     assert "open_page" in function_names
-    assert len(webbrowser_tools.functions) == 1  # Only open_page should be registered
 
 
 @patch("webbrowser.open_new_tab")
 def test_open_page(mock_open_new_tab, webbrowser_tools):
     """Test open_page operation."""
-    # Test opening a regular URL
     url = "https://example.com"
     result = webbrowser_tools.open_page(url)
 
-    # Verify the mock was called with the correct URL
     mock_open_new_tab.assert_called_once_with(url)
-
-    # Since the function doesn't return anything special, we'd expect None
-    assert result is None
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 @patch("webbrowser.open_new")
 def test_open_page_new_window(mock_open_new, webbrowser_tools):
-    """Test open_page operation."""
-    # Test opening a regular URL
+    """Test open_page with new_window=True."""
     url = "https://example.com"
     result = webbrowser_tools.open_page(url, new_window=True)
 
-    # Verify the mock was called with the correct URL
     mock_open_new.assert_called_once_with(url)
-
-    # Since the function doesn't return anything special, we'd expect None
-    assert result is None
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 @patch("webbrowser.open_new_tab", side_effect=Exception("Browser error"))
 def test_open_page_error_handling(mock_open_new_tab, webbrowser_tools):
     """Test error handling when browser opening fails."""
     url = "https://example.com"
+    result = webbrowser_tools.open_page(url)
 
-    # The function should raise an exception if the browser fails to open
-    with pytest.raises(Exception) as excinfo:
-        webbrowser_tools.open_page(url)
-
-    # Verify the exception is propagated
-    assert "Browser error" in str(excinfo.value)
-
-    # Verify the mock was called with the correct URL
     mock_open_new_tab.assert_called_once_with(url)
+    data = json.loads(result)
+    assert "error" in data
