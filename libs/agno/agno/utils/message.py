@@ -1,10 +1,29 @@
 from copy import deepcopy
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Set, Union
 
 from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.utils.log import log_debug
+
+# Placeholder result paired at format time with a tool call whose result was never
+# recorded, keeping the request valid while telling the model the call did not complete.
+MISSING_TOOL_RESULT_PLACEHOLDER = (
+    "Error: no result was recorded for this tool call (the run may have been interrupted)."
+)
+
+
+def collect_recorded_tool_call_ids(messages: Sequence[Message]) -> Set[str]:
+    """Return the tool_call_ids that have a recorded tool result.
+
+    A tool message counts as recorded when it carries a tool_call_id; formatters
+    always emit a result for such messages (even an empty one), so any tool message
+    present in the transcript answers its call. Formatters use this to detect
+    assistant tool calls whose result was never recorded (e.g. an interrupted run)
+    and pair them with a placeholder result at format time, because providers
+    reject requests that carry an unpaired tool call.
+    """
+    return {m.tool_call_id for m in messages if m.role == "tool" and m.tool_call_id}
 
 
 def safe_truncation_index(messages: Sequence[Message], requested_index: int) -> int:
