@@ -459,7 +459,7 @@ def _get_delegate_task_function(
     debug_mode: Optional[bool] = None,
 ) -> Function:
     from agno.team._init import _initialize_member
-    from agno.team._run import _update_team_media
+    from agno.team._run import _record_opted_out_media, _update_team_media
     from agno.team._tools import (
         _determine_team_member_interactions,
         _find_member_by_id,
@@ -590,6 +590,9 @@ def _get_delegate_task_function(
             ):
                 from agno.agent._run import scrub_run_output_for_storage
 
+                # Recorded before the scrub: by here the ids exist nowhere else.
+                if not member_agent.store_media:
+                    _record_opted_out_media(run_response, member_agent_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
 
             # Add the member run to the team session. The session copy is what
@@ -664,6 +667,9 @@ def _get_delegate_task_function(
             ):
                 from agno.agent._run import scrub_run_output_for_storage
 
+                # Recorded before the scrub: by here the ids exist nowhere else.
+                if not member_agent.store_media:
+                    _record_opted_out_media(run_response, member_agent_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
 
             # Add the member run to the team session. The session copy is what

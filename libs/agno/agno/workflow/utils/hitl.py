@@ -269,10 +269,8 @@ async def asave_paused_session(
     """
     workflow._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
     session.upsert_run(run=workflow_run_response)
-    if workflow._has_async_db():
-        await workflow._apersist_session_and_run(session=session, run=workflow_run_response)
-    else:
-        workflow._persist_session_and_run(session=session, run=workflow_run_response)
+    # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
+    await workflow._apersist_session_and_run(session=session, run=workflow_run_response)
 
 
 def check_output_review_status(

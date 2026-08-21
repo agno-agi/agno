@@ -185,6 +185,7 @@ gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
 postgres = ["sqlalchemy", "psycopg[binary]"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
+s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]
@@ -336,10 +337,11 @@ storage = [
   "agno[async-mongo]",
   "agno[async-postgres]",
   "agno[firestore]",
-  "agno[gcs]",
+  "agno[gcs]",  # also used by GCS media storage (gcs serves both roles)
   "agno[mysql]",
   "agno[postgres]",
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
+  "agno[s3]",
   "agno[sql]",
   "agno[sqlite]",
   "agno[valkey]",  # also listed under vectordbs (valkey serves both roles)

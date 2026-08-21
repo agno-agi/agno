@@ -41,6 +41,7 @@ from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.metrics import SessionMetrics
 from agno.models.base import Model
@@ -217,6 +218,8 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If set (and store_media is True), media is uploaded here and only references are stored
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output.
@@ -414,6 +417,7 @@ class Agent:
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,
@@ -558,6 +562,7 @@ class Agent:
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
         self.store_media = store_media
+        self.media_storage = media_storage
         self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
 
@@ -1068,11 +1073,11 @@ class Agent:
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
-    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
-        return _session.delete_session(self, session_id=session_id, user_id=user_id)
+    def delete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False) -> None:
+        return _session.delete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
-    async def adelete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
-        return await _session.adelete_session(self, session_id=session_id, user_id=user_id)
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False) -> None:
+        return await _session.adelete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
     def get_session_messages(
         self,

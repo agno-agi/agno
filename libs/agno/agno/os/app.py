@@ -21,6 +21,7 @@ from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
@@ -57,6 +58,7 @@ from agno.os.routers.home import get_home_router
 from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
+from agno.os.routers.media import get_media_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
@@ -273,6 +275,7 @@ class AgentOS:
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         cors_allowed_origins: Optional[List[str]] = None,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
@@ -335,6 +338,8 @@ class AgentOS:
             authorization: Whether to enable authorization
             authorization_config: Configuration for the authorization middleware
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
+            media_storage: Backend the media routes read stored media from. Defaults to the first
+                one configured on an agent, team or workflow.
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
@@ -426,6 +431,7 @@ class AgentOS:
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
+        self.media_storage = media_storage
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
@@ -562,6 +568,7 @@ class AgentOS:
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
         self._auto_discover_databases()
+        self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
@@ -601,7 +608,8 @@ class AgentOS:
         # The home router is added by _add_built_in_routes below; adding it here too
         # would duplicate the GET / route on every resync.
         updated_routers = [
-            get_session_router(dbs=self.dbs),
+            get_session_router(dbs=self.dbs, media_storage=self.media_storage),
+            get_media_router(dbs=self.dbs, media_storage=self.media_storage, settings=self.settings),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
@@ -1466,6 +1474,7 @@ class AgentOS:
         self._add_built_in_routes(app=fastapi_app)
 
         self._auto_discover_databases()
+        self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
@@ -1473,7 +1482,8 @@ class AgentOS:
         self._populate_registry_components()
 
         routers = [
-            get_session_router(dbs=self.dbs),
+            get_session_router(dbs=self.dbs, media_storage=self.media_storage),
+            get_media_router(dbs=self.dbs, media_storage=self.media_storage, settings=self.settings),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
@@ -1942,6 +1952,36 @@ class AgentOS:
             "workflows": workflow_ids,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
+
+    def _auto_discover_media_storage(self) -> None:
+        """Fall back to the first media storage configured on an agent, team or workflow.
+
+        Media offload is configured per agent/team/workflow, so AgentOS itself is usually left
+        without a backend. Mirrors how tracing falls back to the first available database.
+        """
+        if self.media_storage is not None:
+            return
+
+        # Collected rather than short-circuited so a mixed tree can be reported.
+        found = [
+            entity.media_storage
+            for group in (self._agents, self._teams, self._workflows)
+            for entity in group
+            if entity.media_storage
+        ]
+        if not found:
+            return
+
+        self.media_storage = found[0]
+        # Compared on backend and bucket so two equivalent instances do not read as a conflict.
+        identities = {(getattr(storage, "backend_name", None), getattr(storage, "bucket", None)) for storage in found}
+        if len(identities) > 1:
+            log_warning(
+                "Multiple media storage backends found across the agent tree, serving media with "
+                f"{type(self.media_storage).__name__}. Set media_storage on AgentOS to choose explicitly."
+            )
+        else:
+            log_debug(f"Media storage auto-discovered from the agent tree: {type(self.media_storage).__name__}")
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""

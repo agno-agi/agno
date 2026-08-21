@@ -1093,6 +1093,15 @@ async def aget_user_message(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_media_storage(agent: Agent) -> Optional[Any]:
+    """The agent's own media storage, falling back to the team's.
+
+    A member reads its history out of the shared team session, whose rows were written through
+    the team's backend, so a member with no backend of its own cannot resolve those references.
+    """
+    return agent.media_storage or getattr(getattr(agent, "_team", None), "media_storage", None)
+
+
 def get_run_messages(
     agent: Agent,
     *,
@@ -1292,6 +1301,13 @@ def get_run_messages(
     if user_message is not None:
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
+
+    # Read offloaded media back on every message headed for the model: a member's history arrives as input.
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, media_storage)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1499,13 +1515,20 @@ async def aget_run_messages(
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
 
+    # Read offloaded media back on every message headed for the model: a member's history arrives as input.
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, media_storage)
+
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
 
     return run_messages
 
 
-def get_continue_run_messages(
+def _build_continue_run_messages(
     agent: Agent,
     input: List[Message],
     session: Optional[AgentSession] = None,
@@ -1598,6 +1621,43 @@ def get_continue_run_messages(
     if run_context is not None:
         run_context.messages = run_messages.messages
 
+    return run_messages
+
+
+def get_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Build the messages that resume a paused run, reading offloaded media back first.
+
+    The paused run's own messages come off the database carrying a reference and no bytes.
+    """
+    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, media_storage)
+    return run_messages
+
+
+async def aget_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Async variant of :func:`get_continue_run_messages`."""
+    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, media_storage)
     return run_messages
 
 
@@ -1712,6 +1772,7 @@ def get_relevant_docs_from_knowledge(
 
     if num_documents is None and resolved_knowledge is not None:
         num_documents = getattr(resolved_knowledge, "max_results", None)
+
     # Validate the filters against known valid filter keys
     if resolved_knowledge is not None and filters is not None:
         if validate_filters:
