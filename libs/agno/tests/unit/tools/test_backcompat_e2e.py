@@ -65,6 +65,7 @@ class TestAgnoBuiltinToolkit:
 
     def test_builtin_toolkit_remaps_legacy_param(self):
         """Agno toolkits should remap enable_* to new param names."""
+
         # Simulate a builtin toolkit by setting __module__
         def make_builtin():
             def _init(self, search: bool = True, **kwargs):
