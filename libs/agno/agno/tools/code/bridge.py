@@ -375,21 +375,79 @@ class ToolBridge:
 
     @property
     def has_bindings(self) -> bool:
-        """True when there is anything to bind into a kernel.
-
-        Answered without building the spec: the spec is built at bootstrap,
-        after the injected toolkits have been connected.
-        """
-        if not self._built:
-            return bool(self._tools)
-        return bool(self._spec["toolkits"] or self._spec["functions"])
+        """True always: the result_store handle binds even with no injected tools."""
+        return True
 
     @property
     def handle_names(self) -> List[str]:
+        """The injected tools' kernel names; the built-in result_store handle is not one."""
         self._ensure_built()
-        names = [t["handle"] for t in self._spec["toolkits"]]
+        names = [t["handle"] for t in self._spec["toolkits"] if t is not self._RESULTS_SPEC]
         names.extend(f["name"] for f in self._spec["functions"])
         return names
+
+    # The result_store handle: stored tool results as values a cell can compute
+    # over. get() returns the whole text; the model-facing read/search TOOLS
+    # stay capped, but code binding a payload to a variable needs all of it.
+    _RESULTS_SPEC = {
+        "handle": "result_store",
+        "name": "result_store",
+        "doc": (
+            "Stored tool results, reachable from code when result offloading is enabled. Every method is awaitable."
+        ),
+        "functions": [
+            {
+                "name": "get",
+                "doc": (
+                    "The full stored text of a result id, as one str.\n\nArguments:\n"
+                    "    result_id (string): the id from a result envelope, e.g. 'res_a91c4f20b3'.\n\n"
+                    "Bind it to a variable and compute over it; print summaries, never the payload."
+                ),
+                "params": [{"name": "result_id", "wire": "result_id", "required": True}],
+            },
+            {
+                "name": "read",
+                "doc": (
+                    "One bounded page of a stored result, as a dict with text, start_line, end_line, "
+                    "line_count, next_start_line and next_start_char.\n\nArguments:\n"
+                    "    result_id (string): the id from a result envelope.\n"
+                    "    start_line (integer): first line, 1-indexed - default 1.\n"
+                    "    end_line (integer): last line, inclusive - optional.\n"
+                    "    start_char (integer): offset into start_line - default 0."
+                ),
+                "params": [
+                    {"name": "result_id", "wire": "result_id", "required": True},
+                    {"name": "start_line", "wire": "start_line", "required": False},
+                    {"name": "end_line", "wire": "end_line", "required": False},
+                    {"name": "start_char", "wire": "start_char", "required": False},
+                ],
+            },
+            {
+                "name": "search",
+                "doc": (
+                    "Regex search over a stored result: a list of dicts with line_number, line, "
+                    "char_offset and more.\n\nArguments:\n"
+                    "    result_id (string): the id from a result envelope.\n"
+                    "    pattern (string): a Python regular expression.\n"
+                    "    context_lines (integer): lines of context around each match - default 0."
+                ),
+                "params": [
+                    {"name": "result_id", "wire": "result_id", "required": True},
+                    {"name": "pattern", "wire": "pattern", "required": True},
+                    {"name": "context_lines", "wire": "context_lines", "required": False},
+                ],
+            },
+            {
+                "name": "ids",
+                "doc": (
+                    "This session's stored results, newest first, as dicts with result_id, "
+                    "tool_name, line_count, size_bytes and content_type.\n\nArguments:\n"
+                    "    limit (integer): at most this many - default 20."
+                ),
+                "params": [{"name": "limit", "wire": "limit", "required": False}],
+            },
+        ],
+    }
 
     def _ensure_built(self) -> None:
         """Build the binding spec once, after the injected toolkits are connected.
@@ -405,12 +463,14 @@ class ToolBridge:
         self._registry = {}
         self._spec = {"toolkits": [], "functions": []}
         self._build(self._tools)
+        self._spec["toolkits"].append(self._RESULTS_SPEC)
 
     def _build(self, tools: Sequence[Union[Toolkit, Callable[..., Any], Function]]) -> None:
         # Toolkits and top-level callables share one kernel namespace; the
         # names are deduplicated in input order, matching handle_names_for,
         # so the instructions and the snapshot skip list name what is bound.
-        bound_names: Set[str] = set()
+        # 'result_store' is reserved for the built-in stored-results handle.
+        bound_names: Set[str] = {"result_store"}
         for tool in tools:
             if isinstance(tool, Toolkit):
                 handle = derive_handle_name(tool.name, bound_names)
@@ -727,6 +787,9 @@ class ToolBridge:
     def attach(self, session: KernelSession) -> None:
         session.comm_handler = lambda msg: self._on_comm(session, msg)
         session.interrupt_hook = lambda: self.cancel_pending(session, "the cell was interrupted")
+        # Only injected tools make background bridged calls, which is what
+        # the per-cell context tokens exist for.
+        session.needs_context_tokens = bool(self._tools)
 
     def _on_comm(self, session: KernelSession, msg: Dict[str, Any]) -> None:
         msg_type = msg.get("msg_type")
@@ -753,12 +816,26 @@ class ToolBridge:
         kwargs = data.get("kwargs") or {}
         token = data.get("token")
         tool_label = f"{handle}.{method}" if handle else method
+        reply: Dict[str, Any]
         try:
+            if handle == "result_store":
+                value = await self._serve_results(session, method, kwargs, token)
+                # The whole point of result_store.get is the whole payload, so the
+                # bridge cap does not apply: the bytes land in kernel memory,
+                # never in the model's context, and the store bounds them.
+                reply = {"id": call_id, "ok": True, "value": value}
+                self._send_reply_or_drop(session, reply, generation, tool_label)
+                return
             value = await self._call_tool(session, handle, method, kwargs, token=token)
-            reply: Dict[str, Any] = {"id": call_id, "ok": True, "value": value}
+            reply = {"id": call_id, "ok": True, "value": value}
             payload_bytes = len(json.dumps(reply, default=str).encode("utf-8"))
             if payload_bytes > self.max_result_bytes:
-                reply = self._too_large_reply(call_id, tool_label, payload_bytes)
+                stored = await self._offload_oversized(session, token, tool_label, kwargs, value)
+                reply = (
+                    {"id": call_id, "ok": True, "value": stored}
+                    if stored is not None
+                    else self._too_large_reply(call_id, tool_label, payload_bytes)
+                )
         except asyncio.CancelledError:
             reply = {
                 "id": call_id,
@@ -767,12 +844,117 @@ class ToolBridge:
             }
         except Exception as e:
             reply = {"id": call_id, "ok": False, "error": {"type": "ToolError", "message": f"{tool_label}: {e}"}}
+        self._send_reply_or_drop(session, reply, generation, tool_label)
+
+    def _send_reply_or_drop(
+        self, session: KernelSession, reply: Dict[str, Any], generation: int, tool_label: str
+    ) -> None:
         if generation != session.generation:
             # The kernel that asked is gone. Its call ids restart at 1 in the
             # replacement, so this reply would answer a different call.
             log_debug(f"CodeMode bridge dropped a reply for {tool_label} from a torn-down kernel")
             return
         self._send_reply(session, reply)
+
+    def _resolve_store(self, session: KernelSession, token: Optional[str]) -> Any:
+        # An exact token hit answers even when its value is None: a run that
+        # had no store must never borrow another run's. Only a call with no
+        # resolvable token (a thread, a cell past the token window) falls
+        # back, and then to the store of the currently executing run.
+        if token and token in session.context_stores:
+            return session.context_stores[token]
+        return getattr(session, "current_result_store", None)
+
+    async def _serve_results(
+        self, session: KernelSession, method: str, kwargs: Dict[str, Any], token: Optional[str]
+    ) -> Any:
+        """Serve the results handle: stored payloads as values for a cell.
+
+        Access is the read-back tools' rule exactly: a result is served only
+        to its own session, and when both the row and the run name a user
+        they must match.
+        """
+        from dataclasses import asdict
+
+        from agno.offload.tools import _access_error
+
+        store = self._resolve_store(session, token)
+        if store is None:
+            raise RuntimeError("result offloading is not enabled for this agent, so no stored results are reachable")
+        run_context = session.context_tokens.get(token) if token else None
+        if run_context is None:
+            run_context = getattr(session, "run_context", None)
+        if run_context is None:
+            run_context = RunContext(run_id=f"code-mode-{session.session_id}", session_id=session.session_id)
+
+        if method == "ids":
+            limit = int(kwargs.get("limit", 20) or 20)
+            refs = await asyncio.to_thread(store.live_ids, run_context.session_id, limit)
+            return [
+                {
+                    "result_id": ref.result_id,
+                    "tool_name": ref.tool_name,
+                    "line_count": ref.line_count,
+                    "size_bytes": ref.size_bytes,
+                    "content_type": ref.content_type,
+                }
+                for ref in refs
+            ]
+
+        result_id = str(kwargs.get("result_id") or "")
+        row = await asyncio.to_thread(store.get_row, result_id)
+        error = _access_error(result_id, row, run_context)
+        if error is not None:
+            raise RuntimeError(error)
+        if method == "get":
+            return await asyncio.to_thread(store.payload, result_id)
+        if method == "read":
+            page = await asyncio.to_thread(
+                store.read,
+                result_id,
+                int(kwargs.get("start_line", 1) or 1),
+                kwargs.get("end_line"),
+                int(kwargs.get("start_char", 0) or 0),
+            )
+            return asdict(page)
+        if method == "search":
+            matches = await asyncio.to_thread(
+                store.search, result_id, str(kwargs.get("pattern") or ""), int(kwargs.get("context_lines", 0) or 0)
+            )
+            return [asdict(match) for match in matches]
+        raise RuntimeError(f"unknown result_store method '{method}'")
+
+    async def _offload_oversized(
+        self, session: KernelSession, token: Optional[str], tool_label: str, kwargs: Dict[str, Any], value: Any
+    ) -> Optional[str]:
+        """Store an over-cap bridged result and hand the cell its envelope.
+
+        Refusing used to throw the bytes away. With a store on the run, the
+        payload is kept and the envelope names the id, so the cell reads it
+        back through the results handle instead of re-running the tool.
+        """
+        store = self._resolve_store(session, token)
+        run_context = session.context_tokens.get(token) if token else None
+        if run_context is None:
+            run_context = getattr(session, "run_context", None)
+        if store is None or run_context is None or run_context.session_id is None or run_context.run_id is None:
+            return None
+        output = value if isinstance(value, str) else json.dumps(value, default=str)
+        try:
+            return await asyncio.to_thread(
+                store.offload_for_model,
+                session_id=run_context.session_id,
+                run_id=run_context.run_id,
+                tool_call_id=f"bridge-{tool_label}",
+                tool_name=tool_label,
+                tool_args=kwargs,
+                output=output,
+                user_id=run_context.user_id,
+                shared=False,
+            )
+        except Exception as e:
+            log_warning(f"CodeMode could not offload an oversized result of {tool_label}: {e}")
+            return None
 
     def _too_large_reply(self, call_id: Any, tool_label: str, size_bytes: int) -> Dict[str, Any]:
         return {
@@ -782,8 +964,9 @@ class ToolBridge:
                 "type": "ResultTooLarge",
                 "message": (
                     f"The result of {tool_label} is {size_bytes} bytes, over the "
-                    f"{self.max_result_bytes}-byte bridge limit. Have the tool write large payloads "
-                    "to the agent's file system and return a path instead of the payload."
+                    f"{self.max_result_bytes}-byte bridge limit and no result store is enabled to "
+                    "hold it. Enable result offloading on the agent, or have the tool write large "
+                    "payloads to the agent's file system and return a path."
                 ),
             },
         }

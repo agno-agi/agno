@@ -815,3 +815,167 @@ def test_a_direct_call_carries_the_current_run(make_code_mode):
     session_id = _sid("fg-context")
     cm.execute(RunContext(run_id="run-direct", session_id=session_id), "await probe.probe(label='direct')")
     assert _probe_contexts == [("direct", "run-direct")]
+
+
+# ------------------------------------------------------------------
+# The results handle: stored results as values a cell computes over
+# ------------------------------------------------------------------
+
+
+@pytest.fixture()
+def result_store(tmp_path):
+    from agno.db.sqlite import SqliteDb
+    from agno.fs import FileSystem
+    from agno.offload.store import ResultStore
+
+    db = SqliteDb(db_file=str(tmp_path / "bridge-results.db"))
+    return ResultStore(db=db, fs=FileSystem(backend=db, namespace="tool-results"), threshold_chars=100)
+
+
+def _owner(result_store):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(_result_store=result_store)
+
+
+def test_results_handle_serves_the_whole_payload_as_a_value(make_code_mode, result_store):
+    payload = "\n".join(f"event {i} status={'FAIL' if i % 97 == 0 else 'ok'}" for i in range(1, 2001))
+    ref = result_store.offload(
+        session_id="bridge-results", run_id="r0", tool_call_id="c0", tool_name="fetch", tool_args={}, output=payload
+    )
+    cm = make_code_mode(snapshot=False)
+    out = cm.execute(
+        RunContext(run_id="r1", session_id="bridge-results"),
+        f'text = await result_store.get("{ref.result_id}")\n'
+        f"print(len(text), text.count('status=FAIL'))\n"
+        f'page = await result_store.read("{ref.result_id}", start_line=1, end_line=2)\n'
+        f"print(page['text'])\n"
+        f"print([e['result_id'] for e in await result_store.ids()])\n",
+        agent=_owner(result_store),
+    )
+    content = out.content or ""
+    assert f"{len(payload)} 20" in content
+    assert "event 1 status=ok" in content
+    assert ref.result_id in content
+
+
+def test_results_handle_refuses_another_sessions_result(make_code_mode, result_store):
+    ref = result_store.offload(
+        session_id="someone-elses", run_id="r0", tool_call_id="c0", tool_name="fetch", tool_args={}, output="x" * 500
+    )
+    cm = make_code_mode(snapshot=False)
+    out = cm.execute(
+        RunContext(run_id="r1", session_id="bridge-results-other"),
+        f'try:\n    await result_store.get("{ref.result_id}")\nexcept RuntimeError as e:\n    print("refused:", "different session" in str(e))\n',
+        agent=_owner(result_store),
+    )
+    assert "refused: True" in (out.content or "")
+
+
+def test_results_handle_without_a_store_says_so(make_code_mode):
+    cm = make_code_mode(snapshot=False)
+    out = cm.execute(
+        RunContext(run_id="r1", session_id="bridge-no-store"),
+        'try:\n    await result_store.ids()\nexcept RuntimeError as e:\n    print("said:", "not enabled" in str(e))\n',
+    )
+    assert "said: True" in (out.content or "")
+
+
+def test_an_oversized_bridged_result_is_stored_not_discarded(make_code_mode, result_store):
+    def dump_everything() -> str:
+        """Dump a very large report.
+
+        Returns:
+            str: the whole report.
+        """
+        return "\n".join(f"metric {i} = {i * i}" for i in range(1, 100_000))
+
+    cm = make_code_mode(tools=[dump_everything], max_result_bytes=100_000, snapshot=False)
+    out = cm.execute(
+        RunContext(run_id="r1", session_id="bridge-oversize"),
+        "reply = await dump_everything()\n"
+        'print("envelope:", reply.startswith("<result id="))\n'
+        "rid = reply.split('id=\"')[1].split('\"')[0]\n"
+        "text = await result_store.get(rid)\n"
+        'print("payload tail:", text.rsplit("\\n", 1)[-1])\n',
+        agent=_owner(result_store),
+    )
+    content = out.content or ""
+    assert "envelope: True" in content
+    assert "metric 99999 = 9999800001" in content
+
+
+def test_an_oversized_bridged_result_without_a_store_still_refuses(make_code_mode):
+    def dump_everything() -> str:
+        """Dump a very large report.
+
+        Returns:
+            str: the whole report.
+        """
+        return "x" * 500_000
+
+    cm = make_code_mode(tools=[dump_everything], max_result_bytes=100_000, snapshot=False)
+    out = cm.execute(
+        RunContext(run_id="r1", session_id="bridge-oversize-nostore"),
+        'try:\n    await dump_everything()\nexcept Exception as e:\n    print("refused:", "no result store is enabled" in str(e))\n',
+    )
+    assert "refused: True" in (out.content or "")
+
+
+def test_the_framework_injects_the_owner_into_execute(make_code_mode, result_store):
+    # The real path: agno fills agent= on the entrypoint from the Function's
+    # owner, so the store reaches the kernel without any developer wiring.
+    from agno.tools.function import Function, FunctionCall
+
+    result_store.offload(
+        session_id="bridge-inject", run_id="r0", tool_call_id="c0", tool_name="fetch", tool_args={}, output="y" * 500
+    )
+    cm = make_code_mode(snapshot=False)
+    function = Function.from_callable(cm.execute, name="execute")
+    function.process_entrypoint(strict=False)
+    function._agent = _owner(result_store)
+    function._run_context = RunContext(run_id="fc", session_id="bridge-inject")
+    call = FunctionCall(function=function, arguments={"code": "print('stored count:', len(await result_store.ids()))"})
+    outcome = call.execute()
+    assert outcome.status == "success"
+    assert "stored count: 1" in str(outcome.result.content)
+
+
+def test_a_store_less_run_cannot_reach_another_runs_store(make_code_mode, result_store):
+    # Two owners share one CodeMode session: A offloads, C has no store. C
+    # must not reach A's payload even when its own token has left the window
+    # or it clears the contextvar by hand - a token miss resolves the current
+    # run's store (None), never a scan of other runs'.
+    from types import SimpleNamespace
+
+    secret = result_store.offload(
+        session_id="leak-shared", run_id="ra", tool_call_id="ca", tool_name="fetch", tool_args={}, output="SECRET" * 100
+    )
+    owner_a = SimpleNamespace(_result_store=result_store)
+    owner_c = SimpleNamespace(_result_store=None)
+    cm = make_code_mode(snapshot=False)
+    cm.execute(RunContext(run_id="ra", session_id="leak-shared"), "a = 1", agent=owner_a)
+    out = cm.execute(
+        RunContext(run_id="rc", session_id="leak-shared"),
+        f"_agno_ctx_token.set(None)\n"
+        f'try:\n    await result_store.get("{secret.result_id}")\n    print("ESCALATED")\n'
+        f'except RuntimeError as e:\n    print("blocked:", "not enabled" in str(e))\n',
+        agent=owner_c,
+    )
+    assert "blocked: True" in (out.content or "")
+    assert "ESCALATED" not in (out.content or "")
+
+
+def test_max_kernels_does_not_let_a_dead_session_evict_a_live_one(make_code_mode):
+    cm = make_code_mode(max_kernels=2, snapshot=False)
+    cm.run("live-1", "x = 1")
+    # A session whose kernel died stays registered until its id returns; it
+    # holds no process and must not cost a working kernel its slot.
+    dead = cm._sessions["live-1"]
+    cm._run_on_loop_sync(dead._teardown_kernel())
+    assert not dead.running
+    cm.run("live-2", "y = 2")
+    cm.run("live-3", "z = 3")
+    live = [sid for sid, s in cm._sessions.items() if s.running]
+    assert "live-2" in cm._sessions and "live-3" in cm._sessions
+    assert len(live) == 2

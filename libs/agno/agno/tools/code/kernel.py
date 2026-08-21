@@ -175,6 +175,10 @@ class StderrTail:
             text = b"".join(self._chunks).decode("utf-8", "replace")
         return text[-self.max_bytes :].strip()
 
+    def settle(self, timeout: float = 0.25) -> None:
+        """Give the drain thread a moment to read the final bytes at EOF."""
+        self._thread.join(timeout)
+
     def describe(self) -> str:
         text = self.tail()
         return f" Kernel stderr tail:\n{text}" if text else ""
@@ -315,13 +319,21 @@ class KernelSession:
         self.bridge_comm_id: Optional[str] = None
         # The RunContext of the run whose cell is currently executing.
         self.run_context: Optional[Any] = None
+        # And that run's ResultStore, the fallback for a bridged call whose
+        # cell token has left the window.
+        self.current_result_store: Optional[Any] = None
+        # Set by the bridge when injected tools are bound: only then do
+        # background tasks need per-cell context tokens.
+        self.needs_context_tokens = False
         # Cell token -> the RunContext of the run that executed that cell. A
         # bridged call carries the token of the cell that created its task, so
         # a background task that calls a tool after its cell finished still
         # resolves to the run that started it, not to whichever run is
         # executing when the call is drained. Bounded and cleared on teardown
-        # so no RunContext outlives its kernel.
+        # so no RunContext outlives its kernel. The parallel store map gives
+        # the bridge's results handle the run's ResultStore the same way.
         self.context_tokens: "OrderedDict[str, Any]" = OrderedDict()
+        self.context_stores: "OrderedDict[str, Any]" = OrderedDict()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -452,7 +464,9 @@ class KernelSession:
         # session must not pin it until the next run stamps a new one; the
         # token map holds the same contexts and dies with the kernel too.
         self.run_context = None
+        self.current_result_store = None
         self.context_tokens.clear()
+        self.context_stores.clear()
 
     async def restart(self, before_start: Optional[Callable[[], Coroutine[Any, Any, None]]] = None) -> str:
         """Tear the kernel down, start a fresh one, and return the reset notice.
@@ -514,7 +528,11 @@ class KernelSession:
     # ------------------------------------------------------------------
 
     async def execute_cell(
-        self, code: str, timeout: Optional[float] = None, run_context: Optional[Any] = None
+        self,
+        code: str,
+        timeout: Optional[float] = None,
+        run_context: Optional[Any] = None,
+        result_store: Optional[Any] = None,
     ) -> CellResult:
         """Run one cell, serialized on the per-session lock.
 
@@ -528,13 +546,14 @@ class KernelSession:
             # cell must see this run's context, not a later queued run's.
             if run_context is not None:
                 self.run_context = run_context
+            self.current_result_store = result_store
             await self.ensure_started()
             if self.maybe_busy:
                 cleared = await self._clear_busy()
                 if not cleared:
                     raise KernelBusyError()
             await self._drain_channels()
-            await self._stamp_context_token(run_context)
+            await self._stamp_context_token(run_context, result_store)
             self._cell_idle_seen = False
             try:
                 result = await self._execute_locked(code, timeout)
@@ -550,7 +569,7 @@ class KernelSession:
             self.touch()
             return result
 
-    async def _stamp_context_token(self, run_context: Optional[Any]) -> None:
+    async def _stamp_context_token(self, run_context: Optional[Any], result_store: Optional[Any] = None) -> None:
         """Bind the coming cell, and every task it spawns, to this run's context.
 
         The bridge bootstrap reads the token into a contextvar in a
@@ -562,10 +581,16 @@ class KernelSession:
         """
         if self.comm_handler is None or self.kc is None:
             return
+        # A plain CodeMode with no injected tools and no store has nothing a
+        # token could resolve, so its cells skip the extra silent round trip.
+        if not self.needs_context_tokens and result_store is None:
+            return
         token = uuid4().hex[:16]
         self.context_tokens[token] = run_context
+        self.context_stores[token] = result_store
         while len(self.context_tokens) > _MAX_CONTEXT_TOKENS:
-            self.context_tokens.popitem(last=False)
+            dropped, _ = self.context_tokens.popitem(last=False)
+            self.context_stores.pop(dropped, None)
         await self._run_silent(f"_agno_cm_next_token = '{token}'")
 
     async def _execute_locked(self, code: str, timeout: Optional[float]) -> CellResult:
@@ -779,6 +804,8 @@ class KernelSession:
                     break
 
     async def _on_kernel_death(self) -> None:
+        if self._stderr_tail is not None:
+            self._stderr_tail.settle()
         tail = self._stderr_tail.describe() if self._stderr_tail is not None else ""
         log_warning(f"CodeMode kernel for session {self.session_id} died.{tail}")
         await self._teardown_kernel()

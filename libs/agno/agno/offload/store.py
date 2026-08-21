@@ -247,13 +247,22 @@ def _preview_block(output: str, preview_lines: int, preview_chars: int) -> str:
     """
     lines = output.split("\n")
     head = _head_preview(output, preview_lines, preview_chars)
-    omitted = len(lines) - len(head.split("\n")) - _TAIL_LINES
-    if omitted <= 0:
+    lines_omitted = len(lines) - len(head.split("\n")) - _TAIL_LINES
+    # The head can also be cut mid-stream by the character cap, on a payload
+    # of a few very long lines - the common oversized single-line JSON case -
+    # where no whole line was dropped but most of the bytes were.
+    chars_omitted = len(output) - len(head) - min(len(output), preview_chars)
+    if lines_omitted <= 0 and chars_omitted <= 0:
         return head
-    tail = "\n".join(lines[-_TAIL_LINES:])
+    if lines_omitted > 0:
+        tail = "\n".join(lines[-_TAIL_LINES:])
+        marker = f"[... {lines_omitted} lines omitted ...]"
+    else:
+        tail = output[-min(len(output), preview_chars) :]
+        marker = "[... omitted ...]"
     if len(tail) > preview_chars:
         tail = "..." + tail[-preview_chars:]
-    return f"{head}\n[... {omitted} lines omitted ...]\n{tail}"
+    return f"{head}\n{marker}\n{tail}"
 
 
 def render_stored_envelope(ref: ResultRef, preview: str) -> str:
@@ -813,6 +822,26 @@ class ResultStore:
         if content is None:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
+
+    def payload(self, result_id: str) -> str:
+        """The full stored text of a result. For code, not for a transcript.
+
+        The read-back TOOLS stay capped - a page can never put back what
+        offloading took out of the model's context - but code computing over
+        a result (a CodeMode cell binding it to a variable) needs the whole
+        text, bounded only by the per-result store limit.
+        """
+        row = self.get_row(result_id)
+        if row is None:
+            raise KeyError(f"unknown result id {result_id}")
+        return self._read_payload(row)
+
+    async def apayload(self, result_id: str) -> str:
+        """Async variant of ``payload``."""
+        row = await self.aget_row(result_id)
+        if row is None:
+            raise KeyError(f"unknown result id {result_id}")
+        return await self._aread_payload(row)
 
     def read(
         self, result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0

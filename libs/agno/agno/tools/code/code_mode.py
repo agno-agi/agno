@@ -18,6 +18,7 @@ import asyncio
 import base64
 import concurrent.futures
 import functools
+import re
 import weakref
 from collections import OrderedDict
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Tuple, Union
@@ -55,6 +56,11 @@ _CLOSE_FLUSH_FLOOR = 5.0
 # How many evicted session ids are remembered, most recent kept.
 _MAX_EVICTED_IDS = 1024
 
+# Names the bridge bootstrap binds into the user namespace beside the tool
+# handles: the result_store handle and the ResultTooLarge error class. Variable
+# listing and snapshots treat them like the handles - environment, not state.
+_BOOTSTRAP_NAMES = ("result_store", "ResultTooLarge")
+
 _VARIABLES_CODE_TEMPLATE = (
     "import base64 as _cm_b64\n"
     "import builtins as _cm_b\n"
@@ -72,6 +78,12 @@ _VARIABLES_CODE_TEMPLATE = (
     "    _cm_vars[_cm_k] = _cm_b.type(_cm_v).__name__\n"
     "_cm_b.print('\\n{marker}' + _cm_json.dumps(_cm_vars))\n"
 )
+
+
+def _owner_store(agent: Any, team: Any) -> Any:
+    """The ResultStore of whichever owner the framework injected, or None."""
+    owner = agent if agent is not None else team
+    return getattr(owner, "_result_store", None)
 
 
 def _in_event_loop() -> bool:
@@ -130,6 +142,14 @@ def build_instructions(
             "call_tool(...); call the documented function, and use help(...) on a handle to inspect it."
         )
     paragraphs.append(state_paragraph)
+    paragraphs.append(
+        "When result offloading is enabled, stored tool results are values here, not just "
+        "envelopes: text = await result_store.get('res_...') binds the whole payload to a "
+        "variable, await result_store.search('res_...', pattern) and "
+        "await result_store.read('res_...', start_line=...) stay bounded, and "
+        "await result_store.ids() lists what this session has stored. Compute over the "
+        "variable and print summaries; never print the payload."
+    )
     paragraphs.append(
         "This environment is your control environment, not the runtime of the thing you are "
         "investigating. A repository, service, dataset, or benchmark has its own environment and "
@@ -313,16 +333,16 @@ class CodeMode(Toolkit):
         # dropped, which costs a returning session only the reset notice.
         self._evicted: OrderedDict[str, None] = OrderedDict()
         self._background_flush: Optional["concurrent.futures.Future[Any]"] = None
-        self._bridge: Optional[ToolBridge] = (
-            ToolBridge(self.injected_tools, max_result_bytes=max_result_bytes) if self.injected_tools else None
-        )
+        # Always constructed: the results handle binds even with no injected
+        # tools, so a store's payloads are reachable from any cell.
+        self._bridge: Optional[ToolBridge] = ToolBridge(self.injected_tools, max_result_bytes=max_result_bytes)
         self._snapshots: Optional[SnapshotManager] = (
             SnapshotManager(
                 fs,
                 debounce=snapshot_debounce,
                 max_variable_bytes=max_variable_bytes,
                 max_snapshot_bytes=max_snapshot_bytes,
-                skip_names=self.handles,
+                skip_names=[*self.handles, *_BOOTSTRAP_NAMES],
             )
             if fs is not None and snapshot
             else None
@@ -436,7 +456,7 @@ class CodeMode(Toolkit):
     # Model-facing tools
     # ------------------------------------------------------------------
 
-    def execute(self, run_context: RunContext, code: str) -> ToolResult:
+    def execute(self, run_context: RunContext, code: str, agent: Any = None, team: Any = None) -> ToolResult:
         """Run a cell of Python code in your persistent environment and return its output.
 
         State persists across cells: variables, imports, functions, and results
@@ -452,12 +472,16 @@ class CodeMode(Toolkit):
             restored or reset.
         """
         _warn()
-        return self._run_on_loop_sync(self._aexecute_impl(self._session_key(run_context), code, run_context))
+        return self._run_on_loop_sync(
+            self._aexecute_impl(self._session_key(run_context), code, run_context, _owner_store(agent, team))
+        )
 
-    async def aexecute(self, run_context: RunContext, code: str) -> ToolResult:
+    async def aexecute(self, run_context: RunContext, code: str, agent: Any = None, team: Any = None) -> ToolResult:
         """Async variant of ``execute``."""
         _warn()
-        return await self._run_on_loop(self._aexecute_impl(self._session_key(run_context), code, run_context))
+        return await self._run_on_loop(
+            self._aexecute_impl(self._session_key(run_context), code, run_context, _owner_store(agent, team))
+        )
 
     def restart(self, run_context: RunContext) -> str:
         """Restart the code environment for this session.
@@ -602,6 +626,11 @@ class CodeMode(Toolkit):
         """
         if self.max_kernels is None:
             return
+        # A dead kernel's session stays registered until its id returns; it
+        # holds no process, so it leaves the count before any live kernel is
+        # considered - otherwise a corpse could cost a working kernel its slot.
+        for corpse in [s for s in self._sessions.values() if not s.running and not s.lock.locked()]:
+            self._forget_session(corpse)
         while len(self._sessions) >= self.max_kernels:
             candidates = [s for s in self._sessions.values() if s.running and not s.lock.locked() and not s.maybe_busy]
             if not candidates:
@@ -692,21 +721,35 @@ class CodeMode(Toolkit):
         return _clear
 
     async def _execute_with_busy_policy(
-        self, session: KernelSession, code: str, run_context: Optional[RunContext]
+        self,
+        session: KernelSession,
+        code: str,
+        run_context: Optional[RunContext],
+        result_store: Optional[Any] = None,
     ) -> CellResult:
         """One cell, applying on_busy_kernel. The restart policy lives here —
         beside the snapshot store a restart must also clear — not in the
         kernel session."""
         try:
-            return await session.execute_cell(code, timeout=self.cell_timeout, run_context=run_context)
+            return await session.execute_cell(
+                code, timeout=self.cell_timeout, run_context=run_context, result_store=result_store
+            )
         except KernelBusyError:
             if self.on_busy_kernel != "restart":
                 raise
             await session.restart(before_start=self._snapshot_clear_hook(session.session_id))
             session.pending_notice = RESET_NOTICE
-            return await session.execute_cell(code, timeout=self.cell_timeout, run_context=run_context)
+            return await session.execute_cell(
+                code, timeout=self.cell_timeout, run_context=run_context, result_store=result_store
+            )
 
-    async def _aexecute_impl(self, session_id: str, code: str, run_context: Optional[RunContext] = None) -> ToolResult:
+    async def _aexecute_impl(
+        self,
+        session_id: str,
+        code: str,
+        run_context: Optional[RunContext] = None,
+        result_store: Optional[Any] = None,
+    ) -> ToolResult:
         if self._rejects_shell(code):
             return ToolResult(content="Error: %%bash cells are disabled (allow_shell=False).")
         user_id = self._user_key(run_context)
@@ -715,7 +758,7 @@ class CodeMode(Toolkit):
         if session_id not in self._sessions:
             await self._evict_past_the_cap()
         session = self._session_for(session_id, user_id)
-        cell = await self._execute_with_busy_policy(session, code, run_context)
+        cell = await self._execute_with_busy_policy(session, code, run_context, result_store)
         # An idle eviction can drop the registry entry while this cell waits
         # for the lock; the kernel it started must stay reachable.
         self._sessions.setdefault(session_id, session)
@@ -724,7 +767,8 @@ class CodeMode(Toolkit):
             self._snapshots.schedule(session)
         notice = session.take_notice()
         content = self._format_cell(cell)
-        if cell.status == "error" and "%%bash" in code and not code.lstrip().startswith("%%bash"):
+        misplaced_bash = re.search(r"^\s*%%bash", code, re.MULTILINE) and not code.lstrip().startswith("%%bash")
+        if cell.status == "error" and misplaced_bash:
             content += (
                 "\n[hint: %%bash must be the first line of its cell - move any comment, "
                 "import, or statement into a separate cell]"
@@ -765,7 +809,7 @@ class CodeMode(Toolkit):
         session = self._sessions.get(session_id)
         if session is None or not session.running:
             return {}
-        skip_b64 = base64.b64encode(json.dumps(self.handles).encode("utf-8")).decode("ascii")
+        skip_b64 = base64.b64encode(json.dumps([*self.handles, *_BOOTSTRAP_NAMES]).encode("utf-8")).decode("ascii")
         code = _VARIABLES_CODE_TEMPLATE.format(skip_b64=skip_b64, marker=_VARIABLES_MARKER)
         async with session.lock:
             if not session.running:
