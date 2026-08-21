@@ -1715,6 +1715,7 @@ class StudioTools(Toolkit):
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Apply the shared agent/team fields. Returns an error envelope or None.
@@ -1784,6 +1785,17 @@ class StudioTools(Toolkit):
                     return err
                 component.reasoning_model = model
             replaced_keys.add("reasoning_model")
+        if enable_learning is not None:
+            # The zero-config path: learning=True makes the framework build the
+            # default machine (user profile + user memory on the component's own
+            # db and model) at init. A registry reference in the same call
+            # wins below.
+            component.learning = True if enable_learning else None
+            if enable_learning:
+                component.enable_agentic_memory = False
+                component.memory_manager = None
+                replaced_keys.add("memory_manager")
+            replaced_keys.add("learning")
         if learning_name is not None:
             if learning_name == "":
                 component.learning = None
@@ -1851,6 +1863,7 @@ class StudioTools(Toolkit):
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
@@ -1884,6 +1897,9 @@ class StudioTools(Toolkit):
             reasoning_model_id (Optional[str]): Exact model id used for reasoning.
             learning_name (Optional[str]): Exact name from list_learning; wires the
                 agent to that shared learning machine.
+            enable_learning (Optional[bool]): Give the agent the default learning
+                machine (user profile and user memory on its own db and model).
+                learning_name takes precedence.
             metadata (Optional[Dict]): Arbitrary metadata stored on the component.
 
         Returns:
@@ -1929,6 +1945,7 @@ class StudioTools(Toolkit):
                 output_schema_name=output_schema_name,
                 reasoning_model_id=reasoning_model_id,
                 learning_name=learning_name,
+                enable_learning=enable_learning,
                 metadata=metadata,
             )
             if field_err is not None:
@@ -1962,6 +1979,7 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
@@ -1993,6 +2011,9 @@ class StudioTools(Toolkit):
             output_schema_name (Optional[str]): Exact name from list_schemas.
             learning_name (Optional[str]): Exact name from list_learning; wires the
                 team to that shared learning machine.
+            enable_learning (Optional[bool]): Give the team the default learning
+                machine (user profile and user memory on its own db and model).
+                learning_name takes precedence.
             metadata (Optional[Dict]): Arbitrary metadata stored on the component.
 
         Returns:
@@ -2060,6 +2081,7 @@ class StudioTools(Toolkit):
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
                 learning_name=learning_name,
+                enable_learning=enable_learning,
                 metadata=metadata,
             )
             if field_err is not None:
@@ -2446,6 +2468,7 @@ class StudioTools(Toolkit):
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
         publish: bool = False,
@@ -2479,6 +2502,8 @@ class StudioTools(Toolkit):
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
             reasoning_model_id (Optional[str]): Reasoning model id; "" detaches.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
+            enable_learning (Optional[bool]): Default learning machine on or off;
+                learning_name takes precedence.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard against the
                 latest version you read; a conflict means someone else edited.
@@ -2512,6 +2537,7 @@ class StudioTools(Toolkit):
                 output_schema_name=output_schema_name,
                 reasoning_model_id=reasoning_model_id,
                 learning_name=learning_name,
+                enable_learning=enable_learning,
                 metadata=metadata,
             )
             return err, None
@@ -2536,6 +2562,7 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
         publish: bool = False,
@@ -2562,6 +2589,8 @@ class StudioTools(Toolkit):
             knowledge_name (Optional[str]): Exact name from list_knowledge; "" detaches.
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
+            enable_learning (Optional[bool]): Default learning machine on or off;
+                learning_name takes precedence.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard.
             publish (bool): True publishes this edit immediately, replacing the
@@ -2624,6 +2653,7 @@ class StudioTools(Toolkit):
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
                 learning_name=learning_name,
+                enable_learning=enable_learning,
                 metadata=metadata,
             )
             return err, pinned
@@ -3408,6 +3438,7 @@ class StudioTools(Toolkit):
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
@@ -3433,6 +3464,7 @@ class StudioTools(Toolkit):
             output_schema_name=output_schema_name,
             reasoning_model_id=reasoning_model_id,
             learning_name=learning_name,
+            enable_learning=enable_learning,
             metadata=metadata,
             _agno_run_context=_agno_run_context,
         )
@@ -3456,6 +3488,7 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
@@ -3479,6 +3512,7 @@ class StudioTools(Toolkit):
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
             learning_name=learning_name,
+            enable_learning=enable_learning,
             metadata=metadata,
             _agno_run_context=_agno_run_context,
         )
@@ -3525,6 +3559,7 @@ class StudioTools(Toolkit):
         output_schema_name: Optional[str] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
         publish: bool = False,
@@ -3551,6 +3586,7 @@ class StudioTools(Toolkit):
             output_schema_name=output_schema_name,
             reasoning_model_id=reasoning_model_id,
             learning_name=learning_name,
+            enable_learning=enable_learning,
             metadata=metadata,
             expected_version=expected_version,
             publish=publish,
@@ -3575,6 +3611,7 @@ class StudioTools(Toolkit):
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
         learning_name: Optional[str] = None,
+        enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
         publish: bool = False,
@@ -3599,6 +3636,7 @@ class StudioTools(Toolkit):
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
             learning_name=learning_name,
+            enable_learning=enable_learning,
             metadata=metadata,
             expected_version=expected_version,
             publish=publish,

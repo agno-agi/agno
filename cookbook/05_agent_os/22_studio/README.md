@@ -127,6 +127,13 @@ carries `{"name": ...}`, never the machine's config, so a component cannot
 author learning the deployer did not declare; an undeclared name returns
 `learning_not_found`.
 
+Without a declared machine, `enable_learning=True` is the zero-config path: the
+config carries `learning: True` and the framework builds the default machine
+(user profile and user memory on the component's own db and model) at init;
+`enable_learning=False` turns learning off, and `learning_name` takes
+precedence when both are given. Either way the legacy memory pair is cleared
+on that component.
+
 Every component wired to a machine reads and writes that machine's namespace,
 so `list_learning` shows the namespace (machine-level and per store) first,
 plus each store's mode and whether the machine already binds a `model`, `db`

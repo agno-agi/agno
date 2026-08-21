@@ -146,3 +146,12 @@ tools. The live run called `update_user_memory(task=User's name is Ash.)` and
 answered "Got it, Ash."; the detach wrote a version with no `learning` key.
 
 ---
+
+**Addendum (same day):** the `enable_learning=True` section was added after the
+live pass and verified in a key-less re-run of the same file (the section needs
+no provider): `note-taker` stored `learning: True`, rehydrated through
+`get_agent_by_id`, and `initialize_agent` produced the default machine with
+`user_profile` + `user_memory` on `gpt-5.5`; the rest of the output matched the
+live pass.
+
+---

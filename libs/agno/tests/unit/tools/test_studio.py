@@ -1722,6 +1722,99 @@ class TestLearningSurface:
             )
         assert any("declares no model" in str(call) for call in mock_warn.call_args_list)
 
+    # -- zero-config: the default machine ---------------------------------
+
+    def test_enable_learning_stores_the_default_machine_and_rehydrates(self, studio_learning, db, registry):
+        """enable_learning=True is the zero-config path: the config carries
+        learning: True and the framework builds the default machine (user
+        profile + user memory on the component's own db and model) at init."""
+        from agno.agent._init import initialize_agent
+        from agno.learn import LearningMachine
+        from agno.os.utils import get_agent_by_id
+
+        _data(
+            studio_learning.create_agent(
+                name="rememberer", instructions="i", model_id="gpt-5.4", enable_learning=True, publish=True
+            )
+        )
+        assert db.get_config(component_id="rememberer", version=1)["config"]["learning"] is True
+        assert _data(studio_learning.get_component("rememberer"))["learning"] is True
+
+        agent = get_agent_by_id("rememberer", agents=None, db=db, registry=registry)
+        assert agent.learning is True
+        initialize_agent(agent)
+        machine = agent.learning_machine
+        assert isinstance(machine, LearningMachine)
+        assert machine.name is None
+        assert machine.user_profile is True and machine.user_memory is True
+        assert machine.entity_memory is False and machine.learned_knowledge is False
+        assert machine.db is not None
+        assert machine.model is not None and machine.model.id == "gpt-5.4"
+
+    def test_enable_learning_off_and_learning_name_precedence(self, studio_learning, db):
+        _data(
+            studio_learning.create_agent(name="rememberer", instructions="i", model_id="gpt-5.4", enable_learning=True)
+        )
+
+        out = _loads(studio_learning.edit_agent("rememberer", enable_learning=False))
+        assert "learning" not in db.get_config(component_id="rememberer", version=_edit_version(out))["config"]
+
+        # Both in one call: the registry reference wins over the default machine.
+        out = _loads(studio_learning.edit_agent("rememberer", learning_name="shared-brain", enable_learning=True))
+        assert db.get_config(component_id="rememberer", version=_edit_version(out))["config"]["learning"] == {
+            "name": "shared-brain"
+        }
+        # enable_learning=False turns learning off whatever shape it had.
+        out = _loads(studio_learning.edit_agent("rememberer", enable_learning=False))
+        assert "learning" not in db.get_config(component_id="rememberer", version=_edit_version(out))["config"]
+
+    def test_enable_learning_clears_the_legacy_memory_pair(self, registry, db):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-stable")
+        registry.memory_managers.append(manager)
+        Agent(
+            id="legacy-default",
+            name="Legacy",
+            model=OpenAIResponses(id="gpt-5.5"),
+            memory_manager=manager,
+            enable_agentic_memory=True,
+        ).save(db=db)
+        studio = StudioTools(registry=registry, db=db)
+
+        out = _loads(studio.edit_agent("legacy-default", enable_learning=True))
+        after = db.get_config(component_id="legacy-default", version=_edit_version(out))["config"]
+        assert after["learning"] is True
+        assert "enable_agentic_memory" not in after
+        assert "memory_manager" not in after
+
+    @pytest.mark.asyncio
+    async def test_enable_learning_on_team_and_async_forms(self, studio_learning, db):
+        _data(studio_learning.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True))
+        _data(
+            studio_learning.create_team(
+                name="crew", instructions="i", member_ids=["member"], enable_learning=True, publish=True
+            )
+        )
+        assert db.get_config(component_id="crew", version=1)["config"]["learning"] is True
+        out = _loads(await studio_learning.aedit_team("crew", enable_learning=False))
+        assert "learning" not in db.get_config(component_id="crew", version=_edit_version(out))["config"]
+
+        _data(
+            await studio_learning.acreate_agent(
+                name="arem", instructions="i", model_id="gpt-5.4", enable_learning=True, publish=True
+            )
+        )
+        assert db.get_config(component_id="arem", version=1)["config"]["learning"] is True
+        out = _loads(await studio_learning.aedit_agent("arem", enable_learning=False))
+        assert "learning" not in db.get_config(component_id="arem", version=_edit_version(out))["config"]
+        _data(
+            await studio_learning.acreate_team(
+                name="acrew", instructions="i", member_ids=["member"], enable_learning=True, publish=True
+            )
+        )
+        assert db.get_config(component_id="acrew", version=1)["config"]["learning"] is True
+
     # -- learning only -----------------------------------------------------
 
     def test_wiring_learning_clears_the_legacy_memory_pair(self, registry, db, brain):

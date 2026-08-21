@@ -152,6 +152,36 @@ else:
     print("--- run skipped: set OPENAI_API_KEY to run the agent as user 'ash' ---")
 
 # ---------------------------------------------------------------------------
+# Zero-config: the default machine, no Registry declaration needed
+# ---------------------------------------------------------------------------
+
+print("--- create_agent(enable_learning=True) ---")
+created = json.loads(
+    studio.create_agent(
+        name="Note Taker",
+        component_id="note-taker",
+        instructions="Remember the user's preferences.",
+        model_id="gpt-5.5",
+        enable_learning=True,
+        publish=True,
+    )
+)
+print(
+    "stored learning key:",
+    db.get_config(component_id="note-taker", version=1)["config"]["learning"],
+)
+note_taker = get_agent_by_id("note-taker", agents=None, db=db, registry=registry)
+initialize_agent(note_taker)
+machine = note_taker.learning_machine
+print(
+    "default machine:",
+    "user_profile" if machine.user_profile else "",
+    "user_memory" if machine.user_memory else "",
+    "model:",
+    machine.model.id if machine.model else None,
+)
+
+# ---------------------------------------------------------------------------
 # Detach with an empty string
 # ---------------------------------------------------------------------------
 
