@@ -2048,8 +2048,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
                 return _detached(cached_result)
             arguments = entrypoint_args.copy()
-            if self.arguments is not None:
-                arguments.update(self.arguments)
+            arguments.update(args)
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
@@ -2339,8 +2338,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
                 return _detached(cached_result)
             arguments = entrypoint_args.copy()
-            if self.arguments is not None:
-                arguments.update(self.arguments)
+            arguments.update(args)
 
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
@@ -2355,8 +2353,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
                 return _detached(cached_result)
             arguments = entrypoint_args.copy()
-            if self.arguments is not None:
-                arguments.update(self.arguments)
+            arguments.update(args)
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:

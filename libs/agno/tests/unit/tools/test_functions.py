@@ -582,6 +582,20 @@ def test_function_call_with_tool_hooks():
     assert hook_calls[1][2] == "processed-value1"
 
 
+def test_function_call_tool_hook_can_replace_arguments():
+    def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(param1="replacement")
+
+    @tool(tool_hooks=[tool_hook])
+    def test_func(param1: str) -> str:
+        return param1
+
+    test_func.process_entrypoint()
+    result = FunctionCall(function=test_func, arguments={"param1": "original"}).execute()
+    assert result.status == "success"
+    assert result.result == "replacement"
+
+
 @pytest.mark.asyncio
 async def test_function_call_async_execution():
     """Test async function call execution."""
@@ -690,6 +704,21 @@ async def test_function_call_async_with_tool_hooks():
     assert hook_calls[0][1] == "test_func"
     assert hook_calls[1][0] == "after"
     assert hook_calls[1][2] == "processed-value1"
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_tool_hook_can_replace_arguments():
+    async def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return await function_call(param1="replacement")
+
+    @tool(tool_hooks=[tool_hook])
+    async def test_func(param1: str) -> str:
+        return param1
+
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"param1": "original"}).aexecute()
+    assert result.status == "success"
+    assert result.result == "replacement"
 
 
 @pytest.mark.asyncio
