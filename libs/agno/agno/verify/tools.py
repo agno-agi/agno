@@ -13,7 +13,7 @@ import re
 from typing import Any, Callable, Optional, TypeVar, Union, cast
 
 from agno.verify.types import REPORT_CAP_BYTES, Verdict, cap_text
-from agno.verify.verifiers import _traceback_tail
+from agno.verify.verifiers import _is_async_callable, _traceback_tail
 
 # The decorated tool keeps its own type. This package ships py.typed, so returning a bare
 # Callable would erase the signature for every downstream caller: a wrong argument type and a
@@ -143,7 +143,7 @@ def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: st
     the hooks off this tool.
     """
 
-    if inspect.iscoroutinefunction(compare):
+    if _is_async_callable(compare):
         raise TypeError(
             "verified_tool runs compare synchronously after the tool returns; an async compare "
             "would never be awaited and every call would read as a divergence. Make it a plain "

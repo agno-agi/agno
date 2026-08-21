@@ -498,3 +498,32 @@ def test_a_real_averify_outranks_an_async_verify():
     verdict = asyncio.run(coerce_verifier(Both()).averify(None))
     assert verdict.passed is True
     assert called == ["averify"]
+
+
+def test_a_sync_def_averify_is_used_as_the_sync_half():
+    """A verifier written with only a plain `def averify` has a sync half under the async name.
+    Classifying by the name alone left it with neither half wired, and every attempt failed on
+    a NoneType error instead of running the check."""
+
+    class OddlyNamed:
+        name = "odd"
+
+        def averify(self, run):  # not async, despite the name
+            return True
+
+    guarded = coerce_verifier(OddlyNamed())
+    assert guarded.verify(None).passed is True
+    assert asyncio.run(guarded.averify(None)).passed is True
+
+
+def test_an_async_callable_object_as_compare_is_rejected():
+    """`inspect.iscoroutinefunction` is False for an instance whose __call__ is async, so a
+    bare check on the function would let one through to never be awaited."""
+    from agno.verify import verified_tool
+
+    class AsyncCompare:
+        async def __call__(self, result, expect):
+            return True
+
+    with pytest.raises(TypeError, match="async compare"):
+        verified_tool(AsyncCompare())

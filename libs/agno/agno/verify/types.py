@@ -148,6 +148,7 @@ class VerificationAttempt:
     status: str
     verdicts: List[Verdict] = field(default_factory=list)
     fingerprint: Optional[str] = None
+    compared_against: Optional[str] = None
     noop: bool = False
     metrics: Optional[Any] = None
 
@@ -168,6 +169,7 @@ class VerificationAttempt:
                 for v in self.verdicts
             ],
             "fingerprint": self.fingerprint,
+            "compared_against": self.compared_against,
             "noop": self.noop,
             "metrics": metrics,
         }

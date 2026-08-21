@@ -2,8 +2,10 @@
 
 import json
 
+import pytest
+
 from agno.verify import REPORT_CAP_BYTES, Verdict, Verification, VerificationAttempt, VerifiedRun
-from agno.verify.types import ELISION, cap_text
+from agno.verify.types import ELISION, cap_text, encodable
 
 
 def test_elision_marker_is_sixteen_bytes():
@@ -83,3 +85,30 @@ def test_verified_run_conveniences_delegate():
     assert run.passed is True
     assert run.stop_reason == "passed"
     assert run.attempts == []
+
+
+@pytest.mark.parametrize(
+    "text, why",
+    [
+        ("\udce9dossier.txt", "a filename decoded with errors='surrogateescape'"),
+        ("ok \udcff\udcfe tail", "surrogates in the middle of otherwise fine text"),
+    ],
+)
+def test_cap_text_survives_lone_surrogates(text, why):
+    """A surrogate cannot be UTF-8 encoded. Left alone it raises inside the cap, and because
+    Verdict.__post_init__ caps unconditionally it would take the whole run down."""
+    out = cap_text(text)
+    assert isinstance(out, str), why
+    out.encode("utf-8")  # must not raise
+    assert cap_text(out) == out, "capping twice must equal capping once"
+
+
+def test_a_verdict_carrying_a_surrogate_report_does_not_raise():
+    verdict = Verdict(passed=False, report="failed on \udce9dossier.txt", name="check")
+    assert verdict.passed is False
+    verdict.report.encode("utf-8")
+
+
+def test_encodable_leaves_ordinary_text_alone():
+    for text in ["", "plain", "unicode: é 中 \U0001f600", "a" * 5000]:
+        assert encodable(text) == text

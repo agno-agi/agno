@@ -448,7 +448,8 @@ def run_verified(
 
         if fp is not None:
             attempt.fingerprint = safe_capture(fp)
-            attempt.noop = noop_between(loop.previous_fingerprint(index), attempt.fingerprint)
+            attempt.compared_against = loop.previous_fingerprint(index)
+            attempt.noop = noop_between(attempt.compared_against, attempt.fingerprint)
 
         attempt.verdicts = [v.verify(output).named(v.name) for v in loop.verifiers]
         if fp is not None:
@@ -504,7 +505,8 @@ async def arun_verified(
 
         if fp is not None:
             attempt.fingerprint = await asafe_capture(fp)
-            attempt.noop = noop_between(loop.previous_fingerprint(index), attempt.fingerprint)
+            attempt.compared_against = loop.previous_fingerprint(index)
+            attempt.noop = noop_between(attempt.compared_against, attempt.fingerprint)
 
         verdicts = []
         for v in loop.verifiers:
