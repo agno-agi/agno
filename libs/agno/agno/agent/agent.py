@@ -675,6 +675,8 @@ class Agent:
 
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
+        # The db the cached session was loaded from; the cache is only valid for that db
+        self._cached_session_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
         self._tool_instructions: Optional[List[str]] = None
         self._team: Optional[Any] = None
@@ -713,6 +715,27 @@ class Agent:
     @property
     def cached_session(self) -> Optional[AgentSession]:
         return self._cached_session
+
+    def _get_cached_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
+        """Return the cached session if it matches session_id/user_id and the current db."""
+        cached = getattr(self, "_cached_session", None)
+        if cached is None:
+            return None
+        if getattr(self, "_cached_session_db", None) is not self.db:
+            # The cached session was loaded from a previously assigned db; serving it
+            # would leak that db's runs into the current one, so drop it.
+            self._cached_session = None
+            self._cached_session_db = None
+            return None
+        if cached.session_id != session_id:
+            return None
+        if user_id is not None and cached.user_id != user_id:
+            return None
+        return cached
+
+    def _set_cached_session(self, session: AgentSession) -> None:
+        self._cached_session = session
+        self._cached_session_db = self.db
 
     @property
     def result_store(self) -> Optional["ResultStore"]:

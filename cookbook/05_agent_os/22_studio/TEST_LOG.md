@@ -118,3 +118,40 @@ agents/teams/workflows and dispatched the published `haiku-writer` on request.
 
 **Result:** `run_agent(agent_id=haiku-writer, ...)` COMPLETED and returned a
 haiku; discovery listed only what dispatch admits.
+
+### registry_learning.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Added 2026-08-21 for the learning-in-Studio change, run from
+worktree branch `feat/learning-in-studio` via
+`PYTHONPATH=<worktree>/libs/agno .venv/bin/python` (the demo venv was not
+present on this machine). Declared two `LearningMachine`s on the Registry
+(`shared-brain` / `research-brain`, namespaces `shared` / `research`, model
+declared), listed them with `list_learning`, created the published
+`profile-coach` agent with `learning_name="shared-brain"`, read the stored
+config, requested an undeclared name, rehydrated the agent through
+`get_agent_by_id`, ran it as user `ash`, then detached with `learning_name=""`.
+
+**Result:** `list_learning` printed both machines with per-store modes and
+namespaces; the stored config carried `{'name': 'shared-brain'}` (a reference,
+not the machine); `get_component` showed `learning_name: shared-brain`;
+`my-own-brain` was refused with `learning_not_found`; the rehydrated agent held
+the same machine object (`agent.learning is shared_brain: True`) with
+`SqliteDb` injected and `gpt-5.5` as declared on the machine; the tool list for user `ash` included
+`update_user_memory` plus the entity tools, and without a user only the entity
+tools. The live run called `update_user_memory(task=User's name is Ash.)` and
+answered "Got it, Ash."; the detach wrote a version with no `learning` key.
+
+---
+
+**Addendum (same day):** the `enable_learning=True` section was added after the
+live pass and verified in a key-less re-run of the same file (the section needs
+no provider): `note-taker` stored `learning: True`, rehydrated through
+`get_agent_by_id`, and `initialize_agent` produced the default machine with
+`user_profile` + `user_memory` on `gpt-5.5`; the rest of the output matched the
+live pass.
+
+---

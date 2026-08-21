@@ -99,16 +99,10 @@ def get_session(
     session_id_to_load: str = session_id or agent.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it (never for a bounded/partial read).
-    if (
-        runs_limit is None
-        and agent.cache_session
-        and hasattr(agent, "_cached_session")
-        and agent._cached_session is not None
-    ):
-        if agent._cached_session.session_id == session_id_to_load and (
-            user_id is None or agent._cached_session.user_id == user_id
-        ):
-            return agent._cached_session
+    if runs_limit is None and agent.cache_session:
+        cached_session = agent._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     if _init.has_async_db(agent):
         raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
@@ -150,7 +144,7 @@ def get_session(
 
         # Cache the session if relevant (never cache a bounded/partial read).
         if loaded_session is not None and agent.cache_session and runs_limit is None:
-            agent._cached_session = loaded_session  # type: ignore
+            agent._set_cached_session(loaded_session)  # type: ignore[arg-type]
 
         return loaded_session
 
@@ -184,16 +178,10 @@ async def aget_session(
     session_id_to_load: str = session_id or agent.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it (never for a bounded/partial read).
-    if (
-        runs_limit is None
-        and agent.cache_session
-        and hasattr(agent, "_cached_session")
-        and agent._cached_session is not None
-    ):
-        if agent._cached_session.session_id == session_id_to_load and (
-            user_id is None or agent._cached_session.user_id == user_id
-        ):
-            return agent._cached_session
+    if runs_limit is None and agent.cache_session:
+        cached_session = agent._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     # Load and return the session from the database
     if agent.db is not None:
@@ -232,7 +220,7 @@ async def aget_session(
 
         # Cache the session if relevant (never cache a bounded/partial read).
         if loaded_session is not None and agent.cache_session and runs_limit is None:
-            agent._cached_session = loaded_session  # type: ignore
+            agent._set_cached_session(loaded_session)  # type: ignore[arg-type]
 
         return loaded_session
 

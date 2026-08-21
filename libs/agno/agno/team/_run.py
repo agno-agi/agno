@@ -27,6 +27,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -37,7 +38,6 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics, merge_background_metrics
-from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
@@ -9000,7 +9000,7 @@ async def _acontinue_run_background_stream(
                                 await apersist_run_transition(team, "team", session_id, fresh_run, user_id=user_id)
                                 persist_run.status = cast(RunStatus, restore_status)
                                 if team.cache_session:
-                                    team._cached_session = fresh_session
+                                    team._set_cached_session(fresh_session)
                 except Exception:
                     log_error(
                         f"Failed to restore the pre-continue state for background continue-run stream {_run_id}",
@@ -9035,7 +9035,7 @@ async def _acontinue_run_background_stream(
                                 await apersist_run_transition(team, "team", session_id, fresh_run, user_id=user_id)
                                 persist_run.status = RunStatus.error
                                 if team.cache_session:
-                                    team._cached_session = fresh_session
+                                    team._set_cached_session(fresh_session)
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background continue-run stream {_run_id}",

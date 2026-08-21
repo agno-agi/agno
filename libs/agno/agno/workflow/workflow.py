@@ -23,11 +23,17 @@ from typing import (
 )
 from uuid import uuid4
 
-from fastapi import WebSocket
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    from fastapi import WebSocket
+
     from agno.os.managers import WebSocketHandler
+else:
+    # fastapi only ships with the "os" extra. Binding WebSocket loosely keeps
+    # the websocket annotations resolvable by get_type_hints() -- and with
+    # them Function.from_callable() on run methods -- without importing it.
+    WebSocket = Any
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
@@ -716,6 +722,8 @@ class Workflow:
         self.add_workflow_history_to_steps = add_workflow_history_to_steps
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
+        # The db the cached session was loaded from; the cache is only valid for that db
+        self._cached_session_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
         self.stream_events = stream_events
 
         # Warn if workflow history is enabled without a database
@@ -1584,6 +1592,27 @@ class Workflow:
                 log_warning(f"No run responses found in WorkflowSession {session_id}")
                 return None
 
+    def _get_cached_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
+        """Return the cached session if it matches session_id/user_id and the current db."""
+        cached = getattr(self, "_workflow_session", None)
+        if cached is None:
+            return None
+        if getattr(self, "_cached_session_db", None) is not self.db:
+            # The cached session was loaded from a previously assigned db; serving it
+            # would leak that db's runs into the current one, so drop it.
+            self._workflow_session = None
+            self._cached_session_db = None
+            return None
+        if cached.session_id != session_id:
+            return None
+        if user_id is not None and cached.user_id != user_id:
+            return None
+        return cached
+
+    def _set_cached_session(self, session: WorkflowSession) -> None:
+        self._workflow_session = session
+        self._cached_session_db = self.db
+
     def read_or_create_session(
         self,
         session_id: str,
@@ -1592,12 +1621,9 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if (
-            self._workflow_session is not None
-            and self._workflow_session.session_id == session_id
-            and (user_id is None or self._workflow_session.user_id == user_id)
-        ):
-            return self._workflow_session
+        cached_session = self._get_cached_session(session_id, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
         if self._has_async_db():
             raise ValueError(
@@ -1632,7 +1658,7 @@ class Workflow:
 
         # Cache the session if relevant
         if workflow_session is not None and self.cache_session:
-            self._workflow_session = workflow_session
+            self._set_cached_session(workflow_session)
 
         return workflow_session
 
@@ -1644,12 +1670,9 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if (
-            self._workflow_session is not None
-            and self._workflow_session.session_id == session_id
-            and (user_id is None or self._workflow_session.user_id == user_id)
-        ):
-            return self._workflow_session
+        cached_session = self._get_cached_session(session_id, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
         # Try to load from database
         workflow_session = None
@@ -1679,7 +1702,7 @@ class Workflow:
 
         # Cache the session if relevant
         if workflow_session is not None and self.cache_session:
-            self._workflow_session = workflow_session
+            self._set_cached_session(workflow_session)
 
         return workflow_session
 
@@ -5712,9 +5735,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from typing import get_args
-
-        from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
 
         # Initialize agent with stream_events=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
@@ -5769,7 +5790,7 @@ class Workflow:
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
         ):  # type: ignore
-            if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
+            if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
                 # Track if workflow was executed by checking for WorkflowCompletedEvent
@@ -6115,9 +6136,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from typing import get_args
-
-        from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
 
         logger.info("Workflow agent enabled - async streaming mode")
         log_debug(f"User input: {agent_input}")
@@ -6179,7 +6198,7 @@ class Workflow:
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
         ):  # type: ignore
-            if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
+            if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
                 if isinstance(event, WorkflowCompletedEvent):

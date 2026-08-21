@@ -179,6 +179,66 @@ def resolve_memory_manager_reference(
     config.pop("memory_manager", None)
 
 
+def is_learning_reference(value: Any) -> bool:
+    """True for the shape to_dict writes for a registry-declared machine.
+
+    A reference is ``{"name": <non-empty str>}`` and nothing else. ``{}`` and
+    any dict carrying a store or knob key is an inline machine config, which
+    LearningMachine.from_dict rebuilds; that includes every config written
+    before machines had names.
+    """
+    if not isinstance(value, dict) or set(value) != {"name"}:
+        return False
+    name = value.get("name")
+    return isinstance(name, str) and bool(name)
+
+
+def resolve_learning_reference(
+    config: Dict[str, Any],
+    registry: Optional[Registry],
+    strict: bool,
+    component_label: str,
+) -> None:
+    """Replace a ``config["learning"]`` reference with the registered machine.
+
+    Agents and teams write and read the reference identically, so both call
+    this. An inline machine config is left for LearningMachine.from_dict. A
+    reference that cannot be resolved is dropped, or refused under strict:
+    the registry is what a stored component's learning resolves through, so
+    loading without it would silently run the component with no learning.
+    """
+    reference = config.get("learning")
+    if not isinstance(reference, dict) or not is_learning_reference(reference):
+        return
+    name = reference["name"]
+
+    if registry is not None:
+        if registry.learning_name_is_ambiguous(name):
+            # A name two distinct machines share could bind the wrong one. A
+            # strict load refuses; a lenient load stays lenient and takes the
+            # first registered, saying so.
+            if strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} references learning machine '{name}', but two distinct "
+                    "machines are registered under that name, so the reference could bind the "
+                    "wrong machine. Give the machines distinct names."
+                )
+            log_warning(f"Learning machine name '{name}' matches more than one registered machine; binding the first.")
+        machine = registry.get_learning(name)
+        if machine is not None:
+            config["learning"] = machine
+            return
+
+    if strict:
+        raise ComponentRehydrationError(
+            f"{component_label} references learning machine '{name}' which was not found in the "
+            "registry. Register the machine in the process serving the component, or pass "
+            "strict=False to load the component without it."
+        )
+    log_warning(f"Learning machine '{name}' not found in registry; loading the component without it.")
+    config.pop("learning", None)
+
+
 # ---------------------------------------------------------------------------
 # Run output accessors
 # ---------------------------------------------------------------------------
@@ -580,12 +640,9 @@ def read_or_create_session(
     from uuid import uuid4
 
     # Returning cached session if we have one
-    if (
-        agent._cached_session is not None
-        and agent._cached_session.session_id == session_id
-        and (user_id is None or agent._cached_session.user_id == user_id)
-    ):
-        return agent._cached_session
+    cached_session = agent._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     agent_session = None
@@ -635,7 +692,7 @@ def read_or_create_session(
                 upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
-        agent._cached_session = agent_session
+        agent._set_cached_session(agent_session)
 
     return agent_session
 
@@ -651,12 +708,9 @@ async def aread_or_create_session(
     from agno.agent import _init
 
     # Returning cached session if we have one
-    if (
-        agent._cached_session is not None
-        and agent._cached_session.session_id == session_id
-        and (user_id is None or agent._cached_session.user_id == user_id)
-    ):
-        return agent._cached_session
+    cached_session = agent._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     agent_session = None
@@ -712,7 +766,7 @@ async def aread_or_create_session(
                     upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
-        agent._cached_session = agent_session
+        agent._set_cached_session(agent_session)
 
     return agent_session
 
@@ -841,11 +895,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["add_memories_to_context"] = agent.add_memories_to_context
 
     # --- Learning settings ---
+    # A named machine is a registry resource: stored as a reference by name,
+    # like knowledge, and resolved from the registry on load. Its config is
+    # never inlined, so a stored component cannot carry learning the deployer
+    # did not declare. An unnamed machine belongs to this component and is
+    # inlined in full.
     if agent.learning is not None:
+        learning_name = getattr(agent.learning, "name", None)
         if agent.learning is True:
             config["learning"] = True
         elif agent.learning is False:
             config["learning"] = False
+        elif isinstance(learning_name, str) and learning_name:
+            config["learning"] = {"name": learning_name}
         elif hasattr(agent.learning, "to_dict"):
             config["learning"] = agent.learning.to_dict()
         else:
@@ -1283,10 +1345,17 @@ def from_dict(
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
     # --- Handle Learning reconstruction ---
+    # A named machine is stored as a reference and resolved from the registry;
+    # any other dict is an inline machine config and is rebuilt here.
+    resolve_learning_reference(config, registry, strict, component_label)
     if "learning" in config and isinstance(config["learning"], dict):
         from agno.learn.machine import LearningMachine
 
-        config["learning"] = LearningMachine.from_dict(config["learning"])
+        # An inline machine belongs to this component: a name on it is dropped
+        # so the rebuilt machine keeps round-tripping inline instead of being
+        # re-saved as a reference to a machine no registry declares.
+        inline = {key: value for key, value in config["learning"].items() if key != "name"}
+        config["learning"] = LearningMachine.from_dict(inline)
 
     # Remove keys that aren't constructor parameters
     config.pop("team_id", None)

@@ -2274,6 +2274,11 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
+    # A named LearningMachine on a code-defined component is a registry
+    # resource: its stored config references it by name, so the registry the
+    # AgentOS resolves through must hold it. add_learning ignores True, None
+    # and unnamed (inline) machines.
+    registry.add_learning(getattr(agent, "learning", None))
 
 
 def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
@@ -2297,6 +2302,7 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
     registry.add_schema(getattr(team, "output_schema", None))
     registry.add_db(getattr(team, "db", None))
     _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
+    registry.add_learning(getattr(team, "learning", None))
 
     members = getattr(team, "members", None)
     if isinstance(members, list):

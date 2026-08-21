@@ -17,6 +17,7 @@ Registry/Components HTTP contracts.
 | `registry_and_components.py` | Read `GET /registry` and complete a component lifecycle over the Components API: draft, guarded append, publish, archive, restore. |
 | `studio_runner_dispatcher.py` | Dispatch Studio-built components from a runner-only Agent with `StudioRunnerTools`. |
 | `studio_runner_direct.py` | Call the runner's list/run tools directly and observe the registry guard's refusal. |
+| `registry_learning.py` | Declare `LearningMachine`s on the Registry, discover them with `list_learning`, wire a built agent with `learning_name`, and rehydrate it with the shared machine. |
 
 ## Prerequisites
 
@@ -115,6 +116,63 @@ it. Editing, archiving, and version writes stay owner-scoped throughout
 (`not_owner` for other users), and schedules are never shared on publish.
 Calls without a run context (direct Python, tests) write unowned, shared
 rows. The AgentOS demos pass `user_id` on the run request to show this.
+
+## Learning
+
+Learning is the only memory surface a Studio-built component can be given, and
+the deployer decides what learning exists. Declare `LearningMachine`s by name
+on the `Registry` (`Registry(learning=[LearningMachine(name="shared-brain",
+...)])` or `registry.add_learning(...)`); the builder discovers them with
+`list_learning` and wires one with `learning_name` on `create_agent`,
+`edit_agent`, `create_team` and `edit_team` (`""` detaches). The stored config
+carries `{"name": ...}`, never the machine's config, so a component cannot
+author learning the deployer did not declare; an undeclared name returns
+`learning_not_found`.
+
+Without a declared machine, `enable_learning=True` is the zero-config path: the
+config carries `learning: True` and the framework builds the default machine
+(user profile and user memory on the component's own db and model) at init.
+On a component already wired to a machine, `enable_learning=True` keeps that
+machine and says so in `warnings`; `learning_name=""` in the same call drops
+the reference first, so the pair switches it to the default machine.
+`enable_learning=False` turns learning off whatever shape it had, and a
+non-empty `learning_name` takes precedence when both are given. The legacy
+memory pair is cleared whenever the call ends with learning wired.
+
+Every component wired to a machine reads and writes that machine's namespace,
+so `list_learning` shows the namespace (machine-level and per store) first,
+plus each store's mode and whether the machine already binds a `model`, `db`
+or `knowledge`. A registry machine is one shared instance: the framework
+injects a component's db and model into it only when it has none, so the first
+component to run binds them, permanently, for every sharer — declare `db` and
+`model` on the machine if the deployer, not the first component, should decide.
+`create_*` / `edit_*` return that as `warnings` in the success envelope when the
+machine you wire declares no db or model, or is bound to a different db than
+the component. Namespaces are literal strings; there is no per-component
+templating of a learning namespace.
+
+A named machine on a code-defined Agent or Team is folded into the Registry the
+way its knowledge is, so the stored reference resolves and `list_learning`
+shows it; `GET /registry` lists declared machines under `type: learning` with
+the same summary. Two distinct machines under one name are refused at wiring
+time (`ambiguous_reference`).
+
+The legacy `memory_manager_id` / `enable_agentic_memory` pair is gone from the
+Studio forms. Wiring `learning_name` onto a component stored with them clears
+both, and `get_component` still shows `enable_agentic_memory` on a component
+that carries it, so the real state stays visible.
+
+Upgrade note (3.0.0a3): `learned_knowledge` enabled by a bool or by a bound
+knowledge now follows the machine's `namespace`, the way `entity_memory`
+already did. A deployment that ran `LearningMachine(namespace="team_west",
+knowledge=kb)` on 2.8.4 through 3.0.0a2 saved its learnings under `global`;
+recall filters on the exact namespace, so those rows are not returned until
+their namespace is updated to `team_west` (or the machine is left on the
+default namespace).
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/22_studio/registry_learning.py
+```
 
 ## Palette policy
 
@@ -248,7 +306,7 @@ Run its live lifecycle client:
 The two surfaces have different ownership:
 
 - `GET /registry` describes live, code-defined tools, models, databases,
-  schemas, functions, and reusable components. It is read-only and supports
+  schemas, functions, learning machines, and reusable components. It is read-only and supports
   `resource_type`, partial `name`, `page`, and `limit` filters.
 - `/components` owns persisted component metadata and versioned configuration.
   The demo executes `POST /components` (a draft), a refused
