@@ -9,29 +9,43 @@ from agno.media.reference import MediaReference
 from agno.utils.log import log_error
 
 
-def _bytes_from_url(url: str) -> Optional[bytes]:
-    """Read bytes from an http(s) URL. Raises on HTTP error responses.
+def bytes_and_mime_from_url(url: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Read bytes from an http(s) URL along with the type the server declared.
 
-    Deliberately no ``file://`` support: every ``url`` reaching here is caller-supplied — an
-    AgentOS request body, a tool result, a model-generated string — so reading one off the
-    local filesystem would be an arbitrary-file-read primitive. Media held by the local
-    storage backend is rehydrated through ``storage.download()`` instead.
+    No ``file://`` support: every ``url`` reaching here is caller-supplied, so honouring one
+    would let a caller read the local filesystem. Media held by the local storage backend is
+    rehydrated through ``storage.download()`` instead. The declared type is returned because a
+    url whose path carries no extension is otherwise unidentifiable.
     """
     import httpx
 
     resp = httpx.get(url, follow_redirects=True)
     resp.raise_for_status()
-    return resp.content
+    content_type = resp.headers.get("content-type", "").split(";")[0].strip()
+    return resp.content, content_type or None
 
 
-async def _abytes_from_url(url: str) -> Optional[bytes]:
-    """Async variant of _bytes_from_url."""
+async def abytes_and_mime_from_url(url: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Async variant of bytes_and_mime_from_url."""
     import httpx
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         resp = await client.get(url)
         resp.raise_for_status()
-        return resp.content
+        content_type = resp.headers.get("content-type", "").split(";")[0].strip()
+        return resp.content, content_type or None
+
+
+def _bytes_from_url(url: str) -> Optional[bytes]:
+    """Read bytes from an http(s) URL. Raises on HTTP error responses."""
+    content, _ = bytes_and_mime_from_url(url)
+    return content
+
+
+async def _abytes_from_url(url: str) -> Optional[bytes]:
+    """Async variant of _bytes_from_url."""
+    content, _ = await abytes_and_mime_from_url(url)
+    return content
 
 
 class Image(BaseModel):
@@ -160,7 +174,6 @@ class Image(BaseModel):
 
         if self.media_reference is not None:
             result["media_reference"] = self.media_reference.to_dict()
-            result.pop("content", None)
         elif include_base64_content and self.content:
             result["content"] = self.to_base64()
 
@@ -307,7 +320,6 @@ class Audio(BaseModel):
 
         if self.media_reference is not None:
             result["media_reference"] = self.media_reference.to_dict()
-            result.pop("content", None)
         elif include_base64_content and self.content:
             result["content"] = self.to_base64()
 
@@ -445,7 +457,6 @@ class Video(BaseModel):
 
         if self.media_reference is not None:
             result["media_reference"] = self.media_reference.to_dict()
-            result.pop("content", None)
         elif include_base64_content and self.content:
             result["content"] = self.to_base64()
 
@@ -496,8 +507,7 @@ class File(BaseModel):
                 )
             if isinstance(data.get("media_reference"), dict):
                 data["media_reference"] = MediaReference.from_dict(data["media_reference"])
-            # Auto-generate after the check above. Without it a File is handed a fresh id on every
-            # persist, so the offload cache never hits and the same bytes land under a new key.
+            # Auto-generate after the check above; a stable id is what lets the offload cache reuse an upload.
             if data.get("id") is None:
                 data["id"] = str(uuid4())
         return data
@@ -584,19 +594,14 @@ class File(BaseModel):
 
     @property
     def file_url_content(self) -> Optional[Tuple[bytes, str]]:
-        import httpx
-
-        if self.url:
-            try:
-                response = httpx.get(self.url, follow_redirects=True)
-                content = response.content
-                mime_type = response.headers.get("Content-Type", "").split(";")[0]
-                return content, mime_type
-            except Exception as e:
-                log_error(f"Failed to download file from {self.url}: {str(e)}")
-                return None
-        else:
+        if not self.url:
             return None
+        try:
+            content, mime_type = bytes_and_mime_from_url(self.url)
+        except Exception as e:
+            log_error(f"Failed to download file from {self.url}: {str(e)}")
+            return None
+        return content or b"", mime_type or ""
 
     def get_content_bytes(self) -> Optional[bytes]:
         if self.content:
@@ -654,6 +659,7 @@ class File(BaseModel):
         return content_normalised
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
+        """Convert to dict, optionally including base64-encoded content"""
         response_dict: Dict[str, Any] = {
             "id": self.id,
             "url": self.url,

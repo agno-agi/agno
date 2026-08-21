@@ -39,6 +39,7 @@ from agno.os.services.sessions import get_session_runs as get_session_runs_from_
 from agno.os.settings import AgnoAPISettings
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.utils.log import log_debug
 from agno.utils.media_offload import adelete_media_keys, session_media_keys
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,8 @@ def attach_routes(
             except Exception as e:
                 logger.warning(f"Could not read session {session_id} for media deletion: {e}")
                 continue
-            keys.extend(session_media_keys(session, session_ids, media_storage))
+            # Scoped to the session it was read from: another session's reference is not ours to delete.
+            keys.extend(session_media_keys(session, [session_id], media_storage))
         return keys
 
     async def _delete_media_keys(keys: List[str]) -> None:
@@ -858,6 +860,9 @@ def attach_routes(
         # for admins / unscoped callers it falls back to the query param.
         local_kwargs: Dict[str, Any] = {"session_id": session_id, "user_id": effective_user_id}
 
+        if not delete_media and media_storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
         media_keys = await _collect_media_keys(db, [session_id], effective_user_id) if delete_media else []
 
         if isinstance(db, AsyncBaseDb):
@@ -926,6 +931,9 @@ def attach_routes(
             "session_ids": request.session_ids,
             "user_id": effective_user_id,
         }
+
+        if not delete_media and media_storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
 
         media_keys = await _collect_media_keys(db, request.session_ids, effective_user_id) if delete_media else []
 

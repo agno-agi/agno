@@ -214,8 +214,7 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
-    # If set, media is uploaded here before DB persistence when store_media is True, and only
-    # references are stored. With store_media False, media is not offloaded.
+    # If set (and store_media is True), media is uploaded here and only references are stored
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True

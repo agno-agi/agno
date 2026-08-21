@@ -458,13 +458,12 @@ def test_file_text_roundtrip_through_message():
 
 
 def test_reconstruction_keeps_the_stored_url_and_filepath():
-    """Offload only falls back to the reference's url when the media had none of its own, so
-    reading the reference first threw away a persist_remote_urls image's origin. filepath
-    survives offload too and is a content source in its own right."""
+    """A media object's own url is what the row keeps: the reference's url is only a fallback for
+    media that arrived without one, so reconstruction hands back the origin."""
     from agno.utils.media import reconstruct_image_from_dict
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        storage = LocalMediaStorage(base_path=tmpdir, base_url="https://cdn.example.com")
+        storage = LocalMediaStorage(base_path=tmpdir)
         img = Image(id="i1", mime_type="image/png", url="https://origin.example.com/chart.png")
         img.content = b"CHART"
         run = RunOutput(run_id="r1", images=[img])

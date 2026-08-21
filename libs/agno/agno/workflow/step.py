@@ -2520,7 +2520,6 @@ class Step:
         """Convert AudioArtifact objects to Audio objects"""
         audios = []
         for audio_artifact in audio_artifacts:
-            # id, format and mime_type carry over so offload keys the same bytes to the same object.
             # An offloaded audio carries only its reference, so that is checked first.
             if audio_artifact.media_reference is not None:
                 audios.append(
@@ -3158,10 +3157,8 @@ class Step:
     ) -> Optional[Union[MediaStorage, AsyncMediaStorage]]:
         """The executor's own backend, falling back to the workflow's.
 
-        Fallback, never override: an executor configured with its own backend has stated where
-        its objects belong, and silently redirecting them to the parent's bucket would be worse
-        than the gap this closes. Resolved per execution rather than assigned onto the executor,
-        which is shared across workflows.
+        Fallback, never override: an executor configured with its own backend has stated where its
+        objects belong. Resolved per execution because the executor is shared across workflows.
         """
         return getattr(self.active_executor, "media_storage", None) or workflow_media_storage
 
@@ -3173,18 +3170,22 @@ class Step:
             media.extend(getattr(step_input, field_name, None) or [])
         return media
 
+    def _requires_media_bytes(self) -> bool:
+        """Whether this executor needs the bytes rather than a url it can fetch.
+
+        A function reads ``content`` directly. A nested workflow runs with its own
+        ``media_storage`` — usually unset — so its inner steps cannot read the object back.
+        """
+        return self._executor_type in ["function", "workflow"]
+
     def _rehydrate_step_input_media(
         self, step_input: StepInput, workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
     ) -> None:
-        """Read offloaded media back so the executor receives bytes, not an empty pointer.
-
-        Every executor kind needs this: a model cannot fetch a reference, and a function step
-        reads ``content`` directly.
-        """
+        """Read offloaded media back so the executor receives bytes, not an empty pointer."""
         if workflow_media_storage is None:
             return
         for media in self._step_input_media(step_input):
-            self._rehydrate(media, workflow_media_storage)
+            self._rehydrate(media, workflow_media_storage, require_bytes=self._requires_media_bytes())
 
     async def _arehydrate_step_input_media(
         self, step_input: StepInput, workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
@@ -3193,61 +3194,67 @@ class Step:
         if workflow_media_storage is None:
             return
         for media in self._step_input_media(step_input):
-            await self._arehydrate(media, workflow_media_storage)
+            await self._arehydrate(media, workflow_media_storage, require_bytes=self._requires_media_bytes())
 
     @staticmethod
-    def _rehydrate(media: Any, media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]) -> None:
-        """Read an offloaded object's bytes back so the model can actually see it.
+    def _rehydrate(
+        media: Any,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]],
+        require_bytes: bool = False,
+    ) -> None:
+        """Read an offloaded object's bytes back so the executor can actually see it.
 
-        A reference alone is not something a model API can fetch: on a private bucket the
-        reference carries no url, so the executor would receive media with nothing in it.
+        A durable url is enough for a model executor, which fetches it; ``require_bytes`` is for a
+        function executor, which reads ``content`` and cannot follow a link.
         """
         if media_storage is None or media.media_reference is None or media.content is not None:
             return
-        if media.url:
+        if media.url and not require_bytes:
             return
 
         from agno.media.storage.base import AsyncMediaStorage
         from agno.utils.media_offload import reference_matches_storage
 
-        # Raised outside the guard below: an async backend on a sync run is a configuration
-        # error, and falling back to inline would hide it for the life of the run.
+        # An async backend on a sync run is a configuration error, not something to fall back from.
         if isinstance(media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
         if not reference_matches_storage(media.media_reference, media_storage):
-            logger.warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
+            log_warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
             return
 
         try:
             media.content = media_storage.download(media.media_reference.storage_key)
         except Exception as e:
-            logger.warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
+            log_warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
 
     @staticmethod
-    async def _arehydrate(media: Any, media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]) -> None:
+    async def _arehydrate(
+        media: Any,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]],
+        require_bytes: bool = False,
+    ) -> None:
         """Async variant of :meth:`_rehydrate`."""
         if media_storage is None or media.media_reference is None or media.content is not None:
             return
-        if media.url:
+        if media.url and not require_bytes:
             return
 
+        from agno.media.storage.base import AsyncMediaStorage
         from agno.utils.media_offload import reference_matches_storage
 
         if not reference_matches_storage(media.media_reference, media_storage):
-            logger.warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
+            log_warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
             return
 
         try:
-            from agno.media.storage.base import AsyncMediaStorage
-
             key = media.media_reference.storage_key
             if isinstance(media_storage, AsyncMediaStorage):
                 media.content = await media_storage.download(key)
             else:
                 media.content = await asyncio.to_thread(media_storage.download, key)
         except Exception as e:
-            logger.warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
+            log_warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
 
     def _convert_image_artifacts_to_images(self, image_artifacts: List[Image]) -> List[Image]:
         """
@@ -3265,8 +3272,7 @@ class Step:
         images = []
         for i, img_artifact in enumerate(image_artifacts):
             # Create Image object with proper data from ImageArtifact
-            # An offloaded image carries only its reference, so it has to be checked before the skip
-            # below or the step loses media that storage holds.
+            # An offloaded image carries only its reference, so that is checked first.
             if img_artifact.media_reference is not None:
                 images.append(
                     Image(
@@ -3353,8 +3359,7 @@ class Step:
         videos = []
         for i, video_artifact in enumerate(video_artifacts):
             # Create Video object with proper data from VideoArtifact
-            # id, format and mime_type carry over as in _convert_image_artifacts_to_images, and an
-            # offloaded video carries only its reference, so that is checked first.
+            # An offloaded video carries only its reference, so that is checked first.
             if video_artifact.media_reference is not None:
                 videos.append(
                     Video(

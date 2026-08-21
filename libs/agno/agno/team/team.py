@@ -244,8 +244,7 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
-    # If set, media is uploaded here before DB persistence when store_media is True, and only
-    # references are stored. With store_media False, media is not offloaded.
+    # If set (and store_media is True), media is uploaded here and only references are stored
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
@@ -417,8 +416,6 @@ class Team:
     _tool_instructions: Optional[List[str]] = None
     # Member response model
     _member_response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
-    # Ids of media lifted from a member whose store_media is off, dropped before persistence
-    _opted_out_media_ids: Optional[Set[str]] = None
     # Safe formatter for template resolution
     _formatter: Optional[Any] = None
     # Hooks normalised flag
@@ -1318,10 +1315,7 @@ class Team:
     def scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
         return _run.scrub_run_output_for_storage(self, run_response=run_response)
 
-    def _scrub_member_responses(
-        self,
-        member_responses: List[Union[TeamRunOutput, RunOutput]],
-    ) -> None:
+    def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
         return _run._scrub_member_responses(self, member_responses=member_responses)
 
     def cli_app(

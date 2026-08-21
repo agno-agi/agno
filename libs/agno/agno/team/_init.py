@@ -382,8 +382,6 @@ def __init__(
     team.audio = None
     # Videos generated during this session
     team.videos = None
-    # Media lifted from a member that stores none
-    team._opted_out_media_ids = None
 
     # Team session
     team._cached_session = None

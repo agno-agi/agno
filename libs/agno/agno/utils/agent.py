@@ -40,6 +40,7 @@ from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.media.reference import MediaReference
     from agno.team.team import Team
 
 
@@ -439,11 +440,8 @@ def validate_media_object_id(
 def _media_carries_data(media: Any) -> bool:
     """True if a media object still carries retrievable data.
 
-    Used by the keep_references scrub path. We keep media that has an offload
-    reference (the normal case — content is already nulled), inline content
-    (offload failed or was skipped, so keep it inline rather than lose it — this
-    is the "never lose data on storage failure" guarantee), or a provider-managed
-    external handle (e.g. a GeminiFile). Only empty/url-only placeholders are dropped.
+    Media with an offload reference, inline content, or a provider-managed handle (e.g. a
+    GeminiFile) is kept by the keep_references scrub; empty and url-only ones are dropped.
     """
     return (
         getattr(media, "media_reference", None) is not None
@@ -456,10 +454,8 @@ def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput], k
     """
     Remove media from RunOutput when store_media=False.
 
-    If keep_references=True (media_storage configured), preserve media that still
-    carries data: offloaded media is kept as a lightweight MediaReference (the
-    content bytes were already moved to storage), and media that was not offloaded
-    (storage failure or mismatch) is kept inline so it is never silently lost.
+    With keep_references=True (media_storage configured), media that still carries data is
+    preserved: offloaded media as a lightweight MediaReference, un-offloaded media inline.
     """
     # 1. Scrub RunInput media
     if run_response.input is not None:
@@ -501,8 +497,8 @@ def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput], k
         run_response.audio = None
         run_response.files = None
 
-    # 6. Member responses (TeamRunOutput only) are part of this row, so they follow its
-    # store_media. Each member's own flags are applied by Team._scrub_member_responses.
+    # 6. Member responses (TeamRunOutput only) follow this row's store_media; their own flags
+    # are applied by Team._scrub_member_responses.
     member_responses = getattr(run_response, "member_responses", None)
     if member_responses:
         for member_response in member_responses:
@@ -511,13 +507,14 @@ def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput], k
 
 def scrub_media_from_message(message: Message, keep_references: bool = False) -> None:
     """Remove media from a Message. If keep_references=True, preserve media that still
-    carries data (reference, inline content, or external handle)."""
+    carries data (reference, inline content, or external handle).
+    """
     if keep_references:
         message.images = [img for img in (message.images or []) if _media_carries_data(img)] or None
         message.videos = [v for v in (message.videos or []) if _media_carries_data(v)] or None
         message.audio = [a for a in (message.audio or []) if _media_carries_data(a)] or None
         message.files = [f for f in (message.files or []) if _media_carries_data(f)] or None
-        # Output media: keep if it still carries data
+        # Output media
         if message.audio_output and not _media_carries_data(message.audio_output):
             message.audio_output = None
         if message.image_output and not _media_carries_data(message.image_output):
@@ -539,9 +536,8 @@ def scrub_media_from_message(message: Message, keep_references: bool = False) ->
 def scrub_workflow_media(run_response: Any, keep_references: bool = False) -> None:
     """Remove media from a WorkflowRunOutput when store_media=False.
 
-    Mirrors scrub_media_from_run_output for the workflow run shape: top-level media,
-    step outputs, step executor runs (agent/team/nested-workflow), and the workflow
-    agent run. With keep_references=True, media that still carries data is preserved.
+    Mirrors scrub_media_from_run_output across the workflow shape: top-level media, step
+    outputs, step executor runs, and the workflow agent run.
     """
     from agno.run.workflow import WorkflowRunOutput
     from agno.utils.media_offload import iter_step_outputs
@@ -644,8 +640,7 @@ def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -
     if run_response.input is not None:
         run_response.input = copy.copy(run_response.input)
 
-    # Member responses (TeamRunOutput only). The scrub recurses into them, and they are the
-    # same objects the sibling member rows are written from, so isolate them too.
+    # Member responses (TeamRunOutput only) are the same objects the member rows are written from.
     if isinstance(run_response, TeamRunOutput) and run_response.member_responses:
         isolated_members = []
         for member_response in run_response.member_responses:
@@ -659,8 +654,12 @@ RunOutputT = TypeVar("RunOutputT", RunOutput, TeamRunOutput)
 
 
 def drop_opted_out_member_media(entity: Union["Agent", "Team"], run_response: Any) -> None:
-    """Strip member media the team is not allowed to upload. No-op outside a team run."""
-    if not getattr(run_response, "member_responses", None):
+    """Strip member media the team is not allowed to upload. No-op outside a team run.
+
+    Gated on the run being a team run, not on it holding member responses: media a member
+    surfaced as the team's own answer is filtered off the top level either way.
+    """
+    if not hasattr(run_response, "member_responses"):
         return
 
     from agno.team._run import drop_opted_out_member_media as drop_for_team
@@ -672,30 +671,33 @@ def build_offloaded_storage_copy(
     entity: Union["Agent", "Team"],
     run_response: RunOutputT,
     session_id: str,
+    cache: Optional[Dict[str, "MediaReference"]] = None,
 ) -> Optional[RunOutputT]:
     """Return a deep copy of ``run_response`` with its media offloaded, or None.
 
-    The pre-terminal writes — background PENDING/RUNNING rows and mid-run checkpoints —
-    persist the run while its media is still inline, so without this the row carries raw
-    base64 for the life of the run. Returns None when there is nothing to offload or the
-    offload failed, so the caller writes the run inline as before.
+    Used by the writes that persist a run while its media is still inline: background
+    PENDING/RUNNING rows and mid-run checkpoints. None means the caller writes the run
+    inline, either because there was nothing to offload or because the copy failed.
     """
-    # store_media first: with it off the media is scrubbed from the row anyway, so
-    # uploading it would be wasted work.
+    # With store_media off the media is scrubbed from the row anyway, so uploading it is wasted.
     if not entity.store_media or entity.media_storage is None:
         return None
 
     import copy
 
     from agno.media.storage.base import AsyncMediaStorage
+    from agno.utils.media_offload import offload_cache_for
 
-    # Raised outside the guard below: an async backend on a sync run is a configuration
-    # error, and falling back to inline would hide it for the life of the run.
+    # A caller that already holds a cache passes it in, so a run reached by two writes uploads once.
+    if cache is None:
+        cache = offload_cache_for(run_response)
+
+    # Raised, not caught below: an async backend on a sync run is a configuration error.
     if isinstance(entity.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
     try:
-        from agno.utils.media_offload import offload_cache_for, offload_run_media
+        from agno.utils.media_offload import offload_run_media
 
         storage_copy = copy.deepcopy(run_response)
         drop_opted_out_member_media(entity, storage_copy)
@@ -703,7 +705,7 @@ def build_offloaded_storage_copy(
             storage_copy,
             entity.media_storage,
             session_id,
-            cache=offload_cache_for(run_response),
+            cache=cache,
         )
         return storage_copy
     except Exception as e:
@@ -715,6 +717,7 @@ async def abuild_offloaded_storage_copy(
     entity: Union["Agent", "Team"],
     run_response: RunOutputT,
     session_id: str,
+    cache: Optional[Dict[str, "MediaReference"]] = None,
 ) -> Optional[RunOutputT]:
     """Async variant of :func:`build_offloaded_storage_copy`."""
     if not entity.store_media or entity.media_storage is None:
@@ -723,10 +726,14 @@ async def abuild_offloaded_storage_copy(
     import copy
 
     from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+    from agno.utils.media_offload import offload_cache_for
+
+    if cache is None:
+        cache = offload_cache_for(run_response)
 
     try:
         if isinstance(entity.media_storage, AsyncMediaStorage):
-            from agno.utils.media_offload import aoffload_run_media, offload_cache_for
+            from agno.utils.media_offload import aoffload_run_media
 
             storage_copy = copy.deepcopy(run_response)
             drop_opted_out_member_media(entity, storage_copy)
@@ -734,13 +741,12 @@ async def abuild_offloaded_storage_copy(
                 storage_copy,
                 entity.media_storage,
                 session_id,
-                cache=offload_cache_for(run_response),
+                cache=cache,
             )
             return storage_copy
         if isinstance(entity.media_storage, MediaStorage):
-            # Sync storage in an async run — offload it in a worker thread, the same way the
-            # terminal write does. Calling it inline would hold the event loop for the upload.
-            from agno.utils.media_offload import offload_cache_for, offload_run_media
+            # Sync storage in an async run: upload in a worker thread to keep the event loop free.
+            from agno.utils.media_offload import offload_run_media
 
             storage_copy = copy.deepcopy(run_response)
             drop_opted_out_member_media(entity, storage_copy)
@@ -749,12 +755,37 @@ async def abuild_offloaded_storage_copy(
                 storage_copy,
                 entity.media_storage,
                 session_id,
-                offload_cache_for(run_response),
+                cache,
             )
             return storage_copy
+        log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
     except Exception as e:
         log_warning(f"Media offload failed, falling back to inline storage: {e}")
     return None
+
+
+async def abuild_full_run_storage_copy(
+    entity: Union["Agent", "Team"],
+    run_response: RunOutputT,
+    session_id: str,
+) -> RunOutputT:
+    """Return the ``full_run`` copy of ``run_response``, honouring ``store_media``.
+
+    Offloaded when ``store_media`` is on, scrubbed when it is off, so the row never carries
+    raw bytes. Async only: every ``full_run`` write goes through ``apersist_run_transition``.
+    """
+    if not entity.store_media:
+        import copy
+
+        try:
+            # An uncopyable payload must not take the persist down with it.
+            scrubbed = copy.deepcopy(run_response)
+        except Exception as e:
+            log_warning(f"Could not copy run for the media scrub, scrubbing in place: {e}")
+            scrubbed = run_response
+        scrub_media_from_run_output(scrubbed, keep_references=False)
+        return scrubbed
+    return await abuild_offloaded_storage_copy(entity, run_response, session_id) or run_response
 
 
 def get_run_output_util(

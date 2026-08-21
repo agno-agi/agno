@@ -189,7 +189,7 @@ class MoonShot(OpenAILike):
         """
         import time
 
-        # The ``ms://`` prefix marks an id as already uploaded; a stale one just re-uploads.
+        # The "ms://" prefix marks an id as already uploaded; a stale one just re-uploads.
         if file.id and file.id.startswith("ms://"):
             stored_id = file.id[len("ms://") :]
             try:

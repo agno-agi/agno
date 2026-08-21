@@ -1057,6 +1057,8 @@ class Workflow:
                     session = None
                 if session is not None:
                     keys = session_media_keys(session, [session_id], storage)
+        elif storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
 
         # -*- Delete session
         if self._has_async_db():
@@ -1102,6 +1104,8 @@ class Workflow:
                     session = None
                 if session is not None:
                     keys = session_media_keys(session, [session_id], storage)
+        elif storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
 
         # -*- Delete session
         self.db.delete_session(session_id=session_id, user_id=user_id)
@@ -1824,22 +1828,13 @@ class Workflow:
     def _db_persists_runs_separately(self) -> bool:
         """True when the db adapter has its own runs storage, so the session row carries no runs.
 
-        Adapters ported to the runs table override ``upsert_run`` and serialize the session
-        with ``to_dict(include_runs=False)``. The ones that have not been ported raise
-        ``NotImplementedError`` from the base class (swallowed by ``save_run``) and still
-        write every run onto the session row via a bare ``Session.to_dict()`` — their media
-        has to be offloaded on the session pass instead. An adapter that gains ``upsert_run``
-        flips to the per-run pass here with no further change.
-
-        ``InMemoryDb`` is the one hybrid: it overrides ``upsert_run`` but still writes runs
-        onto the session row, so the session write carries the in-flight run inline until the
-        run write right behind it replaces that row. It stays on the per-run pass with the
-        rest — nothing durable ever holds those bytes.
+        Adapters ported to the runs table override ``upsert_run``; the rest write every run onto
+        the session row, so their media has to be offloaded on the session pass. ``InMemoryDb``
+        overrides it yet still writes runs onto the session row, but nothing durable holds those bytes.
         """
         if self.db is None:
             return False
-        # Read off the type, not the instance, so a duck-typed adapter that exposes no
-        # upsert_run at all answers False rather than raising.
+        # Read off the type, not the instance, so an adapter without upsert_run answers False.
         upsert_run = getattr(type(self.db), "upsert_run", None)
         return upsert_run is not None and upsert_run not in (BaseDb.upsert_run, AsyncBaseDb.upsert_run)
 
@@ -1859,7 +1854,6 @@ class Workflow:
         for run in session.runs:
             try:
                 # Copy inside the guard: an uncopyable payload must not take the session save down.
-                # store_media=False is explicit, so the fallback scrubs rather than persists.
                 run_copy = copy.deepcopy(run)
             except Exception as e:
                 log_warning(f"Could not copy run for the media scrub, scrubbing in place: {e}")
@@ -1871,13 +1865,9 @@ class Workflow:
     def _offload_workflow_session_media(self, session: WorkflowSession) -> None:
         """Offload media in the session's runs to external storage before persisting.
 
-        Only used for adapters that still write runs onto the session row (see
-        ``_db_persists_runs_separately``); everywhere else ``save_run`` offloads the single
-        run being written instead, so the media is uploaded once rather than twice.
-
-        Offload operates on deep copies so the user's returned run output (and any reused
-        input media) is never mutated; the offloaded copies replace the runs in the session
-        that gets persisted. Offload is idempotent — already-offloaded media is skipped.
+        Only for adapters that still write runs onto the session row; everywhere else ``save_run``
+        offloads the single run being written. The offload runs on deep copies, so the run output
+        the caller holds keeps its inline media, and already-offloaded media is skipped.
         """
         if not session.runs:
             return
@@ -1890,8 +1880,7 @@ class Workflow:
         if not isinstance(media_storage, (MediaStorage, AsyncMediaStorage)):
             log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
             return
-        # Raised outside the per-run guard below: an async backend on a sync run is a configuration
-        # error, and falling back to inline would hide it for every run in the session.
+        # Raised outside the per-run guard: an async backend on a sync run is a configuration error.
         if isinstance(media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
@@ -1900,8 +1889,7 @@ class Workflow:
         new_runs = []
         for run in session.runs:
             try:
-                # Copy inside the guard so an uncopyable payload falls back to inline storage
-                # rather than taking the session save down with it.
+                # Copy inside the guard so an uncopyable payload falls back to inline storage.
                 run_copy = copy.deepcopy(run)
                 offload_workflow_media(run_copy, media_storage, session.session_id, cache=offload_cache_for(run))
             except Exception as e:
@@ -1911,7 +1899,7 @@ class Workflow:
         session.runs = new_runs
 
     async def _aoffload_workflow_session_media(self, session: WorkflowSession) -> None:
-        """Async variant of _offload_workflow_session_media."""
+        """Async variant of ``_offload_workflow_session_media``."""
         if not session.runs:
             return
 
@@ -1920,17 +1908,15 @@ class Workflow:
         from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 
         media_storage = self.media_storage
-        # Resolve the backend once — with nothing to offload to there is no reason to
-        # deep-copy the whole run history.
-        if not isinstance(media_storage, (AsyncMediaStorage, MediaStorage)):
+        # Resolve the backend up front: with nothing to offload to, skip deep-copying the run history.
+        if not isinstance(media_storage, (MediaStorage, AsyncMediaStorage)):
             log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
             return
 
         new_runs = []
         for run in session.runs:
             try:
-                # Copy inside the guard so an uncopyable payload falls back to inline storage
-                # rather than taking the session save down with it.
+                # Copy inside the guard so an uncopyable payload falls back to inline storage.
                 run_copy = copy.deepcopy(run)
                 if isinstance(media_storage, AsyncMediaStorage):
                     from agno.utils.media_offload import aoffload_workflow_media, offload_cache_for
@@ -1939,8 +1925,7 @@ class Workflow:
                         run_copy, media_storage, session.session_id, cache=offload_cache_for(run)
                     )
                 else:
-                    # Sync storage in an async run — offload in a worker thread, as _aoffload_run_media_copy
-                    # does, rather than holding the event loop for the upload.
+                    # Sync storage in an async run — offload in a worker thread, not on the event loop.
                     from agno.utils.media_offload import offload_cache_for, offload_workflow_media
 
                     await asyncio.to_thread(
@@ -2078,8 +2063,7 @@ class Workflow:
         if not self.store_media:
             run = self._scrub_run_media_copy(run)
         elif self._db_persists_runs_separately():
-            # On un-ported adapters the upsert below is a no-op, so offloading here would
-            # upload bytes nothing ever reads — save_session offloads those runs instead.
+            # On un-ported adapters the upsert below is a no-op, so save_session offloads instead.
             run = self._offload_run_media_copy(run, session_id)
         try:
             from agno.run.status_persist import persist_worker_owned_run
@@ -2136,7 +2120,6 @@ class Workflow:
 
         try:
             # Copy inside the guard: an uncopyable payload must not take the run save down.
-            # store_media=False is explicit, so the fallback scrubs rather than persists.
             run_copy = copy.deepcopy(run)
         except Exception as e:
             log_warning(f"Could not copy run for the media scrub, scrubbing in place: {e}")
@@ -2147,9 +2130,8 @@ class Workflow:
     def _offload_run_media_copy(self, run: "WorkflowRunOutput", session_id: str) -> "WorkflowRunOutput":
         """Offload media on a deep copy of ``run`` before it is written to the runs table.
 
-        Offload operates on deep copies so the user's returned run output (and any reused
-        input media) is never mutated; offload is idempotent — already-offloaded media is
-        skipped. Returns the original run when offload is not configured or fails.
+        The copy keeps the caller's run output inline; already-offloaded media is skipped, and the
+        original run is returned when offload is not configured or fails.
         """
         if self.media_storage is None or not self.store_media:
             return run
@@ -2161,22 +2143,30 @@ class Workflow:
         if not isinstance(self.media_storage, (MediaStorage, AsyncMediaStorage)):
             log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
             return run
-        # Raised outside the guard below: an async backend on a sync run is a configuration
-        # error, and falling back to inline would hide it for the life of the run.
+        # Raised outside the guard below: an async backend on a sync run is a configuration error.
         if isinstance(self.media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
         from agno.utils.media_offload import offload_cache_for, offload_workflow_media
 
         try:
-            # Copy inside the guard so an uncopyable payload falls back to inline storage
-            # rather than taking the run save down with it.
+            # Copy inside the guard so an uncopyable payload falls back to inline storage.
             run_copy = copy.deepcopy(run)
             offload_workflow_media(run_copy, self.media_storage, session_id, cache=offload_cache_for(run))
         except Exception as e:
             log_warning(f"Media offload failed, falling back to inline storage: {e}")
             return run
         return run_copy
+
+    async def _afull_run_media_copy(self, run: "WorkflowRunOutput", session_id: str) -> "WorkflowRunOutput":
+        """The copy of ``run`` that may be written whole, honouring ``store_media``.
+
+        ``full_run`` writes the fields it is handed verbatim, so this makes the same choice
+        ``asave_run`` makes: offload when ``store_media`` is on, scrub when it is off.
+        """
+        if not self.store_media:
+            return self._scrub_run_media_copy(run)
+        return await self._aoffload_run_media_copy(run, session_id)
 
     async def _aoffload_run_media_copy(self, run: "WorkflowRunOutput", session_id: str) -> "WorkflowRunOutput":
         """Async variant of ``_offload_run_media_copy``."""
@@ -2188,16 +2178,14 @@ class Workflow:
         from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 
         try:
-            # Copy inside the guard so an uncopyable payload falls back to inline storage
-            # rather than taking the run save down with it.
+            # Copy inside the guard so an uncopyable payload falls back to inline storage.
             run_copy = copy.deepcopy(run)
             if isinstance(self.media_storage, AsyncMediaStorage):
                 from agno.utils.media_offload import aoffload_workflow_media, offload_cache_for
 
                 await aoffload_workflow_media(run_copy, self.media_storage, session_id, cache=offload_cache_for(run))
             elif isinstance(self.media_storage, MediaStorage):
-                # Sync storage in an async run — offload it in a worker thread. Calling it
-                # inline would hold the event loop for the whole upload.
+                # Sync storage in an async run — offload in a worker thread, not on the event loop.
                 from agno.utils.media_offload import offload_cache_for, offload_workflow_media
 
                 await asyncio.to_thread(
@@ -2310,9 +2298,7 @@ class Workflow:
         try:
             self._update_session_metrics(session=session, workflow_run_response=run)
             session.upsert_run(run=run)
-            # asave_* already fall back to a sync DB. Branching would also pick the sync media
-            # path, which raises on an async backend — and the guard below swallows it, so the
-            # errored run is never written at all.
+            # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
             await self._apersist_session_and_run(session=session, run=run)
         except Exception as store_err:
             log_warning(f"Failed to persist errored run: {store_err}")
@@ -4977,11 +4963,12 @@ class Workflow:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
+                error_run = await self._afull_run_media_copy(workflow_run_response, session_id)
                 await apersist_run_transition(
                     self,
                     "workflow",
                     session_id,
-                    workflow_run_response,
+                    error_run,
                     user_id=user_id,
                     full_run=True,
                 )
@@ -5089,10 +5076,7 @@ class Workflow:
         # Persist the PENDING run so it is visible (e.g. to polling) while it
         # waits for a concurrency slot.
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
+        await self.asave_session(session=workflow_session)
 
         async def execute_workflow_background_stream():
             """Background execution with streaming and WebSocket broadcasting.
@@ -5234,11 +5218,12 @@ class Workflow:
                 logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
+                error_run = await self._afull_run_media_copy(workflow_run_response, session_id)
                 await apersist_run_transition(
                     self,
                     "workflow",
                     session_id,
-                    workflow_run_response,
+                    error_run,
                     user_id=user_id,
                     full_run=True,
                 )
@@ -5480,7 +5465,7 @@ class Workflow:
                 # Persist ERROR status
                 try:
                     workflow_run_response.status = RunStatus.error
-                    error_run = await self._aoffload_run_media_copy(workflow_run_response, session_id)
+                    error_run = await self._afull_run_media_copy(workflow_run_response, session_id)
                     await apersist_run_transition(
                         self, "workflow", session_id, error_run, user_id=user_id, full_run=True
                     )
@@ -6526,8 +6511,8 @@ class Workflow:
         """
         if self._has_async_db():
             raise Exception("`continue_run()` is not supported with an async DB. Please use `acontinue_run()`.")
-        # Same reason as in run(): the resume's persist is guarded, so the offload's own raise
-        # would reach the caller as a warning rather than an error.
+        # Same reason as in run(): the resume's persist is guarded and would downgrade a raise
+        # from the offload to a warning.
         if self.store_media and isinstance(self.media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
 
@@ -10248,10 +10233,7 @@ class Workflow:
                 # Transition to RUNNING now that a slot is held (PENDING while queued)
                 workflow_run_response.status = RunStatus.running
                 session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=session)
-                else:
-                    self.save_session(session=session)
+                await self.asave_session(session=session)
                 with contextlib.suppress(Exception):
                     # Fail-open: coordination writes must not kill the run
                     await _continue_event_stream.set_run_status(_continue_run_id, RunStatus.running)
@@ -10316,10 +10298,7 @@ class Workflow:
                         # re-parks the stream sentinel as PAUSED)
                         workflow_run_response.status = RunStatus.cancelled
                         session.upsert_run(run=workflow_run_response)
-                        if self._has_async_db():
-                            await self.asave_session(session=session)
-                        else:
-                            self.save_session(session=session)
+                        await self.asave_session(session=session)
                 raise
             except RunCancelledException:
                 # Cancelled while waiting for a slot — execution never started, so
@@ -10329,10 +10308,7 @@ class Workflow:
                 )
                 workflow_run_response.status = RunStatus.cancelled
                 session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=session)
-                else:
-                    self.save_session(session=session)
+                await self.asave_session(session=session)
                 if workflow_run_response.run_id:
                     await acleanup_run(workflow_run_response.run_id)
             except Exception as e:
@@ -10340,18 +10316,11 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background continue streaming execution failed: {str(e)}"
                 # Only the run changed — persist just the run row (O(1))
-                if self._has_async_db():
-                    await self.asave_run(
-                        run=workflow_run_response,
-                        session_id=session.session_id,
-                        user_id=session.user_id,
-                    )
-                else:
-                    self.save_run(
-                        run=workflow_run_response,
-                        session_id=session.session_id,
-                        user_id=session.user_id,
-                    )
+                await self.asave_run(
+                    run=workflow_run_response,
+                    session_id=session.session_id,
+                    user_id=session.user_id,
+                )
             finally:
                 if slot_held:
                     await slot_cm.__aexit__(None, None, None)
@@ -10450,8 +10419,8 @@ class Workflow:
         """Execute the workflow synchronously with optional streaming"""
         if self._has_async_db():
             raise Exception("`run()` is not supported with an async DB. Please use `arun()`.")
-        # Reported here rather than at the offload: the persist is guarded, so a raise down
-        # there reaches the caller as a warning and a run whose media stayed inline.
+        # Reported here rather than at the offload: the persist is guarded and would downgrade
+        # a raise from there to a warning.
         if self.store_media and isinstance(self.media_storage, AsyncMediaStorage):
             raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 

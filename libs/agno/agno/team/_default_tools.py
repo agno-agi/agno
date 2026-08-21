@@ -589,7 +589,7 @@ def _get_delegate_task_function(
 
                 # Recorded before the scrub: by here the ids exist nowhere else.
                 if not member_agent.store_media:
-                    _record_opted_out_media(team, member_agent_run_response)
+                    _record_opted_out_media(run_response, member_agent_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
 
             # Add the member run to the team session

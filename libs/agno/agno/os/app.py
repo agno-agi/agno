@@ -1613,16 +1613,13 @@ class AgentOS:
     def _auto_discover_media_storage(self) -> None:
         """Fall back to the first media storage configured on an agent, team or workflow.
 
-        Media offload is configured per agent/team/workflow, so the usual setup leaves AgentOS
-        itself without a backend and every media route answers 503 even though the references
-        in the database are perfectly good. Mirrors how tracing falls back to the first
-        available database.
+        Media offload is configured per agent/team/workflow, so AgentOS itself is usually left
+        without a backend. Mirrors how tracing falls back to the first available database.
         """
         if self.media_storage is not None:
             return
 
-        # Collected rather than short-circuited so a mixed tree can be reported: the routes
-        # bind to one backend, and the route answers 404 for a reference minted by any other.
+        # Collected rather than short-circuited so a mixed tree can be reported.
         found = [
             entity.media_storage
             for group in (self._agents, self._teams, self._workflows)
@@ -1633,12 +1630,11 @@ class AgentOS:
             return
 
         self.media_storage = found[0]
-        # Compared on what the media route itself discriminates on, so two equivalent
-        # instances of the same backend do not read as a conflict.
+        # Compared on backend and bucket so two equivalent instances do not read as a conflict.
         identities = {(getattr(storage, "backend_name", None), getattr(storage, "bucket", None)) for storage in found}
         if len(identities) > 1:
             log_warning(
-                f"Multiple media storage backends found across the agent tree, serving media with "
+                "Multiple media storage backends found across the agent tree, serving media with "
                 f"{type(self.media_storage).__name__}. Set media_storage on AgentOS to choose explicitly."
             )
         else:
