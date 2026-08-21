@@ -2,12 +2,11 @@
 Workflow Media Storage (S3)
 ===========================
 
-Demonstrates media offload across a workflow. A workflow persists media from three places,
-and all of them are offloaded to S3 with only a MediaReference kept in the database:
+Demonstrates media offload across a workflow. A workflow persists media from two places,
+and both are offloaded to S3 with only a MediaReference kept in the database:
 
 - media attached to workflow.run(images=...)
-- media a step's agent or team produced
-- media nested inside a container step (Loop, Condition, Router, Parallel, Steps)
+- media a step's agent produced
 
 Step inputs are rehydrated before each step runs, so a step downstream of an offloaded
 one receives the bytes rather than an empty pointer.

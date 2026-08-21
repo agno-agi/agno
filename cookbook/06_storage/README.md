@@ -72,6 +72,8 @@ uv pip install 'agno[gcs]'  # GCS (google-cloud-storage)
 - [`07_media_storage_multiturn.py`](07_media_storage_multiturn.py) - Multi-turn media reuse: offload on turn 1, reference reloaded on turn 2
 - [`08_media_storage_gcs.py`](08_media_storage_gcs.py) - Offload media to Google Cloud Storage (GCSMediaStorage)
 - [`09_media_storage_delete.py`](09_media_storage_delete.py) - Delete a session's stored objects along with its rows (delete_media=True)
+- [`10_media_storage_workflow.py`](10_media_storage_workflow.py) - Offload media across a workflow's steps (S3)
+- [`11_media_storage_file_generation.py`](11_media_storage_file_generation.py) - Offload files the agent generates, and read one back with get_content_bytes(storage=...)
 
 ### Enable this only after the whole fleet is upgraded
 

@@ -77,3 +77,27 @@
 **Result:** Exit 0. Two objects in S3 after the runs; deleting the first session without the flag left both; deleting the second with `delete_media=True` swept only its own object, leaving one — the deliberate orphan from the un-flagged delete, which the example prints by key.
 
 ---
+
+### 10_media_storage_workflow.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** A workflow offloads both the image passed to `workflow.run(images=...)` and the image a step's agent produced, to a real S3 bucket (`MEDIA_S3_BUCKET`). Ran with `OpenAIResponses(id="gpt-5.5")`.
+
+**Result:** Exit 0. The run row carried a MediaReference with `inline bytes: None`; the object was 65129 bytes in the bucket.
+
+---
+
+### 11_media_storage_file_generation.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** `FileGenerationTools` generates a CSV, media storage offloads it to a real S3 bucket, and the example reads it back with `get_content_bytes(storage=...)` and mints a link with `get_url(storage=...)`. Ran with `OpenAIResponses(id="gpt-5.5")`.
+
+**Result:** Exit 0. The row kept only a reference (`inline bytes: None`); the read-back returned 93 bytes with the correct first line, and `get_url` returned a real presigned S3 URL.
+
+---
