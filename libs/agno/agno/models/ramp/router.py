@@ -55,8 +55,8 @@ class RampRouter(OpenResponses):
     Router rejects unknown request parameters rather than ignoring them, and the accepted set
     varies by the model that serves the request: `temperature`/`top_p` are rejected by reasoning
     models, and `reasoning.effort` is rejected by non-reasoning ones. Effort vocabularies are
-    per-model and wider than OpenAI's, so values outside "minimal"/"low"/"medium"/"high" go
-    through `reasoning` rather than `reasoning_effort`: `RampRouter(reasoning={"effort": "xhigh"})`.
+    per-model and wider than OpenAI's, and `reasoning_effort` takes any of them:
+    `RampRouter(reasoning_effort="xhigh")`.
 
     `background=True` is not supported. Router accepts the request and queues the generation, but
     serves no endpoint to read it back, so it can never be collected.
