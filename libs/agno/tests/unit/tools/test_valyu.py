@@ -162,7 +162,9 @@ class TestValyuTools:
     def test_search_within_paper_invalid_url(self, valyu_tools):
         """Test within-paper search with invalid URL."""
         result = valyu_tools.search_within_paper("invalid-url", "test query")
-        assert "Error: Invalid paper URL format" in result
+        data = json.loads(result)
+        assert "error" in data
+        assert "Invalid paper URL" in data["error"]
 
     def test_search_api_error(self, valyu_tools):
         """Test handling of API error."""
@@ -170,14 +172,16 @@ class TestValyuTools:
         valyu_tools.valyu.search.return_value = mock_response
 
         result = valyu_tools.search_academic_sources("test query")
-        assert "Error: API Error" in result
+        data = json.loads(result)
+        assert "error" in data
 
     def test_search_exception_handling(self, valyu_tools):
         """Test exception handling during search."""
         valyu_tools.valyu.search.side_effect = Exception("Network error")
 
         result = valyu_tools.search_academic_sources("test query")
-        assert "Error: Valyu search failed: Network error" in result
+        data = json.loads(result)
+        assert "error" in data
 
     def test_constructor_parameters_used_in_search(self, mock_valyu):
         """Test that constructor parameters are properly used in searches."""

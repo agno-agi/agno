@@ -63,11 +63,11 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
     with patch.dict("os.environ", {"WEBEX_ACCESS_TOKEN": "test_token"}):
         tools = WebexTools(
-            enable_send_message=True,
-            enable_list_rooms=False,
+            send_message=True,
+            list_rooms=False,
         )
 
-        assert "send_message" in [func.name for func in tools.functions.values()]
+        assert "send_webex_message" in [func.name for func in tools.functions.values()]
         assert "list_webex_rooms" not in [func.name for func in tools.functions.values()]
 
 
