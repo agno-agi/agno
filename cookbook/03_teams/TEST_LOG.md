@@ -829,11 +829,31 @@ ImportError: Please install tantivy-py `pip install tantivy` to use the full tex
 
 ### modes/tasks/10_multi_run_session.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Validation issue: style
+**Description:** Imported offline and exercised cached same-session task persistence with a deterministic model.
 
-**Result:** Style: missing_docstring_underline | Run: completed
+**Result:** Import and deterministic persistence checks passed. Live OpenAI execution was not attempted.
+
+---
+
+### modes/tasks/12_direct_response.py
+
+**Status:** PASS
+
+**Description:** Imported offline and exercised sync, async, streaming, empty-turn, structured-output, and persisted-plan behavior deterministically.
+
+**Result:** Import and deterministic direct-response checks passed. Live OpenAI execution was not attempted.
+
+---
+
+### modes/tasks/13_task_improvements.py
+
+**Status:** PASS
+
+**Description:** Imported offline and exercised dependency safety, bounded context, editing, cancellation, and replanning through task-tool entrypoints.
+
+**Result:** Import and deterministic task-improvement checks passed. Live OpenAI execution was not attempted.
 
 ---
 

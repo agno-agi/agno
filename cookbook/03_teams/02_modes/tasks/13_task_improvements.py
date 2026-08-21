@@ -2,10 +2,11 @@
 Tasks Mode: Improvements Demo
 ==============================
 
-Demonstrates three improvements to tasks mode:
-1. Dependency context: dependent tasks receive results from their dependencies
-2. Configurable truncation: task_result_summary_limit controls result preview length
-3. Task editing: edit_task and cancel_task tools for replanning
+Demonstrates four improvements to tasks mode:
+1. Dependency context: dependent tasks receive completed dependency results
+2. Bounded context: task_dependency_context_limit caps forwarded dependency results
+3. Configurable previews: task_result_summary_limit controls task-state summaries
+4. Replanning: edit_task and cancel_task update obsolete plans safely
 
 Run: .venvs/demo/bin/python cookbook/03_teams/02_modes/tasks/13_task_improvements.py
 """
@@ -69,6 +70,7 @@ team = Team(
     markdown=True,
     max_iterations=5,
     task_result_summary_limit=1000,  # Show up to 1000 chars of results
+    task_dependency_context_limit=4000,  # Bound the total dependency-result block
 )
 
 
@@ -77,7 +79,7 @@ team = Team(
 # ---------------------------------------------------------------------------
 def run_with_events(prompt: str) -> None:
     """Run a prompt and show task lifecycle events."""
-    print(f"\n{'=' * 60}")
+    print("\n" + "=" * 60)
     print(f"Prompt: {prompt}")
     print("=" * 60)
 
@@ -88,9 +90,14 @@ def run_with_events(prompt: str) -> None:
             deps = f" (depends on: {event.dependencies})" if event.dependencies else ""
             print(f"  + Task created: {event.title} -> {event.assignee}{deps}")
         elif isinstance(event, TaskUpdatedEvent):
-            status_icon = {"completed": "v", "failed": "x", "in_progress": "~"}.get(
-                event.status, "?"
-            )
+            status_icon = {
+                "pending": ".",
+                "blocked": "#",
+                "in_progress": "~",
+                "completed": "v",
+                "failed": "x",
+                "cancelled": "-",
+            }.get(event.status, "?")
             print(f"  [{status_icon}] {event.title}: {event.status}")
         elif isinstance(event, ToolCallStartedEvent):
             if event.tool and event.tool.tool_name in ("edit_task", "cancel_task"):
@@ -123,4 +130,14 @@ if __name__ == "__main__":
     run_with_events(
         "Research 5 key differences between Python and JavaScript, "
         "then write a comparison paragraph."
+    )
+
+    # Scenario 3: Replanning with edit_task and cancel_task
+    # The leader should revise useful pending work, cancel obsolete work, and
+    # create a replacement before marking the new plan complete.
+    print("\n[SCENARIO 3: Edit and cancel obsolete tasks while replanning]")
+    run_with_events(
+        "Plan a short article about remote work. Create separate research, outline, and drafting tasks. "
+        "Before execution, rename the outline task to focus on hybrid work, cancel the original drafting task "
+        "as obsolete, create a replacement drafting task that depends on the revised outline, and complete the plan."
     )

@@ -90,6 +90,11 @@ class TaskList:
 
     # --- CRUD ---
 
+    def _invalidate_goal_completion(self) -> None:
+        """Clear a completion marker when the active plan changes."""
+        self.goal_complete = False
+        self.completion_summary = None
+
     def create_task(
         self,
         title: str,
@@ -100,8 +105,7 @@ class TaskList:
     ) -> Task:
         # A newly-created task starts a new unit of work, so a completion
         # marker inherited from an earlier run is no longer valid.
-        self.goal_complete = False
-        self.completion_summary = None
+        self._invalidate_goal_completion()
         task = Task(
             title=title,
             description=description,
@@ -123,6 +127,38 @@ class TaskList:
         task = self.get_task(task_id)
         if task is None:
             return None
+        previous_status = task.status
+        requested_status = updates.get("status")
+        if isinstance(requested_status, str):
+            requested_status = TaskStatus(requested_status)
+        if (
+            previous_status == TaskStatus.cancelled
+            and requested_status is not None
+            and requested_status != TaskStatus.cancelled
+        ):
+            raise ValueError("Cancelled tasks cannot be reopened.")
+        prospective_status = requested_status if requested_status is not None else previous_status
+        prospective_dependencies = updates.get("dependencies", task.dependencies)
+        requires_satisfied_dependencies = requested_status in (
+            TaskStatus.pending,
+            TaskStatus.in_progress,
+            TaskStatus.completed,
+        ) or ("dependencies" in updates and prospective_status in (TaskStatus.in_progress, TaskStatus.completed))
+        if requires_satisfied_dependencies and self._is_blocked(task, dependencies=prospective_dependencies):
+            raise ValueError("Tasks with unresolved dependencies cannot be started or completed.")
+        if (
+            requested_status is not None
+            and requested_status != previous_status
+            and previous_status in TERMINAL_STATUSES
+            and "result" not in updates
+        ):
+            updates["result"] = None
+        if (
+            requested_status is not None
+            and requested_status != previous_status
+            and requested_status != TaskStatus.completed
+        ):
+            self._invalidate_goal_completion()
         for key, value in updates.items():
             if key == "status" and isinstance(value, str):
                 value = TaskStatus(value)
@@ -151,6 +187,12 @@ class TaskList:
         if not self.tasks:
             return False
         return all(t.status in TERMINAL_STATUSES for t in self.tasks)
+
+    def all_completed(self) -> bool:
+        """Return True when every task completed successfully."""
+        if not self.tasks:
+            return False
+        return all(t.status == TaskStatus.completed for t in self.tasks)
 
     def get_summary_string(self, result_limit: int = 200) -> str:
         """Render the task list as a formatted string for the system message.
@@ -189,11 +231,14 @@ class TaskList:
 
     # --- Dependency management ---
 
-    def _is_blocked(self, task: Task) -> bool:
+    def _is_blocked(self, task: Task, dependencies: Optional[List[str]] = None) -> bool:
         """Check if a task has unfinished or failed dependencies."""
-        if not task.dependencies:
+        dependency_ids = task.dependencies if dependencies is None else dependencies
+        if not dependency_ids:
             return False
-        for dep_id in task.dependencies:
+        for dep_id in dependency_ids:
+            if dep_id == task.id:
+                return True
             dep = self.get_task(dep_id)
             if dep is None:
                 return True  # Unknown dependency ID -- treat as blocked (fail-closed)
@@ -239,10 +284,12 @@ class TaskList:
                 new_result = task.result
                 if self._has_failed_dependency(task):
                     new_status = TaskStatus.failed
-                    new_result = "Automatically failed: a dependency failed."
+                    if new_result is None:
+                        new_result = "Automatically failed: a dependency failed."
                 elif self._has_cancelled_dependency(task):
                     new_status = TaskStatus.cancelled
-                    new_result = "Automatically cancelled: a dependency was cancelled."
+                    if new_result is None:
+                        new_result = "Automatically cancelled: a dependency was cancelled."
                 elif self._is_blocked(task):
                     new_status = TaskStatus.blocked
                 else:

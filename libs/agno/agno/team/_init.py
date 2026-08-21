@@ -78,6 +78,7 @@ def __init__(
     delegate_to_all_members: bool = False,
     max_iterations: int = 10,
     task_result_summary_limit: int = 500,
+    task_dependency_context_limit: int = 4_000,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -206,6 +207,13 @@ def __init__(
     team.delegate_to_all_members = delegate_to_all_members
     team.max_iterations = max_iterations
     team.task_result_summary_limit = task_result_summary_limit
+    if (
+        isinstance(task_dependency_context_limit, bool)
+        or not isinstance(task_dependency_context_limit, int)
+        or task_dependency_context_limit < 0
+    ):
+        raise ValueError("task_dependency_context_limit must be a non-negative integer")
+    team.task_dependency_context_limit = task_dependency_context_limit
 
     # Resolve TeamMode: explicit mode wins, otherwise infer from booleans
     from agno.team.mode import TeamMode

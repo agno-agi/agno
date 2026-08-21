@@ -4,6 +4,7 @@ import json
 from typing import Any, AsyncIterator, Iterator
 
 import pytest
+from pydantic import BaseModel
 
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
@@ -30,6 +31,7 @@ class _ScriptedModel(Model):
         self.script = list(script)
         self.invoke_count = 0
         self.outer_responses: list[ModelResponse] = []
+        self._current_parsed: Any = None
 
     def _next(self) -> ModelResponse:
         if self.invoke_count >= len(self.script):
@@ -47,6 +49,10 @@ class _ScriptedModel(Model):
                     "function": {"name": name, "arguments": json.dumps(arguments)},
                 }
             ]
+        elif turn[0] == "parsed":
+            response = ModelResponse(role="assistant", parsed=turn[1])
+            self._current_parsed = turn[1]
+            response.event = ModelResponseEvent.assistant_response.value
         else:
             response = ModelResponse(role="assistant", content=turn[1])
             response.event = ModelResponseEvent.assistant_response.value
@@ -67,12 +73,16 @@ class _ScriptedModel(Model):
         yield self._next()
 
     def response(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self._current_parsed = None
         response = super().response(*args, **kwargs)
+        response.parsed = self._current_parsed
         self.outer_responses.append(response)
         return response
 
     async def aresponse(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self._current_parsed = None
         response = await super().aresponse(*args, **kwargs)
+        response.parsed = self._current_parsed
         self.outer_responses.append(response)
         return response
 
@@ -99,6 +109,21 @@ def _tasks_team(model: Model, *, max_iterations: int = 3) -> Team:
         max_iterations=max_iterations,
         telemetry=False,
     )
+
+
+class _ParsedAnswer(BaseModel):
+    answer: str
+
+
+def _terminal_session_state(*, goal_complete: bool) -> dict[str, Any]:
+    session_state: dict[str, Any] = {}
+    task_list = TaskList()
+    completed = task_list.create_task("Previously completed work")
+    task_list.update_task(completed.id, status=TaskStatus.completed, result="Already done.")
+    task_list.goal_complete = goal_complete
+    task_list.completion_summary = "Previous request complete." if goal_complete else None
+    save_task_list(session_state, task_list)
+    return session_state
 
 
 class TestTasksModePrompt:
@@ -165,6 +190,273 @@ async def test_async_tasks_loop_retries_after_empty_first_turn():
     assert response.content == "Recovered response."
     assert model.invoke_count == 2
     assert len(model.outer_responses) == 2
+
+
+@pytest.mark.parametrize("goal_complete", [False, True], ids=["all-terminal-only", "goal-complete"])
+def test_sync_tasks_loop_retries_empty_turn_with_persisted_terminal_state(goal_complete: bool):
+    model = _ScriptedModel([("content", None), ("content", "Recovered response.")])
+    team = _tasks_team(model)
+    team.session_state = _terminal_session_state(goal_complete=goal_complete)
+
+    response = team.run("answer this new request")
+
+    assert response.content == "Recovered response."
+    assert model.invoke_count == 2
+    assert len(model.outer_responses) == 2
+
+
+@pytest.mark.parametrize("goal_complete", [False, True], ids=["all-terminal-only", "goal-complete"])
+@pytest.mark.asyncio
+async def test_async_tasks_loop_retries_empty_turn_with_persisted_terminal_state(goal_complete: bool):
+    model = _ScriptedModel([("content", None), ("content", "Recovered response.")])
+    team = _tasks_team(model)
+    team.session_state = _terminal_session_state(goal_complete=goal_complete)
+
+    response = await team.arun("answer this new request")
+
+    assert response.content == "Recovered response."
+    assert model.invoke_count == 2
+    assert len(model.outer_responses) == 2
+
+
+def test_sync_tasks_loop_retries_after_whitespace_only_first_turn():
+    model = _ScriptedModel([("content", " \n\t"), ("content", "Recovered response.")])
+
+    response = _tasks_team(model).run("answer me")
+
+    assert response.content.strip() == "Recovered response."
+    assert model.invoke_count == 2
+    assert len(model.outer_responses) == 2
+
+
+@pytest.mark.asyncio
+async def test_async_tasks_loop_retries_after_whitespace_only_first_turn():
+    model = _ScriptedModel([("content", " \n\t"), ("content", "Recovered response.")])
+
+    response = await _tasks_team(model).arun("answer me")
+
+    assert response.content.strip() == "Recovered response."
+    assert model.invoke_count == 2
+    assert len(model.outer_responses) == 2
+
+
+def test_sync_tasks_loop_retries_after_whitespace_then_empty_turn():
+    model = _ScriptedModel([("content", " \n\t"), ("content", None), ("content", "Recovered response.")])
+
+    response = _tasks_team(model).run("answer me")
+
+    assert response.content.strip() == "Recovered response."
+    assert model.invoke_count == 3
+    assert len(model.outer_responses) == 3
+
+
+@pytest.mark.asyncio
+async def test_async_tasks_loop_retries_after_whitespace_then_empty_turn():
+    model = _ScriptedModel([("content", " \n\t"), ("content", None), ("content", "Recovered response.")])
+
+    response = await _tasks_team(model).arun("answer me")
+
+    assert response.content.strip() == "Recovered response."
+    assert model.invoke_count == 3
+    assert len(model.outer_responses) == 3
+
+
+def test_sync_tasks_loop_accepts_parsed_only_direct_response_after_one_iteration():
+    expected = _ParsedAnswer(answer="Accepted immediately.")
+    model = _ScriptedModel(
+        [
+            ("parsed", expected),
+            ("parsed", _ParsedAnswer(answer="Unexpected retry 2.")),
+            ("parsed", _ParsedAnswer(answer="Unexpected retry 3.")),
+        ]
+    )
+    team = _tasks_team(model)
+    team.output_schema = _ParsedAnswer
+
+    response = team.run("answer in the requested schema")
+
+    assert response.content == expected
+    assert model.invoke_count == 1
+    assert len(model.outer_responses) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_tasks_loop_accepts_parsed_only_direct_response_after_one_iteration():
+    expected = _ParsedAnswer(answer="Accepted immediately.")
+    model = _ScriptedModel(
+        [
+            ("parsed", expected),
+            ("parsed", _ParsedAnswer(answer="Unexpected retry 2.")),
+            ("parsed", _ParsedAnswer(answer="Unexpected retry 3.")),
+        ]
+    )
+    team = _tasks_team(model)
+    team.output_schema = _ParsedAnswer
+
+    response = await team.arun("answer in the requested schema")
+
+    assert response.content == expected
+    assert model.invoke_count == 1
+    assert len(model.outer_responses) == 1
+
+
+def test_sync_tasks_loop_applies_output_model_before_returning_direct_response():
+    leader = _ScriptedModel([("content", "Raw response.")])
+    formatter = _ScriptedModel([("content", "Formatted response.")])
+    team = _tasks_team(leader)
+    team.output_model = formatter
+
+    response = team.run("answer me")
+
+    assert response.content == "Formatted response."
+    assert leader.invoke_count == 1
+    assert formatter.invoke_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_tasks_loop_applies_output_model_before_returning_direct_response():
+    leader = _ScriptedModel([("content", "Raw response.")])
+    formatter = _ScriptedModel([("content", "Formatted response.")])
+    team = _tasks_team(leader)
+    team.output_model = formatter
+
+    response = await team.arun("answer me")
+
+    assert response.content == "Formatted response."
+    assert leader.invoke_count == 1
+    assert formatter.invoke_count == 1
+
+
+def test_sync_tasks_loop_applies_parser_model_before_returning_direct_response():
+    leader = _ScriptedModel([("content", "Unstructured response.")])
+    parser = _ScriptedModel([("content", '{"answer":"Parsed response."}')])
+    team = _tasks_team(leader)
+    team.output_schema = _ParsedAnswer
+    team.parser_model = parser
+
+    response = team.run("answer in the requested schema")
+
+    assert response.content == _ParsedAnswer(answer="Parsed response.")
+    assert leader.invoke_count == 1
+    assert parser.invoke_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_tasks_loop_applies_parser_model_before_returning_direct_response():
+    leader = _ScriptedModel([("content", "Unstructured response.")])
+    parser = _ScriptedModel([("content", '{"answer":"Parsed response."}')])
+    team = _tasks_team(leader)
+    team.output_schema = _ParsedAnswer
+    team.parser_model = parser
+
+    response = await team.arun("answer in the requested schema")
+
+    assert response.content == _ParsedAnswer(answer="Parsed response.")
+    assert leader.invoke_count == 1
+    assert parser.invoke_count == 1
+
+
+def test_sync_idempotent_mark_all_complete_ends_current_request():
+    session_state = _terminal_session_state(goal_complete=True)
+    model = _ScriptedModel(
+        [
+            ("tool", "mark_all_complete", {"summary": "Previous request complete."}, "complete-again"),
+            ("content", None),
+            ("content", "Unexpected retry."),
+        ]
+    )
+    team = _tasks_team(model)
+    team.session_state = session_state
+
+    response = team.run("confirm completion")
+
+    assert not response.content
+    assert model.invoke_count == 2
+    assert len(model.outer_responses) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_idempotent_mark_all_complete_ends_current_request():
+    session_state = _terminal_session_state(goal_complete=True)
+    model = _ScriptedModel(
+        [
+            ("tool", "mark_all_complete", {"summary": "Previous request complete."}, "complete-again"),
+            ("content", None),
+            ("content", "Unexpected retry."),
+        ]
+    )
+    team = _tasks_team(model)
+    team.session_state = session_state
+
+    response = await team.arun("confirm completion")
+
+    assert not response.content
+    assert model.invoke_count == 2
+    assert len(model.outer_responses) == 1
+
+
+def test_sync_reopening_completed_work_invalidates_stale_goal_and_continues():
+    session_state = _terminal_session_state(goal_complete=True)
+    task_id = load_task_list(session_state).tasks[0].id
+    model = _ScriptedModel(
+        [
+            ("tool", "update_task_status", {"task_id": task_id, "status": "pending"}, "reopen"),
+            ("content", "Reopened work."),
+            (
+                "tool",
+                "update_task_status",
+                {"task_id": task_id, "status": "completed", "result": "Updated result."},
+                "finish-again",
+            ),
+            ("content", "Redone."),
+        ]
+    )
+    team = _tasks_team(model, max_iterations=2)
+    team.session_state = session_state
+
+    response = team.run("redo the completed work")
+
+    assert response.content.endswith("Redone.")
+    assert model.invoke_count == 4
+
+
+@pytest.mark.asyncio
+async def test_async_reopening_completed_work_invalidates_stale_goal_and_continues():
+    session_state = _terminal_session_state(goal_complete=True)
+    task_id = load_task_list(session_state).tasks[0].id
+    model = _ScriptedModel(
+        [
+            ("tool", "update_task_status", {"task_id": task_id, "status": "pending"}, "reopen"),
+            ("content", "Reopened work."),
+            (
+                "tool",
+                "update_task_status",
+                {"task_id": task_id, "status": "completed", "result": "Updated result."},
+                "finish-again",
+            ),
+            ("content", "Redone."),
+        ]
+    )
+    team = _tasks_team(model, max_iterations=2)
+    team.session_state = session_state
+
+    response = await team.arun("redo the completed work")
+
+    assert response.content.endswith("Redone.")
+    assert model.invoke_count == 4
+
+
+def test_sync_stale_goal_does_not_suppress_max_iteration_warning(caplog: pytest.LogCaptureFixture):
+    model = _ScriptedModel([("content", None), ("content", None)])
+    team = _tasks_team(model, max_iterations=2)
+    team.session_state = _terminal_session_state(goal_complete=True)
+
+    with caplog.at_level("WARNING", logger="agno-team"):
+        response = team.run("answer this new request")
+
+    assert response.content is None
+    assert model.invoke_count == 2
+    assert "Reached max_iterations (2) without completing all tasks." in caplog.text
 
 
 def test_sync_task_activity_forces_an_outer_iteration_when_aggregate_tool_calls_are_empty():
@@ -278,6 +570,222 @@ def _assert_one_paired_stream_iteration(events: list[Any]) -> None:
     assert (
         iteration_started[0].run_id == iteration_completed[0].run_id == run_started[0].run_id == run_completed[0].run_id
     )
+
+
+def _assert_recovered_after_two_stream_iterations(events: list[Any]) -> None:
+    run_started = [event for event in events if isinstance(event, RunStartedEvent)]
+    run_completed = [event for event in events if isinstance(event, RunCompletedEvent)]
+    iteration_started = [event for event in events if isinstance(event, TaskIterationStartedEvent)]
+    iteration_completed = [event for event in events if isinstance(event, TaskIterationCompletedEvent)]
+
+    assert len(run_started) == len(run_completed) == 1
+    assert [event.iteration for event in iteration_started] == [1, 2]
+    assert [event.iteration for event in iteration_completed] == [1, 2]
+    assert run_completed[0].content.strip() == "Recovered response."
+
+
+def _assert_two_paired_stream_iterations(events: list[Any]) -> None:
+    iteration_started = [event for event in events if isinstance(event, TaskIterationStartedEvent)]
+    iteration_completed = [event for event in events if isinstance(event, TaskIterationCompletedEvent)]
+
+    assert [event.iteration for event in iteration_started] == [1, 2]
+    assert [event.iteration for event in iteration_completed] == [1, 2]
+
+
+@pytest.mark.parametrize("goal_complete", [False, True], ids=["all-terminal-only", "goal-complete"])
+def test_sync_stream_retries_empty_turn_with_persisted_terminal_state(goal_complete: bool):
+    model = _ScriptedModel([("content", None), ("content", "Recovered response.")])
+    team = _tasks_team(model)
+    team.session_state = _terminal_session_state(goal_complete=goal_complete)
+
+    events = list(team.run("answer this new request", stream=True, stream_events=True))
+
+    _assert_recovered_after_two_stream_iterations(events)
+    assert model.invoke_count == 2
+
+
+@pytest.mark.parametrize("goal_complete", [False, True], ids=["all-terminal-only", "goal-complete"])
+@pytest.mark.asyncio
+async def test_async_stream_retries_empty_turn_with_persisted_terminal_state(goal_complete: bool):
+    model = _ScriptedModel([("content", None), ("content", "Recovered response.")])
+    team = _tasks_team(model)
+    team.session_state = _terminal_session_state(goal_complete=goal_complete)
+
+    events = [event async for event in team.arun("answer this new request", stream=True, stream_events=True)]
+
+    _assert_recovered_after_two_stream_iterations(events)
+    assert model.invoke_count == 2
+
+
+def test_sync_stream_retries_after_whitespace_only_first_turn():
+    model = _ScriptedModel([("content", " \n\t"), ("content", "Recovered response.")])
+
+    events = list(_tasks_team(model).run("answer me", stream=True, stream_events=True))
+
+    _assert_recovered_after_two_stream_iterations(events)
+    assert model.invoke_count == 2
+
+
+@pytest.mark.asyncio
+async def test_async_stream_retries_after_whitespace_only_first_turn():
+    model = _ScriptedModel([("content", " \n\t"), ("content", "Recovered response.")])
+
+    events = [event async for event in _tasks_team(model).arun("answer me", stream=True, stream_events=True)]
+
+    _assert_recovered_after_two_stream_iterations(events)
+    assert model.invoke_count == 2
+
+
+def test_sync_stream_accepts_parsed_only_direct_response_after_one_iteration():
+    expected = _ParsedAnswer(answer="Accepted immediately.")
+    model = _ScriptedModel([("parsed", expected)])
+    team = _tasks_team(model)
+    team.output_schema = _ParsedAnswer
+    team.parse_response = False
+
+    events = list(team.run("answer in the requested schema", stream=True, stream_events=True))
+
+    _assert_one_paired_stream_iteration(events)
+    assert [event.content for event in events if isinstance(event, RunCompletedEvent)] == [expected]
+    assert model.invoke_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_stream_accepts_parsed_only_direct_response_after_one_iteration():
+    expected = _ParsedAnswer(answer="Accepted immediately.")
+    model = _ScriptedModel([("parsed", expected)])
+    team = _tasks_team(model)
+    team.output_schema = _ParsedAnswer
+    team.parse_response = False
+
+    events = [event async for event in team.arun("answer in the requested schema", stream=True, stream_events=True)]
+
+    _assert_one_paired_stream_iteration(events)
+    assert [event.content for event in events if isinstance(event, RunCompletedEvent)] == [expected]
+    assert model.invoke_count == 1
+
+
+def test_sync_stream_applies_parser_model_before_returning_direct_response():
+    leader = _ScriptedModel([("content", "Unstructured response.")])
+    parser = _ScriptedModel([("content", '{"answer":"Parsed response."}')])
+    team = _tasks_team(leader)
+    team.output_schema = _ParsedAnswer
+    team.parser_model = parser
+
+    events = list(team.run("answer in the requested schema", stream=True, stream_events=True))
+
+    _assert_one_paired_stream_iteration(events)
+    assert [event.content for event in events if isinstance(event, RunCompletedEvent)] == [
+        _ParsedAnswer(answer="Parsed response.")
+    ]
+    assert leader.invoke_count == 1
+    assert parser.invoke_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_stream_applies_parser_model_before_returning_direct_response():
+    leader = _ScriptedModel([("content", "Unstructured response.")])
+    parser = _ScriptedModel([("content", '{"answer":"Parsed response."}')])
+    team = _tasks_team(leader)
+    team.output_schema = _ParsedAnswer
+    team.parser_model = parser
+
+    events = [event async for event in team.arun("answer in the requested schema", stream=True, stream_events=True)]
+
+    _assert_one_paired_stream_iteration(events)
+    assert [event.content for event in events if isinstance(event, RunCompletedEvent)] == [
+        _ParsedAnswer(answer="Parsed response.")
+    ]
+    assert leader.invoke_count == 1
+    assert parser.invoke_count == 1
+
+
+def test_sync_stream_idempotent_mark_all_complete_ends_current_request():
+    session_state = _terminal_session_state(goal_complete=True)
+    model = _ScriptedModel(
+        [
+            ("tool", "mark_all_complete", {"summary": "Previous request complete."}, "complete-again"),
+            ("content", None),
+            ("content", "Unexpected retry."),
+        ]
+    )
+    team = _tasks_team(model)
+    team.session_state = session_state
+
+    events = list(team.run("confirm completion", stream=True, stream_events=True))
+
+    _assert_one_paired_stream_iteration(events)
+    assert model.invoke_count == 2
+
+
+@pytest.mark.asyncio
+async def test_async_stream_idempotent_mark_all_complete_ends_current_request():
+    session_state = _terminal_session_state(goal_complete=True)
+    model = _ScriptedModel(
+        [
+            ("tool", "mark_all_complete", {"summary": "Previous request complete."}, "complete-again"),
+            ("content", None),
+            ("content", "Unexpected retry."),
+        ]
+    )
+    team = _tasks_team(model)
+    team.session_state = session_state
+
+    events = [event async for event in team.arun("confirm completion", stream=True, stream_events=True)]
+
+    _assert_one_paired_stream_iteration(events)
+    assert model.invoke_count == 2
+
+
+def test_sync_stream_reopening_completed_work_invalidates_stale_goal_and_continues():
+    session_state = _terminal_session_state(goal_complete=True)
+    task_id = load_task_list(session_state).tasks[0].id
+    model = _ScriptedModel(
+        [
+            ("tool", "update_task_status", {"task_id": task_id, "status": "pending"}, "reopen"),
+            ("content", "Reopened work."),
+            (
+                "tool",
+                "update_task_status",
+                {"task_id": task_id, "status": "completed", "result": "Updated result."},
+                "finish-again",
+            ),
+            ("content", "Redone."),
+        ]
+    )
+    team = _tasks_team(model, max_iterations=2)
+    team.session_state = session_state
+
+    events = list(team.run("redo the completed work", stream=True, stream_events=True))
+
+    _assert_two_paired_stream_iterations(events)
+    assert model.invoke_count == 4
+
+
+@pytest.mark.asyncio
+async def test_async_stream_reopening_completed_work_invalidates_stale_goal_and_continues():
+    session_state = _terminal_session_state(goal_complete=True)
+    task_id = load_task_list(session_state).tasks[0].id
+    model = _ScriptedModel(
+        [
+            ("tool", "update_task_status", {"task_id": task_id, "status": "pending"}, "reopen"),
+            ("content", "Reopened work."),
+            (
+                "tool",
+                "update_task_status",
+                {"task_id": task_id, "status": "completed", "result": "Updated result."},
+                "finish-again",
+            ),
+            ("content", "Redone."),
+        ]
+    )
+    team = _tasks_team(model, max_iterations=2)
+    team.session_state = session_state
+
+    events = [event async for event in team.arun("redo the completed work", stream=True, stream_events=True)]
+
+    _assert_two_paired_stream_iterations(events)
+    assert model.invoke_count == 4
 
 
 def test_sync_stream_direct_response_pairs_events_and_runs_one_iteration():

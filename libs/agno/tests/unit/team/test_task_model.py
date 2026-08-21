@@ -1,5 +1,7 @@
 """Unit tests for Task, TaskList, and session_state helpers."""
 
+import pytest
+
 from agno.team.task import (
     TASK_LIST_KEY,
     Task,
@@ -213,6 +215,90 @@ class TestTaskListDependencies:
         assert "dependency was cancelled" in child.result
         assert "dependency was cancelled" in grandchild.result
 
+    def test_failed_dependent_can_reopen_after_dependency_recovers_and_terminal_results_are_cleared(self):
+        tl = TaskList()
+        parent = tl.create_task("Parent")
+        child = tl.create_task("Child", dependencies=[parent.id])
+
+        tl.update_task(parent.id, status="failed", result="Temporary upstream failure")
+
+        assert child.status == TaskStatus.failed
+        assert child.result == "Automatically failed: a dependency failed."
+
+        tl.update_task(parent.id, status="pending")
+
+        assert parent.status == TaskStatus.pending
+        assert parent.result is None
+
+        tl.update_task(parent.id, status="completed", result="Recovered upstream result")
+
+        # Recovery does not silently retry terminal descendants. The leader must
+        # explicitly reopen the failed child once its dependencies are healthy.
+        assert child.status == TaskStatus.failed
+        tl.update_task(child.id, status="pending")
+
+        assert child.status == TaskStatus.pending
+        assert child.result is None
+
+    def test_cancelled_task_cannot_be_reopened_through_task_list(self):
+        task_list = TaskList()
+        task = task_list.create_task("Cancelled work")
+        task_list.update_task(task.id, status=TaskStatus.cancelled, result="Cancelled intentionally")
+        before = task.to_dict()
+
+        with pytest.raises(ValueError, match="Cancelled tasks cannot be reopened"):
+            task_list.update_task(task.id, status=TaskStatus.pending)
+
+        assert task.to_dict() == before
+
+    def test_reopening_work_invalidates_a_prior_goal_completion_marker(self):
+        task_list = TaskList()
+        task = task_list.create_task("Completed work")
+        task_list.update_task(task.id, status=TaskStatus.completed, result="Done")
+        task_list.goal_complete = True
+        task_list.completion_summary = "Old goal"
+
+        task_list.update_task(task.id, status=TaskStatus.pending)
+
+        assert task_list.goal_complete is False
+        assert task_list.completion_summary is None
+
+    def test_terminal_status_change_without_replacement_result_clears_stale_result(self):
+        task_list = TaskList()
+        task = task_list.create_task("Recovered work")
+        task_list.update_task(task.id, status=TaskStatus.failed, result="Member execution error: temporary")
+
+        task_list.update_task(task.id, status=TaskStatus.completed)
+
+        assert task.status == TaskStatus.completed
+        assert task.result is None
+
+    @pytest.mark.parametrize("new_status", [TaskStatus.pending, TaskStatus.in_progress, TaskStatus.completed])
+    @pytest.mark.parametrize("dependency_id", ["incomplete", "missing"])
+    def test_update_task_validates_prospective_dependencies_before_status_change(
+        self, new_status: TaskStatus, dependency_id: str
+    ):
+        task_list = TaskList()
+        incomplete = Task(id="incomplete", title="Incomplete dependency")
+        task = Task(id="target", title="Target")
+        task_list.tasks.extend([incomplete, task])
+        before = task.to_dict()
+
+        with pytest.raises(ValueError, match="unresolved dependencies"):
+            task_list.update_task(task.id, status=new_status, dependencies=[dependency_id])
+
+        assert task.to_dict() == before
+
+    def test_updating_pending_task_dependencies_can_reconcile_it_to_blocked(self):
+        task_list = TaskList()
+        dependency = task_list.create_task("Incomplete dependency")
+        task = task_list.create_task("Target")
+
+        task_list.update_task(task.id, dependencies=[dependency.id])
+
+        assert task.dependencies == [dependency.id]
+        assert task.status == TaskStatus.blocked
+
 
 class TestTaskListSummary:
     def test_empty_summary(self):
@@ -257,6 +343,32 @@ class TestTaskListSerialization:
         assert tl2.tasks[1].status == TaskStatus.pending  # unblocked after t1 completed
         assert tl2.goal_complete is True
         assert tl2.completion_summary == "All done"
+
+    def test_from_dict_reconciles_dependency_status_without_overwriting_a_saved_result(self):
+        restored = TaskList.from_dict(
+            {
+                "tasks": [
+                    {
+                        "id": "upstream",
+                        "title": "Fetch data",
+                        "status": "failed",
+                        "result": "HTTP 503",
+                    },
+                    {
+                        "id": "dependent",
+                        "title": "Draft report",
+                        "status": "pending",
+                        "dependencies": ["upstream"],
+                        "result": "PARTIAL DRAFT worth keeping",
+                    },
+                ]
+            }
+        )
+
+        dependent = restored.get_task("dependent")
+        assert dependent is not None
+        assert dependent.status == TaskStatus.failed
+        assert dependent.result == "PARTIAL DRAFT worth keeping"
 
 
 class TestSessionStateHelpers:

@@ -1,5 +1,6 @@
 """Deterministic unit coverage for task tools and task-state persistence."""
 
+import json
 from typing import Any, AsyncIterator, Iterator
 from unittest.mock import MagicMock
 
@@ -7,11 +8,11 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.base import Model
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.run.team import TeamRunOutput
+from agno.run.team import TaskIterationCompletedEvent, TaskIterationStartedEvent, TeamRunOutput
 from agno.session import TeamSession
 from agno.team import Team
 from agno.team._task_tools import _get_task_management_tools
@@ -102,6 +103,95 @@ class _MultiRunTaskModel(Model):
     async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
         for response in ():
             yield response
+
+    def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+
+class _CancellationReplanModel(Model):
+    """Cancel obsolete work, then create and complete its replacement."""
+
+    def __init__(self, obsolete_task_id: str) -> None:
+        super().__init__(id="cancellation-replan-model", name="cancellation-replan-model", provider="test")
+        self.obsolete_task_id = obsolete_task_id
+        self.invoke_count = 0
+        self.replacement_task_id: str | None = None
+
+    @staticmethod
+    def _tool_response(name: str, arguments: dict[str, Any], tool_call_id: str) -> ModelResponse:
+        response = ModelResponse(role="assistant")
+        response.tool_calls = [
+            {
+                "id": tool_call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments)},
+            }
+        ]
+        return response
+
+    @staticmethod
+    def _content_response(content: str) -> ModelResponse:
+        response = ModelResponse(role="assistant", content=content)
+        response.event = ModelResponseEvent.assistant_response.value
+        return response
+
+    @staticmethod
+    def _created_task_id(messages: list[Any]) -> str:
+        for message in reversed(messages):
+            if getattr(message, "role", None) != "tool" or getattr(message, "tool_name", None) != "create_task":
+                continue
+            content = getattr(message, "content", "")
+            content_text = "".join(str(item) for item in content) if isinstance(content, list) else str(content)
+            if "[" in content_text and "]" in content_text:
+                return content_text.split("[", 1)[1].split("]", 1)[0]
+        raise AssertionError("create_task result was not available to the next model turn")
+
+    def _next(self, messages: list[Any]) -> ModelResponse:
+        step = self.invoke_count
+        self.invoke_count += 1
+
+        if step == 0:
+            return self._tool_response(
+                "cancel_task",
+                {"task_id": self.obsolete_task_id, "reason": "Superseded by a better plan"},
+                "cancel-obsolete",
+            )
+        if step == 1:
+            return self._content_response("Obsolete work cancelled.")
+        if step == 2:
+            return self._tool_response("create_task", {"title": "Replacement work"}, "create-replacement")
+        if step == 3:
+            self.replacement_task_id = self._created_task_id(messages)
+            return self._tool_response(
+                "update_task_status",
+                {
+                    "task_id": self.replacement_task_id,
+                    "status": TaskStatus.completed.value,
+                    "result": "Replacement finished.",
+                },
+                "complete-replacement",
+            )
+        if step == 4:
+            return self._tool_response("mark_all_complete", {"summary": "Replacement plan completed."}, "complete-goal")
+        if step == 5:
+            return self._content_response("Replacement plan completed.")
+
+        raise AssertionError("Task loop made an unexpected model call")
+
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next(kwargs["messages"])
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next(kwargs["messages"])
+
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
+        yield self._next(kwargs["messages"])
+
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
+        yield self._next(kwargs["messages"])
 
     def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
         return response if isinstance(response, ModelResponse) else ModelResponse()
@@ -312,7 +402,7 @@ class TestTaskStatePersistence:
 
         second_response = await team.arun("Complete a follow-up goal")
 
-        assert second_response.content == "Second task created.Second goal complete."
+        assert second_response.content == "Second goal complete."
         assert model.response_count == 3
         assert model.second_run_task_summary is not None
         assert "First task" in model.second_run_task_summary
@@ -329,6 +419,106 @@ class TestTaskStatePersistence:
         cached_task_list = load_task_list(cached_session_state)
         assert [task.title for task in cached_task_list.tasks] == ["First task", "Second task"]
         assert [task.status for task in cached_task_list.tasks] == [TaskStatus.completed, TaskStatus.completed]
+
+
+def _cancellation_replan_team() -> tuple[Team, _CancellationReplanModel, dict[str, Any]]:
+    session_state: dict[str, Any] = {}
+    task_list = TaskList()
+    obsolete_task = task_list.create_task("Obsolete work")
+    save_task_list(session_state, task_list)
+    model = _CancellationReplanModel(obsolete_task.id)
+    team = Team(
+        id="cancellation-replan-team",
+        name="Cancellation Replan Team",
+        members=[],
+        mode=TeamMode.tasks,
+        model=model,
+        max_iterations=2,
+        telemetry=False,
+    )
+    return team, model, session_state
+
+
+def _assert_cancellation_replan_completed(
+    model: _CancellationReplanModel,
+    session_state: dict[str, Any],
+) -> None:
+    assert model.invoke_count == 6, "an all-cancelled first iteration incorrectly terminated the task loop"
+    assert model.replacement_task_id is not None
+
+    task_list = load_task_list(session_state)
+    assert [(task.title, task.status, task.result) for task in task_list.tasks] == [
+        ("Obsolete work", TaskStatus.cancelled, "Cancelled: Superseded by a better plan"),
+        ("Replacement work", TaskStatus.completed, "Replacement finished."),
+    ]
+    assert task_list.goal_complete is True
+    assert task_list.completion_summary == "Replacement plan completed."
+
+
+def _assert_two_paired_task_iterations(events: list[Any]) -> None:
+    iteration_started = [event for event in events if isinstance(event, TaskIterationStartedEvent)]
+    iteration_completed = [event for event in events if isinstance(event, TaskIterationCompletedEvent)]
+
+    assert [event.iteration for event in iteration_started] == [1, 2]
+    assert [event.iteration for event in iteration_completed] == [1, 2]
+    assert [event.run_id for event in iteration_started] == [event.run_id for event in iteration_completed]
+
+
+class TestCancellationReplanning:
+    """Cancelling obsolete work must leave the leader an iteration to replace it."""
+
+    def test_sync_all_cancelled_plan_continues_to_replacement(self):
+        team, model, session_state = _cancellation_replan_team()
+
+        response = team.run("Replace the obsolete work", session_state=session_state)
+
+        _assert_cancellation_replan_completed(model, response.session_state)
+
+    @pytest.mark.asyncio
+    async def test_async_all_cancelled_plan_continues_to_replacement(self):
+        team, model, session_state = _cancellation_replan_team()
+
+        response = await team.arun("Replace the obsolete work", session_state=session_state)
+
+        _assert_cancellation_replan_completed(model, response.session_state)
+
+    def test_sync_stream_all_cancelled_plan_continues_with_paired_iteration_events(self):
+        team, model, session_state = _cancellation_replan_team()
+
+        events = list(
+            team.run(
+                "Replace the obsolete work",
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+                session_state=session_state,
+            )
+        )
+
+        _assert_two_paired_task_iterations(events)
+        run_outputs = [event for event in events if isinstance(event, TeamRunOutput)]
+        assert len(run_outputs) == 1
+        _assert_cancellation_replan_completed(model, run_outputs[0].session_state)
+
+    @pytest.mark.asyncio
+    async def test_async_stream_all_cancelled_plan_continues_with_paired_iteration_events(self):
+        team, model, session_state = _cancellation_replan_team()
+
+        events = [
+            event
+            async for event in team.arun(
+                "Replace the obsolete work",
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+                session_state=session_state,
+            )
+        ]
+
+        _assert_two_paired_task_iterations(events)
+        run_outputs = [event for event in events if isinstance(event, TeamRunOutput)]
+        assert len(run_outputs) == 1
+        _assert_cancellation_replan_completed(model, run_outputs[0].session_state)
 
 
 class TestConfigurableTruncation:
@@ -446,6 +636,20 @@ class TestCancelTaskTool:
 
         assert _run_generator_tool(tools["cancel_task"], task_id="missing") == ["Task with ID 'missing' not found."]
 
+    def test_cancelled_task_does_not_block_a_same_title_replacement(self):
+        task_list = TaskList()
+        cancelled = task_list.create_task("Draft report")
+        tools, session_state, _ = _task_tools(task_list)
+        _run_generator_tool(tools["cancel_task"], task_id=cancelled.id, reason="Replace the approach")
+
+        output = _run_generator_tool(tools["create_task"], title="Draft report")
+
+        assert output[-1].startswith("Task created: [")
+        persisted = load_task_list(session_state)
+        assert [task.title for task in persisted.tasks] == ["Draft report", "Draft report"]
+        assert [task.status for task in persisted.tasks] == [TaskStatus.cancelled, TaskStatus.pending]
+        assert persisted.tasks[0].id != persisted.tasks[1].id
+
     def test_update_status_cannot_bypass_cancel_task_guard(self):
         task_list = TaskList()
         task = task_list.create_task("Guarded")
@@ -462,3 +666,28 @@ class TestCancelTaskTool:
             "blocked status is managed automatically."
         ]
         assert load_task_list(session_state).get_task(task.id).status == TaskStatus.pending  # type: ignore[union-attr]
+
+    @pytest.mark.parametrize(
+        "new_status",
+        [TaskStatus.pending, TaskStatus.in_progress, TaskStatus.completed, TaskStatus.failed],
+    )
+    def test_update_status_rejects_reopening_cancelled_task_and_preserves_graph(self, new_status: TaskStatus):
+        task_list = TaskList()
+        root = task_list.create_task("Root")
+        child = task_list.create_task("Child", dependencies=[root.id])
+        task_list.create_task("Grandchild", dependencies=[child.id])
+        tools, session_state, _ = _task_tools(task_list)
+        _run_generator_tool(tools["cancel_task"], task_id=root.id, reason="Replanned")
+        cancelled_graph = load_task_list(session_state).to_dict()
+
+        output = _run_generator_tool(
+            tools["update_task_status"],
+            task_id=root.id,
+            status=new_status.value,
+            result="Stale replacement result",
+        )
+
+        assert output == [
+            f"Cannot update task [{root.id}] with status 'cancelled'. Cancelled tasks cannot be reopened."
+        ]
+        assert load_task_list(session_state).to_dict() == cancelled_graph

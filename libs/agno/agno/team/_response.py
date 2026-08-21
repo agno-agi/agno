@@ -920,8 +920,10 @@ def _update_run_response(
         # Update the run_response content with the model response content
         if not run_response.content:
             run_response.content = model_response.content
-        else:
+        elif isinstance(run_response.content, str) and isinstance(model_response.content, str):
             run_response.content += model_response.content
+        elif model_response.content is not None:
+            run_response.content = model_response.content
 
     # Update the run_response thinking with the model response thinking
     if model_response.reasoning_content is not None:
@@ -1380,12 +1382,18 @@ def _handle_model_response_chunk(
 
             should_yield = False
             # Process content
-            if model_response_event.content is not None:
+            output_schema = run_context.output_schema if run_context else None
+            if output_schema is not None and not team.use_json_mode and model_response_event.parsed is not None:
+                full_model_response.parsed = model_response_event.parsed
+                full_model_response.content = model_response_event.parsed
+                run_response.content = model_response_event.parsed
+                content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__
+                run_response.content_type = content_type
+                should_yield = True
+            elif model_response_event.content is not None:
                 if parse_structured_output:
                     full_model_response.content = model_response_event.content
                     _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
-                    # Get output_schema from run_context
-                    output_schema = run_context.output_schema if run_context else None
                     content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
                     run_response.content_type = content_type
                 elif team._member_response_model is not None:

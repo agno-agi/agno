@@ -105,7 +105,7 @@
 
 **Status:** PASS
 
-**Description:** Imported the cookbook offline and exercised direct responses across sync, async, streaming, empty-turn, task-tool, and leader-tool paths.
+**Description:** Imported the cookbook offline and exercised direct responses across sync, async, streaming, persisted-terminal empty turns, whitespace-only turns, structured responses, task-tool, and leader-tool paths.
 
 **Result:** Import and deterministic behavior checks passed. A live OpenAI run was not attempted because the demo environment and API credentials were unavailable.
 
@@ -115,7 +115,7 @@
 
 **Status:** PASS
 
-**Description:** Imported the cookbook offline and exercised dependency forwarding, configurable summaries, editing, cancellation, and persistence through real task-tool entrypoints.
+**Description:** Imported the cookbook offline and exercised completed-only bounded dependency forwarding, unresolved-dependency guards, configurable summaries, editing, cancellation/replanning, and persistence through real task-tool entrypoints.
 
 **Result:** Import and deterministic behavior checks passed. A live OpenAI run was not attempted because the demo environment and API credentials were unavailable.
 

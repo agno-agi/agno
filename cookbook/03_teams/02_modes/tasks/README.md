@@ -16,7 +16,7 @@ Task mode examples include both baseline and advanced workflows for dependency-a
 - `10_multi_run_session.py` - Multi-run session persistence patterns.
 - `11_streaming_events.py` - Inspect task lifecycle events while streaming.
 - `12_direct_response.py` - Respond directly when a request does not need task delegation.
-- `13_task_improvements.py` - Dependency-result forwarding, result previews, and task replanning.
+- `13_task_improvements.py` - Bounded completed-dependency context, result previews, and safe task replanning.
 
 ## Running
 
