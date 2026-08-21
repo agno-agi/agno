@@ -669,6 +669,93 @@ class TestInputAppend:
         assert msgs[-1].role == "user"
         assert msgs[-1].content == "also include bar"
 
+    def test_input_updates_run_response_input_content(self, monkeypatch: pytest.MonkeyPatch):
+        """``input="follow up"`` should also update run_response.input.input_content
+        so downstream consumers (followups, file save, UI) see the correct input.
+
+        Regression test for stale input bug where run_response.input retained
+        the original question while messages had the follow-up appended.
+        """
+        from agno.run.agent import RunInput
+
+        completed_run = RunOutput(
+            run_id="run-done",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            requirements=None,
+            input=RunInput(input_content="original question"),
+            messages=[
+                Message(role="user", content="original question"),
+                Message(role="assistant", content="original answer"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[completed_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["input"] = run_response.input
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-done",
+            session_id="session-1",
+            input="follow up question",
+            stream=False,
+        )
+
+        # Both messages and input.input_content should reflect the follow-up
+        assert captured["messages"][-1].content == "follow up question"
+        assert captured["input"] is not None
+        assert captured["input"].input_content == "follow up question"
+
+    def test_input_preserves_existing_media_on_run_input(self, monkeypatch: pytest.MonkeyPatch):
+        """When updating input.input_content, existing media fields should be preserved."""
+        from agno.media import Image
+        from agno.run.agent import RunInput
+
+        test_image = Image(url="https://example.com/img.png")
+        completed_run = RunOutput(
+            run_id="run-done",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            requirements=None,
+            input=RunInput(input_content="original with image", images=[test_image]),
+            messages=[
+                Message(role="user", content="original with image"),
+                Message(role="assistant", content="I see the image"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[completed_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["input"] = run_response.input
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-done",
+            session_id="session-1",
+            input="now describe it differently",
+            stream=False,
+        )
+
+        # input_content updated, but images preserved
+        assert captured["input"].input_content == "now describe it differently"
+        assert captured["input"].images is not None
+        assert len(captured["input"].images) == 1
+        assert captured["input"].images[0].url == "https://example.com/img.png"
+
 
 # ---------------------------------------------------------------------------
 # message_index — time-travel truncation
