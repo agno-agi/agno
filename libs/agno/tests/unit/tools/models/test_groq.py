@@ -51,8 +51,8 @@ def test_groq_tools_init_success(mock_toolkit_init, mock_groq_client):
     assert tools.api_key == MOCK_API_KEY
     assert tools.transcription_model == "whisper-large-v3"
     assert tools.translation_model == "whisper-large-v3"
-    assert tools.tts_model == "playai-tts"
-    assert tools.tts_voice == "Chip-PlayAI"
+    assert tools.tts_model == "canopylabs/orpheus-v1-english"
+    assert tools.tts_voice == "austin"
     assert tools.tts_format == "wav"
     mock_groq_client  # Ensure fixture is used
 
