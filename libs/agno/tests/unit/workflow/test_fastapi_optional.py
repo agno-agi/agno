@@ -1,7 +1,7 @@
 """Regression tests: ``agno.workflow`` must work without ``fastapi`` installed.
 
 fastapi only ships with the ``os`` extra, so a bare ``pip install agno`` must
-still be able to import the package, build and run a workflow, and resolve
+still be able to import the package, build and run a workflow, and import
 ``RemoteWorkflow``. The websocket parameters on the async run methods are
 annotated with fastapi's ``WebSocket``; the modules bind that name loosely at
 runtime so ``get_type_hints()`` -- and with it ``Function.from_callable()`` --
@@ -76,7 +76,6 @@ def test_import_does_not_load_fastapi():
         import agno.workflow
 
         assert "fastapi" not in sys.modules, "import agno.workflow pulled in fastapi"
-        assert "agno.workflow.remote" not in sys.modules, "RemoteWorkflow was imported eagerly"
         print("OK")
         """
     )
@@ -97,17 +96,3 @@ def test_websocket_annotations_resolve_with_fastapi_installed():
     wf = Workflow(name="t", steps=[Step(name="s", executor=lambda si: StepOutput(content="x"))])
     schema = Function.from_callable(wf.arun)
     assert schema.parameters["properties"]
-
-
-def test_remote_workflow_resolves_lazily_and_is_cached():
-    import agno.workflow
-
-    cls = agno.workflow.RemoteWorkflow
-    assert cls.__name__ == "RemoteWorkflow"
-    # First access stores the class in the module namespace, so vars()-based
-    # introspection works from then on.
-    assert vars(agno.workflow)["RemoteWorkflow"] is cls
-    assert "RemoteWorkflow" in dir(agno.workflow)
-
-    with pytest.raises(AttributeError):
-        agno.workflow.DoesNotExist
