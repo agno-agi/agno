@@ -423,9 +423,12 @@ def build_system_blocks(
 def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
     """Validate that no 5m-cached block appears before a 1h-cached block.
 
-    Anthropic's prompt caching rejects requests where a longer-TTL cache entry
-    follows a shorter-TTL one in the cached prefix. Catch this at assembly
-    time with an actionable error rather than letting the API reject it.
+    Anthropic renders cache breakpoints in ``tools`` -> ``system`` -> ``messages``
+    order and rejects a request where a longer-TTL cache entry follows a
+    shorter-TTL one in that sequence. Pass the blocks in render order (e.g.
+    ``[*tools, *system]``) so a 5m tools breakpoint before a 1h system breakpoint
+    is caught here, at assembly time, with an actionable error rather than as an
+    opaque API 400.
     """
     seen_5m = False
     for block in blocks:
@@ -435,12 +438,15 @@ def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
         if cc.get("ttl") == "1h":
             if seen_5m:
                 raise ValueError(
-                    "Invalid Anthropic cache TTL ordering: a 1h cached block cannot "
-                    "follow a 5m cached block. This usually means cache_system_prompt=True "
-                    "(so the agent-built block is cached at 5m by default) together with "
-                    "a SystemPromptBlock(ttl='1h'). Fix with one of:\n"
-                    "  - Claude(extended_cache_time=True) so the agent-built block is 1h too\n"
-                    "  - Change your block ttl to '5m' or None\n"
+                    "Invalid Anthropic cache TTL ordering: a 1h cached block cannot follow a "
+                    "5m cached block. Anthropic processes cache breakpoints in tools -> system "
+                    "-> messages order, so once a 5m breakpoint appears every later breakpoint "
+                    "must also be 5m. This usually means a 5m breakpoint (cache_tools=True, or "
+                    "cache_system_prompt=True which caches the agent-built block at 5m by "
+                    "default) precedes a 1h breakpoint (extended_cache_time=True or a "
+                    "SystemPromptBlock(ttl='1h')). Fix with one of:\n"
+                    "  - Claude(extended_cache_time=True) so all breakpoints use the 1h TTL\n"
+                    "  - Change the 1h block ttl to '5m' or None\n"
                     "  - Set cache_system_prompt=False to leave the agent-built block "
                     "uncached (custom blocks still cache per their own block.cache field)"
                 )

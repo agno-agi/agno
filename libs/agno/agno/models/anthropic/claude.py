@@ -598,9 +598,23 @@ class Claude(Model):
         return None
 
     def _apply_cache_tools(self, request_kwargs: Dict[str, Any]) -> None:
-        """Tag the last tool with cache_control when cache_tools is enabled."""
+        """Tag the last tool with cache_control when cache_tools is enabled.
+
+        Honors ``extended_cache_time`` so the tools breakpoint uses the same 1h TTL
+        as the system block. Anthropic renders cache breakpoints in ``tools`` ->
+        ``system`` -> ``messages`` order and rejects a longer-TTL block that follows
+        a shorter-TTL one, so the tools TTL must not be shorter than the system TTL.
+        """
         if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
-            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+            cc: Dict[str, str] = {"type": "ephemeral"}
+            if self.extended_cache_time:
+                cc["ttl"] = "1h"
+            request_kwargs["tools"][-1]["cache_control"] = cc
+
+        # Defense in depth: validate the full tools -> system breakpoint sequence.
+        # The check inside _build_system sees system blocks only and cannot catch a
+        # 5m tools breakpoint placed before a 1h system breakpoint.
+        _validate_cache_ttl_order([*request_kwargs.get("tools", []), *request_kwargs.get("system", [])])
 
     def _build_system(self, system_message: str) -> List[Dict[str, Any]]:
         """Assemble the Anthropic ``system`` array.
