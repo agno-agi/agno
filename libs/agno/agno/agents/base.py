@@ -2,8 +2,10 @@ import asyncio
 import json
 from dataclasses import dataclass
 from time import time
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Type, Union
 from uuid import uuid4
+
+from pydantic import BaseModel
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.media import Audio, File, Image, Video
@@ -53,6 +55,7 @@ class BaseExternalAgent:
     framework: str = "external"
     markdown: bool = True
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+    output_schema: Optional[Type[BaseModel]] = None
 
     def __post_init__(self) -> None:
         from agno.utils.string import generate_id_from_name
@@ -63,6 +66,54 @@ class BaseExternalAgent:
     def get_id(self) -> str:
         """Return the agent ID, guaranteed non-None after __post_init__."""
         return self.id or ""
+
+    # ---------------------------------------------------------------------------
+    # Structured output
+    # ---------------------------------------------------------------------------
+
+    def _resolve_output_schema(self, output_schema: Optional[Type[BaseModel]]) -> Optional[Type[BaseModel]]:
+        """Per-run schema wins over the agent-level one.
+
+        Mirrors agent/_run_options.py: passing None at the call site falls through to
+        the agent's schema rather than clearing it.
+        """
+        return output_schema if output_schema is not None else self.output_schema
+
+    def _apply_output_schema(self, input: Any, output_schema: Optional[Type[BaseModel]]) -> Any:
+        """Append schema instructions to the input.
+
+        External frameworks emit prose, so the schema is described in the prompt and
+        the reply is parsed. Adapters backed by a framework with a schema-constrained
+        API can override this and consume output_schema in their adapter hook instead.
+        """
+        if output_schema is None or input is None:
+            return input
+
+        from agno.utils.prompts import get_json_output_prompt
+
+        return f"{input}\n\n{get_json_output_prompt(output_schema)}"
+
+    def _parse_output_schema(self, content: Any, output_schema: Optional[Type[BaseModel]]) -> Any:
+        """Coerce raw content into output_schema.
+
+        Matches native Agno (agent/_response.py convert_response_to_structured_format):
+        on failure, warn and return the content unchanged rather than raising.
+        """
+        if output_schema is None or not isinstance(content, str):
+            return content
+
+        from agno.utils.string import parse_response_model_str
+
+        try:
+            parsed = parse_response_model_str(content, output_schema)
+        except Exception as e:
+            log_warning(f"Failed to convert response to output_schema for '{self.id}': {e}")
+            return content
+
+        if parsed is None:
+            log_warning(f"Failed to convert response to output_schema for '{self.id}'")
+            return content
+        return parsed
 
     # ---------------------------------------------------------------------------
     # Public async API (satisfies AgentProtocol protocol)
@@ -80,6 +131,7 @@ class BaseExternalAgent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         if stream:
@@ -87,6 +139,7 @@ class BaseExternalAgent:
                 input,
                 session_id=session_id,
                 user_id=user_id,
+                output_schema=output_schema,
                 **kwargs,
             )
         else:
@@ -95,6 +148,7 @@ class BaseExternalAgent:
                 input,
                 session_id=session_id,
                 user_id=user_id,
+                output_schema=output_schema,
                 **kwargs,
             )
 
@@ -109,11 +163,14 @@ class BaseExternalAgent:
         stream: bool = False,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
         """Synchronous run. Dispatches to the async internals."""
         if stream:
-            return self._run_stream(input, session_id=session_id, user_id=user_id, **kwargs)
+            return self._run_stream(
+                input, session_id=session_id, user_id=user_id, output_schema=output_schema, **kwargs
+            )
         else:
             try:
                 loop = asyncio.get_running_loop()
@@ -126,11 +183,17 @@ class BaseExternalAgent:
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     result = pool.submit(
                         asyncio.run,
-                        self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs),
+                        self._arun_non_stream(
+                            input, session_id=session_id, user_id=user_id, output_schema=output_schema, **kwargs
+                        ),
                     ).result()
                 return result
             else:
-                return asyncio.run(self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs))
+                return asyncio.run(
+                    self._arun_non_stream(
+                        input, session_id=session_id, user_id=user_id, output_schema=output_schema, **kwargs
+                    )
+                )
 
     def print_response(
         self,
@@ -507,8 +570,17 @@ class BaseExternalAgent:
                     )
                 )
 
+        # Messages are the chat transcript, so a structured content object is stored
+        # as its JSON rather than a repr. RunOutput.content keeps the object itself.
+        if isinstance(content, BaseModel):
+            message_content = content.model_dump_json()
+            content_type = content.__class__.__name__
+        else:
+            message_content = str(content)
+            content_type = "str"
+
         messages.append(
-            Message(role="assistant", content=str(content), created_at=now),
+            Message(role="assistant", content=message_content, created_at=now),
         )
 
         return RunOutput(
@@ -519,6 +591,7 @@ class BaseExternalAgent:
             user_id=user_id,
             input=RunInput(input_content=str(input_text)) if input_text is not None else None,
             content=content,
+            content_type=content_type,
             messages=messages,
             tools=tools,
             status=status,
@@ -573,6 +646,7 @@ class BaseExternalAgent:
         run_id = str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
         user_id = kwargs.get("user_id")
+        output_schema = self._resolve_output_schema(kwargs.pop("output_schema", None))
 
         # Load session and extract history for the adapter
         session = None
@@ -582,13 +656,20 @@ class BaseExternalAgent:
             history = self._get_history_from_session(session)
 
         try:
-            content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
+            content = await self._arun_adapter(
+                self._apply_output_schema(input, output_schema),
+                history=history,
+                run_id=run_id,
+                session=session,
+                output_schema=output_schema,
+                **kwargs,
+            )
             run_output = self._build_run_output(
                 run_id=run_id,
                 session_id=session_id,
                 user_id=user_id,
                 input_text=input,
-                content=content,
+                content=self._parse_output_schema(content, output_schema),
                 status=RunStatus.completed,
             )
         except Exception as e:
@@ -623,6 +704,7 @@ class BaseExternalAgent:
         run_id = str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
         user_id = kwargs.get("user_id")
+        output_schema = self._resolve_output_schema(kwargs.pop("output_schema", None))
 
         # Load session and extract history for the adapter
         session = None
@@ -647,7 +729,12 @@ class BaseExternalAgent:
             tool_map: Dict[str, ToolExecution] = {}
 
             async for event in self._arun_adapter_stream(
-                input, history=history, run_id=run_id, session=session, **kwargs
+                self._apply_output_schema(input, output_schema),
+                history=history,
+                run_id=run_id,
+                session=session,
+                output_schema=output_schema,
+                **kwargs,
             ):
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
@@ -671,6 +758,13 @@ class BaseExternalAgent:
             log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
             run_error = e
 
+        # Parsed once here, after the stream completes: intermediate RunContentEvents
+        # stay raw text, and only the terminal event and RunOutput carry the object.
+        # This matches native Agno, which converts after its stream loop.
+        final_content: Any = (
+            str(run_error) if run_error is not None else self._parse_output_schema(accumulated_content, output_schema)
+        )
+
         # Persist the run to the session. Swallow DB failures so the consumer
         # still receives the terminal RunCompletedEvent / RunErrorEvent below.
         if session is not None:
@@ -679,7 +773,7 @@ class BaseExternalAgent:
                 session_id=session_id,
                 user_id=user_id,
                 input_text=input,
-                content=str(run_error) if run_error is not None else accumulated_content,
+                content=final_content,
                 status=RunStatus.error if run_error is not None else RunStatus.completed,
                 tools=accumulated_tools if accumulated_tools else None,
             )
@@ -706,7 +800,7 @@ class BaseExternalAgent:
                 agent_id=self.get_id(),
                 agent_name=self.name or "",
                 session_id=session_id,
-                content=accumulated_content,
+                content=final_content,
             )
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[RunOutputEvent]:
@@ -756,6 +850,13 @@ class BaseExternalAgent:
         Mutate `session.session_data` in place to persist adapter-specific
         per-session state — the base class upserts the session after this
         returns, so no separate DB write is needed.
+
+        kwargs also includes the resolved `output_schema` (or None). By default the
+        base class has already appended schema instructions to `input` and will parse
+        the returned string, so adapters can ignore it. Adapters whose framework has a
+        schema-constrained API can override `_apply_output_schema` to skip the prompt
+        injection and use `output_schema` directly; returning an already-validated
+        model instance is fine — the base class leaves non-str content untouched.
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter")
 
@@ -765,6 +866,9 @@ class BaseExternalAgent:
         """Streaming execution. Yield RunContentEvent, ToolCallStartedEvent, etc.
 
         Do NOT yield RunStartedEvent or RunCompletedEvent -- those are handled by the base class.
+
+        See `_arun_adapter` for how the `output_schema` kwarg is handled. Yield content
+        as raw text: the base class parses the accumulated stream once at the end.
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter_stream")
         yield  # type: ignore  # make this a generator
