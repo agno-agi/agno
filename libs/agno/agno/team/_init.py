@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
+    from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
     from agno.team.team import Team
-    from agno.offload.store import ResultStore
 
 from os import getenv
 from typing import (
