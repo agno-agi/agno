@@ -1,5 +1,6 @@
+import json
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, log_warning
@@ -9,7 +10,7 @@ class ShellTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Union[Path, str]] = None,
-        enable_run_shell_command: bool = True,
+        run_shell_command: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -17,18 +18,22 @@ class ShellTools(Toolkit):
 
         .. warning::
             ``run_shell_command`` runs an arbitrary command on the host OS with no
-            sandboxing — an RCE sink if the agent is prompt-injected. To require
-            human approval before any command executes, gate the tool through the
+            sandboxing — an RCE sink if the agent is prompt-injected. Disabled by
+            default for security. Enable explicitly and consider gating through the
             toolkit's confirmation mechanism::
 
-                ShellTools(requires_confirmation_tools=["run_shell_command"])
+                ShellTools(run_shell_command=True, requires_confirmation_tools=["run_shell_command"])
         """
+        # Backwards compat: enable_X -> X
+        if "enable_run_shell_command" in kwargs:
+            run_shell_command = kwargs.pop("enable_run_shell_command")
+
         self.base_dir: Optional[Path] = None
         if base_dir is not None:
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir
 
-        tools = []
-        if all or enable_run_shell_command:
+        tools: List[Callable] = []
+        if all or run_shell_command:
             tools.append(self.run_shell_command)
 
         super().__init__(name="shell_tools", tools=tools, **kwargs)
@@ -61,8 +66,8 @@ class ShellTools(Toolkit):
             log_debug(f"Result: {result}")
             log_debug(f"Return code: {result.returncode}")
             if result.returncode != 0:
-                return f"Error: {result.stderr}"
+                return json.dumps({"error": result.stderr})
             return "\n".join(result.stdout.split("\n")[-tail:])
         except Exception as e:
             log_warning(f"Failed to run shell command: {str(e)}")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})

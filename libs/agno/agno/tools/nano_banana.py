@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from io import BytesIO
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 from uuid import uuid4
 
 from agno.media import Image
@@ -44,9 +44,23 @@ class NanoBananaTools(Toolkit):
         model: str = "gemini-2.5-flash-image",
         aspect_ratio: str = "1:1",
         api_key: Optional[str] = None,
-        enable_create_image: bool = True,
+        all: bool = False,
+        create_image: bool = True,
         **kwargs,
     ):
+        """Initialize NanoBananaTools for image generation using Google's Gemini models.
+
+        Args:
+            model: The Gemini model to use for image generation
+            aspect_ratio: Output image aspect ratio (e.g., "1:1", "16:9", "9:16")
+            api_key: Google API key, falls back to GOOGLE_API_KEY env var
+            all: Enable all tools at once
+            create_image: Enable the create_image tool
+        """
+        # Backwards compat: enable_X -> X
+        if "enable_create_image" in kwargs:
+            create_image = kwargs.pop("enable_create_image")
+
         self.model = model
         self.aspect_ratio = aspect_ratio
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
@@ -61,13 +75,13 @@ class NanoBananaTools(Toolkit):
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY not set. Export it: `export GOOGLE_API_KEY=<your-key>`")
 
-        tools: List[Any] = []
-        if enable_create_image:
-            tools.append(self.create_image)
+        tools: List[Callable] = []
+        if all or create_image:
+            tools.append(self.nano_banana_create_image)
 
         super().__init__(name="nano_banana", tools=tools, **kwargs)
 
-    def create_image(self, prompt: str) -> ToolResult:
+    def nano_banana_create_image(self, prompt: str) -> ToolResult:
         """Generate an image from a text prompt."""
         try:
             client = genai.Client(**inject_agno_client_header({"api_key": self.api_key}))

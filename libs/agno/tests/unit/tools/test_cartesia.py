@@ -151,7 +151,7 @@ def test_list_voices(cartesia_tools, mock_cartesia_client):
     """Test listing voices correctly handles the pager and extracts data."""
     # Mock client already set up in fixture to return pager
 
-    result_json_str = cartesia_tools.list_voices()
+    result_json_str = cartesia_tools.cartesia_list_voices()
     result_data = json.loads(result_json_str)
 
     # Check the client method was called
@@ -174,7 +174,7 @@ def test_list_voices_error(cartesia_tools, mock_cartesia_client):
     """Test error handling for list_voices."""
     mock_cartesia_client.voices.list.side_effect = Exception("List API Error")
 
-    result_json_str = cartesia_tools.list_voices()
+    result_json_str = cartesia_tools.cartesia_list_voices()
     result_data = json.loads(result_json_str)
 
     assert "error" in result_data
@@ -186,7 +186,7 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
     """Test text-to-speech functionality creates artifact."""
     # Mock client returns iterator with b"audio data"
 
-    result = cartesia_tools.text_to_speech(
+    result = cartesia_tools.cartesia_text_to_speech(
         agent=mock_agent,
         transcript="Hello world",
         # language="en",  # Removed: Language is no longer a parameter
@@ -229,7 +229,7 @@ def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):
     """Test error handling for text_to_speech."""
     mock_cartesia_client.tts.bytes.side_effect = Exception("TTS API Error")
 
-    result = cartesia_tools.text_to_speech(agent=mock_agent, transcript="Error test")
+    result = cartesia_tools.cartesia_text_to_speech(agent=mock_agent, transcript="Error test")
 
     # Verify ToolResult is returned with error message
     assert isinstance(result, ToolResult)
@@ -250,7 +250,7 @@ def test_localize_voice(cartesia_tools, mock_cartesia_client):
     # Use the client from the specific tools instance
     mock_cartesia_client.voices.localize.return_value = localized_voice_data
 
-    result = cartesia_tools.localize_voice(
+    result = cartesia_tools.cartesia_localize_voice(
         voice_id="original_voice_id",
         language="es",
         name="Localized Voice",

@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, log_warning, logger
@@ -12,6 +12,30 @@ except ImportError:
 
 
 class DuckDbTools(Toolkit):
+    """Toolkit for interacting with DuckDB databases.
+
+    Args:
+        db_path: Path to the DuckDB database file.
+        connection: Existing DuckDB connection to reuse.
+        init_commands: SQL commands to run on connection.
+        read_only: Open database in read-only mode. Defaults to False.
+        config: DuckDB configuration options.
+        show_tables: Enable show_tables tool. Defaults to True.
+        describe_table: Enable describe_table tool. Defaults to True.
+        inspect_query: Enable inspect_query tool. Defaults to True.
+        run_query: Enable run_query tool. Defaults to False (executes arbitrary SQL).
+        create_table_from_path: Enable create_table_from_path tool. Defaults to False (creates tables).
+        summarize_table: Enable summarize_table tool. Defaults to True.
+        export_table_to_path: Enable export_table_to_path tool. Defaults to False (writes files).
+        load_local_path_to_table: Enable load_local_path_to_table tool. Defaults to False (creates tables).
+        load_local_csv_to_table: Enable load_local_csv_to_table tool. Defaults to False (creates tables).
+        load_s3_path_to_table: Enable load_s3_path_to_table tool. Defaults to False (creates tables).
+        load_s3_csv_to_table: Enable load_s3_csv_to_table tool. Defaults to False (creates tables).
+        create_fts_index: Enable create_fts_index tool. Defaults to False (creates indexes).
+        full_text_search: Enable full_text_search tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         db_path: Optional[str] = None,
@@ -19,6 +43,20 @@ class DuckDbTools(Toolkit):
         init_commands: Optional[List] = None,
         read_only: bool = False,
         config: Optional[dict] = None,
+        show_tables: bool = True,
+        describe_table: bool = True,
+        inspect_query: bool = True,
+        run_query: bool = False,
+        create_table_from_path: bool = False,
+        summarize_table: bool = True,
+        export_table_to_path: bool = False,
+        load_local_path_to_table: bool = False,
+        load_local_csv_to_table: bool = False,
+        load_s3_path_to_table: bool = False,
+        load_s3_csv_to_table: bool = False,
+        create_fts_index: bool = False,
+        full_text_search: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.db_path: Optional[str] = db_path
@@ -28,21 +66,33 @@ class DuckDbTools(Toolkit):
         self.init_commands: Optional[List] = init_commands
         self._reserved_keywords: Optional[frozenset] = None
 
-        tools: List[Any] = [
-            self.show_tables,
-            self.describe_table,
-            self.inspect_query,
-            self.run_query,
-            self.create_table_from_path,
-            self.summarize_table,
-            self.export_table_to_path,
-            self.load_local_path_to_table,
-            self.load_local_csv_to_table,
-            self.load_s3_path_to_table,
-            self.load_s3_csv_to_table,
-            self.create_fts_index,
-            self.full_text_search,
-        ]
+        tools: List[Callable] = []
+        if all or show_tables:
+            tools.append(self.show_duckdb_tables)
+        if all or describe_table:
+            tools.append(self.describe_duckdb_table)
+        if all or inspect_query:
+            tools.append(self.inspect_duckdb_query)
+        if all or run_query:
+            tools.append(self.run_duckdb_sql)
+        if all or create_table_from_path:
+            tools.append(self.create_duckdb_table_from_path)
+        if all or summarize_table:
+            tools.append(self.summarize_duckdb_table)
+        if all or export_table_to_path:
+            tools.append(self.export_duckdb_table_to_path)
+        if all or load_local_path_to_table:
+            tools.append(self.load_duckdb_table_from_local_path)
+        if all or load_local_csv_to_table:
+            tools.append(self.load_duckdb_table_from_local_csv)
+        if all or load_s3_path_to_table:
+            tools.append(self.load_duckdb_table_from_s3_path)
+        if all or load_s3_csv_to_table:
+            tools.append(self.load_duckdb_table_from_s3_csv)
+        if all or create_fts_index:
+            tools.append(self.create_duckdb_fts_index)
+        if all or full_text_search:
+            tools.append(self.search_duckdb_fts)
 
         super().__init__(name="duckdb_tools", tools=tools, **kwargs)
 
@@ -72,7 +122,7 @@ class DuckDbTools(Toolkit):
 
         return self._connection
 
-    def show_tables(self, show_tables: bool) -> str:
+    def show_duckdb_tables(self, show_tables: bool) -> str:
         """Function to show tables in the database
 
         Args:
@@ -83,12 +133,12 @@ class DuckDbTools(Toolkit):
         """
         if show_tables:
             stmt = "SHOW TABLES;"
-            tables = self.run_query(stmt)
+            tables = self.run_duckdb_sql(stmt)
             log_debug(f"Tables: {tables}")
             return tables
         return "No tables to show"
 
-    def describe_table(self, table: str) -> str:
+    def describe_duckdb_table(self, table: str) -> str:
         """Function to describe a table
 
         Args:
@@ -98,12 +148,12 @@ class DuckDbTools(Toolkit):
             str: Description of the table
         """
         stmt = f"DESCRIBE {table};"
-        table_description = self.run_query(stmt)
+        table_description = self.run_duckdb_sql(stmt)
 
         log_debug(f"Table description: {table_description}")
         return f"{table}\n{table_description}"
 
-    def inspect_query(self, query: str) -> str:
+    def inspect_duckdb_query(self, query: str) -> str:
         """Function to inspect a query and return the query plan. Always inspect your query before running them.
 
         Args:
@@ -113,12 +163,12 @@ class DuckDbTools(Toolkit):
             str: Query plan
         """
         stmt = f"explain {query};"
-        explain_plan = self.run_query(stmt)
+        explain_plan = self.run_duckdb_sql(stmt)
 
         log_debug(f"Explain plan: {explain_plan}")
         return explain_plan
 
-    def run_query(self, query: str) -> str:
+    def run_duckdb_sql(self, query: str) -> str:
         """Function that runs a query and returns the result.
 
         Args:
@@ -163,7 +213,7 @@ class DuckDbTools(Toolkit):
         except Exception as e:
             return str(e)
 
-    def summarize_table(self, table: str) -> str:
+    def summarize_duckdb_table(self, table: str) -> str:
         """Function to compute a number of aggregates over a table.
         The function launches a query that computes a number of aggregates over all columns,
         including min, max, avg, std and approx_unique.
@@ -174,7 +224,7 @@ class DuckDbTools(Toolkit):
         Returns:
             str: Summary of the table
         """
-        table_summary = self.run_query(f"SUMMARIZE {table};")
+        table_summary = self.run_duckdb_sql(f"SUMMARIZE {table};")
 
         log_debug(f"Table description: {table_summary}")
         return table_summary
@@ -217,7 +267,7 @@ class DuckDbTools(Toolkit):
         """Escape single quotes so a value is safe inside a SQL string literal."""
         return value.replace("'", "''")
 
-    def create_table_from_path(self, path: str, table: Optional[str] = None, replace: bool = False) -> str:
+    def create_duckdb_table_from_path(self, path: str, table: Optional[str] = None, replace: bool = False) -> str:
         """Creates a table from a path
 
         Args:
@@ -246,11 +296,13 @@ class DuckDbTools(Toolkit):
         else:
             create_statement += f" {table} AS SELECT * FROM '{safe_path}';"
 
-        self.run_query(create_statement)
+        self.run_duckdb_sql(create_statement)
         log_debug(f"Created table {table} from {path}")
         return table
 
-    def export_table_to_path(self, table: str, format: Optional[str] = "PARQUET", path: Optional[str] = None) -> str:
+    def export_duckdb_table_to_path(
+        self, table: str, format: Optional[str] = "PARQUET", path: Optional[str] = None
+    ) -> str:
         """Save a table in a desired format (default: parquet)
         If the path is provided, the table will be saved under that path.
             Eg: If path is /tmp, the table will be saved as /tmp/table.parquet
@@ -275,11 +327,11 @@ class DuckDbTools(Toolkit):
         export_statement = (
             f"COPY (SELECT * FROM {table}) TO '{self._escape_sql_string(path)}' (FORMAT {format.upper()});"
         )
-        result = self.run_query(export_statement)
+        result = self.run_duckdb_sql(export_statement)
         log_debug(f"Exported {table} to {path}/{table}")
         return result
 
-    def load_local_path_to_table(self, path: str, table: Optional[str] = None) -> Tuple[str, str]:
+    def load_duckdb_table_from_local_path(self, path: str, table: Optional[str] = None) -> Tuple[str, str]:
         """Load a local file into duckdb
 
         Args:
@@ -295,12 +347,12 @@ class DuckDbTools(Toolkit):
             table = self.get_table_name_from_path(path)
 
         create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{self._escape_sql_string(path)}';"
-        self.run_query(create_statement)
+        self.run_duckdb_sql(create_statement)
 
         log_debug(f"Loaded {path} into duckdb as {table}")
         return table, create_statement
 
-    def load_local_csv_to_table(
+    def load_duckdb_table_from_local_csv(
         self, path: str, table: Optional[str] = None, delimiter: Optional[str] = None
     ) -> Tuple[str, str]:
         """Load a local CSV file into duckdb
@@ -327,12 +379,12 @@ class DuckDbTools(Toolkit):
             select_statement += ")"
 
         create_statement = f"CREATE OR REPLACE TABLE {table} AS {select_statement};"
-        self.run_query(create_statement)
+        self.run_duckdb_sql(create_statement)
 
         log_debug(f"Loaded CSV {path} into duckdb as {table}")
         return table, create_statement
 
-    def load_s3_path_to_table(self, path: str, table: Optional[str] = None) -> Tuple[str, str]:
+    def load_duckdb_table_from_s3_path(self, path: str, table: Optional[str] = None) -> Tuple[str, str]:
         """Load a file from S3 into duckdb
 
         Args:
@@ -348,12 +400,12 @@ class DuckDbTools(Toolkit):
             table = self.get_table_name_from_path(path)
 
         create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{self._escape_sql_string(path)}';"
-        self.run_query(create_statement)
+        self.run_duckdb_sql(create_statement)
 
         log_debug(f"Loaded {path} into duckdb as {table}")
         return table, create_statement
 
-    def load_s3_csv_to_table(
+    def load_duckdb_table_from_s3_csv(
         self, path: str, table: Optional[str] = None, delimiter: Optional[str] = None
     ) -> Tuple[str, str]:
         """Load a CSV file from S3 into duckdb
@@ -380,12 +432,12 @@ class DuckDbTools(Toolkit):
             select_statement += ")"
 
         create_statement = f"CREATE OR REPLACE TABLE {table} AS {select_statement};"
-        self.run_query(create_statement)
+        self.run_duckdb_sql(create_statement)
 
         log_debug(f"Loaded CSV {path} into duckdb as {table}")
         return table, create_statement
 
-    def create_fts_index(self, table: str, unique_key: str, input_values: list[str]) -> str:
+    def create_duckdb_fts_index(self, table: str, unique_key: str, input_values: list[str]) -> str:
         """Create a full text search index on a table
 
         Args:
@@ -397,9 +449,9 @@ class DuckDbTools(Toolkit):
             str: Result of the create index query
         """
         log_debug(f"Creating FTS index on {table} for {input_values}")
-        self.run_query("INSTALL fts;")
+        self.run_duckdb_sql("INSTALL fts;")
         log_debug("Installed FTS extension")
-        self.run_query("LOAD fts;")
+        self.run_duckdb_sql("LOAD fts;")
         log_debug("Loaded FTS extension")
 
         # Each indexed column is a separate PRAGMA argument, not one list literal
@@ -409,7 +461,7 @@ class DuckDbTools(Toolkit):
             f"'{self._escape_sql_string(table)}', '{self._escape_sql_string(unique_key)}', {input_value_literals});"
         )
         log_debug(f"Running {create_fts_index_statement}")
-        result = self.run_query(create_fts_index_statement)
+        result = self.run_duckdb_sql(create_fts_index_statement)
         log_debug(f"Created FTS index on {table} for {input_values}")
 
         return result
@@ -425,7 +477,7 @@ class DuckDbTools(Toolkit):
         name = f"fts_{schema}_{parts[-1]}"
         return '"' + name.replace('"', '""') + '"'
 
-    def full_text_search(self, table: str, unique_key: str, search_text: str) -> str:
+    def search_duckdb_fts(self, table: str, unique_key: str, search_text: str) -> str:
         """Full text Search in a table column for a specific text/keyword
 
         Args:
@@ -444,7 +496,7 @@ class DuckDbTools(Toolkit):
                                         ORDER BY score;"""
 
         log_debug(f"Running {search_text_statement}")
-        result = self.run_query(search_text_statement)
+        result = self.run_duckdb_sql(search_text_statement)
         log_debug(f"Search results for {search_text} in {table}")
 
         return result

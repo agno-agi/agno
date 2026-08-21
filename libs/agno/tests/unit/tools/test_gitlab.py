@@ -247,7 +247,9 @@ class TestGitlabTools:
         project.issues.list.return_value = [issue]
         mock_client.projects.get.return_value = project
 
-        result = tools.list_issues("team/demo", labels="bug,backend", assignee_username="developer", search="parser")
+        result = tools.gitlab_list_issues(
+            "team/demo", labels="bug,backend", assignee_username="developer", search="parser"
+        )
         result_data = json.loads(result)
 
         project.issues.list.assert_called_once_with(

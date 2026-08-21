@@ -1,7 +1,7 @@
 import json
 import re
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 from urllib.parse import quote_plus
 
 from agno.tools import Toolkit
@@ -14,9 +14,14 @@ except ImportError:
 
 
 class ZendeskTools(Toolkit):
-    """
-    A toolkit class for interacting with the Zendesk API to search articles.
-    It requires authentication details and the company name to configure the API access.
+    """Toolkit for searching Zendesk Help Center articles.
+
+    Args:
+        username: Zendesk username. Falls back to ZENDESK_USERNAME env var.
+        password: Zendesk password. Falls back to ZENDESK_PASSWORD env var.
+        company_name: Company subdomain. Falls back to ZENDESK_COMPANY_NAME env var.
+        search_zendesk: Enable search_zendesk tool. Defaults to True.
+        timeout: Request timeout in seconds. Defaults to 30.
     """
 
     def __init__(
@@ -24,22 +29,14 @@ class ZendeskTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         company_name: Optional[str] = None,
-        enable_search_zendesk: bool = True,
-        all: bool = False,
+        search_zendesk: bool = True,
         timeout: int = 30,
         **kwargs,
     ):
-        """
-        Initializes the ZendeskTools class with necessary authentication details
-        and registers the search_zendesk method.
+        # Backwards compat: enable_X -> X
+        if "enable_search_zendesk" in kwargs:
+            search_zendesk = kwargs.pop("enable_search_zendesk")
 
-        Parameters:
-        username (str): The username for Zendesk API authentication.
-        password (str): The password for Zendesk API authentication.
-        company_name (str): The company name to form the base URL for API requests.
-        enable_search_zendesk (bool): Whether to enable the search functionality.
-        all (bool): Enable all functions.
-        """
         self.username = username or getenv("ZENDESK_USERNAME")
         self.password = password or getenv("ZENDESK_PASSWORD")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
@@ -47,28 +44,24 @@ class ZendeskTools(Toolkit):
         if not self.username or not self.password or not self.company_name:
             log_error("Username, password, or company name not provided.")
 
-        tools: List[Any] = []
-        if all or enable_search_zendesk:
+        tools: List[Callable] = []
+        if search_zendesk:
             tools.append(self.search_zendesk)
 
         super().__init__(name="zendesk_tools", tools=tools, timeout=timeout, **kwargs)
 
     def search_zendesk(self, search_string: str) -> str:
-        """
-        Searches for articles in Zendesk Help Center that match the given search string.
+        """Search Zendesk Help Center articles.
 
-        Parameters:
-        search_string (str): The search query to look for in Zendesk articles.
+        Args:
+            search_string: The search query.
 
         Returns:
-        str: A JSON-formatted string containing the list of articles without HTML tags.
-
-        Raises:
-        ConnectionError: If the API request fails due to connection-related issues.
+            JSON with matching articles.
         """
 
         if not self.username or not self.password or not self.company_name:
-            return "Username, password, or company name not provided."
+            return json.dumps({"error": "Username, password, or company name not provided."})
 
         log_debug(f"Searching Zendesk for: {search_string}")
 
@@ -79,6 +72,6 @@ class ZendeskTools(Toolkit):
             response.raise_for_status()
             clean = re.compile("<.*?>")
             articles = [re.sub(clean, "", article["body"]) for article in response.json()["results"]]
-            return json.dumps(articles)
+            return json.dumps({"articles": articles})
         except requests.RequestException as e:
-            raise ConnectionError(f"API request failed: {e}")
+            return json.dumps({"error": f"API request failed: {e}"})

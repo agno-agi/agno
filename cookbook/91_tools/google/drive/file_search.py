@@ -50,7 +50,7 @@ agent = Agent(
     tools=[GoogleDriveTools()],
     instructions=[
         "Search for files matching the user's criteria.",
-        "search_files returns full metadata including parents, description, and links.",
+        "gdrive_search_files returns full metadata including parents, description, and links.",
     ],
     output_schema=FileSearchResult,
 )

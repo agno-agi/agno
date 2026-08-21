@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -18,19 +18,62 @@ class RedmineTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
-        enable_get_issue: bool = True,
-        enable_create_issue: bool = True,
-        enable_update_issue: bool = True,
-        enable_search_issues: bool = True,
-        enable_add_comment: bool = True,
-        enable_log_time: bool = True,
-        enable_list_projects: bool = True,
-        enable_list_users: bool = True,
-        enable_list_project_members: bool = True,
-        enable_list_versions: bool = True,
+        get_issue: bool = True,
+        create_issue: bool = False,
+        update_issue: bool = False,
+        search_issues: bool = True,
+        add_comment: bool = False,
+        log_time: bool = False,
+        list_projects: bool = True,
+        list_users: bool = True,
+        list_project_members: bool = True,
+        list_versions: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        """Initialize Redmine toolkit for issue tracking operations.
+
+        Connects to a Redmine server using API token or username/password auth.
+
+        Args:
+            server_url: Redmine server URL. Falls back to REDMINE_SERVER_URL env var.
+            username: Username for basic auth. Falls back to REDMINE_USERNAME env var.
+            password: Password for basic auth. Falls back to REDMINE_PASSWORD env var.
+            token: API token (preferred). Falls back to REDMINE_TOKEN env var.
+            get_issue: Enable the get_issue tool.
+            create_issue: Enable the create_issue tool. Disabled by default (write op).
+            update_issue: Enable the update_issue tool. Disabled by default (write op).
+            search_issues: Enable the search_issues tool.
+            add_comment: Enable the add_comment tool. Disabled by default (write op).
+            log_time: Enable the log_time tool. Disabled by default (write op).
+            list_projects: Enable the list_projects tool.
+            list_users: Enable the list_users tool.
+            list_project_members: Enable the list_project_members tool.
+            list_versions: Enable the list_versions tool.
+            all: Enable all tools.
+        """
+        # Backwards compat: enable_X -> X
+        if "enable_get_issue" in kwargs:
+            get_issue = kwargs.pop("enable_get_issue")
+        if "enable_create_issue" in kwargs:
+            create_issue = kwargs.pop("enable_create_issue")
+        if "enable_update_issue" in kwargs:
+            update_issue = kwargs.pop("enable_update_issue")
+        if "enable_search_issues" in kwargs:
+            search_issues = kwargs.pop("enable_search_issues")
+        if "enable_add_comment" in kwargs:
+            add_comment = kwargs.pop("enable_add_comment")
+        if "enable_log_time" in kwargs:
+            log_time = kwargs.pop("enable_log_time")
+        if "enable_list_projects" in kwargs:
+            list_projects = kwargs.pop("enable_list_projects")
+        if "enable_list_users" in kwargs:
+            list_users = kwargs.pop("enable_list_users")
+        if "enable_list_project_members" in kwargs:
+            list_project_members = kwargs.pop("enable_list_project_members")
+        if "enable_list_versions" in kwargs:
+            list_versions = kwargs.pop("enable_list_versions")
+
         self.server_url = server_url or getenv("REDMINE_SERVER_URL")
         self.username = username or getenv("REDMINE_USERNAME")
         self.password = password or getenv("REDMINE_PASSWORD")
@@ -50,26 +93,26 @@ class RedmineTools(Toolkit):
         else:
             self.redmine = Redmine(url=self.server_url, raise_attr_exception=False)
 
-        tools: List[Any] = []
-        if enable_get_issue or all:
+        tools: List[Callable] = []
+        if all or get_issue:
             tools.append(self.get_issue)
-        if enable_create_issue or all:
+        if all or create_issue:
             tools.append(self.create_issue)
-        if enable_update_issue or all:
+        if all or update_issue:
             tools.append(self.update_issue)
-        if enable_search_issues or all:
+        if all or search_issues:
             tools.append(self.search_issues)
-        if enable_add_comment or all:
+        if all or add_comment:
             tools.append(self.add_comment)
-        if enable_log_time or all:
+        if all or log_time:
             tools.append(self.log_time)
-        if enable_list_projects or all:
+        if all or list_projects:
             tools.append(self.list_projects)
-        if enable_list_users or all:
+        if all or list_users:
             tools.append(self.list_users)
-        if enable_list_project_members or all:
+        if all or list_project_members:
             tools.append(self.list_project_members)
-        if enable_list_versions or all:
+        if all or list_versions:
             tools.append(self.list_versions)
 
         super().__init__(name="redmine_tools", tools=tools, **kwargs)
@@ -95,11 +138,11 @@ class RedmineTools(Toolkit):
         """Retrieve issue details from Redmine.
 
         Args:
-            issue_id (str): The numeric id of the issue to retrieve.
-            include_comments (bool, optional): Whether to include the issue's comments (journal notes). Defaults to False.
+            issue_id: The numeric id of the issue to retrieve.
+            include_comments: Whether to include comments (journal notes).
 
         Returns:
-            str: A JSON string containing issue details.
+            JSON with issue details including project, status, priority, assignee.
         """
         try:
             params = {"include": "journals"} if include_comments else {}
@@ -146,20 +189,20 @@ class RedmineTools(Toolkit):
         """Create a new issue in Redmine.
 
         Args:
-            project_id (str): The identifier of the project in which to create the issue.
-            subject (str): The subject (title) of the issue.
-            description (str): The description of the issue.
-            tracker (str, optional): The tracker name for the issue (e.g. 'Bug', 'Feature', 'Support'). The project default is used when omitted.
-            priority (str, optional): The priority name for the issue (e.g. 'Low', 'Normal', 'High'). The project default is used when omitted.
-            assigned_to_id (int, optional): The id of the user to assign the issue to.
-            version_id (int, optional): The id of the target version (sprint/milestone). Use list_versions to resolve a version name to its id.
-            parent_issue_id (int, optional): The id of the parent issue, to create this issue as a subtask.
-            estimated_hours (float, optional): The estimated time to complete the issue, in hours.
-            start_date (str, optional): The start date in ISO format (YYYY-MM-DD).
-            due_date (str, optional): The due date in ISO format (YYYY-MM-DD).
+            project_id: Project identifier to create the issue in.
+            subject: Issue title.
+            description: Issue description.
+            tracker: Tracker name (e.g., Bug, Feature, Support). Uses project default if omitted.
+            priority: Priority name (e.g., Low, Normal, High). Uses project default if omitted.
+            assigned_to_id: User ID to assign to. Use list_users or list_project_members to find.
+            version_id: Target version ID. Use list_versions to find.
+            parent_issue_id: Parent issue ID to create as subtask.
+            estimated_hours: Estimated hours to complete.
+            start_date: Start date (YYYY-MM-DD).
+            due_date: Due date (YYYY-MM-DD).
 
         Returns:
-            str: A JSON string with the new issue's id and URL.
+            JSON with id and url of created issue.
         """
         try:
             fields: Dict[str, Any] = {"project_id": project_id, "subject": subject, "description": description}
@@ -213,25 +256,25 @@ class RedmineTools(Toolkit):
     ) -> str:
         """Update an existing issue in Redmine.
 
-        Only the provided fields are changed. Use this to move an issue to a new status, reassign it, or set its priority.
+        Only provided fields are changed. Use to change status, reassign, or update priority.
 
         Args:
-            issue_id (str): The numeric id of the issue to update.
-            subject (str, optional): The new subject (title) of the issue.
-            description (str, optional): The new description of the issue.
-            status (str, optional): The new status name (e.g. 'In Progress', 'Resolved', 'Closed').
-            tracker (str, optional): The new tracker name (e.g. 'Bug', 'Feature', 'Support').
-            priority (str, optional): The new priority name (e.g. 'Low', 'Normal', 'High').
-            assigned_to_id (int, optional): The id of the user to assign the issue to.
-            done_ratio (int, optional): The completion percentage (0-100). Ignored for parent issues, whose value is computed from their subtasks.
-            version_id (int, optional): The id of the target version (sprint/milestone). Use list_versions to resolve a version name to its id.
-            parent_issue_id (int, optional): The id of the parent issue, to make this issue a subtask.
-            estimated_hours (float, optional): The estimated time to complete the issue, in hours.
-            start_date (str, optional): The start date in ISO format (YYYY-MM-DD).
-            due_date (str, optional): The due date in ISO format (YYYY-MM-DD).
+            issue_id: Issue ID to update.
+            subject: New title.
+            description: New description.
+            status: New status name (e.g., In Progress, Resolved, Closed).
+            tracker: New tracker name (e.g., Bug, Feature, Support).
+            priority: New priority name (e.g., Low, Normal, High).
+            assigned_to_id: User ID to assign to.
+            done_ratio: Completion percentage (0-100). Ignored for parent issues.
+            version_id: Target version ID. Use list_versions to find.
+            parent_issue_id: Parent issue ID to make this a subtask.
+            estimated_hours: Estimated hours to complete.
+            start_date: Start date (YYYY-MM-DD).
+            due_date: Due date (YYYY-MM-DD).
 
         Returns:
-            str: A JSON string indicating success or containing an error message.
+            JSON with status success or error message.
         """
         try:
             fields: Dict[str, Any] = {}
@@ -288,18 +331,18 @@ class RedmineTools(Toolkit):
         assigned_to_id: Optional[int] = None,
         max_results: int = 50,
     ) -> str:
-        """Search for issues, optionally filtering by subject, project, status, tracker and assignee.
+        """Search for issues with optional filters.
 
         Args:
-            pattern (str, optional): Text to match against issue subjects.
-            project_id (str, optional): Restrict the search to this project identifier.
-            status (str, optional): Filter by status: 'open', 'closed', 'all', or a status name (e.g. 'In Progress').
-            tracker (str, optional): Filter by tracker name (e.g. 'Bug', 'Feature', 'Support').
-            assigned_to_id (int, optional): Filter by the id of the assigned user.
-            max_results (int, optional): Maximum number of results to return. Defaults to 50.
+            pattern: Text to match against issue subjects.
+            project_id: Restrict to this project identifier.
+            status: Filter by open, closed, all, or status name (e.g., In Progress).
+            tracker: Filter by tracker name (e.g., Bug, Feature, Support).
+            assigned_to_id: Filter by assigned user ID.
+            max_results: Maximum results to return.
 
         Returns:
-            str: A JSON string containing a list of dictionaries with issue details.
+            JSON list of issues with id, subject, tracker, status, priority, assignee.
         """
         try:
             filters: Dict[str, Any] = {"status_id": "*", "limit": max_results}
@@ -348,12 +391,12 @@ class RedmineTools(Toolkit):
         """Add a comment to an issue.
 
         Args:
-            issue_id (str): The numeric id of the issue.
-            comment (str): The comment text.
-            private_notes (bool, optional): Whether the comment is a private note visible only to users with permission. Defaults to False.
+            issue_id: Issue ID to comment on.
+            comment: Comment text.
+            private_notes: If True, only visible to users with permission.
 
         Returns:
-            str: A JSON string indicating success or containing an error message.
+            JSON with status success or error message.
         """
         if not comment or not comment.strip():
             return json.dumps({"error": "comment cannot be empty"})
@@ -376,14 +419,14 @@ class RedmineTools(Toolkit):
         """Log time spent on an issue.
 
         Args:
-            issue_id (str): The numeric id of the issue to log time against.
-            hours (float): The number of hours spent. Must be greater than 0.
-            activity (str, optional): The activity name (e.g. 'Design', 'Development'). Required unless the Redmine instance defines a default activity.
-            comment (str, optional): A short description of the work done.
-            spent_on (str, optional): The date the time was spent, in ISO format (YYYY-MM-DD). Defaults to today.
+            issue_id: Issue ID to log time against.
+            hours: Hours spent (must be > 0).
+            activity: Activity name (e.g., Design, Development). Required if no default.
+            comment: Description of work done.
+            spent_on: Date spent (YYYY-MM-DD). Defaults to today.
 
         Returns:
-            str: A JSON string with the created time entry id, or an error message.
+            JSON with time entry id or error message.
         """
         if hours <= 0:
             return json.dumps({"error": "hours must be greater than 0"})
@@ -414,10 +457,10 @@ class RedmineTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def list_projects(self) -> str:
-        """List the projects available on the Redmine server.
+        """List projects available on the Redmine server.
 
         Returns:
-            str: A JSON string containing a list of projects with their id, identifier and name.
+            JSON list of projects with id, identifier, and name.
         """
         try:
             projects = [
@@ -431,13 +474,13 @@ class RedmineTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def list_users(self) -> str:
-        """List the active users on the Redmine server.
+        """List active users on the Redmine server.
 
-        Use this to resolve an assignee name to the numeric id required by create_issue and update_issue.
-        This requires an admin token; with a non-admin token use list_project_members instead.
+        Use to resolve assignee names to IDs for create_issue/update_issue.
+        Requires admin token; use list_project_members for non-admin access.
 
         Returns:
-            str: A JSON string containing a list of users with their id, name and login.
+            JSON list of users with id, name, and login.
         """
         try:
             users = [
@@ -451,15 +494,15 @@ class RedmineTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def list_project_members(self, project_id: str) -> str:
-        """List the users who are members of a project.
+        """List users who are members of a project.
 
-        An issue can only be assigned to a member of its project, so use this to find valid assignee ids.
+        Use to find valid assignee IDs (issues can only be assigned to project members).
 
         Args:
-            project_id (str): The identifier of the project.
+            project_id: Project identifier.
 
         Returns:
-            str: A JSON string containing a list of members with their id and name.
+            JSON list of members with id and name.
         """
         try:
             members = []
@@ -474,15 +517,15 @@ class RedmineTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def list_versions(self, project_id: str) -> str:
-        """List the versions (sprints/milestones) of a project.
+        """List versions (sprints/milestones) of a project.
 
-        Use this to resolve a version name to the numeric id required by create_issue and update_issue.
+        Use to resolve version names to IDs for create_issue/update_issue.
 
         Args:
-            project_id (str): The identifier of the project.
+            project_id: Project identifier.
 
         Returns:
-            str: A JSON string containing a list of versions with their id, name and status.
+            JSON list of versions with id, name, and status.
         """
         try:
             versions = [

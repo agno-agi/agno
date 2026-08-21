@@ -2,7 +2,7 @@ import datetime
 import json
 import textwrap
 import uuid
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
@@ -112,7 +112,7 @@ class GoogleCalendarTools(GoogleToolkit):
         self.calendar_id = calendar_id
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
-        tools: List[Any] = []
+        tools: List[Callable] = []
 
         if list_events:
             tools.append(self.list_events)

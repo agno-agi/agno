@@ -31,19 +31,15 @@ Enable flags:
       backends) return a clear error payload at call time.
 
 Read-only:
-    * No tool mutates platform state, and no tool writes. Schedule, approval and
-      component management are deliberately not exposed. ``get_platform_metrics``
-      can still cause a metrics rollup write, but only because ``db.get_metrics()``
-      refreshes stale rollups for every caller -- the toolkit does not ask for it,
-      so it inherits whatever throttling the database applies.
+    * No tool mutates platform state. Schedule, approval and component management
+      are deliberately not exposed. The one write that does happen is the metrics
+      rollup refresh inside get_platform_metrics -- derived data, no user content.
     * Span attributes payloads, approval tool arguments and schedule run
       input/output are never returned -- they can hold full conversation content.
-    * Schedule run errors are redacted: an error carrying a non-2xx status code is
-      an upstream response body (which echoes run input back, e.g. via a 422) and
-      is reduced to ``HTTP <code>``. Messages the scheduler wrote itself -- a run
-      that ended in an error state, a timeout, a transport failure -- accompany a
-      2xx or no status code and are kept, capped at their first line, 200
-      characters.
+    * Schedule run errors are redacted: an error that came with an HTTP status
+      code is reduced to ``HTTP <code>`` (upstream response bodies echo run
+      input back, e.g. via a 422), and framework-generated messages are capped
+      at their first line, 200 characters.
     * The tools read the database directly, so AgentOS endpoint scopes do not
       apply to them: anyone who can talk to the agent sees platform-wide
       aggregates, and pending approvals include identifiers (user_id, tool_name,
@@ -59,7 +55,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Un
 
 from agno.db.utils import aggregate_metrics_by_date
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_exception, log_warning
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb
@@ -193,12 +189,17 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return _async_db_error()
         try:
-            days = _window_days(days)
             start_date, end_date = _metrics_window(days)
+            try:
+                self._sync_db().calculate_metrics()
+            except NotImplementedError:
+                pass
+            except Exception as e:
+                log_warning(f"Could not refresh metrics: {e}")
             rows, _ = self._sync_db().get_metrics(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
         except Exception:
-            logger.exception("Failed to get platform metrics")
+            log_exception("Failed to get platform metrics")
             return _tool_error("Failed to get platform metrics")
 
     async def aget_platform_metrics(self, days: int = 7) -> str:
@@ -213,12 +214,17 @@ class AgentOSTools(Toolkit):
         if not self._db_is_async:
             return await _run_sync(self.get_platform_metrics, days)
         try:
-            days = _window_days(days)
             start_date, end_date = _metrics_window(days)
+            try:
+                await self._async_db().calculate_metrics()
+            except NotImplementedError:
+                pass
+            except Exception as e:
+                log_warning(f"Could not refresh metrics: {e}")
             rows, _ = await self._async_db().get_metrics(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
         except Exception:
-            logger.exception("Failed to get platform metrics")
+            log_exception("Failed to get platform metrics")
             return _tool_error("Failed to get platform metrics")
 
     # ------------------------------------------------------------------
@@ -240,7 +246,6 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return _async_db_error()
         try:
-            days = _window_days(days)
             start_time = _window_start(days)
             groupings: Dict[str, Tuple[List[Dict[str, Any]], int]] = {}
             for group in ("agent", "team", "workflow", "endpoint"):
@@ -252,7 +257,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError as e:
             return json.dumps({"error": f"Component-grouped trace stats are not supported by this database: {e}"})
         except Exception:
-            logger.exception("Failed to get run activity")
+            log_exception("Failed to get run activity")
             return _tool_error("Failed to get run activity")
 
     async def aget_run_activity(self, days: int = 7) -> str:
@@ -270,7 +275,6 @@ class AgentOSTools(Toolkit):
         if not self._db_is_async:
             return await _run_sync(self.get_run_activity, days)
         try:
-            days = _window_days(days)
             start_time = _window_start(days)
             groupings: Dict[str, Tuple[List[Dict[str, Any]], int]] = {}
             for group in ("agent", "team", "workflow", "endpoint"):
@@ -282,7 +286,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError as e:
             return json.dumps({"error": f"Component-grouped trace stats are not supported by this database: {e}"})
         except Exception:
-            logger.exception("Failed to get run activity")
+            log_exception("Failed to get run activity")
             return _tool_error("Failed to get run activity")
 
     # ------------------------------------------------------------------
@@ -305,7 +309,6 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return _async_db_error()
         try:
-            days = _window_days(days)
             start_time = _window_start(days)
             tools_most_used, tools_total = self._sync_db().get_span_stats(
                 span_type="TOOL", start_time=start_time, sort_by="total_calls", limit=_SPAN_LIMIT
@@ -320,7 +323,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "Span statistics are not supported by this database"})
         except Exception:
-            logger.exception("Failed to get tool activity")
+            log_exception("Failed to get tool activity")
             return _tool_error("Failed to get tool activity")
 
     async def aget_tool_activity(self, days: int = 7) -> str:
@@ -339,7 +342,6 @@ class AgentOSTools(Toolkit):
         if not self._db_is_async:
             return await _run_sync(self.get_tool_activity, days)
         try:
-            days = _window_days(days)
             start_time = _window_start(days)
             tools_most_used, tools_total = await self._async_db().get_span_stats(
                 span_type="TOOL", start_time=start_time, sort_by="total_calls", limit=_SPAN_LIMIT
@@ -354,7 +356,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "Span statistics are not supported by this database"})
         except Exception:
-            logger.exception("Failed to get tool activity")
+            log_exception("Failed to get tool activity")
             return _tool_error("Failed to get tool activity")
 
     # ------------------------------------------------------------------
@@ -380,7 +382,7 @@ class AgentOSTools(Toolkit):
             )
             return _format_eval_history(rows, total)
         except Exception:
-            logger.exception("Failed to get eval history")
+            log_exception("Failed to get eval history")
             return _tool_error("Failed to get eval history")
 
     async def aget_eval_history(self, limit: int = 20) -> str:
@@ -402,7 +404,7 @@ class AgentOSTools(Toolkit):
             )
             return _format_eval_history(rows, total)
         except Exception:
-            logger.exception("Failed to get eval history")
+            log_exception("Failed to get eval history")
             return _tool_error("Failed to get eval history")
 
     # ------------------------------------------------------------------
@@ -432,7 +434,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
         except Exception:
-            logger.exception("Failed to list schedules")
+            log_exception("Failed to list schedules")
             return _tool_error("Failed to list schedules")
 
     async def alist_schedules(self, limit: int = 20) -> str:
@@ -458,7 +460,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
         except Exception:
-            logger.exception("Failed to list schedules")
+            log_exception("Failed to list schedules")
             return _tool_error("Failed to list schedules")
 
     def get_schedule_history(self, schedule_id: str, limit: int = 20) -> str:
@@ -483,7 +485,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
         except Exception:
-            logger.exception("Failed to get schedule history")
+            log_exception("Failed to get schedule history")
             return _tool_error("Failed to get schedule history")
 
     async def aget_schedule_history(self, schedule_id: str, limit: int = 20) -> str:
@@ -508,7 +510,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
         except Exception:
-            logger.exception("Failed to get schedule history")
+            log_exception("Failed to get schedule history")
             return _tool_error("Failed to get schedule history")
 
     # ------------------------------------------------------------------
@@ -533,7 +535,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "Component listing is not supported by this database"})
         except Exception:
-            logger.exception("Failed to list platform components")
+            log_exception("Failed to list platform components")
             return _tool_error("Failed to list platform components")
 
     async def alist_platform_components(self, limit: int = 50) -> str:
@@ -572,7 +574,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "Approvals are not supported by this database"})
         except Exception:
-            logger.exception("Failed to list pending approvals")
+            log_exception("Failed to list pending approvals")
             return _tool_error("Failed to list pending approvals")
 
     async def alist_pending_approvals(self) -> str:
@@ -593,7 +595,7 @@ class AgentOSTools(Toolkit):
         except NotImplementedError:
             return json.dumps({"error": "Approvals are not supported by this database"})
         except Exception:
-            logger.exception("Failed to list pending approvals")
+            log_exception("Failed to list pending approvals")
             return _tool_error("Failed to list pending approvals")
 
 
@@ -660,7 +662,7 @@ def _async_db_error() -> str:
 def _tool_error(context: str) -> str:
     """Generic error payload for the agent.
 
-    The exception detail is logged (logger.exception) but never returned. These
+    The exception detail is logged (log_exception) but never returned. These
     tools read the database directly with no endpoint scopes, so raw exception
     text -- SQL fragments, table or column names -- must not reach whoever talks
     to the agent.
@@ -672,23 +674,13 @@ def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(int(value), high))
 
 
-def _window_days(days: int) -> int:
-    """Normalize a caller-supplied window to a whole number of days in 1..365.
-
-    Callers are models, so 0, negatives and floats arrive routinely. Every tool
-    normalizes here and reports this value, so the window named in the payload is
-    always the window that was queried.
-    """
-    return _clamp(days, 1, 365)
-
-
 def _window_start(days: int) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(days=days)
+    return datetime.now(timezone.utc) - timedelta(days=_clamp(days, 1, 365))
 
 
 def _metrics_window(days: int) -> tuple[date, date]:
     end_date = datetime.now(timezone.utc).date()
-    start_date = end_date - timedelta(days=days - 1)
+    start_date = end_date - timedelta(days=_clamp(days, 1, 365) - 1)
     return start_date, end_date
 
 
@@ -882,34 +874,20 @@ def _format_eval_history(rows: List[Any], total: int) -> str:
 def _summarize_run_error(run: Dict[str, Any]) -> Optional[str]:
     """Reduce a stored schedule run error to a safe, bounded summary.
 
-    A non-2xx status code means the error is a raw upstream response body, which
-    can echo the run input back (e.g. a 422 validation error), so the body is
-    dropped and only ``HTTP <code>`` is returned.
-
-    A 2xx status code, or none at all, means the scheduler wrote the message
-    itself -- a run that finished in an error state, a timeout, a cancellation, a
-    transport failure. Those carry the diagnosis an operator actually needs, so
-    they are kept: first line only, capped at 200 characters.
-
-    The status code is a reliable signal because the executor only ever stores an
-    upstream body alongside a non-2xx response; its own messages accompany a
-    successful poll.
+    Errors that came with an HTTP status code are raw upstream response bodies,
+    which can echo the run input back (e.g. a 422 validation error), so the
+    body is dropped and only ``HTTP <code>`` is returned. Errors without a
+    status code are framework-generated (timeouts, cancellations, transport
+    failures) and are kept, first line only, capped at 200 characters.
     """
     error = run.get("error")
     if error is None:
         return None
     status_code = run.get("status_code")
-    if status_code is not None and not _is_success_status(status_code):
+    if status_code is not None:
         return f"HTTP {status_code}"
     lines = str(error).strip().splitlines()
     return lines[0][:_ERROR_SUMMARY_LIMIT] if lines else None
-
-
-def _is_success_status(status_code: Any) -> bool:
-    try:
-        return 200 <= int(status_code) < 300
-    except (TypeError, ValueError):
-        return False
 
 
 def _format_schedule_run(run: Dict[str, Any]) -> Dict[str, Any]:

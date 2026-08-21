@@ -1,11 +1,13 @@
+import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import httpx
 from pydantic import BaseModel, Field, HttpUrl
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
+from agno.utils.serialize import to_json_str
 
 
 class JinaReaderToolsConfig(BaseModel):
@@ -26,11 +28,17 @@ class JinaReaderTools(Toolkit):
         max_content_length: int = 10000,
         timeout: Optional[int] = None,
         search_query_content: bool = True,
-        enable_read_url: bool = True,
-        enable_search_query: bool = False,
+        read_url: bool = True,
+        search_query: bool = False,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_read_url" in kwargs:
+            read_url = kwargs.pop("enable_read_url")
+        if "enable_search_query" in kwargs:
+            search_query = kwargs.pop("enable_search_query")
+
         self.api_key = api_key or getenv("JINA_API_KEY")
         self.config: JinaReaderToolsConfig = JinaReaderToolsConfig(
             api_key=self.api_key,
@@ -41,29 +49,43 @@ class JinaReaderTools(Toolkit):
             search_query_content=search_query_content,
         )
 
-        tools: List[Any] = []
-        if all or enable_read_url:
-            tools.append(self.read_url)
-        if all or enable_search_query:
+        tools: List[Callable] = []
+        if all or read_url:
+            tools.append(self.jina_read_url)
+        if all or search_query:
             tools.append(self.search_query)
 
         super().__init__(name="jina_reader_tools", tools=tools, **kwargs)
 
-    def read_url(self, url: str) -> str:
-        """Reads a URL and returns the truncated content using Jina Reader API."""
+    def jina_read_url(self, url: str) -> str:
+        """Read a URL and return content using Jina Reader API.
+
+        Args:
+            url: The URL to read.
+
+        Returns:
+            JSON with page content (truncated if needed).
+        """
         full_url = f"{self.config.base_url}{url}"
         try:
             response = httpx.get(full_url, headers=self._get_headers())
             response.raise_for_status()
             content = response.json()
-            return self._truncate_content(str(content))
+            return self._truncate_content(to_json_str(content))
         except Exception as e:
-            error_msg = f"Error reading URL: {str(e)}"
+            error_msg = f"Error reading URL: {e}"
             log_error(error_msg)
-            return error_msg
+            return json.dumps({"error": error_msg})
 
     def search_query(self, query: str) -> str:
-        """Performs a web search using Jina Reader API and returns the truncated results."""
+        """Search the web using Jina Reader API.
+
+        Args:
+            query: The search query.
+
+        Returns:
+            JSON with search results (truncated if needed).
+        """
         full_url = f"{self.config.search_url}"
         headers = self._get_headers()
         if not self.config.search_query_content:
@@ -74,11 +96,11 @@ class JinaReaderTools(Toolkit):
             response = httpx.post(full_url, headers=headers, json=body)
             response.raise_for_status()
             content = response.json()
-            return self._truncate_content(str(content))
+            return self._truncate_content(to_json_str(content))
         except Exception as e:
-            error_msg = f"Error performing search: {str(e)}"
+            error_msg = f"Error performing search: {e}"
             log_error(error_msg)
-            return error_msg
+            return json.dumps({"error": error_msg})
 
     def _get_headers(self) -> Dict[str, str]:
         headers = {

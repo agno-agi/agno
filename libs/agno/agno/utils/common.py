@@ -1,3 +1,4 @@
+import dataclasses
 from dataclasses import asdict
 from typing import Any, List, Optional, Set, Type, Union, get_type_hints
 
@@ -32,14 +33,36 @@ def dataclass_to_dict(dataclass_object, exclude: Optional[set[str]] = None, excl
 
 
 def nested_model_dump(value):
+    """Recursively convert pydantic models, dataclasses, and plain objects to dicts.
+
+    Handles nested structures: dicts, lists, tuples, sets.
+    Also handles plain classes with __dict__ (e.g. Todoist SDK).
+    """
+    from enum import Enum
+
     from pydantic import BaseModel
 
     if isinstance(value, BaseModel):
-        return value.model_dump()
+        return value.model_dump(mode="json")
+    # Dataclasses (e.g. Exa SDK responses)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
     elif isinstance(value, dict):
         return {k: nested_model_dump(v) for k, v in value.items()}
-    elif isinstance(value, list):
+    elif isinstance(value, (list, tuple, set)):
         return [nested_model_dump(item) for item in value]
+    # Enums - extract value before __dict__ check (enums have __dict__ but it's not useful)
+    elif isinstance(value, Enum):
+        v = value.value
+        return v if isinstance(v, (str, int, float, bool, type(None))) else value.name
+    # Plain objects with __dict__ (e.g. Todoist SDK)
+    elif hasattr(value, "__dict__") and not isinstance(value, type):
+        # Extract non-private attributes
+        extracted = {k: nested_model_dump(v) for k, v in value.__dict__.items() if not k.startswith("_")}
+        # If all attrs were private (e.g. Neo4j DateTime), return original value
+        # so json_serializer can handle it via str() fallback
+        if extracted:
+            return extracted
     return value
 
 

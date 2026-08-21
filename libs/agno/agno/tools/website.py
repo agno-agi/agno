@@ -1,5 +1,5 @@
 import json
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -15,11 +15,11 @@ class WebsiteTools(Toolkit):
     ):
         self.knowledge: Optional[Knowledge] = knowledge
 
-        tools: List[Any] = []
+        tools: List[Callable] = []
         if self.knowledge is not None:
             tools.append(self.add_website_to_knowledge)
         else:
-            tools.append(self.read_url)
+            tools.append(self.website_read)
 
         super().__init__(name="website_tools", tools=tools, **kwargs)
 
@@ -33,13 +33,13 @@ class WebsiteTools(Toolkit):
         :return: 'Success' if the website was added to the knowledge base.
         """
         if self.knowledge is None:
-            return "Knowledge base not provided"
+            return json.dumps({"error": "Knowledge base not provided"})
 
         log_debug(f"Adding to knowledge base: {url}")
         self.knowledge.insert(url=url)
-        return "Success"
+        return json.dumps({"status": "success", "url": url})
 
-    def read_url(self, url: str) -> str:
+    def website_read(self, url: str) -> str:
         """This function reads a url and returns the content.
 
         :param url: The url of the website to read.

@@ -45,7 +45,7 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import json
-from typing import Any, List, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
@@ -85,11 +85,6 @@ class GoogleSheetsTools(GoogleToolkit):
         create_sheet: bool = False,
         update_sheet: bool = False,
         create_duplicate_sheet: bool = False,
-        # Backward compat aliases (deprecated)
-        enable_read_sheet: Optional[bool] = None,
-        enable_create_sheet: Optional[bool] = None,
-        enable_update_sheet: Optional[bool] = None,
-        enable_create_duplicate_sheet: Optional[bool] = None,
         all: bool = False,
         **kwargs,
     ):
@@ -108,40 +103,38 @@ class GoogleSheetsTools(GoogleToolkit):
             create_sheet (bool): Enable creating a sheet.
             update_sheet (bool): Enable updating a sheet.
             create_duplicate_sheet (bool): Enable creating a duplicate sheet.
-            enable_read_sheet (Optional[bool]): Deprecated alias for read_sheet.
-            enable_create_sheet (Optional[bool]): Deprecated alias for create_sheet.
-            enable_update_sheet (Optional[bool]): Deprecated alias for update_sheet.
-            enable_create_duplicate_sheet (Optional[bool]): Deprecated alias for create_duplicate_sheet.
             all (bool): Enable all tools.
         """
-        # Resolve deprecated aliases: explicit deprecated flag overrides new flag
-        _read_sheet = enable_read_sheet if enable_read_sheet is not None else read_sheet
-        _create_sheet = enable_create_sheet if enable_create_sheet is not None else create_sheet
-        _update_sheet = enable_update_sheet if enable_update_sheet is not None else update_sheet
-        _create_duplicate_sheet = (
-            enable_create_duplicate_sheet if enable_create_duplicate_sheet is not None else create_duplicate_sheet
-        )
+        # Backwards compat: enable_X -> X
+        if "enable_read_sheet" in kwargs:
+            read_sheet = kwargs.pop("enable_read_sheet")
+        if "enable_create_sheet" in kwargs:
+            create_sheet = kwargs.pop("enable_create_sheet")
+        if "enable_update_sheet" in kwargs:
+            update_sheet = kwargs.pop("enable_update_sheet")
+        if "enable_create_duplicate_sheet" in kwargs:
+            create_duplicate_sheet = kwargs.pop("enable_create_duplicate_sheet")
 
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
             self.scopes = []
-            if _read_sheet:
+            if read_sheet:
                 self.scopes.append(self.DEFAULT_SCOPES["read"])
-            if _create_sheet or _update_sheet or _create_duplicate_sheet:
+            if create_sheet or update_sheet or create_duplicate_sheet:
                 self.scopes.append(self.DEFAULT_SCOPES["write"])
             # Remove duplicates while preserving order
             self.scopes = list(dict.fromkeys(self.scopes))
         else:
             self.scopes = scopes
             # Validate that required scopes are present for requested operations
-            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.DEFAULT_SCOPES[
+            if (create_sheet or update_sheet or create_duplicate_sheet) and self.DEFAULT_SCOPES[
                 "write"
             ] not in self.scopes:
                 raise ValueError(f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations")
             if (
-                _read_sheet
+                read_sheet
                 and self.DEFAULT_SCOPES["read"] not in self.scopes
                 and self.DEFAULT_SCOPES["write"] not in self.scopes
             ):
@@ -149,14 +142,14 @@ class GoogleSheetsTools(GoogleToolkit):
                     f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} is required for read operations"
                 )
 
-        tools: List[Any] = []
-        if all or _read_sheet:
+        tools: List[Callable] = []
+        if all or read_sheet:
             tools.append(self.read_sheet)
-        if all or _create_sheet:
+        if all or create_sheet:
             tools.append(self.create_sheet)
-        if all or _update_sheet:
+        if all or update_sheet:
             tools.append(self.update_sheet)
-        if all or _create_duplicate_sheet:
+        if all or create_duplicate_sheet:
             tools.append(self.create_duplicate_sheet)
 
         super().__init__(
@@ -188,21 +181,23 @@ class GoogleSheetsTools(GoogleToolkit):
             JSON of list of rows, where each row is a list of values
         """
         if not self.creds:
-            return "Not authenticated. Call auth() first."
+            return json.dumps({"error": "Not authenticated. Call auth() first."})
 
         # Prioritize instance attributes
         sheet_id = self.spreadsheet_id or spreadsheet_id
         sheet_range = self.spreadsheet_range or spreadsheet_range
 
         if not sheet_id or not sheet_range:
-            return "Spreadsheet ID and range must be provided either in constructor or method call"
+            return json.dumps(
+                {"error": "Spreadsheet ID and range must be provided either in constructor or method call"}
+            )
 
         try:
             result = self.service.spreadsheets().values().get(spreadsheetId=sheet_id, range=sheet_range).execute()  # type: ignore
             return json.dumps(result.get("values", []))
 
         except Exception as e:
-            return f"Error reading Google Sheet: {e}"
+            return json.dumps({"error": f"Error reading Google Sheet: {e}"})
 
     @authenticate
     def create_sheet(self, title: str) -> str:
@@ -216,7 +211,7 @@ class GoogleSheetsTools(GoogleToolkit):
             The ID of the created Google Sheet
         """
         if not self.creds:
-            return "Not authenticated. Call auth() first."
+            return json.dumps({"error": "Not authenticated. Call auth() first."})
 
         try:
             spreadsheet = {"properties": {"title": title}}
@@ -224,10 +219,12 @@ class GoogleSheetsTools(GoogleToolkit):
             spreadsheet = self.service.spreadsheets().create(body=spreadsheet, fields="spreadsheetId").execute()  # type: ignore
             spreadsheet_id = spreadsheet.get("spreadsheetId")
 
-            return f"Spreadsheet created: https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+            return json.dumps(
+                {"url": f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}", "spreadsheet_id": spreadsheet_id}
+            )
 
         except Exception as e:
-            return f"Error creating Google Sheet: {e}"
+            return json.dumps({"error": f"Error creating Google Sheet: {e}"})
 
     @authenticate
     def update_sheet(
@@ -250,7 +247,7 @@ class GoogleSheetsTools(GoogleToolkit):
             A message indicating the success or failure of the operation
         """
         if not self.creds:
-            return "Not authenticated. Call auth() first."
+            return json.dumps({"error": "Not authenticated. Call auth() first."})
 
         try:
             # Define the request body
@@ -264,10 +261,10 @@ class GoogleSheetsTools(GoogleToolkit):
                 body=body,
             ).execute()
 
-            return f"Sheet updated successfully: {spreadsheet_id}"
+            return json.dumps({"status": "success", "spreadsheet_id": spreadsheet_id})
 
         except Exception as e:
-            return f"Error updating Google Sheet: {e}"
+            return json.dumps({"error": f"Error updating Google Sheet: {e}"})
 
     @authenticate
     def create_duplicate_sheet(
@@ -290,10 +287,10 @@ class GoogleSheetsTools(GoogleToolkit):
             A link to the duplicated spreadsheet.
         """
         if not self.creds:
-            return "Not authenticated. Call auth() first."
+            return json.dumps({"error": "Not authenticated. Call auth() first."})
 
         if not self.service:
-            return "Service not initialized"
+            return json.dumps({"error": "Service not initialized"})
 
         try:
             # Ensure the drive scope is included
@@ -338,6 +335,11 @@ class GoogleSheetsTools(GoogleToolkit):
                         },
                     ).execute()
 
-            return f"Spreadsheet duplicated successfully: https://docs.google.com/spreadsheets/d/{new_spreadsheet_id}"
+            return json.dumps(
+                {
+                    "url": f"https://docs.google.com/spreadsheets/d/{new_spreadsheet_id}",
+                    "spreadsheet_id": new_spreadsheet_id,
+                }
+            )
         except Exception as e:
-            return f"Error duplicating spreadsheet via Drive API: {e}"
+            return json.dumps({"error": f"Error duplicating spreadsheet via Drive API: {e}"})

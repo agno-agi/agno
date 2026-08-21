@@ -1,10 +1,10 @@
 import json
 import time
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error, log_info, logger
+from agno.utils.log import log_exception, log_info, logger
 
 try:
     from twelvelabs import TwelveLabs
@@ -14,38 +14,21 @@ except ImportError:
 
 
 class TwelveLabsTools(Toolkit):
-    """
-    TwelveLabsTools is a toolkit for interfacing with TwelveLabs' video understanding APIs.
+    """Toolkit for TwelveLabs video understanding APIs.
 
-    It exposes three video-understanding capabilities for agents (`analyze_video` and
-    `embed_text` are enabled by default; `embed_video` is long-running and opt-in):
-      - `analyze_video`: ask a natural-language question about a video and get a text answer
-        back, powered by the Pegasus video understanding model.
-      - `embed_text`: generate a multimodal embedding for a piece of text using the Marengo
-        model. Marengo embeds text, video, audio and images into the same latent space, so
-        these vectors can be used to search a video corpus by text.
-      - `embed_video`: embed a whole video into the same Marengo latent space with one
-        vector per 2-10s segment. Video embedding is asynchronous: the tool creates a task,
-        waits for it to finish, and returns a summary of the resulting segments (their count,
-        the embedding dimensionality and each segment's time offsets and scope). The raw
-        vectors are not returned to the agent (see `embed_video` for why); this tool is
-        long-running, so it is disabled by default and must be enabled explicitly.
+    Provides video analysis with Pegasus and multimodal embeddings with Marengo.
 
     Args:
-        api_key (Optional[str]): TwelveLabs API key. Read from the `TWELVELABS_API_KEY`
-            environment variable if not provided.
-        analyze_model (str): The Pegasus model used for `analyze_video`. Default is "pegasus1.5".
-        embed_model (str): The Marengo model used for `embed_text` and `embed_video`. Default is "marengo3.0".
-        max_tokens (int): Maximum number of tokens for `analyze_video` responses. Default is 2048.
-        embed_poll_interval (float): Seconds to wait between status checks while an `embed_video`
-            task is processing. Default is 5.0.
-        embed_timeout (float): Maximum seconds to wait for an `embed_video` task to finish before
-            giving up. Default is 300.0.
-        enable_analyze_video (bool): Enable the `analyze_video` tool. Default is True.
-        enable_embed_text (bool): Enable the `embed_text` tool. Default is True.
-        enable_embed_video (bool): Enable the `embed_video` tool. Because video embedding is
-            long-running (it polls an async task), this is opt-in and defaults to False.
-        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        api_key: TwelveLabs API key. Falls back to TWELVELABS_API_KEY env var.
+        analyze_model: Pegasus model for analyze_video. Defaults to "pegasus1.5".
+        embed_model: Marengo model for embeddings. Defaults to "marengo3.0".
+        max_tokens: Max tokens for analyze_video responses. Defaults to 2048.
+        embed_poll_interval: Seconds between embed_video status checks. Defaults to 5.0.
+        embed_timeout: Max seconds to wait for embed_video task. Defaults to 300.0.
+        analyze_video: Enable analyze_video tool. Defaults to True.
+        embed_text: Enable embed_text tool. Defaults to True.
+        embed_video: Enable embed_video tool. Defaults to False (long-running async task).
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -56,12 +39,20 @@ class TwelveLabsTools(Toolkit):
         max_tokens: int = 2048,
         embed_poll_interval: float = 5.0,
         embed_timeout: float = 300.0,
-        enable_analyze_video: bool = True,
-        enable_embed_text: bool = True,
-        enable_embed_video: bool = False,
+        analyze_video: bool = True,
+        embed_text: bool = True,
+        embed_video: bool = False,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_analyze_video" in kwargs:
+            analyze_video = kwargs.pop("enable_analyze_video")
+        if "enable_embed_text" in kwargs:
+            embed_text = kwargs.pop("enable_embed_text")
+        if "enable_embed_video" in kwargs:
+            embed_video = kwargs.pop("enable_embed_video")
+
         self.api_key = api_key or getenv("TWELVELABS_API_KEY")
         if not self.api_key:
             logger.warning("No TwelveLabs API key provided. Set TWELVELABS_API_KEY or pass api_key.")
@@ -73,12 +64,12 @@ class TwelveLabsTools(Toolkit):
         self.embed_timeout = embed_timeout
         self._client: Optional[TwelveLabs] = None
 
-        tools: List[Any] = []
-        if all or enable_analyze_video:
+        tools: List[Callable] = []
+        if all or analyze_video:
             tools.append(self.analyze_video)
-        if all or enable_embed_text:
+        if all or embed_text:
             tools.append(self.embed_text)
-        if all or enable_embed_video:
+        if all or embed_video:
             tools.append(self.embed_video)
 
         super().__init__(name="twelvelabs_tools", tools=tools, **kwargs)
@@ -102,9 +93,9 @@ class TwelveLabsTools(Toolkit):
             str: The text answer generated from the video, or an error message.
         """
         if not video_url:
-            return "No video_url provided"
+            return json.dumps({"error": "No video_url provided"})
         if not prompt:
-            return "No prompt provided"
+            return json.dumps({"error": "No prompt provided"})
 
         log_info(f"Analyzing video with Pegasus: {video_url}")
         try:
@@ -114,10 +105,10 @@ class TwelveLabsTools(Toolkit):
                 prompt=prompt,
                 max_tokens=self.max_tokens,
             )
-            return response.data or "No analysis returned"
+            return json.dumps({"analysis": response.data or "No analysis returned"})
         except Exception as e:
-            log_error(f"Error analyzing video {video_url}: {e}")
-            return f"Error analyzing video: {e}"
+            log_exception(f"Error analyzing video {video_url}")
+            return json.dumps({"error": f"Error analyzing video: {e}"})
 
     def embed_text(self, text: str) -> str:
         """Generate a multimodal embedding for the given text using the Marengo model.
@@ -132,20 +123,20 @@ class TwelveLabsTools(Toolkit):
             str: A JSON object with the model name and the embedding vector, or an error message.
         """
         if not text:
-            return "No text provided"
+            return json.dumps({"error": "No text provided"})
 
         log_info(f"Embedding text with Marengo: {text[:50]}")
         try:
             response = self.client.embed.create(model_name=self.embed_model, text=text)
             if response.text_embedding is None or not response.text_embedding.segments:
-                return "No embedding returned"
+                return json.dumps({"error": "No embedding returned"})
             vector = response.text_embedding.segments[0].float_
             if not vector:
-                return "No embedding returned"
+                return json.dumps({"error": "No embedding returned"})
             return json.dumps({"model": self.embed_model, "dimensions": len(vector), "embedding": vector})
         except Exception as e:
-            log_error(f"Error embedding text: {e}")
-            return f"Error embedding text: {e}"
+            log_exception("Error embedding text")
+            return json.dumps({"error": f"Error embedding text: {e}"})
 
     def embed_video(self, video_url: str) -> str:
         """Generate Marengo multimodal embeddings for a video.
@@ -169,14 +160,14 @@ class TwelveLabsTools(Toolkit):
                 message.
         """
         if not video_url:
-            return "No video_url provided"
+            return json.dumps({"error": "No video_url provided"})
 
         log_info(f"Embedding video with Marengo: {video_url}")
         try:
             task = self.client.embed.tasks.create(model_name=self.embed_model, video_url=video_url)
             task_id = task.id
             if not task_id:
-                return "No embedding task id returned"
+                return json.dumps({"error": "No embedding task id returned"})
 
             # Video embedding is asynchronous: poll the task status until it is terminal
             # (`ready` or `failed`), bounded by `embed_timeout` so the tool never blocks forever.
@@ -184,15 +175,17 @@ class TwelveLabsTools(Toolkit):
             status = self.client.embed.tasks.status(task_id).status
             while status not in ("ready", "failed"):
                 if time.monotonic() >= deadline:
-                    return f"Video embedding task timed out after {self.embed_timeout:.0f}s (status: {status})"
+                    return json.dumps(
+                        {"error": f"Video embedding task timed out after {self.embed_timeout:.0f}s (status: {status})"}
+                    )
                 time.sleep(self.embed_poll_interval)
                 status = self.client.embed.tasks.status(task_id).status
             if status != "ready":
-                return f"Video embedding task did not complete (status: {status})"
+                return json.dumps({"error": f"Video embedding task did not complete (status: {status})"})
 
             result = self.client.embed.tasks.retrieve(task_id=task_id)
             if result.video_embedding is None or not result.video_embedding.segments:
-                return "No embedding returned"
+                return json.dumps({"error": "No embedding returned"})
 
             dimensions = 0
             segments: List[Dict[str, Any]] = []
@@ -214,7 +207,7 @@ class TwelveLabsTools(Toolkit):
                     }
                 )
             if not segments:
-                return "No embedding returned"
+                return json.dumps({"error": "No embedding returned"})
 
             return json.dumps(
                 {
@@ -225,5 +218,5 @@ class TwelveLabsTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_error(f"Error embedding video {video_url}: {e}")
-            return f"Error embedding video: {e}"
+            log_exception(f"Error embedding video {video_url}")
+            return json.dumps({"error": f"Error embedding video: {e}"})

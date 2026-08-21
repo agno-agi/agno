@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from xml.etree import ElementTree
 
 import httpx
@@ -9,26 +9,53 @@ from agno.utils.log import log_debug
 
 
 class PubmedTools(Toolkit):
+    """Search PubMed for medical and biomedical literature.
+
+    PubMed is a free search engine accessing primarily the MEDLINE database
+    of references and abstracts on life sciences and biomedical topics.
+
+    Requirements:
+        - No API key required, but an email is recommended for NCBI identification
+
+    Example:
+        >>> from agno.tools.pubmed import PubmedTools
+        >>> tools = PubmedTools(email="your@email.com")
+    """
+
     def __init__(
         self,
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
         results_expanded: bool = False,
-        enable_search_pubmed: bool = True,
+        search_pubmed: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        """Initialize PubMed toolkit for searching medical literature.
+
+        Args:
+            email: Email for NCBI API identification.
+            max_results: Maximum results per search. Defaults to 10.
+            results_expanded: If True, return full metadata. If False, concise output.
+            search_pubmed: Enable the search_pubmed tool.
+            all: Enable all tools.
+        """
+        # Backwards compat: enable_X -> X
+        if "enable_search_pubmed" in kwargs:
+            search_pubmed = kwargs.pop("enable_search_pubmed")
+
         self.max_results: Optional[int] = max_results
         self.email: str = email
         self.results_expanded: bool = results_expanded
 
-        tools: List[Any] = []
-        if enable_search_pubmed or all:
+        tools: List[Callable] = []
+        if all or search_pubmed:
             tools.append(self.search_pubmed)
 
         super().__init__(name="pubmed", tools=tools, **kwargs)
 
-    def fetch_pubmed_ids(self, query: str, max_results: int, email: str) -> List[str]:
+    def _fetch_pubmed_ids(self, query: str, max_results: int, email: str) -> List[str]:
+        """Fetch PubMed IDs matching a search query."""
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
         params = {
             "db": "pubmed",
@@ -41,13 +68,14 @@ class PubmedTools(Toolkit):
         root = ElementTree.fromstring(response.content)
         return [id_elem.text for id_elem in root.findall(".//Id") if id_elem.text is not None]
 
-    def fetch_details(self, pubmed_ids: List[str]) -> ElementTree.Element:
+    def _fetch_details(self, pubmed_ids: List[str]) -> ElementTree.Element:
+        """Fetch detailed article metadata for given PubMed IDs."""
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
         params = {"db": "pubmed", "id": ",".join(pubmed_ids), "retmode": "xml"}
         response = httpx.get(url, params=params)
         return ElementTree.fromstring(response.content)
 
-    def parse_details(self, xml_root: ElementTree.Element) -> List[Dict[str, Any]]:
+    def _parse_details(self, xml_root: ElementTree.Element) -> List[Dict[str, Optional[str]]]:
         articles = []
         for article in xml_root.findall(".//PubmedArticle"):
             # Get existing fields
@@ -137,21 +165,21 @@ class PubmedTools(Toolkit):
         return articles
 
     def search_pubmed(self, query: str, max_results: Optional[int] = None) -> str:
-        """Use this function to search PubMed for articles.
+        """Search PubMed for medical and biomedical literature.
 
         Args:
-            query (str): The search query.
-            max_results (int, optional): The maximum number of results to return. Defaults to the value set on the toolkit, or 10.
+            query: Natural language search query (e.g., "COVID-19 vaccine efficacy").
+            max_results: Maximum number of results. Defaults to toolkit setting or 10.
 
         Returns:
-            str: A JSON string containing the search results.
+            JSON with article details including title, authors, abstract, DOI, and URLs.
         """
         try:
             log_debug(f"Searching PubMed for: {query}")
             max_results = max_results or self.max_results or 10
-            ids = self.fetch_pubmed_ids(query, max_results, self.email)
-            details_root = self.fetch_details(ids)
-            articles = self.parse_details(details_root)
+            ids = self._fetch_pubmed_ids(query, max_results, self.email)
+            details_root = self._fetch_details(ids)
+            articles = self._parse_details(details_root)
 
             # Create result strings based on configured detail level
             results = []
@@ -173,7 +201,7 @@ class PubmedTools(Toolkit):
                     )
                 else:
                     # Concise format with just essential information
-                    summary = article.get("Summary", "")
+                    summary = article.get("Summary") or ""
                     article_text = (
                         f"Title: {article.get('Title')}\n"
                         f"Published: {article.get('Published')}\n"
@@ -185,4 +213,4 @@ class PubmedTools(Toolkit):
 
             return json.dumps(results)
         except Exception as e:
-            return f"Could not fetch articles. Error: {e}"
+            return json.dumps({"error": f"Could not fetch articles: {e}"})

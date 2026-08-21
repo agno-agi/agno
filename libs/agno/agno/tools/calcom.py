@@ -1,6 +1,7 @@
+import json
 from datetime import datetime
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, logger
@@ -19,12 +20,11 @@ class CalComTools(Toolkit):
         event_type_id: Optional[int] = None,
         user_timezone: Optional[str] = None,
         timeout: int = 30,
-        # Enable flags for <6 functions
-        enable_get_available_slots: bool = True,
-        enable_create_booking: bool = True,
-        enable_get_upcoming_bookings: bool = True,
-        enable_reschedule_booking: bool = True,
-        enable_cancel_booking: bool = True,
+        get_available_slots: bool = True,
+        create_booking: bool = False,
+        get_upcoming_bookings: bool = True,
+        reschedule_booking: bool = False,
+        cancel_booking: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -36,6 +36,17 @@ class CalComTools(Toolkit):
             user_timezone: User's timezone in IANA format (e.g., 'Asia/Kolkata')
             timeout: Per-request HTTP timeout in seconds. Defaults to 30.
         """
+        # Backwards compat: enable_X -> X
+        if "enable_get_available_slots" in kwargs:
+            get_available_slots = kwargs.pop("enable_get_available_slots")
+        if "enable_create_booking" in kwargs:
+            create_booking = kwargs.pop("enable_create_booking")
+        if "enable_get_upcoming_bookings" in kwargs:
+            get_upcoming_bookings = kwargs.pop("enable_get_upcoming_bookings")
+        if "enable_reschedule_booking" in kwargs:
+            reschedule_booking = kwargs.pop("enable_reschedule_booking")
+        if "enable_cancel_booking" in kwargs:
+            cancel_booking = kwargs.pop("enable_cancel_booking")
 
         # Get credentials from environment if not provided
         self.api_key = api_key or getenv("CALCOM_API_KEY")
@@ -52,19 +63,19 @@ class CalComTools(Toolkit):
 
         self.user_timezone = user_timezone or "America/New_York"
 
-        tools: List[Any] = []
-        if all or enable_get_available_slots:
+        tools: List[Callable] = []
+        if all or get_available_slots:
             tools.append(self.get_available_slots)
-        if all or enable_create_booking:
+        if all or create_booking:
             tools.append(self.create_booking)
-        if all or enable_get_upcoming_bookings:
+        if all or get_upcoming_bookings:
             tools.append(self.get_upcoming_bookings)
-        if all or enable_reschedule_booking:
+        if all or reschedule_booking:
             tools.append(self.reschedule_booking)
-        if all or enable_cancel_booking:
+        if all or cancel_booking:
             tools.append(self.cancel_booking)
 
-        super().__init__(name="calcom", tools=tools, timeout=timeout, **kwargs)
+        super().__init__(name="calcom_tools", tools=tools, timeout=timeout, **kwargs)
 
     def _convert_to_user_timezone(self, utc_time: str) -> str:
         """Convert UTC time to user's timezone.
@@ -104,13 +115,11 @@ class CalComTools(Toolkit):
         """Get available time slots for booking.
 
         Args:
-            start_date: Start date in YYYY-MM-DD format
-            end_date: End date in YYYY-MM-DD format
-            user_timezone: User's timezone
-            event_type_id: Optional specific event type ID
+            start_date: Start date in YYYY-MM-DD format.
+            end_date: End date in YYYY-MM-DD format.
 
         Returns:
-            str: Available slots or error message
+            JSON with available slots or error.
         """
         try:
             url = "https://api.cal.com/v2/slots/available"
@@ -128,11 +137,11 @@ class CalComTools(Toolkit):
                     for slot in times:
                         user_time = self._convert_to_user_timezone(slot["time"])
                         available_slots.append(user_time)
-                return f"Available slots: {', '.join(available_slots)}"
-            return f"Failed to fetch slots: {response.text}"
+                return json.dumps({"slots": available_slots})
+            return json.dumps({"error": f"Failed to fetch slots: {response.text}"})
         except Exception as e:
             logger.exception("Error fetching available slots")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})
 
     def create_booking(
         self,
@@ -143,12 +152,12 @@ class CalComTools(Toolkit):
         """Create a new booking.
 
         Args:
-            start_time: Start time in YYYY-MM-DDTHH:MM:SSZ format
-            name: Attendee's name
-            email: Attendee's email
+            start_time: Start time in YYYY-MM-DDTHH:MM:SSZ format.
+            name: Attendee's name.
+            email: Attendee's email.
 
         Returns:
-            str: Booking confirmation or error message
+            JSON with booking uid and time, or error.
         """
         try:
             url = "https://api.cal.com/v2/bookings"
@@ -163,20 +172,20 @@ class CalComTools(Toolkit):
             if response.status_code == 201:
                 booking_data = response.json()["data"]
                 user_time = self._convert_to_user_timezone(booking_data["start"])
-                return f"Booking created successfully for {user_time}. Booking uid: {booking_data['uid']}"
-            return f"Failed to create booking: {response.text}"
+                return json.dumps({"success": True, "uid": booking_data["uid"], "time": user_time})
+            return json.dumps({"error": f"Failed to create booking: {response.text}"})
         except Exception as e:
             logger.exception("Error creating booking")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})
 
     def get_upcoming_bookings(self, email: Optional[str] = None) -> str:
         """Get all upcoming bookings for an attendee.
 
         Args:
-            email (str): Attendee's email [Optional]
+            email: Attendee's email (optional).
 
         Returns:
-            str: List of upcoming bookings or error message
+            JSON with list of bookings or error.
         """
         try:
             url = "https://api.cal.com/v2/bookings"
@@ -188,19 +197,24 @@ class CalComTools(Toolkit):
             if response.status_code == 200:
                 bookings = response.json()["data"]
                 if not bookings:
-                    return "No upcoming bookings found."
+                    return json.dumps({"bookings": []})
 
                 booking_info = []
                 for booking in bookings:
                     user_time = self._convert_to_user_timezone(booking["start"])
                     booking_info.append(
-                        f"uid: {booking['uid']}, Title: {booking['title']}, Time: {user_time}, Status: {booking['status']}"
+                        {
+                            "uid": booking["uid"],
+                            "title": booking["title"],
+                            "time": user_time,
+                            "status": booking["status"],
+                        }
                     )
-                return "Upcoming bookings:\n" + "\n".join(booking_info)
-            return f"Failed to fetch bookings: {response.text}"
+                return json.dumps({"bookings": booking_info})
+            return json.dumps({"error": f"Failed to fetch bookings: {response.text}"})
         except Exception as e:
             logger.exception("Error fetching upcoming bookings")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})
 
     def reschedule_booking(
         self,
@@ -211,13 +225,12 @@ class CalComTools(Toolkit):
         """Reschedule an existing booking.
 
         Args:
-            booking_uid: Booking UID to reschedule
-            new_start_time: New start time in YYYY-MM-DDTHH:MM:SSZ format
-            reason: Reason for rescheduling
-            user_timezone: User's timezone
+            booking_uid: Booking UID to reschedule.
+            new_start_time: New start time in YYYY-MM-DDTHH:MM:SSZ format.
+            reason: Reason for rescheduling.
 
         Returns:
-            str: Rescheduling confirmation or error message
+            JSON with new booking uid and time, or error.
         """
         try:
             url = f"https://api.cal.com/v2/bookings/{booking_uid}/reschedule"
@@ -228,21 +241,21 @@ class CalComTools(Toolkit):
             if response.status_code == 201:
                 booking_data = response.json()["data"]
                 user_time = self._convert_to_user_timezone(booking_data["start"])
-                return f"Booking rescheduled to {user_time}. New booking uid: {booking_data['uid']}"
-            return f"Failed to reschedule booking: {response.text}"
+                return json.dumps({"success": True, "uid": booking_data["uid"], "time": user_time})
+            return json.dumps({"error": f"Failed to reschedule booking: {response.text}"})
         except Exception as e:
             logger.exception("Error rescheduling booking")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})
 
     def cancel_booking(self, booking_uid: str, reason: str) -> str:
         """Cancel an existing booking.
 
         Args:
-            booking_uid: Booking UID to cancel
-            reason: Reason for cancellation
+            booking_uid: Booking UID to cancel.
+            reason: Reason for cancellation.
 
         Returns:
-            str: Cancellation confirmation or error message
+            JSON with success status or error.
         """
         try:
             url = f"https://api.cal.com/v2/bookings/{booking_uid}/cancel"
@@ -250,8 +263,8 @@ class CalComTools(Toolkit):
 
             response = requests.post(url, json=payload, headers=self._get_headers(), timeout=self.timeout)
             if response.status_code == 200:
-                return "Booking cancelled successfully."
-            return f"Failed to cancel booking: {response.text}"
+                return json.dumps({"success": True, "message": "Booking cancelled"})
+            return json.dumps({"error": f"Failed to cancel booking: {response.text}"})
         except Exception as e:
             logger.exception("Error cancelling booking")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})

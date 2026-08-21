@@ -1,24 +1,15 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
+from agno.utils.serialize import to_json_str
 
 try:
     from parallel import Parallel as ParallelClient
 except ImportError:
     raise ImportError("`parallel-web` not installed. Please install using `pip install parallel-web`")
-
-
-class CustomJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles non-serializable types by converting them to strings."""
-
-    def default(self, obj):
-        try:
-            return super().default(obj)
-        except TypeError:
-            return str(obj)
 
 
 class ParallelTools(Toolkit):
@@ -33,10 +24,10 @@ class ParallelTools(Toolkit):
 
     Args:
         api_key (Optional[str]): Parallel API key. If not provided, will use PARALLEL_API_KEY environment variable.
-        enable_search (bool): Enable Search API functionality. Default is True.
-        enable_extract (bool): Enable Extract API functionality. Default is True.
-        enable_task (bool): Enable Task API (deep research). Default is False.
-        enable_monitor (bool): Enable Monitor API (web tracking). Default is False.
+        search (bool): Enable Search API functionality. Default is True.
+        extract (bool): Enable Extract API functionality. Default is True.
+        task (bool): Enable Task API (deep research). Default is False.
+        monitor (bool): Enable Monitor API (web tracking). Default is False.
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         max_results (int): Default maximum number of results for search operations. Default is 10.
         max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
@@ -55,10 +46,10 @@ class ParallelTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_search: bool = True,
-        enable_extract: bool = True,
-        enable_task: bool = False,
-        enable_monitor: bool = False,
+        search: bool = True,
+        extract: bool = True,
+        task: bool = False,
+        monitor: bool = False,
         all: bool = False,
         max_results: int = 10,
         max_chars_per_result: int = 10000,
@@ -74,6 +65,16 @@ class ParallelTools(Toolkit):
         default_output_schema: Optional[Union[Dict[str, Any], str]] = None,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_search" in kwargs:
+            search = kwargs.pop("enable_search")
+        if "enable_extract" in kwargs:
+            extract = kwargs.pop("enable_extract")
+        if "enable_task" in kwargs:
+            task = kwargs.pop("enable_task")
+        if "enable_monitor" in kwargs:
+            monitor = kwargs.pop("enable_monitor")
+
         self.api_key: Optional[str] = api_key or getenv("PARALLEL_API_KEY")
         if not self.api_key:
             log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")
@@ -93,14 +94,14 @@ class ParallelTools(Toolkit):
 
         self.parallel_client = ParallelClient(api_key=self.api_key)
 
-        tools: List[Any] = []
-        if all or enable_search:
+        tools: List[Callable] = []
+        if all or search:
             tools.append(self.parallel_search)
-        if all or enable_extract:
+        if all or extract:
             tools.append(self.parallel_extract)
-        if all or enable_task:
+        if all or task:
             tools.extend([self.create_task, self.get_task_status, self.get_task_result])
-        if all or enable_monitor:
+        if all or monitor:
             tools.extend(
                 [
                     self.create_monitor,
@@ -178,10 +179,10 @@ class ParallelTools(Toolkit):
 
             search_result = self.parallel_client.search(**search_params)
 
-            # Prefer SDK's model_dump() for complete response, fall back to manual formatting
+            # Prefer SDK's model for complete response, fall back to manual formatting
             try:
                 if hasattr(search_result, "model_dump"):
-                    return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
+                    return to_json_str(search_result)
             except Exception:
                 pass
             formatted_results: Dict[str, Any] = {
@@ -207,7 +208,7 @@ class ParallelTools(Toolkit):
             if hasattr(search_result, "usage"):
                 formatted_results["usage"] = search_result.usage
 
-            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
+            return to_json_str(formatted_results)
 
         except Exception as e:
             log_error(f"Error searching Parallel for objective '{objective}': {str(e)}")
@@ -274,10 +275,10 @@ class ParallelTools(Toolkit):
 
             extract_result = self.parallel_client.extract(**extract_params)
 
-            # Prefer SDK's model_dump() for complete response, fall back to manual formatting
+            # Prefer SDK's model for complete response, fall back to manual formatting
             try:
                 if hasattr(extract_result, "model_dump"):
-                    return json.dumps(extract_result.model_dump(), cls=CustomJSONEncoder)
+                    return to_json_str(extract_result)
             except Exception:
                 pass
 
@@ -314,7 +315,7 @@ class ParallelTools(Toolkit):
             if hasattr(extract_result, "usage"):
                 formatted_results["usage"] = extract_result.usage
 
-            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
+            return to_json_str(formatted_results)
 
         except Exception as e:
             log_error(f"Error extracting from Parallel: {str(e)}")
@@ -401,7 +402,7 @@ class ParallelTools(Toolkit):
             )
 
             output_data = self._format_task_output(run_id, task_result)
-            return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
+            return to_json_str(output_data)
 
         except Exception as e:
             log_error(f"Error getting result for task {run_id}: {str(e)}")
@@ -429,7 +430,6 @@ class ParallelTools(Toolkit):
                     "created_at": task_run.created_at,
                     "modified_at": task_run.modified_at,
                 },
-                cls=CustomJSONEncoder,
                 indent=2,
             )
 

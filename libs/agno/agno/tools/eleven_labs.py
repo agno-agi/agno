@@ -1,7 +1,8 @@
+import json
 from io import BytesIO
 from os import getenv, path
 from pathlib import Path
-from typing import Any, Iterator, List, Literal, Optional, Union
+from typing import Callable, Iterator, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -39,12 +40,20 @@ class ElevenLabsTools(Toolkit):
         target_directory: Optional[str] = None,
         model_id: str = "eleven_multilingual_v2",
         output_format: ElevenLabsAudioOutputFormat = "mp3_44100_64",
-        enable_get_voices: bool = True,
-        enable_generate_sound_effect: bool = True,
-        enable_text_to_speech: bool = True,
+        get_voices: bool = True,
+        generate_sound_effect: bool = True,
+        text_to_speech: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_get_voices" in kwargs:
+            get_voices = kwargs.pop("enable_get_voices")
+        if "enable_generate_sound_effect" in kwargs:
+            generate_sound_effect = kwargs.pop("enable_generate_sound_effect")
+        if "enable_text_to_speech" in kwargs:
+            text_to_speech = kwargs.pop("enable_text_to_speech")
+
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
         if not self.api_key:
             log_error("ELEVEN_LABS_API_KEY not set. Please set the ELEVEN_LABS_API_KEY environment variable.")
@@ -60,22 +69,21 @@ class ElevenLabsTools(Toolkit):
 
         self.eleven_labs_client = ElevenLabs(api_key=self.api_key)
 
-        tools: List[Any] = []
-        if all or enable_get_voices:
-            tools.append(self.get_voices)
-        if all or enable_generate_sound_effect:
-            tools.append(self.generate_sound_effect)
-        if all or enable_text_to_speech:
-            tools.append(self.text_to_speech)
+        tools: List[Callable] = []
+        if all or get_voices:
+            tools.append(self.elevenlabs_get_voices)
+        if all or generate_sound_effect:
+            tools.append(self.elevenlabs_generate_sound_effect)
+        if all or text_to_speech:
+            tools.append(self.elevenlabs_text_to_speech)
 
         super().__init__(name="elevenlabs_tools", tools=tools, **kwargs)
 
-    def get_voices(self) -> str:
-        """
-        Get all the voices available.
+    def elevenlabs_get_voices(self) -> str:
+        """Get all available voices.
 
         Returns:
-            result (list): A list of voices that have an ID, name and description.
+            JSON list of voices with id, name, and description.
         """
         try:
             voices = self.eleven_labs_client.voices.get_all()
@@ -90,11 +98,11 @@ class ElevenLabsTools(Toolkit):
                     }
                 )
 
-            return str(response)
+            return json.dumps(response)
 
         except Exception as e:
             log_error(f"Failed to fetch voices: {str(e)}")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
     def _process_audio(self, audio_generator: Iterator[bytes]) -> bytes:
         audio_bytes = BytesIO()
@@ -127,15 +135,15 @@ class ElevenLabsTools(Toolkit):
 
         return audio_data
 
-    def generate_sound_effect(self, prompt: str, duration_seconds: Optional[float] = None) -> ToolResult:
-        """
-        Generate a sound effect from a text description.
+    def elevenlabs_generate_sound_effect(self, prompt: str, duration_seconds: Optional[float] = None) -> ToolResult:
+        """Generate a sound effect from a text description.
 
         Args:
-            prompt (str): Description of the sound effect
-            duration_seconds (Optional[float]): Duration in seconds to generate audio from. Has to be between 0.5 and 22.
+            prompt: Description of the sound effect.
+            duration_seconds: Duration in seconds (0.5 to 22).
+
         Returns:
-            ToolResult: A ToolResult containing the generated audio or error message.
+            ToolResult containing the generated audio.
         """
         try:
             audio_generator = self.eleven_labs_client.text_to_sound_effects.convert(
@@ -160,14 +168,14 @@ class ElevenLabsTools(Toolkit):
             log_error(f"Failed to generate sound effect: {str(e)}")
             return ToolResult(content=f"Error: {e}")
 
-    def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
-        """
-        Convert text to speech.
+    def elevenlabs_text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
+        """Convert text to speech.
 
         Args:
-            prompt (str): Text to generate audio from.
+            prompt: Text to generate audio from.
+
         Returns:
-            ToolResult: A ToolResult containing the generated audio or error message.
+            ToolResult containing the generated audio.
         """
         try:
             audio_generator = self.eleven_labs_client.text_to_speech.convert(

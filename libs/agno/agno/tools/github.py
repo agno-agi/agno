@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -13,18 +13,76 @@ except ImportError:
 
 
 class GithubTools(Toolkit):
+    # Tool name constants for include_tools/exclude_tools
+    SEARCH_REPOSITORIES = "search_repositories"
+    LIST_REPOSITORIES = "list_repositories"
+    GET_REPOSITORY = "get_repository"
+    GET_PULL_REQUEST = "get_pull_request"
+    GET_PULL_REQUEST_CHANGES = "get_pull_request_changes"
+    CREATE_ISSUE = "create_issue"
+    CREATE_REPOSITORY = "create_repository"
+    DELETE_REPOSITORY = "delete_repository"
+    LIST_BRANCHES = "list_branches"
+    GET_REPOSITORY_LANGUAGES = "get_repository_languages"
+    GET_PULL_REQUEST_COUNT = "get_pull_request_count"
+    GET_REPOSITORY_STARS = "get_repository_stars"
+    GET_PULL_REQUESTS = "get_pull_requests"
+    GET_PULL_REQUEST_COMMENTS = "get_pull_request_comments"
+    CREATE_PULL_REQUEST_COMMENT = "create_pull_request_comment"
+    EDIT_PULL_REQUEST_COMMENT = "edit_pull_request_comment"
+    GET_PULL_REQUEST_WITH_DETAILS = "get_pull_request_with_details"
+    GET_REPOSITORY_WITH_STATS = "get_repository_with_stats"
+    LIST_ISSUES = "list_issues"
+    GET_ISSUE = "get_issue"
+    COMMENT_ON_ISSUE = "comment_on_issue"
+    CLOSE_ISSUE = "close_issue"
+    REOPEN_ISSUE = "reopen_issue"
+    ASSIGN_ISSUE = "assign_issue"
+    LABEL_ISSUE = "label_issue"
+    LIST_ISSUE_COMMENTS = "list_issue_comments"
+    EDIT_ISSUE = "edit_issue"
+    CREATE_PULL_REQUEST = "create_pull_request"
+    CREATE_FILE = "create_file"
+    GET_FILE_CONTENT = "get_file_content"
+    UPDATE_FILE = "update_file"
+    DELETE_FILE = "delete_file"
+    GET_DIRECTORY_CONTENT = "get_directory_content"
+    GET_BRANCH_CONTENT = "get_branch_content"
+    CREATE_BRANCH = "create_branch"
+    SET_DEFAULT_BRANCH = "set_default_branch"
+    SEARCH_CODE = "search_code"
+    SEARCH_ISSUES_AND_PRS = "search_issues_and_prs"
+    CREATE_REVIEW_REQUEST = "create_review_request"
+
     def __init__(
         self,
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
+        all: bool = False,
         **kwargs,
     ):
+        """Initialize GitHub toolkit for repository and issue management.
+
+        Args:
+            access_token: GitHub personal access token. Falls back to GITHUB_ACCESS_TOKEN env var.
+            base_url: GitHub Enterprise base URL. If None, uses public GitHub.
+            all: Enable all tools (default behavior, kept for API consistency).
+            **kwargs: Passed to Toolkit. Use include_tools/exclude_tools to filter.
+
+        Example:
+            # Include only specific tools
+            GithubTools(include_tools=[GithubTools.SEARCH_REPOSITORIES, GithubTools.GET_REPOSITORY])
+
+            # Exclude destructive tools
+            GithubTools(exclude_tools=[GithubTools.DELETE_REPOSITORY, GithubTools.DELETE_FILE])
+        """
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
 
         self.g = self.authenticate()
 
-        tools: List[Any] = [
+        # Register all tools - base Toolkit handles include_tools/exclude_tools filtering
+        tools: List[Callable] = [
             self.search_repositories,
             self.list_repositories,
             self.get_repository,

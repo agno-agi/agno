@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -15,35 +15,57 @@ except ImportError:
 
 
 class WikipediaTools(Toolkit):
+    """Tools for searching Wikipedia articles.
+
+    Provides search functionality to retrieve Wikipedia content. When a Knowledge base
+    is provided, search results are automatically added to the knowledge base.
+
+    Args:
+        knowledge: Optional Knowledge base to store search results.
+        auto_suggest: Let Wikipedia find a valid page title for the query. Defaults to True.
+        search_wikipedia: Enable basic Wikipedia search tool. Defaults to True.
+        search_wikipedia_and_update_knowledge_base: Enable search with knowledge base update.
+            Only available when knowledge is provided. Defaults to True.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         knowledge: Optional[Knowledge] = None,
         auto_suggest: bool = True,
+        search_wikipedia: bool = True,
+        search_wikipedia_and_update_knowledge_base: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        tools = []
+        tools: List[Callable] = []
 
         self.auto_suggest = auto_suggest
         self.knowledge: Optional[Knowledge] = knowledge
+
         if self.knowledge is not None and isinstance(self.knowledge, Knowledge):
-            tools.append(self.search_wikipedia_and_update_knowledge_base)
+            if all or search_wikipedia_and_update_knowledge_base:
+                tools.append(self.search_wikipedia_and_update_knowledge_base)
         else:
-            tools.append(self.search_wikipedia)  # type: ignore
+            if all or search_wikipedia:
+                tools.append(self.search_wikipedia)  # type: ignore
 
         super().__init__(name="wikipedia_tools", tools=tools, **kwargs)
 
     def search_wikipedia_and_update_knowledge_base(self, topic: str) -> str:
-        """This function searches wikipedia for a topic, adds the results to the knowledge base and returns them.
+        """Search Wikipedia for a topic and add results to the knowledge base.
 
-        USE THIS FUNCTION TO GET INFORMATION WHICH DOES NOT EXIST.
+        Use this function to get information which does not exist in the knowledge base.
 
-        :param topic: The topic to search Wikipedia and add to knowledge base.
-        :return: Relevant documents from Wikipedia knowledge base.
+        Args:
+            topic: The topic to search Wikipedia and add to knowledge base.
+
+        Returns:
+            JSON string containing relevant documents from Wikipedia knowledge base.
         """
 
         if self.knowledge is None:
-            return "Knowledge not provided"
+            return json.dumps({"error": "Knowledge not provided"})
 
         log_debug(f"Adding to knowledge: {topic}")
         self.knowledge.insert(
@@ -55,10 +77,13 @@ class WikipediaTools(Toolkit):
         return json.dumps([doc.to_dict() for doc in relevant_docs])
 
     def search_wikipedia(self, query: str) -> str:
-        """Searches Wikipedia for a query.
+        """Search Wikipedia for a query.
 
-        :param query: The query to search for.
-        :return: Relevant documents from wikipedia.
+        Args:
+            query: The query to search for.
+
+        Returns:
+            JSON string containing the Wikipedia article summary or disambiguation options.
         """
         log_info(f"Searching wikipedia for: {query}")
         try:

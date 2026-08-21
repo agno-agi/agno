@@ -83,7 +83,7 @@ class TestRedshiftTools:
         mock_cursor.description = [("table_name",)]
         mock_cursor.fetchall.return_value = MOCK_TABLES_RESULT
 
-        result = redshift_tools.show_tables()
+        result = redshift_tools.show_redshift_tables()
 
         mock_cursor.execute.assert_called_with(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;", ("company_data",)
@@ -99,7 +99,7 @@ class TestRedshiftTools:
         mock_cursor.description = [("column_name",), ("data_type",), ("is_nullable",)]
         mock_cursor.fetchall.return_value = MOCK_DESCRIBE_RESULT
 
-        result = redshift_tools.describe_table("employees")
+        result = redshift_tools.describe_redshift_table("employees")
 
         mock_cursor.execute.assert_called()
         call_args = mock_cursor.execute.call_args
@@ -114,7 +114,7 @@ class TestRedshiftTools:
         mock_cursor.description = [("count",)]
         mock_cursor.fetchall.return_value = MOCK_COUNT_RESULT
 
-        result = redshift_tools.run_query("SELECT COUNT(*) FROM employees;")
+        result = redshift_tools.run_redshift_sql("SELECT COUNT(*) FROM employees;")
 
         mock_cursor.execute.assert_called_with("SELECT COUNT(*) FROM employees;", None)
 
@@ -131,7 +131,7 @@ class TestRedshiftTools:
         export_path = "/tmp/test_export.csv"
 
         with patch("builtins.open", mock_file):
-            result = redshift_tools.export_table_to_path("employees", export_path)
+            result = redshift_tools.export_redshift_table_to_path("employees", export_path)
 
         mock_cursor.execute.assert_called_once()
         mock_file.assert_called_once_with(export_path, "w", newline="", encoding="utf-8")
@@ -142,7 +142,7 @@ class TestRedshiftTools:
         mock_cursor.description = [("QUERY PLAN",)]
         mock_cursor.fetchall.return_value = MOCK_EXPLAIN_RESULT
 
-        result = redshift_tools.inspect_query("SELECT name FROM employees WHERE salary > 10000;")
+        result = redshift_tools.inspect_redshift_query("SELECT name FROM employees WHERE salary > 10000;")
 
         mock_cursor.execute.assert_called_with("EXPLAIN SELECT name FROM employees WHERE salary > 10000;", None)
 
@@ -153,7 +153,7 @@ class TestRedshiftTools:
         """Test proper error handling for database errors."""
         mock_cursor.execute.side_effect = redshift_connector.Error("Table does not exist")
 
-        result = redshift_tools.show_tables()
+        result = redshift_tools.show_redshift_tables()
 
         assert "Error executing query:" in result
 
@@ -162,7 +162,7 @@ class TestRedshiftTools:
         mock_cursor.description = [("id",), ("name",)]
 
         with patch("builtins.open", side_effect=IOError("Permission denied")):
-            result = redshift_tools.export_table_to_path("employees", "/invalid/path/file.csv")
+            result = redshift_tools.export_redshift_table_to_path("employees", "/invalid/path/file.csv")
 
         assert "Error exporting table: Permission denied" in result
 
@@ -172,7 +172,7 @@ class TestRedshiftTools:
         mock_cursor.fetchall.return_value = []
 
         malicious_table = "users'; DROP TABLE employees; --"
-        redshift_tools.describe_table(malicious_table)
+        redshift_tools.describe_redshift_table(malicious_table)
 
         call_args = mock_cursor.execute.call_args
         assert call_args[0][1] == ("company_data", malicious_table)
@@ -194,7 +194,7 @@ class TestRedshiftTools:
                 table_schema="public",
             )
             # Trigger a connection by running a query
-            tools.run_query("SELECT 1")
+            tools.run_redshift_sql("SELECT 1")
 
             mock_connect.assert_called_once()
             call_kwargs = mock_connect.call_args[1]

@@ -1,8 +1,8 @@
+import json
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info
 
 try:
     import agentql
@@ -15,106 +15,86 @@ class AgentQLTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_scrape_website: bool = True,
-        enable_custom_scrape_website: bool = False,
-        all: bool = False,
         agentql_query: str = "",
+        scrape_website: bool = True,
+        custom_scrape_website: bool = False,
+        all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_scrape_website" in kwargs:
+            scrape_website = kwargs.pop("enable_scrape_website")
+        if "enable_custom_scrape_website" in kwargs:
+            custom_scrape_website = kwargs.pop("enable_custom_scrape_website")
+
         self.api_key = api_key or getenv("AGENTQL_API_KEY")
         if not self.api_key:
             raise ValueError("AGENTQL_API_KEY not set. Please set the AGENTQL_API_KEY environment variable.")
 
         self.agentql_query = agentql_query
 
-        tools: List[Any] = []
-        if all or enable_scrape_website:
-            tools.append(self.scrape_website)
-        if all or enable_custom_scrape_website or (agentql_query and not all and not enable_custom_scrape_website):
-            if agentql_query:
-                log_info("Custom AgentQL query provided. Registering custom scrape function.")
-                tools.append(self.custom_scrape_website)
+        tools: List[Callable] = []
+        if all or scrape_website:
+            tools.append(self.agentql_scrape_website)
+        if all or custom_scrape_website or agentql_query:
+            tools.append(self.agentql_custom_scrape_website)
 
         super().__init__(name="agentql_tools", tools=tools, **kwargs)
 
-    def scrape_website(self, url: str) -> str:
-        """
-        Scrape all text content from a website using AgentQL.
+    def agentql_scrape_website(self, url: str) -> str:
+        """Scrape all text content from a website using AgentQL.
 
         Args:
-            url (str): The URL of the website to scrape
+            url: The URL of the website to scrape.
 
         Returns:
-            str: Extracted text content or error message
+            JSON with text_content array or error.
         """
         if not url:
-            return "No URL provided"
+            return json.dumps({"error": "No URL provided"})
 
-        TEXT_SEARCH_QUERY = """
-        {
-            text_content[]
-        }
-        """
+        query = "{ text_content[] }"
 
         try:
             with sync_playwright() as playwright, playwright.chromium.launch(headless=False) as browser:
                 page = agentql.wrap(browser.new_page())
                 page.goto(url)
 
-                try:
-                    # Get response from AgentQL query
-                    response = page.query_data(TEXT_SEARCH_QUERY)
+                response = page.query_data(query)
 
-                    # Extract text based on response format
-                    if isinstance(response, dict) and "text_content" in response:
-                        text_items = [item for item in response["text_content"] if item and item.strip()]
+                if isinstance(response, dict) and "text_content" in response:
+                    text_items = [item for item in response["text_content"] if item and item.strip()]
+                    deduplicated = list(set(text_items))
+                    return json.dumps({"text_content": deduplicated})
 
-                        deduplicated = list(set(text_items))
-                        return " ".join(deduplicated)
-
-                except Exception as e:
-                    return f"Error extracting text: {e}"
+                return json.dumps({"text_content": []})
         except Exception as e:
-            return f"Error launching browser: {e}"
+            return json.dumps({"error": f"Failed to scrape: {e}"})
 
-        return "No text content found"
-
-    def custom_scrape_website(self, url: str) -> str:
-        """
-        Scrape a website using a custom AgentQL query.
+    def agentql_custom_scrape_website(self, url: str) -> str:
+        """Scrape a website using a custom AgentQL query.
 
         Args:
-            url (str): The URL of the website to scrape
+            url: The URL of the website to scrape.
 
         Returns:
-            str: Extracted text content or error message
+            JSON with query results or error.
         """
         if not url:
-            return "No URL provided"
+            return json.dumps({"error": "No URL provided"})
 
-        if self.agentql_query == "":
-            return "Custom AgentQL query not provided. Please provide a custom AgentQL query."
+        if not self.agentql_query:
+            return json.dumps({"error": "Custom AgentQL query not provided"})
 
         try:
             with sync_playwright() as playwright, playwright.chromium.launch(headless=False) as browser:
                 page = agentql.wrap(browser.new_page())
                 page.goto(url)
 
-                try:
-                    # Get response from AgentQL query
-                    response = page.query_data(self.agentql_query)
+                response = page.query_data(self.agentql_query)
 
-                    # Extract text based on response format
-                    if isinstance(response, dict):
-                        items = [item for item in response]
-                        text_items = [text_item for text_item in items if text_item]
-
-                        deduplicated = list(set(text_items))
-                        return " ".join(deduplicated)
-
-                except Exception as e:
-                    return f"Error extracting text: {e}"
+                if isinstance(response, dict):
+                    return json.dumps(response)
+                return json.dumps({"result": response})
         except Exception as e:
-            return f"Error launching browser: {e}"
-
-        return "No text content found"
+            return json.dumps({"error": f"Failed to scrape: {e}"})

@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -22,12 +22,20 @@ class CartesiaTools(Toolkit):
         api_key: Optional[str] = None,
         model_id: str = "sonic-2",
         default_voice_id: str = "78ab82d5-25be-4f7d-82b3-7ad64e5b85b2",
-        enable_text_to_speech: bool = True,
-        enable_list_voices: bool = True,
-        enable_localize_voice: bool = False,
+        text_to_speech: bool = True,
+        list_voices: bool = True,
+        localize_voice: bool = False,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_text_to_speech" in kwargs:
+            text_to_speech = kwargs.pop("enable_text_to_speech")
+        if "enable_list_voices" in kwargs:
+            list_voices = kwargs.pop("enable_list_voices")
+        if "enable_localize_voice" in kwargs:
+            localize_voice = kwargs.pop("enable_localize_voice")
+
         self.api_key = api_key or getenv("CARTESIA_API_KEY")
 
         if not self.api_key:
@@ -37,12 +45,12 @@ class CartesiaTools(Toolkit):
         self.model_id = model_id
         self.default_voice_id = default_voice_id
 
-        tools: List[Any] = []
-        if all or enable_localize_voice:
+        tools: List[Callable] = []
+        if all or localize_voice:
             tools.append(self.localize_voice)
-        if all or enable_text_to_speech:
-            tools.append(self.text_to_speech)
-        if all or enable_list_voices:
+        if all or text_to_speech:
+            tools.append(self.cartesia_text_to_speech)
+        if all or list_voices:
             tools.append(self.list_voices)
 
         super().__init__(name="cartesia_tools", tools=tools, **kwargs)
@@ -97,14 +105,14 @@ class CartesiaTools(Toolkit):
         """Create a new voice localized to a different language.
 
         Args:
-            name (str): The desired name for the new localized voice.
-            description (str): The description for the new localized voice.
-            language (str): The target language code (e.g., 'fr', 'es').
-            original_speaker_gender (str): The gender of the original speaker ("male" or "female").
-            voice_id (optional): The ID of an existing voice to use as the base. If None, uses the default voice ID configured in the tool. Defaults to None.
+            name: The desired name for the new localized voice.
+            description: The description for the new localized voice.
+            language: The target language code (e.g., 'fr', 'es').
+            original_speaker_gender: The gender of the original speaker ("male" or "female").
+            voice_id: The ID of an existing voice to use as the base. Defaults to the configured default.
 
         Returns:
-            str: JSON string containing the information of the newly created localized voice, including its 'id'.
+            JSON with the newly created localized voice info including its id.
         """
         localize_voice_id = voice_id or self.default_voice_id
         log_debug(f"Using voice_id '{localize_voice_id}' for localization.")
@@ -127,20 +135,20 @@ class CartesiaTools(Toolkit):
             log_error(f"Error localizing voice with Cartesia: {str(e)}")
             return json.dumps({"error": str(e), "type": type(e).__name__})
 
-    def text_to_speech(
+    def cartesia_text_to_speech(
         self,
         agent: Union[Agent, Team],
         transcript: str,
         voice_id: Optional[str] = None,
     ) -> ToolResult:
-        """
-        Convert text to speech.
+        """Convert text to speech.
+
         Args:
-            transcript: The text to convert to speech
-            voice_id (optional): The ID of the voice to use for the text-to-speech. If None, uses the default voice ID configured in the tool. Defaults to None.
+            transcript: The text to convert to speech.
+            voice_id: The ID of the voice to use. Defaults to the configured default.
 
         Returns:
-            ToolResult: A ToolResult containing the generated audio or error message.
+            ToolResult containing the generated audio or error message.
         """
 
         try:

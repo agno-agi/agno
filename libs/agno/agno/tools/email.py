@@ -1,7 +1,10 @@
-from typing import Optional
+import json
+import smtplib
+from email.message import EmailMessage
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error, log_info, logger
+from agno.utils.log import log_info, logger
 
 
 class EmailTools(Toolkit):
@@ -11,44 +14,43 @@ class EmailTools(Toolkit):
         sender_name: Optional[str] = None,
         sender_email: Optional[str] = None,
         sender_passkey: Optional[str] = None,
-        enable_email_user: bool = True,
+        email_user: bool = False,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_email_user" in kwargs:
+            email_user = kwargs.pop("enable_email_user")
+
         self.receiver_email: Optional[str] = receiver_email
         self.sender_name: Optional[str] = sender_name
         self.sender_email: Optional[str] = sender_email
         self.sender_passkey: Optional[str] = sender_passkey
 
-        tools = []
-        if all or enable_email_user:
+        tools: List[Callable] = []
+        if all or email_user:
             tools.append(self.email_user)
 
-        # Call superclass with tools list
         super().__init__(name="email_tools", tools=tools, **kwargs)
 
-    def email_user(self, subject: str, body: str, **kwargs) -> str:
-        """Emails the user with the given subject and body.
+    def email_user(self, subject: str, body: str) -> str:
+        """Send an email to the configured receiver.
 
-        :param subject: The subject of the email.
-        :param body: The body of the email.
-        :return: "success" if the email was sent successfully, "error: [error message]" otherwise.
+        Args:
+            subject: The subject of the email.
+            body: The body of the email.
+
+        Returns:
+            JSON with status or error.
         """
-        try:
-            import smtplib
-            from email.message import EmailMessage
-        except ImportError as e:
-            log_error(f"`smtplib` not installed: {str(e)}")
-            raise
-
         if not self.receiver_email:
-            return "error: No receiver email provided"
+            return json.dumps({"error": "No receiver email provided"})
         if not self.sender_name:
-            return "error: No sender name provided"
+            return json.dumps({"error": "No sender name provided"})
         if not self.sender_email:
-            return "error: No sender email provided"
+            return json.dumps({"error": "No sender email provided"})
         if not self.sender_passkey:
-            return "error: No sender passkey provided"
+            return json.dumps({"error": "No sender passkey provided"})
 
         msg = EmailMessage()
         msg["Subject"] = subject
@@ -63,5 +65,5 @@ class EmailTools(Toolkit):
                 smtp.send_message(msg)
         except Exception as e:
             logger.exception("Error sending email")
-            return f"error: {e}"
-        return "email sent successfully"
+            return json.dumps({"error": str(e)})
+        return json.dumps({"status": "email sent successfully"})

@@ -51,9 +51,9 @@ full_crm_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         SalesforceTools(
-            enable_create_record=True,
-            enable_update_record=True,
-            enable_delete_record=True,
+            create_record=True,
+            update_record=True,
+            delete_record=True,
         )
     ],
     description="You are a Salesforce CRM assistant with full read and write capabilities.",
