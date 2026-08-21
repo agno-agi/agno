@@ -53,14 +53,12 @@ def test_init_with_params():
 
 def test_firecrawl_scrape_website(firecrawl_tools, mock_firecrawl):
     """Test firecrawl_scrape_website method."""
-    # Setup mock response
-    mock_response = Mock()
-    mock_response.model_dump.return_value = {
+    # Setup mock response - return dict directly since to_json_str handles dicts
+    mock_firecrawl.scrape.return_value = {
         "url": "https://example.com",
         "content": "Test content",
         "status": "success",
     }
-    mock_firecrawl.scrape.return_value = mock_response
 
     # Call the method
     result = firecrawl_tools.firecrawl_scrape_website("https://example.com")
@@ -75,14 +73,12 @@ def test_firecrawl_scrape_website(firecrawl_tools, mock_firecrawl):
 
 def test_firecrawl_scrape_website_with_formats(firecrawl_tools, mock_firecrawl):
     """Test firecrawl_scrape_website method with formats."""
-    # Setup mock response
-    mock_response = Mock()
-    mock_response.model_dump.return_value = {
+    # Setup mock response - return dict directly since to_json_str handles dicts
+    mock_firecrawl.scrape.return_value = {
         "url": "https://example.com",
         "content": "Test content",
         "status": "success",
     }
-    mock_firecrawl.scrape.return_value = mock_response
 
     # Set formats
     firecrawl_tools.formats = ["html", "text"]
@@ -100,14 +96,12 @@ def test_firecrawl_scrape_website_with_formats(firecrawl_tools, mock_firecrawl):
 
 def test_firecrawl_crawl_website(firecrawl_tools, mock_firecrawl):
     """Test firecrawl_crawl_website method."""
-    # Setup mock response
-    mock_response = Mock()
-    mock_response.model_dump.return_value = {
+    # Setup mock response - return dict directly since to_json_str handles dicts
+    mock_firecrawl.crawl.return_value = {
         "url": "https://example.com",
         "pages": ["page1", "page2"],
         "status": "success",
     }
-    mock_firecrawl.crawl.return_value = mock_response
 
     # Call the method
     result = firecrawl_tools.firecrawl_crawl_website("https://example.com")
@@ -124,14 +118,12 @@ def test_firecrawl_crawl_website_with_custom_limit(firecrawl_tools, mock_firecra
     """Test firecrawl_crawl_website method with custom limit."""
     # Reset the default limit
     firecrawl_tools.limit = None
-    # Setup mock response
-    mock_response = Mock()
-    mock_response.model_dump.return_value = {
+    # Setup mock response - return dict directly since to_json_str handles dicts
+    mock_firecrawl.crawl.return_value = {
         "url": "https://example.com",
         "pages": ["page1", "page2"],
         "status": "success",
     }
-    mock_firecrawl.crawl.return_value = mock_response
 
     # Call the method with custom limit
     result = firecrawl_tools.firecrawl_crawl_website("https://example.com", limit=5)
@@ -146,14 +138,12 @@ def test_firecrawl_crawl_website_with_custom_limit(firecrawl_tools, mock_firecra
 
 def test_map_website(firecrawl_tools, mock_firecrawl):
     """Test map_website method."""
-    # Setup mock response
-    mock_response = Mock()
-    mock_response.model_dump.return_value = {
+    # Setup mock response - return dict directly since to_json_str handles dicts
+    mock_firecrawl.map.return_value = {
         "url": "https://example.com",
         "sitemap": {"page1": ["link1", "link2"]},
         "status": "success",
     }
-    mock_firecrawl.map.return_value = mock_response
 
     # Call the method
     result = firecrawl_tools.map_website("https://example.com")
@@ -226,12 +216,12 @@ def test_search_with_custom_params(firecrawl_tools, mock_firecrawl):
 
 
 def test_search_tool_response(firecrawl_tools, mock_firecrawl):
-    mock_response = Mock(spec=["model_dump"])
-    mock_response.model_dump.return_value = {
+    # For search responses without .success attribute, to_json_str is called directly
+    # Return dict directly since to_json_str handles dicts
+    mock_firecrawl.search.return_value = {
         "query": "test query",
         "results": ["result1", "result2"],
     }
-    mock_firecrawl.search.return_value = mock_response
 
     result = firecrawl_tools.firecrawl_search_web("test query")
     result_data = json.loads(result)
@@ -244,9 +234,7 @@ def test_search_tool_response(firecrawl_tools, mock_firecrawl):
 def test_firecrawl_crawl_website_with_constructor_limit(firecrawl_tools, mock_firecrawl):
     """Test that the toolkit's limit reaches the client when no argument is passed."""
     firecrawl_tools.limit = 3
-    mock_response = Mock()
-    mock_response.model_dump.return_value = {"status": "success"}
-    mock_firecrawl.crawl.return_value = mock_response
+    mock_firecrawl.crawl.return_value = {"status": "success"}
 
     firecrawl_tools.firecrawl_crawl_website("https://example.com")
 
@@ -255,9 +243,7 @@ def test_firecrawl_crawl_website_with_constructor_limit(firecrawl_tools, mock_fi
 
 def test_firecrawl_crawl_website_explicit_limit_overrides_constructor(firecrawl_tools, mock_firecrawl):
     """Test that an explicit limit argument wins over the toolkit's limit."""
-    mock_response = Mock()
-    mock_response.model_dump.return_value = {"status": "success"}
-    mock_firecrawl.crawl.return_value = mock_response
+    mock_firecrawl.crawl.return_value = {"status": "success"}
 
     firecrawl_tools.firecrawl_crawl_website("https://example.com", limit=5)
 

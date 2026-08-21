@@ -29,23 +29,32 @@ def bq_tools_instance(mock_bq_client):  # mock_bq_client is the instance mock fr
 
 
 # --- Test Cases ---
+class MockBigQueryRow(dict):
+    """Mock BigQuery Row that supports dict() conversion like the real Row class."""
+
+    pass
+
+
 def test_run_sql_query_success(bq_tools_instance, mock_bq_client):
     """Test run_sql_query successfully returns a JSON string of query results."""
-
-    mock_result_data = [{"product_name": "Laptop", "quantity": 5}, {"product_name": "Mouse", "quantity": 20}]
+    # BigQuery Row objects support dict() conversion
+    mock_row1 = MockBigQueryRow({"product_name": "Laptop", "quantity": 5})
+    mock_row2 = MockBigQueryRow({"product_name": "Mouse", "quantity": 20})
 
     mock_query_job = MagicMock()
-    mock_query_job.result.return_value = mock_result_data
+    mock_query_job.result.return_value = [mock_row1, mock_row2]
 
     mock_bq_client.query.return_value = mock_query_job
 
     query = "SELECT product_name, quantity FROM sales"
     result_json_str = bq_tools_instance.run_bigquery_sql(query)
 
-    expected_inner_string = "[{'product_name': 'Laptop', 'quantity': 5}, {'product_name': 'Mouse', 'quantity': 20}]"
-    expected_json_string = json.dumps(expected_inner_string)
-
-    assert result_json_str == expected_json_string
+    # v3.0 returns {"rows": [...]} structure
+    result = json.loads(result_json_str)
+    assert "rows" in result
+    assert len(result["rows"]) == 2
+    assert result["rows"][0]["product_name"] == "Laptop"
+    assert result["rows"][1]["product_name"] == "Mouse"
 
     cleaned_query = _clean_sql(query)
     # Verify the call was made with cleaned query and job config
@@ -81,7 +90,8 @@ def test_describe_table_success(bq_tools_instance, mock_bq_client):
 
     result = bq_tools_instance.describe_bigquery_table(table_id="customers")
 
-    expected_data = {"table_description": "Table of customer data", "columns": "['customer_id', 'email']"}
+    # v3.0 returns columns as an actual list, not a string repr
+    expected_data = {"table_description": "Table of customer data", "columns": ["customer_id", "email"]}
     expected_json_string = json.dumps(expected_data)
 
     assert result == expected_json_string
@@ -104,8 +114,8 @@ def test_run_sql_query_empty_result(bq_tools_instance, mock_bq_client):
 
     query = "SELECT * FROM empty_table"
     result = bq_tools_instance.run_bigquery_sql(query)
-    expected_json_string = json.dumps("[]")
-    assert result == expected_json_string
+    # v3.0 returns {"rows": []} for empty results
+    assert json.loads(result) == {"rows": []}
 
 
 def test_run_sql_query_error_in_client_query(bq_tools_instance, mock_bq_client):
@@ -115,8 +125,8 @@ def test_run_sql_query_error_in_client_query(bq_tools_instance, mock_bq_client):
     query = "SELECT * FROM some_table"
     result = bq_tools_instance.run_bigquery_sql(query)
 
-    expected_json_string = json.dumps("")
-    assert result == expected_json_string
+    # v3.0 returns {"error": ...} for errors
+    assert json.loads(result) == {"error": "Error running query: Query Execution Failed"}
 
 
 def test_clean_sql_preserves_token_boundaries_with_line_comments():
