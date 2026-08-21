@@ -6,10 +6,13 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence,
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
+    RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
@@ -469,6 +472,7 @@ class BaseExternalAgent:
         content: Any,
         status: RunStatus,
         tools: Optional[List[ToolExecution]] = None,
+        metrics: Optional[RunMetrics] = None,
     ) -> RunOutput:
         """Build a RunOutput with properly populated messages for chat history."""
         now = int(time())
@@ -522,6 +526,7 @@ class BaseExternalAgent:
             messages=messages,
             tools=tools,
             status=status,
+            metrics=metrics,
             created_at=now,
         )
 
@@ -581,8 +586,13 @@ class BaseExternalAgent:
             session = await self.aread_or_create_session(session_id, user_id)
             history = self._get_history_from_session(session)
 
+        # Mutable side-channel for adapters to report run metadata (e.g. metrics)
+        adapter_state: Dict[str, Any] = {}
+
         try:
-            content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
+            content = await self._arun_adapter(
+                input, history=history, run_id=run_id, session=session, adapter_state=adapter_state, **kwargs
+            )
             run_output = self._build_run_output(
                 run_id=run_id,
                 session_id=session_id,
@@ -590,6 +600,16 @@ class BaseExternalAgent:
                 input_text=input,
                 content=content,
                 status=RunStatus.completed,
+                metrics=adapter_state.get("metrics"),
+            )
+        except RunCancelledException as e:
+            run_output = self._build_run_output(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                input_text=input,
+                content=str(e),
+                status=RunStatus.cancelled,
             )
         except Exception as e:
             log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
@@ -641,13 +661,18 @@ class BaseExternalAgent:
         accumulated_content = ""
         accumulated_tools: List[ToolExecution] = []
         run_error: Optional[Exception] = None
+        run_cancelled: Optional[RunCancelledException] = None
+
+        # Mutable side-channel for adapters to report run metadata (e.g. metrics,
+        # or a final_content override for structured output)
+        adapter_state: Dict[str, Any] = {}
 
         try:
             # Map tool_call_id -> ToolExecution for merging started+completed
             tool_map: Dict[str, ToolExecution] = {}
 
             async for event in self._arun_adapter_stream(
-                input, history=history, run_id=run_id, session=session, **kwargs
+                input, history=history, run_id=run_id, session=session, adapter_state=adapter_state, **kwargs
             ):
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
@@ -667,21 +692,34 @@ class BaseExternalAgent:
                     else:
                         accumulated_tools.append(event.tool)
                 yield event
+        except RunCancelledException as e:
+            run_cancelled = e
         except Exception as e:
             log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
             run_error = e
 
+        # Adapters may override the accumulated text (e.g. parsed structured output)
+        final_content = adapter_state.get("final_content", accumulated_content)
+
         # Persist the run to the session. Swallow DB failures so the consumer
         # still receives the terminal RunCompletedEvent / RunErrorEvent below.
+        if run_error is not None:
+            run_status = RunStatus.error
+        elif run_cancelled is not None:
+            run_status = RunStatus.cancelled
+        else:
+            run_status = RunStatus.completed
+
         if session is not None:
             run_output = self._build_run_output(
                 run_id=run_id,
                 session_id=session_id,
                 user_id=user_id,
                 input_text=input,
-                content=str(run_error) if run_error is not None else accumulated_content,
-                status=RunStatus.error if run_error is not None else RunStatus.completed,
+                content=str(run_error) if run_error is not None else final_content,
+                status=run_status,
                 tools=accumulated_tools if accumulated_tools else None,
+                metrics=adapter_state.get("metrics"),
             )
             if session.runs is None:
                 session.runs = []
@@ -700,13 +738,21 @@ class BaseExternalAgent:
                 content=str(run_error),
                 error_type=error_type_of(run_error),
             )
+        elif run_cancelled is not None:
+            yield RunCancelledEvent(
+                run_id=run_id,
+                agent_id=self.get_id(),
+                agent_name=self.name or "",
+                session_id=session_id,
+                reason=str(run_cancelled),
+            )
         else:
             yield RunCompletedEvent(
                 run_id=run_id,
                 agent_id=self.get_id(),
                 agent_name=self.name or "",
                 session_id=session_id,
-                content=accumulated_content,
+                content=final_content,
             )
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[RunOutputEvent]:
@@ -756,6 +802,10 @@ class BaseExternalAgent:
         Mutate `session.session_data` in place to persist adapter-specific
         per-session state — the base class upserts the session after this
         returns, so no separate DB write is needed.
+
+        kwargs also includes `adapter_state`, a mutable dict for reporting run
+        metadata back to the base class. Supported keys:
+        - "metrics": a RunMetrics instance, stored on the RunOutput.
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter")
 
@@ -765,6 +815,12 @@ class BaseExternalAgent:
         """Streaming execution. Yield RunContentEvent, ToolCallStartedEvent, etc.
 
         Do NOT yield RunStartedEvent or RunCompletedEvent -- those are handled by the base class.
+
+        kwargs includes `adapter_state`, a mutable dict for reporting run
+        metadata back to the base class. Supported keys:
+        - "metrics": a RunMetrics instance, stored on the RunOutput.
+        - "final_content": overrides the accumulated stream text as the run's
+          final content (e.g. parsed structured output).
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter_stream")
         yield  # type: ignore  # make this a generator
