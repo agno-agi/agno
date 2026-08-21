@@ -60,7 +60,7 @@ from agno.team._default_tools import (
     _acascading_cancel_run,
     _cascading_cancel_run,
 )
-from agno.team.task import TaskList, TaskStatus, save_task_list
+from agno.team.task import Task, TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
 from agno.utils.events import (
     create_team_task_created_event,
@@ -173,6 +173,150 @@ def _get_task_management_tools(
             store_events=team.store_events,
         )
 
+    no_task_update = object()
+
+    def _transition_task(
+        task_obj: Task,
+        status: TaskStatus,
+        *,
+        result: Any = no_task_update,
+        assignee: Any = no_task_update,
+    ) -> List[TaskUpdatedEvent]:
+        """Apply a transition and return explicit plus derived status events."""
+        previous_statuses = {task.id: task.status.value for task in task_list.tasks}
+        updates: Dict[str, Any] = {"status": status}
+        if result is not no_task_update:
+            updates["result"] = result
+        if assignee is not no_task_update:
+            updates["assignee"] = assignee
+        updated_task = task_list.update_task(task_obj.id, **updates)
+        if updated_task is None:
+            raise ValueError(f"Task with ID '{task_obj.id}' not found.")
+
+        if not stream_events:
+            return []
+
+        changed_tasks = [updated_task]
+        changed_tasks.extend(
+            task
+            for task in task_list.tasks
+            if task.id != updated_task.id and previous_statuses.get(task.id) != task.status.value
+        )
+        events: List[TaskUpdatedEvent] = []
+        for changed_task in changed_tasks:
+            event_result = (
+                changed_task.result
+                if changed_task.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled)
+                else None
+            )
+            events.append(
+                _emit_task_updated(
+                    changed_task,
+                    previous_statuses.get(changed_task.id, changed_task.status.value),
+                    result=event_result,
+                )
+            )
+        return events
+
+    def _find_active_task_with_title(title: str, *, exclude_task_id: Optional[str] = None) -> Optional[Task]:
+        """Find an active task whose normalized title matches ``title``."""
+        normalized_title = title.lower().strip()
+        for existing_task in task_list.tasks:
+            if existing_task.id == exclude_task_id or existing_task.status == TaskStatus.cancelled:
+                continue
+            if existing_task.title.lower().strip() == normalized_title:
+                return existing_task
+        return None
+
+    def _duplicate_task_message(task: Task) -> str:
+        return (
+            f"Task already exists: [{task.id}] {task.title} (status: {task.status.value}). "
+            "Use this task instead of creating a duplicate."
+        )
+
+    # ------------------------------------------------------------------
+    # Helper: dependency context
+    # ------------------------------------------------------------------
+    def _get_unresolved_dependency_ids(task_obj: Task) -> List[str]:
+        """Return dependency IDs that are missing or not completed."""
+        unresolved: List[str] = []
+        for dep_id in task_obj.dependencies:
+            dependency = task_list.get_task(dep_id)
+            if dependency is None or dependency.status != TaskStatus.completed:
+                unresolved.append(dep_id)
+        return unresolved
+
+    def _unresolved_dependency_error(task_obj: Task) -> Optional[str]:
+        unresolved = _get_unresolved_dependency_ids(task_obj)
+        if not unresolved:
+            return None
+        return (
+            f"Task [{task_obj.id}] has unresolved dependencies: {', '.join(unresolved)}. "
+            "Complete them before executing this task."
+        )
+
+    def _build_dependency_context(task_obj: Task) -> str:
+        """Gather results from completed dependency tasks and format as context."""
+        if not task_obj.dependencies:
+            return ""
+        opening = "<dependency_results>\n"
+        closing = "\n</dependency_results>\n\n"
+        limit = team.task_dependency_context_limit
+        if limit <= 0:
+            return ""
+        marker = "\n...[dependency results truncated]..."
+        body_limit = limit - len(opening) - len(closing)
+
+        fragments: List[str] = []
+        body_length = 0
+        truncated = False
+
+        def append_fragment(fragment: str) -> bool:
+            nonlocal body_length, truncated
+            remaining = body_limit - body_length
+            if len(fragment) <= remaining:
+                fragments.append(fragment)
+                body_length += len(fragment)
+                return True
+            truncated = True
+            return False
+
+        def append_escaped(value: str) -> bool:
+            escapes = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#x27;"}
+            for character in value:
+                if not append_fragment(escapes.get(character, character)):
+                    return False
+            return True
+
+        added_result = False
+        for dep_id in task_obj.dependencies:
+            dep = task_list.get_task(dep_id)
+            if dep is None or dep.status != TaskStatus.completed or not dep.result:
+                continue
+            if added_result and not append_fragment("\n\n"):
+                break
+            if not append_fragment('Task "'):
+                break
+            if not append_escaped(dep.title):
+                break
+            if not append_fragment('" result:\n'):
+                break
+            if not append_escaped(dep.result):
+                break
+            added_result = True
+
+        if not fragments and not truncated:
+            return ""
+
+        if truncated:
+            if body_limit < len(marker):
+                return ""
+            while fragments and body_length + len(marker) > body_limit:
+                body_length -= len(fragments.pop())
+            fragments.append(marker)
+        body = "".join(fragments)
+        return opening + body + closing
+
     # ------------------------------------------------------------------
     # Tool: create_task
     # ------------------------------------------------------------------
@@ -192,13 +336,11 @@ def _get_task_management_tools(
         Returns:
             str: Confirmation with the new task ID.
         """
-        # Check for duplicate tasks with the same title (case-insensitive)
-        title_lower = title.lower().strip()
-        for existing_task in task_list.tasks:
-            if existing_task.title.lower().strip() == title_lower:
-                log_debug(f"Task with title '{title}' already exists: [{existing_task.id}]")
-                yield f"Task already exists: [{existing_task.id}] {existing_task.title} (status: {existing_task.status.value}). Use this task instead of creating a duplicate."
-                return
+        duplicate_task = _find_active_task_with_title(title)
+        if duplicate_task is not None:
+            log_debug(f"Task with title '{title}' already exists: [{duplicate_task.id}]")
+            yield _duplicate_task_message(duplicate_task)
+            return
 
         task = task_list.create_task(
             title=title,
@@ -236,8 +378,11 @@ def _get_task_management_tools(
         except ValueError:
             yield f"Invalid status '{status}'. Must be one of: pending, in_progress, completed, failed."
             return
-        if new_status == TaskStatus.blocked:
-            yield "Cannot manually set status to 'blocked'. Blocked status is managed automatically based on task dependencies."
+        if new_status in (TaskStatus.blocked, TaskStatus.cancelled):
+            yield (
+                f"Cannot manually set status to '{new_status.value}'. "
+                "Use cancel_task for cancellation; blocked status is managed automatically."
+            )
             return
 
         # Get the task to capture previous status
@@ -246,25 +391,27 @@ def _get_task_management_tools(
             yield f"Task with ID '{task_id}' not found."
             return
 
-        previous_status = task.status.value
-        task_title = task.title
+        if task.status == TaskStatus.cancelled:
+            yield f"Cannot update task [{task_id}] with status 'cancelled'. Cancelled tasks cannot be reopened."
+            return
 
-        updates: Dict[str, Any] = {"status": new_status}
-        if result is not None:
-            updates["result"] = result
+        if new_status in (TaskStatus.pending, TaskStatus.in_progress, TaskStatus.completed) and task_list._is_blocked(
+            task
+        ):
+            yield f"Cannot update task [{task_id}] while it has unresolved dependencies."
+            return
 
-        updated_task = task_list.update_task(task_id, **updates)
+        transition_events = _transition_task(
+            task,
+            new_status,
+            result=result if result is not None else no_task_update,
+        )
         save_task_list(run_context.session_state, task_list)
 
-        if stream_events and updated_task:
-            # Only include result for terminal states (completed/failed)
-            event_result = updated_task.result if new_status in (TaskStatus.completed, TaskStatus.failed) else None
-            yield _emit_task_updated(updated_task, previous_status, result=event_result)
+        if stream_events:
+            yield from transition_events
 
-        if updated_task:
-            yield f"Task [{updated_task.id}] '{updated_task.title}' updated to {updated_task.status.value}."
-        else:
-            yield f"Task [{task_id}] '{task_title}' updated to {new_status.value}."
+        yield f"Task [{task.id}] '{task.title}' updated to {task.status.value}."
 
     # ------------------------------------------------------------------
     # Tool: list_tasks
@@ -275,7 +422,7 @@ def _get_task_management_tools(
         Returns:
             str: Formatted task list.
         """
-        return task_list.get_summary_string()
+        return task_list.get_summary_string(result_limit=team.task_result_summary_limit)
 
     # ------------------------------------------------------------------
     # Tool: add_task_note
@@ -311,6 +458,102 @@ def _get_task_management_tools(
         task_list.completion_summary = summary
         save_task_list(run_context.session_state, task_list)
         return f"Goal marked as complete. Summary: {summary}"
+
+    # ------------------------------------------------------------------
+    # Tool: edit_task
+    # ------------------------------------------------------------------
+    def edit_task(
+        task_id: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        assignee: Optional[str] = None,
+    ) -> Iterator[Union[TaskUpdatedEvent, str]]:
+        """Edit a pending or blocked task's title, description, or assignee.
+
+        Only tasks with status 'pending' or 'blocked' can be edited.
+
+        Args:
+            task_id (str): The ID of the task to edit.
+            title (str, optional): New title for the task.
+            description (str, optional): New description for the task.
+            assignee (str, optional): New member_id to assign this task to.
+        Returns:
+            str: Confirmation of the edit.
+        """
+        task = task_list.get_task(task_id)
+        if task is None:
+            yield f"Task with ID '{task_id}' not found."
+            return
+
+        if task.status not in (TaskStatus.pending, TaskStatus.blocked):
+            yield f"Cannot edit task [{task_id}] with status '{task.status.value}'. Only pending or blocked tasks can be edited."
+            return
+
+        previous_status = task.status.value
+        changes: list[str] = []
+        if title is not None:
+            duplicate_task = _find_active_task_with_title(title, exclude_task_id=task.id)
+            if duplicate_task is not None:
+                yield _duplicate_task_message(duplicate_task)
+                return
+            task.title = title
+            changes.append(f"title='{title}'")
+        if description is not None:
+            task.description = description
+            changes.append("description updated")
+        if assignee is not None:
+            task.assignee = assignee
+            changes.append(f"assignee='{assignee}'")
+
+        if not changes:
+            yield f"No changes provided for task [{task_id}]."
+            return
+
+        task_list._invalidate_goal_completion()
+        save_task_list(run_context.session_state, task_list)
+
+        if stream_events:
+            yield _emit_task_updated(task, previous_status)
+
+        yield f"Task [{task.id}] updated: {', '.join(changes)}."
+
+    # ------------------------------------------------------------------
+    # Tool: cancel_task
+    # ------------------------------------------------------------------
+    def cancel_task(
+        task_id: str,
+        reason: str = "",
+    ) -> Iterator[Union[TaskUpdatedEvent, str]]:
+        """Cancel a pending or blocked task.
+
+        Only tasks with status 'pending' or 'blocked' can be cancelled.
+
+        Args:
+            task_id (str): The ID of the task to cancel.
+            reason (str): Reason for cancellation.
+        Returns:
+            str: Confirmation of cancellation.
+        """
+        task = task_list.get_task(task_id)
+        if task is None:
+            yield f"Task with ID '{task_id}' not found."
+            return
+
+        if task.status not in (TaskStatus.pending, TaskStatus.blocked):
+            yield f"Cannot cancel task [{task_id}] with status '{task.status.value}'. Only pending or blocked tasks can be cancelled."
+            return
+
+        transition_events = _transition_task(
+            task,
+            TaskStatus.cancelled,
+            result=f"Cancelled: {reason}" if reason else "Cancelled by leader.",
+        )
+        save_task_list(run_context.session_state, task_list)
+
+        if stream_events:
+            yield from transition_events
+
+        yield f"Task [{task.id}] '{task.title}' cancelled."
 
     # ------------------------------------------------------------------
     # Shared: member setup and post-processing
@@ -498,6 +741,11 @@ def _get_task_management_tools(
             yield f"Task [{task_id}] is {task.status.value} and cannot be executed."
             return
 
+        dependency_error = _unresolved_dependency_error(task)
+        if dependency_error is not None:
+            yield dependency_error
+            return
+
         result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
             yield f"Member with ID {member_id} not found. Available members:\n{team.get_members_system_message_content(indent=0, run_context=run_context)}"
@@ -505,20 +753,18 @@ def _get_task_management_tools(
 
         _, member_agent = result
 
-        previous_status = task.status.value
-        task.status = TaskStatus.in_progress
-        task.assignee = member_id
+        transition_events = _transition_task(task, TaskStatus.in_progress, assignee=member_id)
         save_task_list(run_context.session_state, task_list)
 
         if stream_events:
-            yield _emit_task_updated(task, previous_status)
+            yield from transition_events
 
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
         try:
-            member_task_description = task.description or task.title
+            member_task_description = _build_dependency_context(task) + (task.description or task.title)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             if stream:
@@ -611,22 +857,27 @@ def _get_task_management_tools(
                 save_task_list(run_context.session_state, task_list)
             raise
         except Exception as e:
-            task.status = TaskStatus.failed
-            task.result = f"Member execution error: {e}"
+            transition_events = _transition_task(task, TaskStatus.failed, result=f"Member execution error: {e}")
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
+            if stream_events:
+                yield from transition_events
             yield f"Task [{task.id}] failed due to member execution error: {e}"
             return
 
         # Check HITL pause
         if member_run_response is not None and member_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_run_response)
-            task.status = TaskStatus.pending  # Reset to pending so it can be retried after HITL
-            save_task_list(run_context.session_state, task_list)
             use_team_logger()
             _post_process_member_run(
                 member_run_response, member_agent, member_task_description, member_session_state_copy
             )
+            transition_events = _transition_task(
+                task, TaskStatus.pending
+            )  # Reset to pending so it can be retried after HITL
+            save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield from transition_events
             yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
             return
 
@@ -635,26 +886,27 @@ def _get_task_management_tools(
         _post_process_member_run(member_run_response, member_agent, member_task_description, member_session_state_copy)
 
         if member_run_response is not None and member_run_response.status == RunStatus.error:
-            task.status = TaskStatus.failed
-            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
+            transition_events = _transition_task(
+                task,
+                TaskStatus.failed,
+                result=str(member_run_response.content) if member_run_response.content else "Task failed",
+            )
             save_task_list(run_context.session_state, task_list)
             if stream_events:
-                yield _emit_task_updated(task, "in_progress", result=task.result)
+                yield from transition_events
             yield f"Task [{task.id}] failed: {task.result}"
         elif member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
-            task.status = TaskStatus.completed
-            task.result = content
+            transition_events = _transition_task(task, TaskStatus.completed, result=content)
             save_task_list(run_context.session_state, task_list)
             if stream_events:
-                yield _emit_task_updated(task, "in_progress", result=task.result)
+                yield from transition_events
             yield f"Task [{task.id}] completed. Result: {content}"
         else:
-            task.status = TaskStatus.completed
-            task.result = "No content returned"
+            transition_events = _transition_task(task, TaskStatus.completed, result="No content returned")
             save_task_list(run_context.session_state, task_list)
             if stream_events:
-                yield _emit_task_updated(task, "in_progress", result=task.result)
+                yield from transition_events
             yield f"Task [{task.id}] completed with no content."
 
     # ------------------------------------------------------------------
@@ -681,6 +933,11 @@ def _get_task_management_tools(
             yield f"Task [{task_id}] is {task.status.value} and cannot be executed."
             return
 
+        dependency_error = _unresolved_dependency_error(task)
+        if dependency_error is not None:
+            yield dependency_error
+            return
+
         result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
             yield f"Member with ID {member_id} not found. Available members:\n{team.get_members_system_message_content(indent=0, run_context=run_context, async_mode=True)}"
@@ -688,20 +945,19 @@ def _get_task_management_tools(
 
         _, member_agent = result
 
-        previous_status = task.status.value
-        task.status = TaskStatus.in_progress
-        task.assignee = member_id
+        transition_events = _transition_task(task, TaskStatus.in_progress, assignee=member_id)
         save_task_list(run_context.session_state, task_list)
 
         if stream_events:
-            yield _emit_task_updated(task, previous_status)
+            for task_event in transition_events:
+                yield task_event
 
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
 
         try:
-            member_task_description = task.description or task.title
+            member_task_description = _build_dependency_context(task) + (task.description or task.title)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             if stream:
@@ -797,17 +1053,17 @@ def _get_task_management_tools(
                 save_task_list(run_context.session_state, task_list)
             raise
         except Exception as e:
-            task.status = TaskStatus.failed
-            task.result = f"Member execution error: {e}"
+            transition_events = _transition_task(task, TaskStatus.failed, result=f"Member execution error: {e}")
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
+            if stream_events:
+                for task_event in transition_events:
+                    yield task_event
             yield f"Task [{task.id}] failed due to member execution error: {e}"
             return
 
         if member_run_response is not None and member_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_run_response)
-            task.status = TaskStatus.pending
-            save_task_list(run_context.session_state, task_list)
             use_team_logger()
             await _apost_process_member_run(
                 member_run_response,
@@ -815,6 +1071,11 @@ def _get_task_management_tools(
                 member_task_description,
                 member_session_state_copy,
             )
+            transition_events = _transition_task(task, TaskStatus.pending)
+            save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                for task_event in transition_events:
+                    yield task_event
             yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
             return
 
@@ -827,26 +1088,30 @@ def _get_task_management_tools(
         )
 
         if member_run_response is not None and member_run_response.status == RunStatus.error:
-            task.status = TaskStatus.failed
-            task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
+            transition_events = _transition_task(
+                task,
+                TaskStatus.failed,
+                result=str(member_run_response.content) if member_run_response.content else "Task failed",
+            )
             save_task_list(run_context.session_state, task_list)
             if stream_events:
-                yield _emit_task_updated(task, "in_progress", result=task.result)
+                for task_event in transition_events:
+                    yield task_event
             yield f"Task [{task.id}] failed: {task.result}"
         elif member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
-            task.status = TaskStatus.completed
-            task.result = content
+            transition_events = _transition_task(task, TaskStatus.completed, result=content)
             save_task_list(run_context.session_state, task_list)
             if stream_events:
-                yield _emit_task_updated(task, "in_progress", result=task.result)
+                for task_event in transition_events:
+                    yield task_event
             yield f"Task [{task.id}] completed. Result: {content}"
         else:
-            task.status = TaskStatus.completed
-            task.result = "No content returned"
+            transition_events = _transition_task(task, TaskStatus.completed, result="No content returned")
             save_task_list(run_context.session_state, task_list)
             if stream_events:
-                yield _emit_task_updated(task, "in_progress", result=task.result)
+                for task_event in transition_events:
+                    yield task_event
             yield f"Task [{task.id}] completed with no content."
 
     # ------------------------------------------------------------------
@@ -865,13 +1130,22 @@ def _get_task_management_tools(
 
         # Validate all tasks
         tasks_to_run = []
+        seen_task_ids: set[str] = set()
         for tid in task_ids:
+            if tid in seen_task_ids:
+                yield f"Duplicate task ID '{tid}' cannot be executed in parallel."
+                return
+            seen_task_ids.add(tid)
             task = task_list.get_task(tid)
             if task is None:
                 yield f"Task '{tid}' not found."
                 return
             if task.status not in (TaskStatus.pending, TaskStatus.in_progress):
                 yield f"Task [{tid}] is {task.status.value}, cannot execute."
+                return
+            dependency_error = _unresolved_dependency_error(task)
+            if dependency_error is not None:
+                yield dependency_error
                 return
             if not task.assignee:
                 yield f"Task [{tid}] has no assignee. Assign a member_id first."
@@ -888,15 +1162,14 @@ def _get_task_management_tools(
 
         # Mark all in_progress and emit events
         for task_obj, _ in tasks_to_run:
-            previous_status = task_obj.status.value
-            task_obj.status = TaskStatus.in_progress
+            transition_events = _transition_task(task_obj, TaskStatus.in_progress)
             if stream_events:
-                yield _emit_task_updated(task_obj, previous_status)
+                yield from transition_events
         save_task_list(run_context.session_state, task_list)
 
         def _run_single_task(task_obj, member_agent):
             """Run a single task in a thread. Returns (task_id, member_run_response, session_state_copy, error)."""
-            member_task_description = task_obj.description or task_obj.title
+            member_task_description = _build_dependency_context(task_obj) + (task_obj.description or task_obj.title)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
@@ -955,21 +1228,34 @@ def _get_task_management_tools(
                         modified_states.append(state_copy)
 
                     if error is not None:
-                        task_obj.status = TaskStatus.failed
-                        task_obj.result = f"Member execution error: {error}"
-                        if stream_events:
-                            completion_events.append(
-                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
-                            )
+                        completion_events.extend(
+                            _transition_task(task_obj, TaskStatus.failed, result=f"Member execution error: {error}")
+                        )
                         results_text.append(f"Task [{tid}] failed: {error}")
                         continue
 
                     use_team_logger()
 
+                    if member_run is not None and member_run.is_cancelled:
+                        _post_process_member_run(
+                            member_run,
+                            member_agent,
+                            member_task,
+                            state_copy,
+                            tool_name="execute_tasks_parallel",
+                            skip_session_merge=True,
+                        )
+                        if member_run.content:
+                            task_obj.result = str(member_run.content)
+                        if modified_states:
+                            merge_parallel_session_states(run_context.session_state, modified_states)  # type: ignore
+                        save_task_list(run_context.session_state, task_list)
+                        check_if_run_cancelled(member_run)
+
                     # Check HITL pause
                     if member_run is not None and member_run.is_paused:
                         _propagate_member_pause(run_response, member_agent, member_run)
-                        task_obj.status = TaskStatus.pending
+                        completion_events.extend(_transition_task(task_obj, TaskStatus.pending))
                         _post_process_member_run(
                             member_run,
                             member_agent,
@@ -982,8 +1268,13 @@ def _get_task_management_tools(
                             f"Task [{tid}]: Member '{member_agent.name}' requires human input. Task paused."
                         )
                     elif member_run is not None and member_run.status == RunStatus.error:
-                        task_obj.status = TaskStatus.failed
-                        task_obj.result = str(member_run.content) if member_run.content else "Task failed"
+                        completion_events.extend(
+                            _transition_task(
+                                task_obj,
+                                TaskStatus.failed,
+                                result=str(member_run.content) if member_run.content else "Task failed",
+                            )
+                        )
                         _post_process_member_run(
                             member_run,
                             member_agent,
@@ -992,15 +1283,10 @@ def _get_task_management_tools(
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
                         )
-                        if stream_events:
-                            completion_events.append(
-                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
-                            )
                         results_text.append(f"Task [{tid}] failed: {task_obj.result}")
                     elif member_run is not None and member_run.content:
                         content = str(member_run.content)
-                        task_obj.status = TaskStatus.completed
-                        task_obj.result = content
+                        completion_events.extend(_transition_task(task_obj, TaskStatus.completed, result=content))
                         _post_process_member_run(
                             member_run,
                             member_agent,
@@ -1009,14 +1295,11 @@ def _get_task_management_tools(
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
                         )
-                        if stream_events:
-                            completion_events.append(
-                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
-                            )
                         results_text.append(f"Task [{tid}] completed. Result: {content}")
                     else:
-                        task_obj.status = TaskStatus.completed
-                        task_obj.result = "No content returned"
+                        completion_events.extend(
+                            _transition_task(task_obj, TaskStatus.completed, result="No content returned")
+                        )
                         _post_process_member_run(
                             member_run,
                             member_agent,
@@ -1025,19 +1308,14 @@ def _get_task_management_tools(
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
                         )
-                        if stream_events:
-                            completion_events.append(
-                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
-                            )
                         results_text.append(f"Task [{tid}] completed with no content.")
                 except RunCancelledException:
                     # Cancel must propagate up; otherwise the team marks the task failed.
                     raise
                 except Exception as e:
-                    task_obj.status = TaskStatus.failed
-                    task_obj.result = f"Unexpected error: {e}"
-                    if stream_events:
-                        completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
+                    completion_events.extend(
+                        _transition_task(task_obj, TaskStatus.failed, result=f"Unexpected error: {e}")
+                    )
                     results_text.append(f"Task [{task_obj.id}] failed unexpectedly: {e}")
 
         # Merge all modified session states
@@ -1070,13 +1348,22 @@ def _get_task_management_tools(
 
         # Validate all tasks
         tasks_to_run = []
+        seen_task_ids: set[str] = set()
         for tid in task_ids:
+            if tid in seen_task_ids:
+                yield f"Duplicate task ID '{tid}' cannot be executed in parallel."
+                return
+            seen_task_ids.add(tid)
             task = task_list.get_task(tid)
             if task is None:
                 yield f"Task '{tid}' not found."
                 return
             if task.status not in (TaskStatus.pending, TaskStatus.in_progress):
                 yield f"Task [{tid}] is {task.status.value}, cannot execute."
+                return
+            dependency_error = _unresolved_dependency_error(task)
+            if dependency_error is not None:
+                yield dependency_error
                 return
             if not task.assignee:
                 yield f"Task [{tid}] has no assignee. Assign a member_id first."
@@ -1093,15 +1380,15 @@ def _get_task_management_tools(
 
         # Mark all in_progress and emit events
         for task_obj, _ in tasks_to_run:
-            previous_status = task_obj.status.value
-            task_obj.status = TaskStatus.in_progress
+            transition_events = _transition_task(task_obj, TaskStatus.in_progress)
             if stream_events:
-                yield _emit_task_updated(task_obj, previous_status)
+                for task_event in transition_events:
+                    yield task_event
         save_task_list(run_context.session_state, task_list)
 
         async def _run_single_task_async(task_obj, member_agent):
             """Run a single task asynchronously."""
-            member_task_description = task_obj.description or task_obj.title
+            member_task_description = _build_dependency_context(task_obj) + (task_obj.description or task_obj.title)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
@@ -1162,10 +1449,9 @@ def _get_task_management_tools(
             task_obj, member_agent = tasks_to_run[i]
 
             if isinstance(gather_result, BaseException):
-                task_obj.status = TaskStatus.failed
-                task_obj.result = f"Unexpected error: {gather_result}"
-                if stream_events:
-                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
+                completion_events.extend(
+                    _transition_task(task_obj, TaskStatus.failed, result=f"Unexpected error: {gather_result}")
+                )
                 results_text.append(f"Task [{task_obj.id}] failed unexpectedly: {gather_result}")
                 continue
 
@@ -1174,18 +1460,33 @@ def _get_task_management_tools(
                 modified_states.append(state_copy)
 
             if error is not None:
-                task_obj.status = TaskStatus.failed
-                task_obj.result = f"Member execution error: {error}"
-                if stream_events:
-                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
+                completion_events.extend(
+                    _transition_task(task_obj, TaskStatus.failed, result=f"Member execution error: {error}")
+                )
                 results_text.append(f"Task [{tid}] failed: {error}")
                 continue
 
             use_team_logger()
 
+            if member_run is not None and member_run.is_cancelled:
+                await _apost_process_member_run(
+                    member_run,
+                    member_agent,
+                    member_task,
+                    state_copy,
+                    tool_name="execute_tasks_parallel",
+                    skip_session_merge=True,
+                )
+                if member_run.content:
+                    task_obj.result = str(member_run.content)
+                if modified_states:
+                    merge_parallel_session_states(run_context.session_state, modified_states)  # type: ignore
+                save_task_list(run_context.session_state, task_list)
+                check_if_run_cancelled(member_run)
+
             if member_run is not None and member_run.is_paused:
                 _propagate_member_pause(run_response, member_agent, member_run)
-                task_obj.status = TaskStatus.pending
+                completion_events.extend(_transition_task(task_obj, TaskStatus.pending))
                 await _apost_process_member_run(
                     member_run,
                     member_agent,
@@ -1196,8 +1497,13 @@ def _get_task_management_tools(
                 )
                 results_text.append(f"Task [{tid}]: Member '{member_agent.name}' requires human input. Task paused.")
             elif member_run is not None and member_run.status == RunStatus.error:
-                task_obj.status = TaskStatus.failed
-                task_obj.result = str(member_run.content) if member_run.content else "Task failed"
+                completion_events.extend(
+                    _transition_task(
+                        task_obj,
+                        TaskStatus.failed,
+                        result=str(member_run.content) if member_run.content else "Task failed",
+                    )
+                )
                 await _apost_process_member_run(
                     member_run,
                     member_agent,
@@ -1206,13 +1512,10 @@ def _get_task_management_tools(
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
                 )
-                if stream_events:
-                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{tid}] failed: {task_obj.result}")
             elif member_run is not None and member_run.content:
                 content = str(member_run.content)
-                task_obj.status = TaskStatus.completed
-                task_obj.result = content
+                completion_events.extend(_transition_task(task_obj, TaskStatus.completed, result=content))
                 await _apost_process_member_run(
                     member_run,
                     member_agent,
@@ -1221,12 +1524,9 @@ def _get_task_management_tools(
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
                 )
-                if stream_events:
-                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{tid}] completed. Result: {content}")
             else:
-                task_obj.status = TaskStatus.completed
-                task_obj.result = "No content returned"
+                completion_events.extend(_transition_task(task_obj, TaskStatus.completed, result="No content returned"))
                 await _apost_process_member_run(
                     member_run,
                     member_agent,
@@ -1235,8 +1535,6 @@ def _get_task_management_tools(
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
                 )
-                if stream_events:
-                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{tid}] completed with no content.")
 
         # Merge all modified session states
@@ -1258,6 +1556,8 @@ def _get_task_management_tools(
     tools: List[Function] = [
         Function.from_callable(create_task, name="create_task"),
         Function.from_callable(update_task_status, name="update_task_status"),
+        Function.from_callable(edit_task, name="edit_task"),
+        Function.from_callable(cancel_task, name="cancel_task"),
         Function.from_callable(list_tasks, name="list_tasks"),
         Function.from_callable(add_task_note, name="add_task_note"),
         Function.from_callable(mark_all_complete, name="mark_all_complete"),

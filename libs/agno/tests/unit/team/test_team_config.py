@@ -212,6 +212,30 @@ class TestTeamToDict:
         assert "debug_mode" not in config  # defaults to False
         assert "retries" not in config  # defaults to 0
         assert "respond_directly" not in config  # defaults to False
+        assert "task_result_summary_limit" not in config  # defaults to 500
+
+    @pytest.mark.parametrize("limit", [1000, 0])
+    def test_task_result_summary_limit_round_trip(self, limit: int):
+        """Custom task summary limits, including zero, survive every copy path."""
+        team = Team(id="tasks-team", members=[], task_result_summary_limit=limit)
+
+        config = team.to_dict()
+        restored = Team.from_dict(config)
+        copied = team.deep_copy()
+
+        assert config["task_result_summary_limit"] == limit
+        assert restored.task_result_summary_limit == limit
+        assert copied.task_result_summary_limit == limit
+
+    @pytest.mark.parametrize("invalid_limit", [None, "100", True, -1])
+    def test_task_result_summary_limit_rejects_invalid_constructor_values(self, invalid_limit: Any):
+        with pytest.raises(ValueError, match="task_result_summary_limit"):
+            Team(members=[], task_result_summary_limit=invalid_limit)
+
+    @pytest.mark.parametrize("invalid_limit", [None, "100", True, -1])
+    def test_task_result_summary_limit_rejects_invalid_restored_values(self, invalid_limit: Any):
+        with pytest.raises(ValueError, match="task_result_summary_limit"):
+            Team.from_dict({"id": "tasks-team", "task_result_summary_limit": invalid_limit})
 
     def test_store_history_messages_default_is_false(self):
         """Test store_history_messages defaults to False and is omitted from config."""

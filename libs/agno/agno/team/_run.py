@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import time
 from collections import deque
+from copy import deepcopy
 from time import time as unix_time
 from typing import (
     TYPE_CHECKING,
@@ -27,6 +28,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -37,7 +39,6 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics, merge_background_metrics
-from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
@@ -78,16 +79,19 @@ from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_
 from agno.run.messages import RunMessages
 from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
+    IntermediateRunContentEvent,
+    RunContentEvent,
+    TaskData,
+    TeamRunEvent,
+    TeamRunInput,
+    TeamRunOutput,
+    TeamRunOutputEvent,
+)
+from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
-)
-from agno.run.team import (
-    TaskData,
-    TeamRunInput,
-    TeamRunOutput,
-    TeamRunOutputEvent,
 )
 from agno.session import TeamSession
 from agno.session._utils import resolve_run_index
@@ -141,6 +145,120 @@ _MEMBER_CANCEL_BYPASS_EVENT_TYPES = (
     TeamRunCancelledEvent,
     TeamRunCompletedEvent,
 )
+
+
+def _has_meaningful_response_content(content: Any) -> bool:
+    """Return whether a model turn produced content worth accepting."""
+    if content is None:
+        return False
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, (list, tuple, dict, set)):
+        return bool(content)
+    return True
+
+
+def _has_accepted_model_response_content(team: Any, model_response: ModelResponse, run_context: RunContext) -> bool:
+    """Return whether one model turn produced content accepted by the response contract."""
+    output_schema = run_context.output_schema
+    if output_schema is not None and not team.use_json_mode and model_response.parsed is not None:
+        return True
+    return _has_meaningful_response_content(model_response.content)
+
+
+def _replace_run_response_content(
+    team: Any,
+    model_response: ModelResponse,
+    run_response: TeamRunOutput,
+    run_context: RunContext,
+) -> None:
+    """Replace task-mode content with the final model turn's accepted content."""
+    output_schema = run_context.output_schema
+    if output_schema is not None and not team.use_json_mode and model_response.parsed is not None:
+        run_response.content = model_response.parsed
+        run_response.content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__
+    else:
+        run_response.content = None if model_response.content == "" else model_response.content
+
+
+def _executed_tool_named(tool_executions: Optional[Sequence[Any]], tool_name: str) -> bool:
+    """Return whether the current model turn executed a named tool."""
+    if not tool_executions:
+        return False
+    for execution in tool_executions:
+        execution_name = execution.get("tool_name") if isinstance(execution, dict) else execution.tool_name
+        if execution_name == tool_name:
+            return True
+    return False
+
+
+def _task_loop_completion_reason(
+    task_list: Any,
+    *,
+    task_activity_seen: bool,
+    goal_completion_seen: bool,
+) -> Optional[str]:
+    """Return why the current request's task loop can finish, if at all.
+
+    Persisted terminal state belongs to an earlier request until the current
+    request changes the task plan. This prevents an empty model turn from
+    inheriting a stale completion marker and ending immediately.
+    """
+    if goal_completion_seen and task_list.goal_complete:
+        return "goal_complete"
+    if task_activity_seen and task_list.all_completed():
+        return "all_completed"
+    return None
+
+
+def _is_task_leader_content_event(event: Any, run_response: TeamRunOutput) -> bool:
+    """Return whether an event is content from the task leader itself."""
+    return isinstance(event, RunContentEvent) and event.run_id == run_response.run_id
+
+
+def _remove_buffered_content_event(run_response: TeamRunOutput, event: RunContentEvent) -> None:
+    """Remove an intercepted event from stored run events until its final type is known."""
+    if run_response.events is not None:
+        run_response.events[:] = [stored_event for stored_event in run_response.events if stored_event is not event]
+
+
+def _flush_task_iteration_content(
+    team: Any,
+    run_response: TeamRunOutput,
+    content_events: Sequence[RunContentEvent],
+    *,
+    final: bool,
+    stream_events: bool,
+) -> Iterator[TeamRunOutputEvent]:
+    """Emit buffered leader content as final output or identified intermediate output."""
+    for content_event in content_events:
+        if final:
+            yield cast(
+                TeamRunOutputEvent,
+                handle_event(
+                    content_event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                ),
+            )
+        elif stream_events:
+            event_data = content_event.to_dict()
+            event_data["event"] = TeamRunEvent.run_intermediate_content.value
+            intermediate_event = cast(
+                IntermediateRunContentEvent,
+                IntermediateRunContentEvent.from_dict(event_data),
+            )
+            yield cast(
+                TeamRunOutputEvent,
+                handle_event(
+                    intermediate_event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                ),
+            )
+
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -259,10 +377,12 @@ def _run_tasks(
         _convert_response_to_structured_format,
         _update_run_response,
         handle_reasoning,
+        parse_response_with_output_model,
+        parse_response_with_parser_model,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
-    from agno.team.task import TaskStatus, load_task_list
+    from agno.team.task import load_task_list
 
     log_debug(f"Team Task Run Start: {run_response.run_id}", center=True)
     memory_future = None
@@ -363,22 +483,34 @@ def _run_tasks(
         accumulated_messages = run_messages.messages
 
         model_response: Optional[ModelResponse] = None
+        task_activity_seen = False
+        goal_completion_seen = False
 
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+            run_response.content = None
 
             # On subsequent iterations, inject current task state as a user message
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
-                )
+                task_summary = task_list.get_summary_string(result_limit=team.task_result_summary_limit)
+                if task_list.tasks:
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When all tasks are done, call `mark_all_complete` with a summary.",
+                    )
+                else:
+                    state_message = Message(
+                        role="user",
+                        content="If the request requires member expertise, create and execute tasks. "
+                        "Otherwise, respond directly.",
+                    )
                 accumulated_messages.append(state_message)
+
+            task_state_before = deepcopy(load_task_list(run_context.session_state).to_dict())
 
             # Get model response
             model_response = call_model_with_fallback(
@@ -417,30 +549,57 @@ def _run_tasks(
                     team, run_response=run_response, session=session, run_context=run_context
                 )
 
-            # Check termination conditions
             task_list = load_task_list(run_context.session_state)
-            if task_list.goal_complete:
-                log_debug("Task goal marked complete, finishing task loop.")
+            task_activity_seen = task_activity_seen or task_list.to_dict() != task_state_before
+            goal_completion_seen = (
+                goal_completion_seen
+                or (not task_state_before.get("goal_complete", False) and task_list.goal_complete)
+                or _executed_tool_named(model_response.tool_executions, "mark_all_complete")
+            )
+
+            # A content response without task-state activity is a direct
+            # response. This also supports leader-owned tools and persisted
+            # task plans from prior messages.
+            direct_response = (
+                not task_activity_seen
+                and (not task_list.tasks or task_list.all_terminal())
+                and _has_accepted_model_response_content(team, model_response, run_context)
+            )
+            if direct_response:
+                log_debug("Model responded directly without creating tasks, exiting task loop.")
                 break
 
-            if task_list.all_terminal():
-                # All tasks done but some may have failed
-                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
-                if not has_failures:
-                    log_debug("All tasks completed successfully, finishing task loop.")
-                    break
-                # If there are failures, continue to let model handle them
-                log_debug("All tasks terminal but some failed, continuing to let model handle.")
+            # Check termination conditions
+            completion_reason = _task_loop_completion_reason(
+                task_list,
+                task_activity_seen=task_activity_seen,
+                goal_completion_seen=goal_completion_seen,
+            )
+            if completion_reason == "goal_complete":
+                log_debug("Task goal marked complete, finishing task loop.")
+                break
+            if completion_reason == "all_completed":
+                log_debug("All tasks completed successfully, finishing task loop.")
+                break
+            if task_activity_seen and task_list.all_terminal():
+                log_debug("All tasks terminal but some failed or were cancelled, continuing to let model handle.")
         else:
             # Loop exhausted without completing
-            task_list = load_task_list(run_context.session_state)
-            if not task_list.goal_complete:
-                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+            log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
         # === Post-loop ===
 
         # Always add media to run_response for caller availability
         if model_response is not None:
+            parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+            parse_response_with_parser_model(
+                team,
+                model_response,
+                run_messages,
+                run_context=run_context,
+                run_response=run_response,
+            )
+            _replace_run_response_content(team, model_response, run_response, run_context)
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -586,10 +745,11 @@ def _run_tasks_stream(
         _handle_model_response_stream,
         generate_response_with_output_model_stream,
         handle_reasoning_stream,
+        parse_response_with_parser_model_stream,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
-    from agno.team.task import TaskStatus, load_task_list
+    from agno.team.task import load_task_list
     from agno.utils.events import (
         create_team_task_iteration_completed_event,
         create_team_task_iteration_started_event,
@@ -710,10 +870,15 @@ def _run_tasks_stream(
 
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
+        task_activity_seen = False
+        goal_completion_seen = False
+        model_iteration_ran = False
+        parser_active = team.parser_model is not None and run_context.output_schema is not None
 
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+            run_response.content = None
 
             # Yield task iteration started event
             if stream_events:
@@ -731,68 +896,67 @@ def _run_tasks_stream(
             # On subsequent iterations, inject current task state as a user message
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
-                )
+                task_summary = task_list.get_summary_string(result_limit=team.task_result_summary_limit)
+                if task_list.tasks:
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When all tasks are done, call `mark_all_complete` with a summary.",
+                    )
+                else:
+                    state_message = Message(
+                        role="user",
+                        content="If the request requires member expertise, create and execute tasks. "
+                        "Otherwise, respond directly.",
+                    )
                 accumulated_messages.append(state_message)
+
+            # Snapshot task state so direct responses can be distinguished
+            # from task-plan activity during this iteration.
+            task_state_before = deepcopy(load_task_list(run_context.session_state).to_dict())
+            tool_count_before = len(run_response.tools or [])
+            iteration_response_seen = False
+            buffered_content_events: List[RunContentEvent] = []
+
+            def reset_iteration_content_for_fallback() -> None:
+                nonlocal iteration_response_seen
+                iteration_response_seen = False
+                buffered_content_events.clear()
 
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
             run_messages.messages = accumulated_messages
 
-            if team.output_model is None:
-                for event in _handle_model_response_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-            else:
-                for event in _handle_model_response_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
-
-                    if isinstance(event, RunContentEvent):
-                        if stream_events:
-                            yield IntermediateRunContentEvent(
-                                content=event.content,
-                                content_type=event.content_type,
-                            )
-                    else:
-                        yield event
-
-                for event in generate_response_with_output_model_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    stream_events=stream_events,
-                ):
+            model_iteration_ran = True
+            for event in _handle_model_response_stream(
+                team,
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                tools=_tools,
+                response_format=response_format,
+                stream_events=stream_events,
+                session_state=run_context.session_state,
+                run_context=run_context,
+                on_fallback_activated=reset_iteration_content_for_fallback,
+            ):
+                buffered_content = False
+                if _is_task_leader_content_event(event, run_response):
+                    content_event = cast(RunContentEvent, event)
+                    if content_event.content is not None:
+                        iteration_response_seen = iteration_response_seen or (
+                            content_event.content_type != "str"
+                            or _has_meaningful_response_content(content_event.content)
+                        )
+                        _remove_buffered_content_event(run_response, content_event)
+                        buffered_content_events.append(content_event)
+                        buffered_content = True
+                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                if buffered_content:
+                    continue
+                yield event
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -800,6 +964,13 @@ def _run_tasks_stream(
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
+                yield from _flush_task_iteration_content(
+                    team,
+                    run_response,
+                    buffered_content_events,
+                    final=True,
+                    stream_events=stream_events,
+                )
                 yield from _hooks.handle_team_run_paused_stream(
                     team, run_response=run_response, session=session, run_context=run_context
                 )
@@ -807,8 +978,36 @@ def _run_tasks_stream(
                     yield run_response
                 return
 
-            # Check termination conditions
             task_list = load_task_list(run_context.session_state)
+            task_activity_seen = task_activity_seen or task_list.to_dict() != task_state_before
+            current_tool_executions = (run_response.tools or [])[tool_count_before:]
+            goal_completion_seen = (
+                goal_completion_seen
+                or (not task_state_before.get("goal_complete", False) and task_list.goal_complete)
+                or _executed_tool_named(current_tool_executions, "mark_all_complete")
+            )
+
+            # A new content response without task-state activity is direct.
+            direct_response = (
+                not task_activity_seen and (not task_list.tasks or task_list.all_terminal()) and iteration_response_seen
+            )
+            if direct_response:
+                log_debug("Model responded directly without creating tasks, exiting task loop.")
+
+            completion_reason = _task_loop_completion_reason(
+                task_list,
+                task_activity_seen=task_activity_seen,
+                goal_completion_seen=goal_completion_seen,
+            )
+            will_exit = direct_response or completion_reason is not None or iteration == team.max_iterations - 1
+            final_content = will_exit and team.output_model is None and not parser_active
+            yield from _flush_task_iteration_content(
+                team,
+                run_response,
+                buffered_content_events,
+                final=final_content,
+                stream_events=stream_events,
+            )
 
             # Yield task state updated event
             if stream_events:
@@ -828,7 +1027,7 @@ def _run_tasks_stream(
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
-                        task_summary=task_list.get_summary_string(),
+                        task_summary=task_list.get_summary_string(result_limit=team.task_result_summary_limit),
                         goal_complete=task_list.goal_complete,
                         tasks=task_data_list,
                         completion_summary=task_list.completion_summary,
@@ -845,32 +1044,67 @@ def _run_tasks_stream(
                         from_run_response=run_response,
                         iteration=iteration + 1,
                         max_iterations=team.max_iterations,
-                        task_summary=task_list.get_summary_string(),
+                        task_summary=task_list.get_summary_string(result_limit=team.task_result_summary_limit),
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
 
-            if task_list.goal_complete:
-                log_debug("Task goal marked complete, finishing task loop.")
+            if direct_response:
                 break
 
-            if task_list.all_terminal():
-                # All tasks done but some may have failed
-                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
-                if not has_failures:
-                    log_debug("All tasks completed successfully, finishing task loop.")
-                    break
-                # If there are failures, continue to let model handle them
-                log_debug("All tasks terminal but some failed, continuing to let model handle.")
+            if completion_reason == "goal_complete":
+                log_debug("Task goal marked complete, finishing task loop.")
+                break
+            if completion_reason == "all_completed":
+                log_debug("All tasks completed successfully, finishing task loop.")
+                break
+            if task_activity_seen and task_list.all_terminal():
+                log_debug("All tasks terminal but some failed or were cancelled, continuing to let model handle.")
         else:
             # Loop exhausted without completing
-            task_list = load_task_list(run_context.session_state)
-            if not task_list.goal_complete:
-                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+            log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
         # === Post-loop ===
+
+        if model_iteration_ran:
+            if team.output_model is not None:
+                for event in generate_response_with_output_model_stream(
+                    team,
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    stream_events=stream_events,
+                ):
+                    buffered_content = False
+                    if parser_active and _is_task_leader_content_event(event, run_response):
+                        content_event = cast(RunContentEvent, event)
+                        if content_event.content is not None:
+                            _remove_buffered_content_event(run_response, content_event)
+                            buffered_content = True
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    if buffered_content:
+                        yield from _flush_task_iteration_content(
+                            team,
+                            run_response,
+                            [content_event],
+                            final=False,
+                            stream_events=stream_events,
+                        )
+                        continue
+                    yield event
+
+            yield from parse_response_with_parser_model_stream(
+                team,
+                session=session,
+                run_response=run_response,
+                stream_events=stream_events,
+                run_context=run_context,
+            )
+            if (team.output_model is not None or parser_active) and run_response.content == "":
+                run_response.content = None
 
         # Convert response to structured format
         _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -1641,6 +1875,7 @@ def _run_stream(
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2101,11 +2336,13 @@ async def _arun_tasks(
     from agno.team._response import (
         _convert_response_to_structured_format,
         _update_run_response,
+        agenerate_response_with_output_model,
         ahandle_reasoning,
+        aparse_response_with_parser_model,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
-    from agno.team.task import TaskStatus, load_task_list
+    from agno.team.task import load_task_list
 
     log_debug(f"Team Task Run Start: {run_response.run_id}", center=True)
     memory_task = None
@@ -2222,22 +2459,34 @@ async def _arun_tasks(
         accumulated_messages = run_messages.messages
 
         model_response: Optional[ModelResponse] = None
+        task_activity_seen = False
+        goal_completion_seen = False
 
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+            run_response.content = None
 
             # On subsequent iterations, inject current task state as a user message
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
-                )
+                task_summary = task_list.get_summary_string(result_limit=team.task_result_summary_limit)
+                if task_list.tasks:
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When all tasks are done, call `mark_all_complete` with a summary.",
+                    )
+                else:
+                    state_message = Message(
+                        role="user",
+                        content="If the request requires member expertise, create and execute tasks. "
+                        "Otherwise, respond directly.",
+                    )
                 accumulated_messages.append(state_message)
+
+            task_state_before = deepcopy(load_task_list(run_context.session_state).to_dict())
 
             # Get model response
             model_response = await acall_model_with_fallback(
@@ -2276,28 +2525,62 @@ async def _arun_tasks(
                     team, run_response=run_response, session=team_session, run_context=run_context
                 )
 
-            # Check termination conditions
             task_list = load_task_list(run_context.session_state)
-            if task_list.goal_complete:
-                log_debug("Task goal marked complete, finishing task loop.")
+            task_activity_seen = task_activity_seen or task_list.to_dict() != task_state_before
+            goal_completion_seen = (
+                goal_completion_seen
+                or (not task_state_before.get("goal_complete", False) and task_list.goal_complete)
+                or _executed_tool_named(model_response.tool_executions, "mark_all_complete")
+            )
+
+            # A content response without task-state activity is a direct
+            # response. This also supports leader-owned tools and persisted
+            # task plans from prior messages.
+            direct_response = (
+                not task_activity_seen
+                and (not task_list.tasks or task_list.all_terminal())
+                and _has_accepted_model_response_content(team, model_response, run_context)
+            )
+            if direct_response:
+                log_debug("Model responded directly without creating tasks, exiting task loop.")
                 break
 
-            if task_list.all_terminal():
-                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
-                if not has_failures:
-                    log_debug("All tasks completed successfully, finishing task loop.")
-                    break
-                log_debug("All tasks terminal but some failed, continuing to let model handle.")
+            # Check termination conditions
+            completion_reason = _task_loop_completion_reason(
+                task_list,
+                task_activity_seen=task_activity_seen,
+                goal_completion_seen=goal_completion_seen,
+            )
+            if completion_reason == "goal_complete":
+                log_debug("Task goal marked complete, finishing task loop.")
+                break
+            if completion_reason == "all_completed":
+                log_debug("All tasks completed successfully, finishing task loop.")
+                break
+            if task_activity_seen and task_list.all_terminal():
+                log_debug("All tasks terminal but some failed or were cancelled, continuing to let model handle.")
         else:
             # Loop exhausted without completing
-            task_list = load_task_list(run_context.session_state)
-            if not task_list.goal_complete:
-                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+            log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
         # === Post-loop ===
 
         # Always add media to run_response for caller availability
         if model_response is not None:
+            await agenerate_response_with_output_model(
+                team,
+                model_response=model_response,
+                run_messages=run_messages,
+                run_response=run_response,
+            )
+            await aparse_response_with_parser_model(
+                team,
+                model_response=model_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                run_response=run_response,
+            )
+            _replace_run_response_content(team, model_response, run_response, run_context)
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -2463,10 +2746,11 @@ async def _arun_tasks_stream(
         _convert_response_to_structured_format,
         agenerate_response_with_output_model_stream,
         ahandle_reasoning_stream,
+        aparse_response_with_parser_model_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
-    from agno.team.task import TaskStatus, load_task_list
+    from agno.team.task import load_task_list
     from agno.utils.events import (
         create_team_task_iteration_completed_event,
         create_team_task_iteration_started_event,
@@ -2604,10 +2888,15 @@ async def _arun_tasks_stream(
 
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
+        task_activity_seen = False
+        goal_completion_seen = False
+        model_iteration_ran = False
+        parser_active = team.parser_model is not None and run_context.output_schema is not None
 
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+            run_response.content = None
 
             # Yield task iteration started event
             if stream_events:
@@ -2625,68 +2914,67 @@ async def _arun_tasks_stream(
             # On subsequent iterations, inject current task state as a user message
             if iteration > 0:
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
-                )
+                task_summary = task_list.get_summary_string(result_limit=team.task_result_summary_limit)
+                if task_list.tasks:
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When all tasks are done, call `mark_all_complete` with a summary.",
+                    )
+                else:
+                    state_message = Message(
+                        role="user",
+                        content="If the request requires member expertise, create and execute tasks. "
+                        "Otherwise, respond directly.",
+                    )
                 accumulated_messages.append(state_message)
+
+            # Snapshot task state so direct responses can be distinguished
+            # from task-plan activity during this iteration.
+            task_state_before = deepcopy(load_task_list(run_context.session_state).to_dict())
+            tool_count_before = len(run_response.tools or [])
+            iteration_response_seen = False
+            buffered_content_events: List[RunContentEvent] = []
+
+            def reset_iteration_content_for_fallback() -> None:
+                nonlocal iteration_response_seen
+                iteration_response_seen = False
+                buffered_content_events.clear()
 
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
             run_messages.messages = accumulated_messages
 
-            if team.output_model is None:
-                async for event in _ahandle_model_response_stream(
-                    team,
-                    session=team_session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-            else:
-                async for event in _ahandle_model_response_stream(
-                    team,
-                    session=team_session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
-
-                    if isinstance(event, RunContentEvent):
-                        if stream_events:
-                            yield IntermediateRunContentEvent(
-                                content=event.content,
-                                content_type=event.content_type,
-                            )
-                    else:
-                        yield event
-
-                async for event in agenerate_response_with_output_model_stream(
-                    team,
-                    session=team_session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    stream_events=stream_events,
-                ):
+            model_iteration_ran = True
+            async for event in _ahandle_model_response_stream(
+                team,
+                session=team_session,
+                run_response=run_response,
+                run_messages=run_messages,
+                tools=_tools,
+                response_format=response_format,
+                stream_events=stream_events,
+                session_state=run_context.session_state,
+                run_context=run_context,
+                on_fallback_activated=reset_iteration_content_for_fallback,
+            ):
+                buffered_content = False
+                if _is_task_leader_content_event(event, run_response):
+                    content_event = cast(RunContentEvent, event)
+                    if content_event.content is not None:
+                        iteration_response_seen = iteration_response_seen or (
+                            content_event.content_type != "str"
+                            or _has_meaningful_response_content(content_event.content)
+                        )
+                        _remove_buffered_content_event(run_response, content_event)
+                        buffered_content_events.append(content_event)
+                        buffered_content = True
+                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                if buffered_content:
+                    continue
+                yield event
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2694,6 +2982,14 @@ async def _arun_tasks_stream(
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
+                for item in _flush_task_iteration_content(
+                    team,
+                    run_response,
+                    buffered_content_events,
+                    final=True,
+                    stream_events=stream_events,
+                ):
+                    yield item
                 async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
                     team, run_response=run_response, session=team_session, run_context=run_context
                 ):
@@ -2702,8 +2998,37 @@ async def _arun_tasks_stream(
                     yield run_response
                 return
 
-            # Check termination conditions
             task_list = load_task_list(run_context.session_state)
+            task_activity_seen = task_activity_seen or task_list.to_dict() != task_state_before
+            current_tool_executions = (run_response.tools or [])[tool_count_before:]
+            goal_completion_seen = (
+                goal_completion_seen
+                or (not task_state_before.get("goal_complete", False) and task_list.goal_complete)
+                or _executed_tool_named(current_tool_executions, "mark_all_complete")
+            )
+
+            # A new content response without task-state activity is direct.
+            direct_response = (
+                not task_activity_seen and (not task_list.tasks or task_list.all_terminal()) and iteration_response_seen
+            )
+            if direct_response:
+                log_debug("Model responded directly without creating tasks, exiting task loop.")
+
+            completion_reason = _task_loop_completion_reason(
+                task_list,
+                task_activity_seen=task_activity_seen,
+                goal_completion_seen=goal_completion_seen,
+            )
+            will_exit = direct_response or completion_reason is not None or iteration == team.max_iterations - 1
+            final_content = will_exit and team.output_model is None and not parser_active
+            for item in _flush_task_iteration_content(
+                team,
+                run_response,
+                buffered_content_events,
+                final=final_content,
+                stream_events=stream_events,
+            ):
+                yield item
 
             # Yield task state updated event
             if stream_events:
@@ -2723,7 +3048,7 @@ async def _arun_tasks_stream(
                 yield handle_event(  # type: ignore
                     create_team_task_state_updated_event(
                         from_run_response=run_response,
-                        task_summary=task_list.get_summary_string(),
+                        task_summary=task_list.get_summary_string(result_limit=team.task_result_summary_limit),
                         goal_complete=task_list.goal_complete,
                         tasks=task_data_list,
                         completion_summary=task_list.completion_summary,
@@ -2740,30 +3065,69 @@ async def _arun_tasks_stream(
                         from_run_response=run_response,
                         iteration=iteration + 1,
                         max_iterations=team.max_iterations,
-                        task_summary=task_list.get_summary_string(),
+                        task_summary=task_list.get_summary_string(result_limit=team.task_result_summary_limit),
                     ),
                     run_response,
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
 
-            if task_list.goal_complete:
-                log_debug("Task goal marked complete, finishing task loop.")
+            if direct_response:
                 break
 
-            if task_list.all_terminal():
-                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
-                if not has_failures:
-                    log_debug("All tasks completed successfully, finishing task loop.")
-                    break
-                log_debug("All tasks terminal but some failed, continuing to let model handle.")
+            if completion_reason == "goal_complete":
+                log_debug("Task goal marked complete, finishing task loop.")
+                break
+            if completion_reason == "all_completed":
+                log_debug("All tasks completed successfully, finishing task loop.")
+                break
+            if task_activity_seen and task_list.all_terminal():
+                log_debug("All tasks terminal but some failed or were cancelled, continuing to let model handle.")
         else:
             # Loop exhausted without completing
-            task_list = load_task_list(run_context.session_state)
-            if not task_list.goal_complete:
-                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+            log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
         # === Post-loop ===
+
+        if model_iteration_ran:
+            if team.output_model is not None:
+                async for event in agenerate_response_with_output_model_stream(
+                    team,
+                    session=team_session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    stream_events=stream_events,
+                ):
+                    buffered_content = False
+                    if parser_active and _is_task_leader_content_event(event, run_response):
+                        content_event = cast(RunContentEvent, event)
+                        if content_event.content is not None:
+                            _remove_buffered_content_event(run_response, content_event)
+                            buffered_content = True
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    if buffered_content:
+                        for item in _flush_task_iteration_content(
+                            team,
+                            run_response,
+                            [content_event],
+                            final=False,
+                            stream_events=stream_events,
+                        ):
+                            yield item
+                        continue
+                    yield event
+
+            async for event in aparse_response_with_parser_model_stream(
+                team,
+                session=team_session,
+                run_response=run_response,
+                stream_events=stream_events,
+                run_context=run_context,
+            ):
+                yield event
+            if (team.output_model is not None or parser_active) and run_response.content == "":
+                run_response.content = None
 
         # Convert response to structured format
         _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -3941,6 +4305,7 @@ async def _arun_stream(
                         session=team_session,
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -8470,6 +8835,7 @@ def _continue_run_stream(
                         session=session,
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -10140,6 +10506,7 @@ async def _acontinue_run_stream(
                             session=team_session,
                             run_response=run_response,
                             run_messages=run_messages,
+                            run_context=run_context,
                             stream_events=stream_events,
                         ):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -10259,6 +10626,7 @@ async def _acontinue_run_stream(
                             session=team_session,
                             run_response=run_response,
                             run_messages=run_messages,
+                            run_context=run_context,
                             stream_events=stream_events,
                         ):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore

@@ -1862,11 +1862,30 @@ DEBUG **** Team Run End: 1599660c-53c5-4346-8299-d47047e226b9 ****
 
 ### tasks/10_multi_run_session.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Example execution attempt
+**Description:** Imported offline and exercised cached same-session task persistence with a deterministic model.
 
-**Result:** Timeout after 30s
+**Result:** Import and deterministic persistence checks passed. Live OpenAI execution was not attempted.
 
 ---
 
+### tasks/12_direct_response.py
+
+**Status:** PASS
+
+**Description:** Imported offline and exercised sync, async, streaming, empty-turn, structured-output, and persisted-plan behavior deterministically.
+
+**Result:** Import and deterministic direct-response checks passed. Live OpenAI execution was not attempted.
+
+---
+
+### tasks/13_task_improvements.py
+
+**Status:** PASS
+
+**Description:** Imported offline and exercised dependency safety, bounded context, editing, cancellation, and replanning through task-tool entrypoints.
+
+**Result:** Import and deterministic task-improvement checks passed. Live OpenAI execution was not attempted.
+
+---

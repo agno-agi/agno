@@ -1,5 +1,6 @@
 """
 Multi-Run Session with Task Mode
+================================
 
 Demonstrates that task state persists across multiple runs within the same
 session. The first run creates and executes tasks; the second run can
@@ -41,6 +42,7 @@ team = Team(
     model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher, analyst],
     session_id="task-mode-demo-session",
+    cache_session=True,
     instructions=[
         "You are a research and analysis team leader.",
         "Decompose requests into research and analysis tasks.",

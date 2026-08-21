@@ -7,6 +7,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -20,9 +21,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent._tools import result_store_kwargs
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
-from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
@@ -406,6 +407,7 @@ def parse_response_with_output_model(
         )
 
     model_response.content = output_model_response.content
+    model_response.parsed = output_model_response.parsed
 
 
 def generate_response_with_output_model_stream(
@@ -413,6 +415,7 @@ def generate_response_with_output_model_stream(
     session: TeamSession,
     run_response: TeamRunOutput,
     run_messages: RunMessages,
+    run_context: RunContext,
     stream_events: bool = False,
 ):
     """Parse the model response using the output model stream."""
@@ -445,6 +448,7 @@ def generate_response_with_output_model_stream(
             run_response=run_response,
             full_model_response=model_response,
             model_response_event=model_response_event,
+            run_context=run_context,
         )
 
     # Update the TeamRunResponse content
@@ -491,6 +495,7 @@ async def agenerate_response_with_output_model(
         )
 
     model_response.content = output_model_response.content
+    model_response.parsed = output_model_response.parsed
 
 
 async def agenerate_response_with_output_model_stream(
@@ -498,6 +503,7 @@ async def agenerate_response_with_output_model_stream(
     session: TeamSession,
     run_response: TeamRunOutput,
     run_messages: RunMessages,
+    run_context: RunContext,
     stream_events: bool = False,
 ):
     """Parse the model response using the output model stream."""
@@ -530,6 +536,7 @@ async def agenerate_response_with_output_model_stream(
             run_response=run_response,
             full_model_response=model_response,
             model_response_event=model_response_event,
+            run_context=run_context,
         ):
             yield event
 
@@ -920,8 +927,10 @@ def _update_run_response(
         # Update the run_response content with the model response content
         if not run_response.content:
             run_response.content = model_response.content
-        else:
+        elif isinstance(run_response.content, str) and isinstance(model_response.content, str):
             run_response.content += model_response.content
+        elif model_response.content is not None:
+            run_response.content = model_response.content
 
     # Update the run_response thinking with the model response thinking
     if model_response.reasoning_content is not None:
@@ -994,6 +1003,7 @@ def _handle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    on_fallback_activated: Optional[Callable[[], None]] = None,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     team.model = cast(Model, team.model)
 
@@ -1034,6 +1044,10 @@ def _handle_model_response_stream(
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
+            if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+                if on_fallback_activated is not None:
+                    on_fallback_activated()
+
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -1155,6 +1169,7 @@ async def _ahandle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    on_fallback_activated: Optional[Callable[[], None]] = None,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     team.model = cast(Model, team.model)
 
@@ -1196,6 +1211,10 @@ async def _ahandle_model_response_stream(
     async for model_response_event in model_stream:
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
+            if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+                if on_fallback_activated is not None:
+                    on_fallback_activated()
+
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -1380,12 +1399,18 @@ def _handle_model_response_chunk(
 
             should_yield = False
             # Process content
-            if model_response_event.content is not None:
+            output_schema = run_context.output_schema if run_context else None
+            if output_schema is not None and not team.use_json_mode and model_response_event.parsed is not None:
+                full_model_response.parsed = model_response_event.parsed
+                full_model_response.content = model_response_event.parsed
+                run_response.content = model_response_event.parsed
+                content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__
+                run_response.content_type = content_type
+                should_yield = True
+            elif model_response_event.content is not None:
                 if parse_structured_output:
                     full_model_response.content = model_response_event.content
                     _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
-                    # Get output_schema from run_context
-                    output_schema = run_context.output_schema if run_context else None
                     content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
                     run_response.content_type = content_type
                 elif team._member_response_model is not None:

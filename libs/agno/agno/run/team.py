@@ -547,7 +547,7 @@ class TaskData:
     id: str = ""
     title: str = ""
     description: str = ""
-    status: str = "pending"  # pending, in_progress, completed, failed, blocked
+    status: str = "pending"  # pending, in_progress, completed, failed, cancelled, blocked
     assignee: Optional[str] = None
     dependencies: List[str] = field(default_factory=list)
     result: Optional[str] = None
@@ -621,7 +621,7 @@ class TaskUpdatedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.task_updated.value
     task_id: str = ""
     title: str = ""
-    status: str = ""  # pending, in_progress, completed, failed, blocked
+    status: str = ""  # pending, in_progress, completed, failed, cancelled, blocked
     previous_status: Optional[str] = None
     result: Optional[str] = None
     assignee: Optional[str] = None

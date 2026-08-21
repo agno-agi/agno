@@ -224,7 +224,6 @@ def call_model_stream_with_fallback(
         if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
-        yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         yield from _try_fallback_models_stream(
             fallbacks,
             primary_error,
@@ -249,7 +248,6 @@ async def acall_model_stream_with_fallback(
         if not fallbacks:
             raise
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
-        yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         async for event in _atry_fallback_models_stream(
             fallbacks,
             primary_error,
@@ -355,6 +353,7 @@ def _try_fallback_models_stream(
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
+            yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
             attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
             yield from fallback.response_stream(**attempt_kwargs)
             _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
@@ -383,6 +382,7 @@ async def _atry_fallback_models_stream(
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
+            yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
             attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
             async for event in fallback.aresponse_stream(**attempt_kwargs):
                 yield event
