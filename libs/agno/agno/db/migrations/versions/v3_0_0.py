@@ -5,6 +5,7 @@ Changes:
 - Copy every run stored in the sessions table `runs` column into the runs table
 - Add the user_id column and its index to every table in ``USER_ID_TABLE_TYPES``
 - Move the metrics unique key onto (user_id, date, aggregation_period)
+- Re-key namespace="user" entity_memory learnings onto their owner's key
 
 This removes the unbounded growth of session rows: each run is now stored once,
 in its own row, instead of the whole run list being rewritten on every save.
@@ -49,6 +50,21 @@ BATCH_SIZE = 50
 # never called for it; a backend whose schema does not declare the column is skipped.
 USER_ID_TABLE_TYPES = ("evals", "components", "knowledge", "schedules", "schedule_runs", "metrics")
 
+# Studio 3.0 schedule provenance:
+# nullable TEXT columns, so legacy rows need only the ALTERs. managed_by and
+# target_id also get lookup indexes.
+SCHEDULE_PROVENANCE_COLUMNS = (
+    "managed_by",
+    "target_type",
+    "target_id",
+    "created_by_run_id",
+    "created_by_session_id",
+    "updated_by_run_id",
+    "updated_by_session_id",
+    "disabled_reason",
+)
+SCHEDULE_PROVENANCE_INDEXED = ("managed_by", "target_id")
+
 # The pre-v3.0 metrics unique key. It has to go: a per-user bucket needs user_id in the
 # key, or the second user's row for a date is rejected.
 METRICS_LEGACY_UNIQUE_NAME = "uq_metrics_date_period"
@@ -65,12 +81,71 @@ class ScheduleDuplicateNamesError(RuntimeError):
     later run (a re-run would skip an already-stamped version)."""
 
 
+# Buckets the operator has to act on, and buckets that only record what the
+# re-key did with a row. rekey_user_entity_learnings logs every count already,
+# so these lines carry the reason rather than the numbers.
+_REKEY_NEEDS_AN_OPERATOR = (
+    ("conflicts", "have a row on the target key whose content does not parse"),
+    ("failed", "could not be moved"),
+    ("malformed", "are missing the entity columns or do not parse"),
+)
+_REKEY_FOR_THE_RECORD = (
+    ("quarantined", "held more than one user's data and moved out of the entity store's reads"),
+    ("contaminated_keyed", "record a user other than their owner and were left in place"),
+    (
+        "unowned",
+        "have no owner: no user's erasure reaches them, and a scoped /learnings read returns them to every user",
+    ),
+)
+
+
+def _report_rekey(report: Dict[str, Any], table_name: str) -> bool:
+    """Say what the entity_memory re-key did with the rows it could not simply move.
+
+    Returns True when the re-key wrote something.
+    """
+    for buckets, emit in ((_REKEY_NEEDS_AN_OPERATOR, log_warning), (_REKEY_FOR_THE_RECORD, log_info)):
+        for bucket, note in buckets:
+            count = len(report.get(bucket) or [])
+            if count:
+                emit(
+                    f"{count} entity_memory row(s) on table {table_name} {note}. "
+                    "See 'Entity memory: per-user keys' in V3_MIGRATION_GUIDE.md."
+                )
+    return any(report.get(bucket) for bucket in ("rekeyed", "merged", "quarantined"))
+
+
+def _rekey_learnings(db: BaseDb, table_name: str) -> bool:
+    """Move pre-3.0 namespace="user" entity_memory rows onto their owner's key."""
+    from agno.learn.migrations import rekey_user_entity_learnings
+
+    try:
+        report = rekey_user_entity_learnings(db, dry_run=False)
+    except NotImplementedError:
+        log_info(f"{type(db).__name__} does not store learnings; table {table_name} is left unchanged")
+        return False
+    return _report_rekey(report, table_name)
+
+
+async def _arekey_learnings(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async version of _rekey_learnings."""
+    from agno.learn.migrations import arekey_user_entity_learnings
+
+    try:
+        report = await arekey_user_entity_learnings(db, dry_run=False)
+    except NotImplementedError:
+        log_info(f"{type(db).__name__} does not store learnings; table {table_name} is left unchanged")
+        return False
+    return _report_rekey(report, table_name)
+
+
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     """
     Apply the following changes to the database:
     - Move session runs out of the sessions `runs` column into the runs table
     - Add a user_id column and index to the tables listed in USER_ID_TABLE_TYPES
     - Move the metrics unique key onto (user_id, date, aggregation_period)
+    - Re-key namespace="user" entity_memory learnings onto their owner's key
 
     Notice only the changes related to the given table_type are applied.
 
@@ -80,6 +155,11 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
+        # The learnings re-key is a content move, identical on every backend that
+        # stores learnings, so it does not go through the per-backend schema work.
+        if table_type == "learnings":
+            return _rekey_learnings(db, table_name)
+
         if db_type == "PostgresDb":
             return _migrate_postgres(db, table_type, table_name)
         elif db_type == "SqliteDb":
@@ -118,6 +198,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     - Move session runs out of the sessions `runs` column into the runs table
     - Add a user_id column and index to the tables listed in USER_ID_TABLE_TYPES
     - Move the metrics unique key onto (user_id, date, aggregation_period)
+    - Re-key namespace="user" entity_memory learnings onto their owner's key
 
     Notice only the changes related to the given table_type are applied.
 
@@ -127,6 +208,10 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
+        # See the sync twin: the learnings re-key is a content move.
+        if table_type == "learnings":
+            return await _arekey_learnings(db, table_name)
+
         if db_type == "AsyncPostgresDb":
             return await _migrate_async_postgres(db, table_type, table_name)
         elif db_type == "AsyncSqliteDb":
@@ -149,12 +234,21 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
     - Move runs back into the sessions `runs` column and drop the runs table
     - Drop the user_id column and index from the tables listed in USER_ID_TABLE_TYPES
     - Move the metrics unique key back onto (date, aggregation_period)
+    - The entity_memory re-key is not reverted
 
     Notice only the changes related to the given table_type are reverted.
 
     Returns:
         bool: True if any migration was reverted, False otherwise.
     """
+    # The pre-3.0 entity_memory key under namespace="user" is shared across
+    # users, so moving these rows back onto it would collide them again.
+    if table_type == "learnings":
+        log_warning(
+            f"The entity_memory re-key on table {table_name} cannot be reverted: the pre-3.0 key is shared across users"
+        )
+        return False
+
     db_type = type(db).__name__
 
     try:
@@ -196,12 +290,21 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     - Move runs back into the sessions `runs` column and drop the runs table
     - Drop the user_id column and index from the tables listed in USER_ID_TABLE_TYPES
     - Move the metrics unique key back onto (date, aggregation_period)
+    - The entity_memory re-key is not reverted
 
     Notice only the changes related to the given table_type are reverted.
 
     Returns:
         bool: True if any migration was reverted, False otherwise.
     """
+    # The pre-3.0 entity_memory key under namespace="user" is shared across
+    # users, so moving these rows back onto it would collide them again.
+    if table_type == "learnings":
+        log_warning(
+            f"The entity_memory re-key on table {table_name} cannot be reverted: the pre-3.0 key is shared across users"
+        )
+        return False
+
     db_type = type(db).__name__
 
     try:
@@ -404,11 +507,16 @@ def _forget_table(db, table_name: Optional[str], attribute: str) -> None:
     ``db.metadata``, so a later up() in the same process fails with
     "Table is already defined".
     """
-    metadata = getattr(db, "metadata", None)
-    if metadata is not None and table_name is not None:
-        for table in list(metadata.tables.values()):
-            if table.name == table_name:
-                metadata.remove(table)
+    invalidate = getattr(db, "_invalidate_table_cache", None)
+    if invalidate is not None and table_name is not None:
+        invalidate(table_name)
+    else:
+        # Third-party adapter without the cache helper: best-effort metadata cleanup
+        metadata = getattr(db, "metadata", None)
+        if metadata is not None and table_name is not None:
+            for table in list(metadata.tables.values()):
+                if table.name == table_name:
+                    metadata.remove(table)
     if hasattr(db, attribute):
         setattr(db, attribute, None)
 
@@ -3025,6 +3133,18 @@ def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> b
                 )
                 applied = True
 
+    if table_type == "schedules":
+        with db.Session() as sess, sess.begin():  # type: ignore
+            for column in SCHEDULE_PROVENANCE_COLUMNS:
+                log_info(f"-- Ensuring {column} column on {table_name}")
+                sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {column} VARCHAR"))
+            for column in SCHEDULE_PROVENANCE_INDEXED:
+                index = f"idx_{table_name}_{column}"
+                sess.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS {quote_db_identifier(db_type, index)} ON {full_table} ({column})")
+                )
+        applied = True
+
     # Outside the main transaction: a duplicate-name failure only skips the backstop.
     if table_type == "schedules":
         applied = _postgres_schedule_unique_backstop(db, db_schema, table_name, full_table, db_type) or applied
@@ -3110,6 +3230,18 @@ async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, tabl
                     )
                 )
                 applied = True
+
+    if table_type == "schedules":
+        async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+            for column in SCHEDULE_PROVENANCE_COLUMNS:
+                log_info(f"-- Ensuring {column} column on {table_name}")
+                await sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {column} VARCHAR"))
+            for column in SCHEDULE_PROVENANCE_INDEXED:
+                index = f"idx_{table_name}_{column}"
+                await sess.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS {quote_db_identifier(db_type, index)} ON {full_table} ({column})")
+                )
+        applied = True
 
     # Outside the main transaction: a duplicate-name failure only skips the backstop.
     if table_type == "schedules":
@@ -3566,6 +3698,26 @@ def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> boo
                 )
                 applied = True
 
+    if table_type == "schedules":
+        with db.Session() as sess, sess.begin():  # type: ignore
+            columns_info = sess.execute(text(f"PRAGMA table_info({quoted_table})")).fetchall()
+            existing_columns = {col[1] for col in columns_info}
+            indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
+            existing_indexes = {idx[1] for idx in indexes}
+            for column in SCHEDULE_PROVENANCE_COLUMNS:
+                if column not in existing_columns:
+                    log_info(f"-- Adding {column} column to {table_name}")
+                    sess.execute(text(f"ALTER TABLE {quoted_table} ADD COLUMN {column} TEXT"))
+                    applied = True
+            for column in SCHEDULE_PROVENANCE_INDEXED:
+                index = f"idx_{table_name}_{column}"
+                if index not in existing_indexes:
+                    log_info(f"-- Adding index {index} on {table_name}")
+                    sess.execute(
+                        text(f"CREATE INDEX {quote_db_identifier(db_type, index)} ON {quoted_table} ({column})")
+                    )
+                    applied = True
+
     # Outside the main transaction: a duplicate-name failure only skips the backstop.
     if table_type == "schedules":
         applied = _sqlite_schedule_unique_backstop(db, table_name, quoted_table, db_type) or applied
@@ -3621,6 +3773,26 @@ async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_
                     )
                 )
                 applied = True
+
+    if table_type == "schedules":
+        async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+            columns_info = (await sess.execute(text(f"PRAGMA table_info({quoted_table})"))).fetchall()
+            existing_columns = {col[1] for col in columns_info}
+            indexes = (await sess.execute(text(f"PRAGMA index_list({quoted_table})"))).fetchall()
+            existing_indexes = {idx[1] for idx in indexes}
+            for column in SCHEDULE_PROVENANCE_COLUMNS:
+                if column not in existing_columns:
+                    log_info(f"-- Adding {column} column to {table_name}")
+                    await sess.execute(text(f"ALTER TABLE {quoted_table} ADD COLUMN {column} TEXT"))
+                    applied = True
+            for column in SCHEDULE_PROVENANCE_INDEXED:
+                index = f"idx_{table_name}_{column}"
+                if index not in existing_indexes:
+                    log_info(f"-- Adding index {index} on {table_name}")
+                    await sess.execute(
+                        text(f"CREATE INDEX {quote_db_identifier(db_type, index)} ON {quoted_table} ({column})")
+                    )
+                    applied = True
 
     # Outside the main transaction: a duplicate-name failure only skips the backstop.
     if table_type == "schedules":
@@ -3815,6 +3987,57 @@ async def _restore_async_mysql_metrics_unique(sess, db, db_schema: str, table_na
     return True
 
 
+def _drop_postgres_schedule_provenance(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
+    """Drop the schedule provenance columns and their lookup indexes for PostgreSQL.
+
+    Each drop is guarded on its own: the forward migration adds a column only when
+    the table lacks it, so a table an older build migrated can carry some of them
+    and not others. The indexes are dropped by name rather than left to the
+    column drop's cascade, so the revert names exactly what the forward
+    migration created.
+    """
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    applied = False
+
+    for column in SCHEDULE_PROVENANCE_INDEXED:
+        index = f"idx_{table_name}_{column}"
+        if _index_exists(sess, db_schema, table_name, index, db_type):
+            log_info(f"-- Dropping index {index} from {table_name}")
+            sess.execute(text(f"DROP INDEX IF EXISTS {quoted_schema}.{quote_db_identifier(db_type, index)}"))
+            applied = True
+
+    for column in SCHEDULE_PROVENANCE_COLUMNS:
+        if _column_exists(sess, db_schema, table_name, column, db_type):
+            log_info(f"-- Dropping {column} column from {table_name}")
+            sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN IF EXISTS {column}"))
+            applied = True
+
+    return applied
+
+
+async def _drop_async_postgres_schedule_provenance(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
+    """Async PostgreSQL variant of :func:`_drop_postgres_schedule_provenance`."""
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    applied = False
+
+    for column in SCHEDULE_PROVENANCE_INDEXED:
+        index = f"idx_{table_name}_{column}"
+        if await _async_index_exists(sess, db_schema, table_name, index, db_type):
+            log_info(f"-- Dropping index {index} from {table_name}")
+            await sess.execute(text(f"DROP INDEX IF EXISTS {quoted_schema}.{quote_db_identifier(db_type, index)}"))
+            applied = True
+
+    for column in SCHEDULE_PROVENANCE_COLUMNS:
+        if await _async_column_exists(sess, db_schema, table_name, column, db_type):
+            log_info(f"-- Dropping {column} column from {table_name}")
+            await sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN IF EXISTS {column}"))
+            applied = True
+
+    return applied
+
+
 def _revert_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Drop the user_id column from the given table for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
@@ -3855,6 +4078,11 @@ def _revert_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bo
         if column_exists:
             log_info(f"-- Dropping user_id column from {table_name}")
             sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN user_id"))
+            applied = True
+
+        if table_type == "schedules" and _drop_postgres_schedule_provenance(
+            sess, db, db_schema, table_name, full_table
+        ):
             applied = True
 
         if is_metrics and _restore_postgres_metrics_unique(sess, db, db_schema, table_name, full_table):
@@ -3903,6 +4131,11 @@ async def _revert_async_postgres_user_id(db: AsyncBaseDb, table_type: str, table
         if column_exists:
             log_info(f"-- Dropping user_id column from {table_name}")
             await sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN user_id"))
+            applied = True
+
+        if table_type == "schedules" and await _drop_async_postgres_schedule_provenance(
+            sess, db, db_schema, table_name, full_table
+        ):
             applied = True
 
         if is_metrics and await _restore_async_postgres_metrics_unique(sess, db, db_schema, table_name, full_table):
@@ -4168,6 +4401,60 @@ async def _revert_async_sqlite_metrics_table(db: AsyncBaseDb, table_type: str, t
     return True
 
 
+def _drop_sqlite_schedule_provenance(sess, table_name: str, quoted_table: str, db_type: str) -> bool:
+    """Drop the schedule provenance columns and their lookup indexes for SQLite.
+
+    The indexes go first: SQLite refuses DROP COLUMN while an index still covers
+    the column. Each drop is guarded on its own, because the forward migration
+    adds a column only when the table lacks it, so a table an older build
+    migrated can carry some of them and not others.
+    """
+    applied = False
+
+    indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
+    existing_indexes = {idx[1] for idx in indexes}
+    for column in SCHEDULE_PROVENANCE_INDEXED:
+        index = f"idx_{table_name}_{column}"
+        if index in existing_indexes:
+            log_info(f"-- Dropping index {index} from {table_name}")
+            sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index)}"))
+            applied = True
+
+    columns_info = sess.execute(text(f"PRAGMA table_info({quoted_table})")).fetchall()
+    existing_columns = {col[1] for col in columns_info}
+    for column in SCHEDULE_PROVENANCE_COLUMNS:
+        if column in existing_columns:
+            log_info(f"-- Dropping {column} column from {table_name}")
+            sess.execute(text(f"ALTER TABLE {quoted_table} DROP COLUMN {column}"))
+            applied = True
+
+    return applied
+
+
+async def _drop_async_sqlite_schedule_provenance(sess, table_name: str, quoted_table: str, db_type: str) -> bool:
+    """Async SQLite variant of :func:`_drop_sqlite_schedule_provenance`."""
+    applied = False
+
+    result = await sess.execute(text(f"PRAGMA index_list({quoted_table})"))
+    existing_indexes = {idx[1] for idx in result.fetchall()}
+    for column in SCHEDULE_PROVENANCE_INDEXED:
+        index = f"idx_{table_name}_{column}"
+        if index in existing_indexes:
+            log_info(f"-- Dropping index {index} from {table_name}")
+            await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index)}"))
+            applied = True
+
+    result = await sess.execute(text(f"PRAGMA table_info({quoted_table})"))
+    existing_columns = {col[1] for col in result.fetchall()}
+    for column in SCHEDULE_PROVENANCE_COLUMNS:
+        if column in existing_columns:
+            log_info(f"-- Dropping {column} column from {table_name}")
+            await sess.execute(text(f"ALTER TABLE {quoted_table} DROP COLUMN {column}"))
+            applied = True
+
+    return applied
+
+
 def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Drop the user_id column from the given table for SQLite."""
     db_type = type(db).__name__
@@ -4226,6 +4513,9 @@ def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool
                         text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
                     )
                 raise
+            applied = True
+
+        if table_type == "schedules" and _drop_sqlite_schedule_provenance(sess, table_name, quoted_table, db_type):
             applied = True
 
         return applied
@@ -4289,6 +4579,11 @@ async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_n
                         text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
                     )
                 raise
+            applied = True
+
+        if table_type == "schedules" and await _drop_async_sqlite_schedule_provenance(
+            sess, table_name, quoted_table, db_type
+        ):
             applied = True
 
         return applied

@@ -8,6 +8,7 @@ on:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
       - "feat/v3.0"
+      - "fix/sql-table-cache"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -811,7 +812,7 @@ jobs:
 
   test-teams-3:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Green runs take 24-26 min; split the job to get under 20
+    timeout-minutes: 40 # Green runs take 24-26 min; one slow provider window pushed three runs past 30. Split the job to get under 20.
     strategy:
       matrix:
         python-version: ["3.12"]

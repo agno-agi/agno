@@ -14,6 +14,7 @@ from sqlalchemy import Column, Index, MetaData, Table, UniqueConstraint
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 from agno.db.migrations.manager import MigrationManager
+from agno.db.migrations.versions.v3_0_0 import SCHEDULE_PROVENANCE_COLUMNS
 from agno.db.schemas.evals import EvalRunRecord, EvalType
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 
@@ -451,6 +452,90 @@ def test_schedules_migration_is_idempotent():
 
     assert _table_columns(db_file, SCHEDULES_TABLE) == before_cols
     assert _table_indexes(db_file, SCHEDULES_TABLE) == before_idx
+
+
+def _strip_schedules_to_pre_v3(db_file: str) -> None:
+    """Mimic a 2.5.6 schedules table: no user_id, no provenance columns, none of their indexes."""
+    conn = sqlite3.connect(db_file)
+    try:
+        for index in [
+            f"idx_{SCHEDULES_TABLE}_user_id",
+            SCHEDULES_COMPOSITE_INDEX,
+            # v3-only unique name backstops also cover user_id
+            f"{SCHEDULES_TABLE}_uq_user_name",
+            f"{SCHEDULES_TABLE}_uq_unowned_name",
+            f"idx_{SCHEDULES_TABLE}_managed_by",
+            f"idx_{SCHEDULES_TABLE}_target_id",
+        ]:
+            conn.execute(f"DROP INDEX IF EXISTS {index}")
+        for column in ("user_id", *SCHEDULE_PROVENANCE_COLUMNS):
+            conn.execute(f"ALTER TABLE {SCHEDULES_TABLE} DROP COLUMN {column}")
+        conn.execute("UPDATE agno_schema_versions SET version='2.5.6' WHERE table_name=?", (SCHEDULES_TABLE,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _schedule_row(name: str) -> dict:
+    return {
+        "id": f"sched-{name}",
+        "name": name,
+        "cron_expr": "0 9 * * *",
+        "endpoint": "/agents/analyst/runs",
+        "method": "POST",
+        "timezone": "UTC",
+        "timeout_seconds": 3600,
+        "max_retries": 0,
+        "retry_delay_seconds": 60,
+        "enabled": True,
+        "created_at": 1,
+    }
+
+
+def test_schedules_migration_adds_provenance_columns_to_stripped_table():
+    """A true 2.5.6 schedules table (no provenance columns at all) gains all eight."""
+    db, db_file = _new_db_with(["schedules"])
+    _strip_schedules_to_pre_v3(db_file)
+    cols = _table_columns(db_file, SCHEDULES_TABLE)
+    assert "user_id" not in cols
+    assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
+
+    asyncio.run(MigrationManager(db).up(table_type="schedules"))
+
+    cols = _table_columns(db_file, SCHEDULES_TABLE)
+    assert "user_id" in cols
+    assert set(SCHEDULE_PROVENANCE_COLUMNS) <= cols
+    idx = _table_indexes(db_file, SCHEDULES_TABLE)
+    assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
+    assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
+    assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
+
+
+@pytest.mark.asyncio
+async def test_async_schedules_migration_adds_provenance_columns():
+    """Regression: the async schedules path called db.Session(), which async adapters do not
+    have — the migration died after adding user_id, leaving the provenance columns missing
+    and the version stamp at 2.5.6."""
+    db_file = os.path.join(tempfile.mkdtemp(), "test_async_schedules.db")
+    db = AsyncSqliteDb(db_file=db_file)
+    await db._get_table(table_type="schedules", create_table_if_not_found=True)
+    _strip_schedules_to_pre_v3(db_file)
+    cols = _table_columns(db_file, SCHEDULES_TABLE)
+    assert "user_id" not in cols
+    assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
+
+    await MigrationManager(db).up(table_type="schedules")
+
+    cols = _table_columns(db_file, SCHEDULES_TABLE)
+    assert "user_id" in cols
+    assert set(SCHEDULE_PROVENANCE_COLUMNS) <= cols
+    idx = _table_indexes(db_file, SCHEDULES_TABLE)
+    assert f"idx_{SCHEDULES_TABLE}_managed_by" in idx
+    assert f"idx_{SCHEDULES_TABLE}_target_id" in idx
+    assert await db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
+
+    created = await db.create_schedule(_schedule_row("after-migration"))
+    assert created["id"] == "sched-after-migration"
 
 
 # ---------------------------------------------------------------------------

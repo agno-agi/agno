@@ -218,6 +218,8 @@ class TestSqliteDbDeleteRunScrubsLegacyBlob:
         db.metadata.reflect(bind=db.db_engine)
         if hasattr(db, "_tables"):
             db._tables = {}
+        # The manual ALTER above bypassed the adapter, so bust its resolution cache too
+        db._table_cache.clear()
 
         return db
 
