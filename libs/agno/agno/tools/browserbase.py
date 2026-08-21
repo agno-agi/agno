@@ -18,10 +18,10 @@ class BrowserbaseTools(Toolkit):
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         base_url: Optional[str] = None,
-        enable_navigate_to: bool = True,
-        enable_screenshot: bool = True,
-        enable_get_page_content: bool = True,
-        enable_close_session: bool = True,
+        navigate_to: bool = True,
+        screenshot: bool = True,
+        get_page_content: bool = True,
+        close_session: bool = True,
         all: bool = False,
         parse_html: bool = True,
         max_content_length: Optional[int] = 100000,
@@ -88,16 +88,16 @@ class BrowserbaseTools(Toolkit):
         tools: List[Any] = []
         async_tools: List[tuple] = []
 
-        if all or enable_navigate_to:
+        if all or navigate_to:
             tools.append(self.navigate_to)
             async_tools.append((self.anavigate_to, "navigate_to"))
-        if all or enable_screenshot:
+        if all or screenshot:
             tools.append(self.screenshot)
             async_tools.append((self.ascreenshot, "screenshot"))
-        if all or enable_get_page_content:
+        if all or get_page_content:
             tools.append(self.get_page_content)
             async_tools.append((self.aget_page_content, "get_page_content"))
-        if all or enable_close_session:
+        if all or close_session:
             tools.append(self.close_session)
             async_tools.append((self.aclose_session, "close_session"))
 

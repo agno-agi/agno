@@ -30,9 +30,9 @@ class SpiderTools(Toolkit):
         max_results: Optional[int] = None,
         url: Optional[str] = None,
         optional_params: Optional[dict] = None,
-        enable_search: bool = True,
-        enable_scrape: bool = True,
-        enable_crawl: bool = True,
+        search: bool = True,
+        scrape: bool = True,
+        crawl: bool = True,
         all: bool = False,
         **kwargs,
     ):

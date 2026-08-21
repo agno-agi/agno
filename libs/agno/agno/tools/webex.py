@@ -17,8 +17,8 @@ except ImportError as e:
 class WebexTools(Toolkit):
     def __init__(
         self,
-        enable_send_message: bool = True,
-        enable_list_rooms: bool = True,
+        send_message: bool = True,
+        list_rooms: bool = True,
         all: bool = False,
         access_token: Optional[str] = None,
         **kwargs,
@@ -30,9 +30,9 @@ class WebexTools(Toolkit):
         self.client = WebexAPI(access_token=access_token)
 
         tools: List[Any] = []
-        if all or enable_send_message:
+        if all or send_message:
             tools.append(self.send_message)
-        if all or enable_list_rooms:
+        if all or list_rooms:
             tools.append(self.list_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)

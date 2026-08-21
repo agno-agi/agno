@@ -10,11 +10,11 @@ class VisualizationTools(Toolkit):
     def __init__(
         self,
         output_dir: str = "charts",
-        enable_create_bar_chart: bool = True,
-        enable_create_line_chart: bool = True,
-        enable_create_pie_chart: bool = True,
-        enable_create_scatter_plot: bool = True,
-        enable_create_histogram: bool = True,
+        create_bar_chart: bool = True,
+        create_line_chart: bool = True,
+        create_pie_chart: bool = True,
+        create_scatter_plot: bool = True,
+        create_histogram: bool = True,
         all: bool = False,
         **kwargs,
     ):

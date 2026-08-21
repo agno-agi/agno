@@ -13,9 +13,9 @@ class KnowledgeTools(Toolkit):
     def __init__(
         self,
         knowledge: Knowledge,
-        enable_think: bool = True,
-        enable_search: bool = True,
-        enable_analyze: bool = True,
+        think: bool = True,
+        search: bool = True,
+        analyze: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         add_few_shot: bool = False,

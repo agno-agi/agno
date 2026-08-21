@@ -14,11 +14,11 @@ class DiscordTools(Toolkit):
     def __init__(
         self,
         bot_token: Optional[str] = None,
-        enable_send_message: bool = True,
-        enable_get_channel_messages: bool = True,
-        enable_get_channel_info: bool = True,
-        enable_list_channels: bool = True,
-        enable_delete_message: bool = True,
+        send_message: bool = True,
+        get_channel_messages: bool = True,
+        get_channel_info: bool = True,
+        list_channels: bool = True,
+        delete_message: bool = True,
         all: bool = False,
         **kwargs,
     ):

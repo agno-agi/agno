@@ -14,7 +14,7 @@ class PubmedTools(Toolkit):
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
         results_expanded: bool = False,
-        enable_search_pubmed: bool = True,
+        search_pubmed: bool = True,
         all: bool = False,
         **kwargs,
     ):

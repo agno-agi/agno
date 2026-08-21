@@ -28,15 +28,15 @@ class GeminiTools(Toolkit):
         location: Optional[str] = None,
         image_generation_model: str = "imagen-3.0-generate-002",
         video_generation_model: str = "veo-2.0-generate-001",
-        enable_generate_image: bool = True,
-        enable_generate_video: bool = True,
+        generate_image: bool = True,
+        generate_video: bool = True,
         all: bool = False,
         **kwargs,
     ):
         tools = []
-        if all or enable_generate_image:
+        if all or generate_image:
             tools.append(self.generate_image)
-        if all or enable_generate_video:
+        if all or generate_video:
             tools.append(self.generate_video)
 
         super().__init__(name="gemini_tools", tools=tools, **kwargs)

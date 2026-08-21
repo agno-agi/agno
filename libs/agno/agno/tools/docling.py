@@ -29,15 +29,15 @@ class DoclingTools(Toolkit):
     Advanced pipeline/OCR options can be configured via init params.
 
     PDF/OCR options (init args):
-    - pdf_enable_ocr: bool
+    - pdf_ocr: bool
     - pdf_ocr_engine: "auto" | "easyocr" | "tesseract" | "tesseract_cli" | "ocrmac" | "rapidocr"
     - pdf_ocr_lang: list of language codes
     - pdf_force_full_page_ocr: bool
-    - pdf_enable_table_structure: bool
-    - pdf_enable_picture_description: bool
-    - pdf_enable_picture_classification: bool
+    - pdf_table_structure: bool
+    - pdf_picture_description: bool
+    - pdf_picture_classification: bool
     - pdf_document_timeout: float (seconds)
-    - pdf_enable_remote_services: bool
+    - pdf_remote_services: bool
 
     Note:
     Some OCR engines may require additional runtime dependencies. For example,
@@ -61,16 +61,16 @@ class DoclingTools(Toolkit):
         pdf_enable_picture_classification: Optional[bool] = None,
         pdf_document_timeout: Optional[float] = None,
         pdf_enable_remote_services: Optional[bool] = None,
-        enable_convert_to_markdown: bool = True,
-        enable_convert_to_text: bool = True,
-        enable_convert_to_html: bool = True,
-        enable_convert_to_html_split_page: bool = True,
-        enable_convert_to_json: bool = True,
-        enable_convert_to_yaml: bool = True,
-        enable_convert_to_doctags: bool = True,
-        enable_convert_to_vtt: bool = True,
-        enable_convert_string_content: bool = True,
-        enable_list_supported_parsers: bool = True,
+        convert_to_markdown: bool = True,
+        convert_to_text: bool = True,
+        convert_to_html: bool = True,
+        convert_to_html_split_page: bool = True,
+        convert_to_json: bool = True,
+        convert_to_yaml: bool = True,
+        convert_to_doctags: bool = True,
+        convert_to_vtt: bool = True,
+        convert_string_content: bool = True,
+        list_supported_parsers: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -91,25 +91,25 @@ class DoclingTools(Toolkit):
         self.max_chars = max_chars
 
         tools: List[Any] = []
-        if all or enable_convert_to_markdown:
+        if all or convert_to_markdown:
             tools.append(self.convert_to_markdown)
-        if all or enable_convert_to_text:
+        if all or convert_to_text:
             tools.append(self.convert_to_text)
-        if all or enable_convert_to_html:
+        if all or convert_to_html:
             tools.append(self.convert_to_html)
-        if all or enable_convert_to_html_split_page:
+        if all or convert_to_html_split_page:
             tools.append(self.convert_to_html_split_page)
-        if all or enable_convert_to_json:
+        if all or convert_to_json:
             tools.append(self.convert_to_json)
-        if all or enable_convert_to_yaml:
+        if all or convert_to_yaml:
             tools.append(self.convert_to_yaml)
-        if all or enable_convert_to_doctags:
+        if all or convert_to_doctags:
             tools.append(self.convert_to_doctags)
-        if all or enable_convert_to_vtt:
+        if all or convert_to_vtt:
             tools.append(self.convert_to_vtt)
-        if all or enable_convert_string_content:
+        if all or convert_string_content:
             tools.append(self.convert_string_content)
-        if all or enable_list_supported_parsers:
+        if all or list_supported_parsers:
             tools.append(self.list_supported_parsers)
 
         super().__init__(name="docling_tools", tools=tools, **kwargs)

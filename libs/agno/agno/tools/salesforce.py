@@ -57,15 +57,15 @@ class SalesforceTools(Toolkit):
         session_id: Optional[str] = None,
         max_records: int = 200,
         max_fields: int = 100,
-        enable_list_objects: bool = True,
-        enable_describe_object: bool = True,
-        enable_get_record: bool = True,
-        enable_query: bool = True,
-        enable_search: bool = True,
-        enable_create_record: bool = False,
-        enable_update_record: bool = False,
-        enable_delete_record: bool = False,
-        enable_get_report: bool = False,
+        list_objects: bool = True,
+        describe_object: bool = True,
+        get_record: bool = True,
+        query: bool = True,
+        search: bool = True,
+        create_record: bool = False,
+        update_record: bool = False,
+        delete_record: bool = False,
+        get_report: bool = False,
         all: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
@@ -97,23 +97,23 @@ class SalesforceTools(Toolkit):
             )
 
         tools: List[Any] = []
-        if all or enable_list_objects:
+        if all or list_objects:
             tools.append(self.list_objects)
-        if all or enable_describe_object:
+        if all or describe_object:
             tools.append(self.describe_object)
-        if all or enable_get_record:
+        if all or get_record:
             tools.append(self.get_record)
-        if all or enable_query:
+        if all or query:
             tools.append(self.query)
-        if all or enable_search:
+        if all or search:
             tools.append(self.search)
-        if all or enable_create_record:
+        if all or create_record:
             tools.append(self.create_record)
-        if all or enable_update_record:
+        if all or update_record:
             tools.append(self.update_record)
-        if all or enable_delete_record:
+        if all or delete_record:
             tools.append(self.delete_record)
-        if all or enable_get_report:
+        if all or get_report:
             tools.append(self.get_report)
 
         super().__init__(name="salesforce_tools", tools=tools, instructions=self.instructions, **kwargs)

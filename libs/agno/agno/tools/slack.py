@@ -145,18 +145,18 @@ class SlackTools(Toolkit):
         markdown: bool = True,
         output_directory: Optional[str] = None,
         save_downloads: bool = False,
-        enable_send_message: bool = True,
-        enable_send_message_thread: bool = True,
-        enable_list_channels: bool = True,
-        enable_get_channel_history: bool = True,
-        enable_upload_file: bool = True,
-        enable_download_file: bool = True,
-        enable_search_messages: bool = False,
-        enable_search_workspace: bool = False,
-        enable_get_thread: bool = False,
-        enable_list_users: bool = False,
-        enable_get_user_info: bool = False,
-        enable_get_channel_info: bool = False,
+        send_message: bool = True,
+        send_message_thread: bool = True,
+        list_channels: bool = True,
+        get_channel_history: bool = True,
+        upload_file: bool = True,
+        download_file: bool = True,
+        search_messages: bool = False,
+        search_workspace: bool = False,
+        get_thread: bool = False,
+        list_users: bool = False,
+        get_user_info: bool = False,
+        get_channel_info: bool = False,
         all: bool = False,
         ssl: Optional[SSLContext] = None,
         max_file_size: int = 1_073_741_824,  # 1GB
@@ -241,7 +241,7 @@ class SlackTools(Toolkit):
         if enable_search_messages or all:
             if self._user_client:
                 tools.append(self.search_messages)
-            elif enable_search_messages:
+            elif search_messages:
                 # Only warn when explicitly requested, not via all=True
                 log_warning("search_messages disabled: no user token (SLACK_USER_TOKEN) provided")
         if enable_search_workspace or all:

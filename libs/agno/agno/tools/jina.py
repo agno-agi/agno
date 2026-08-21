@@ -26,8 +26,8 @@ class JinaReaderTools(Toolkit):
         max_content_length: int = 10000,
         timeout: Optional[int] = None,
         search_query_content: bool = True,
-        enable_read_url: bool = True,
-        enable_search_query: bool = False,
+        read_url: bool = True,
+        search_query: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -42,9 +42,9 @@ class JinaReaderTools(Toolkit):
         )
 
         tools: List[Any] = []
-        if all or enable_read_url:
+        if all or read_url:
             tools.append(self.read_url)
-        if all or enable_search_query:
+        if all or search_query:
             tools.append(self.search_query)
 
         super().__init__(name="jina_reader_tools", tools=tools, **kwargs)

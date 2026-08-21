@@ -21,12 +21,12 @@ class Crawl4aiTools(Toolkit):
         headless: bool = True,
         wait_until: str = "domcontentloaded",
         proxy_config: Optional[Dict[str, Any]] = None,
-        enable_crawl: bool = True,
+        crawl: bool = True,
         all: bool = False,
         **kwargs,
     ):
         tools = []
-        if all or enable_crawl:
+        if all or crawl:
             tools.append(self.crawl)
 
         super().__init__(name="crawl4ai_tools", tools=tools, **kwargs)

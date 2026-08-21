@@ -1,5 +1,6 @@
 from collections import OrderedDict
-from inspect import iscoroutinefunction
+from functools import wraps
+from inspect import iscoroutinefunction, signature
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, cast, get_type_hints
 
@@ -8,6 +9,56 @@ from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 from agno.utils.string import generate_id_from_name
+
+# ── 2.x → 3.0 backwards compatibility ────────────────────────────────────────
+# Automatically remap enable_* kwargs to their new names for built-in toolkits.
+# Custom mappings go in _legacy_param_aliases on the toolkit class.
+
+
+def _remap_legacy_kwargs(cls: type, valid_params: frozenset, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Remap 2.x enable_* kwargs to 3.0 names. Non-legacy params pass through."""
+    aliases: Dict[str, Optional[str]] = getattr(cls, "_legacy_param_aliases", {})
+    result = dict(kwargs)
+
+    for key in list(result.keys()):
+        # Skip if this class accepts the param directly
+        if key in valid_params:
+            continue
+
+        # 1. Find target name (from aliases or by stripping enable_)
+        if key in aliases:
+            target = aliases[key]
+            if target is None:
+                # None means the subclass handles this kwarg itself
+                continue
+        elif key.startswith("enable_"):
+            target = key.removeprefix("enable_")
+        else:
+            continue
+
+        # 2. Remap: pop old key, set new key (unless new key already exists)
+        value = result.pop(key)
+        if target in result:
+            log_warning(f"Both `{key}` and `{target}` passed; using `{target}`.")
+        else:
+            log_warning(f"`{key}` is deprecated; use `{target}` instead.")
+            result[target] = value
+
+    return result
+
+
+def _wrap_init_for_legacy_support(cls: type, original_init: Callable) -> Callable:
+    """Wrap __init__ to remap legacy kwargs before calling original."""
+    valid_params = frozenset(signature(original_init).parameters)
+
+    @wraps(original_init)
+    def wrapped_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        # Use type(self) to get subclass aliases, not the captured cls
+        kwargs = _remap_legacy_kwargs(type(self), valid_params, kwargs)
+        original_init(self, *args, **kwargs)
+
+    return wrapped_init
+
 
 # Groups a Toolkit by what it contributes rather than by object identity.
 # Agent.deep_copy / Team.deep_copy clone a Toolkit list entry while the
@@ -111,6 +162,23 @@ class Toolkit:
     # Set to True for toolkits that require connection management (e.g., database connections)
     # When True, the Agent will automatically call connect() before using tools and close() after
     _requires_connect: bool = False
+
+    # Override in subclasses where the 2.x → 3.0 param rename isn't just stripping
+    # "enable_". For example: _legacy_param_aliases = {"max_documents": "max_results"}
+    # A value of None means the subclass handles that legacy kwarg in its own __init__.
+    _legacy_param_aliases: Dict[str, Optional[str]] = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Hook called by Python when any class inherits from Toolkit.
+
+        Wraps the subclass's __init__ with legacy 2.x parameter support, but
+        only for Agno's built-in toolkits: the 2.x -> 3.0 rename happened in
+        agno.tools, so only classes defined there get the remap. User-defined
+        toolkits own their parameter names and are left untouched.
+        """
+        super().__init_subclass__(**kwargs)
+        if "__init__" in cls.__dict__ and cls.__module__.startswith("agno.tools."):
+            cls.__init__ = _wrap_init_for_legacy_support(cls, cls.__dict__["__init__"])  # type: ignore[method-assign]
 
     def __init__(
         self,

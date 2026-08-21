@@ -18,12 +18,12 @@ class PlivoTools(Toolkit):
         auth_id: Optional[str] = None,
         auth_token: Optional[str] = None,
         debug: bool = False,
-        enable_send_sms: bool = True,
-        enable_make_call: bool = True,
-        enable_get_call_details: bool = True,
-        enable_list_messages: bool = True,
-        enable_list_calls: bool = True,
-        enable_lookup_number: bool = True,
+        send_sms: bool = True,
+        make_call: bool = True,
+        get_call_details: bool = True,
+        list_messages: bool = True,
+        list_calls: bool = True,
+        lookup_number: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -61,17 +61,17 @@ class PlivoTools(Toolkit):
             logging.getLogger("plivo").setLevel(logging.DEBUG)
 
         tools: List[Any] = []
-        if all or enable_send_sms:
+        if all or send_sms:
             tools.append(self.send_sms)
-        if all or enable_make_call:
+        if all or make_call:
             tools.append(self.make_call)
-        if all or enable_get_call_details:
+        if all or get_call_details:
             tools.append(self.get_call_details)
-        if all or enable_list_messages:
+        if all or list_messages:
             tools.append(self.list_messages)
-        if all or enable_list_calls:
+        if all or list_calls:
             tools.append(self.list_calls)
-        if all or enable_lookup_number:
+        if all or lookup_number:
             tools.append(self.lookup_number)
 
         super().__init__(name="plivo", tools=tools, **kwargs)

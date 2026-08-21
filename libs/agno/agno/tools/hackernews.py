@@ -20,16 +20,16 @@ class HackerNewsTools(Toolkit):
 
     def __init__(
         self,
-        enable_get_top_stories: bool = True,
-        enable_get_user_details: bool = True,
+        get_top_stories: bool = True,
+        get_user_details: bool = True,
         all: bool = False,
         timeout: int = 30,
         **kwargs,
     ):
         tools: List[Any] = []
-        if all or enable_get_top_stories:
+        if all or get_top_stories:
             tools.append(self.get_top_hackernews_stories)
-        if all or enable_get_user_details:
+        if all or get_user_details:
             tools.append(self.get_user_details)
 
         super().__init__(name="hackers_news", tools=tools, timeout=timeout, **kwargs)

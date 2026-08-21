@@ -65,11 +65,11 @@ class TrafilaturaTools(Toolkit):
         max_crawl_urls: int = 10,
         max_known_urls: int = 100000,
         # Tool enable flags for <6 functions
-        enable_extract_text: bool = True,
-        enable_extract_metadata_only: bool = True,
-        enable_html_to_text: bool = True,
-        enable_extract_batch: bool = True,
-        enable_crawl_website: bool = True,
+        extract_text: bool = True,
+        extract_metadata_only: bool = True,
+        html_to_text: bool = True,
+        extract_batch: bool = True,
+        crawl_website: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -89,16 +89,16 @@ class TrafilaturaTools(Toolkit):
         self.max_known_urls = max_known_urls
 
         tools: List[Callable] = []
-        if all or enable_extract_text:
+        if all or extract_text:
             tools.append(self.extract_text)
-        if all or enable_extract_metadata_only:
+        if all or extract_metadata_only:
             tools.append(self.extract_metadata_only)
-        if all or enable_html_to_text:
+        if all or html_to_text:
             tools.append(self.html_to_text)
-        if all or enable_extract_batch:
+        if all or extract_batch:
             tools.append(self.extract_batch)
 
-        if all or enable_crawl_website:
+        if all or crawl_website:
             if not SPIDER_AVAILABLE:
                 logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
             else:

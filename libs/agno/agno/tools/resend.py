@@ -15,7 +15,7 @@ class ResendTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         from_email: Optional[str] = None,
-        enable_send_email: bool = True,
+        send_email: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -25,7 +25,7 @@ class ResendTools(Toolkit):
             log_error("No Resend API key provided")
 
         tools: List[Any] = []
-        if all or enable_send_email:
+        if all or send_email:
             tools.append(self.send_email)
 
         super().__init__(name="resend_tools", tools=tools, **kwargs)

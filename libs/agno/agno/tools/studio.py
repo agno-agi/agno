@@ -314,8 +314,8 @@ class StudioTools(Toolkit):
         self.enable_agents = create_agents
         self.enable_teams = create_teams
         self.enable_workflows = create_workflows
-        self.enable_versions: bool = versions
-        self.enable_schedules: bool = schedules
+        self.versions: bool = versions
+        self.schedules: bool = schedules
         # Schedule management is shared with SchedulerTools; Studio owns only
         # create_schedule (component targets, internally built endpoint).
         self._scheduler_tools: Optional["SchedulerTools"] = None

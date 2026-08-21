@@ -134,7 +134,7 @@ class GoogleMapTools(Toolkit):
             return str([])
 
     def validate_address(
-        self, address: str, region_code: str = "US", locality: Optional[str] = None, enable_usps_cass: bool = False
+        self, address: str, region_code: str = "US", locality: Optional[str] = None, usps_cass: bool = False
     ) -> str:
         """
         Validate an address using Google Maps Address Validation API.

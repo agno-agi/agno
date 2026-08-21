@@ -32,7 +32,7 @@ class MLXTranscribeTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        enable_read_files_in_base_dir: bool = True,
+        read_files_in_base_dir: bool = True,
         restrict_to_base_dir: bool = True,
         path_or_hf_repo: str = "mlx-community/whisper-large-v3-turbo",
         verbose: Optional[bool] = None,

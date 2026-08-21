@@ -25,8 +25,8 @@ class DuckDuckGoTools(WebSearchTools):
 
     def __init__(
         self,
-        enable_search: bool = True,
-        enable_news: bool = True,
+        search: bool = True,
+        news: bool = True,
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         proxy: Optional[str] = None,

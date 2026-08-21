@@ -33,9 +33,9 @@ class MoviePyVideoTools(Toolkit):
 
     def __init__(
         self,
-        enable_process_video: bool = True,
-        enable_generate_captions: bool = True,
-        enable_embed_captions: bool = True,
+        process_video: bool = True,
+        generate_captions: bool = True,
+        embed_captions: bool = True,
         all: bool = False,
         **kwargs,
     ):

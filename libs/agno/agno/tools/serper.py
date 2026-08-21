@@ -16,10 +16,10 @@ class SerperTools(Toolkit):
         language: str = "en",
         num_results: int = 10,
         date_range: Optional[str] = None,
-        enable_search: bool = True,
-        enable_search_news: bool = True,
-        enable_search_scholar: bool = True,
-        enable_scrape_webpage: bool = True,
+        search: bool = True,
+        search_news: bool = True,
+        search_scholar: bool = True,
+        scrape_webpage: bool = True,
         all: bool = False,
         timeout: int = 30,
         **kwargs,
@@ -45,13 +45,13 @@ class SerperTools(Toolkit):
         self.date_range = date_range
 
         tools: List[Any] = []
-        if all or enable_search:
+        if all or search:
             tools.append(self.search_web)
-        if all or enable_search_news:
+        if all or search_news:
             tools.append(self.search_news)
-        if all or enable_search_scholar:
+        if all or search_scholar:
             tools.append(self.search_scholar)
-        if all or enable_scrape_webpage:
+        if all or scrape_webpage:
             tools.append(self.scrape_webpage)
 
         super().__init__(name="serper_tools", tools=tools, timeout=timeout, **kwargs)
