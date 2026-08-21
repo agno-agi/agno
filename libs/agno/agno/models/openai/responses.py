@@ -263,6 +263,7 @@ class OpenAIResponses(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -781,7 +782,11 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
 
             assistant_message.metrics.start_timer()
@@ -886,7 +891,11 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
 
             assistant_message.metrics.start_timer()
@@ -991,7 +1000,11 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
             # Background mode is not supported for streaming. Strip the flag and warn.
             if request_params.pop("background", None):
@@ -1080,7 +1093,11 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
             # Background mode is not supported for streaming. Strip the flag and warn.
             if request_params.pop("background", None):
