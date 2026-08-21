@@ -352,15 +352,11 @@ class Agent:
     compression_manager: Optional[CompressionManager] = None
 
     # --- Result Offloading ---
-    # Store large tool results as files and leave a short envelope with a
-    # result id in the message. True uses the defaults (results longer than
-    # 16000 characters). A ResultStore sets the threshold, the preview, the
-    # lifetime, and where payloads live; it is a settings object, bound to
-    # this db as a copy (the live store is the .result_store property), and
-    # inside a team a member store's own db or fs is not used - payloads go
-    # where the whole team can read them. Unset, the agent does not offload
-    # on its own and inherits a team's store when it is a member; False keeps
-    # offloading off inside a team too.
+    # Store tool results longer than a threshold as files and leave a short
+    # envelope with a result id in the message. True uses the defaults
+    # (16000 characters, one read_result page); a ResultStore sets the
+    # threshold, preview, lifetime and payload location. Unset, an agent
+    # inherits a team's store as a member; False keeps offloading off there too.
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Debug ---

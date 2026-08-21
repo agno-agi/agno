@@ -333,7 +333,10 @@ class ResultStore:
     ``Agent(offload_tool_results=ResultStore(...))`` or
     ``Team(offload_tool_results=ResultStore(...))`` to set the threshold, the
     preview size, the lifetime, or where payloads live. ``db`` is taken from
-    the agent or team when unset.
+    the agent or team when unset. The object passed is never modified: it is
+    bound to the owner's db as a copy, and that copy is the owner's
+    ``.result_store``. A member store inside a team keeps its settings only;
+    payloads go to the team's database so the whole team can read them.
 
     Usable without an agent. The sync and ``a``-prefixed async surfaces are
     equivalent; the async one uses the db's native async methods when the db

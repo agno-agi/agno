@@ -334,15 +334,11 @@ class Team:
     compression_manager: Optional["CompressionManager"] = None
 
     # --- Result Offloading ---
-    # Store large tool results as files and leave a short envelope with a
-    # result id in the message. True uses the defaults (results longer than
-    # 16000 characters), for the leader's own tool results and for every
-    # member answer. A ResultStore sets the threshold, the preview, the
-    # lifetime, and where payloads live; it is a settings object, bound to
-    # this db as a copy (the live store is the .result_store property), and
-    # a member store's own db or fs is not used - payloads go where the whole
-    # team can read them. Unset, a sub-team inherits the parent team's store;
-    # False keeps offloading off inside a parent team too.
+    # Store tool results and member answers longer than a threshold as files
+    # and leave a short envelope with a result id in the message. True uses
+    # the defaults (16000 characters, one read_result page); a ResultStore
+    # sets the threshold, preview, lifetime and payload location. Unset, a
+    # sub-team inherits the parent's store; False keeps offloading off there too.
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Team History ---
