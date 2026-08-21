@@ -72,11 +72,11 @@ class ZepTools(Toolkit):
         self.initialize()
 
         tools: List[Any] = []
-        if enable_add_zep_message or all:
+        if add_zep_message or all:
             tools.append(self.add_zep_message)
-        if enable_get_zep_memory or all:
+        if get_zep_memory or all:
             tools.append(self.get_zep_memory)
-        if enable_search_zep_memory or all:
+        if search_zep_memory or all:
             tools.append(self.search_zep_memory)
 
         super().__init__(

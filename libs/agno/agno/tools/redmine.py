@@ -51,25 +51,25 @@ class RedmineTools(Toolkit):
             self.redmine = Redmine(url=self.server_url, raise_attr_exception=False)
 
         tools: List[Any] = []
-        if enable_get_issue or all:
+        if get_issue or all:
             tools.append(self.get_issue)
-        if enable_create_issue or all:
+        if create_issue or all:
             tools.append(self.create_issue)
-        if enable_update_issue or all:
+        if update_issue or all:
             tools.append(self.update_issue)
-        if enable_search_issues or all:
+        if search_issues or all:
             tools.append(self.search_issues)
-        if enable_add_comment or all:
+        if add_comment or all:
             tools.append(self.add_comment)
-        if enable_log_time or all:
+        if log_time or all:
             tools.append(self.log_time)
-        if enable_list_projects or all:
+        if list_projects or all:
             tools.append(self.list_projects)
-        if enable_list_users or all:
+        if list_users or all:
             tools.append(self.list_users)
-        if enable_list_project_members or all:
+        if list_project_members or all:
             tools.append(self.list_project_members)
-        if enable_list_versions or all:
+        if list_versions or all:
             tools.append(self.list_versions)
 
         super().__init__(name="redmine_tools", tools=tools, **kwargs)

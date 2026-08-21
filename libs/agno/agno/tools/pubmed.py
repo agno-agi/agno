@@ -23,7 +23,7 @@ class PubmedTools(Toolkit):
         self.results_expanded: bool = results_expanded
 
         tools: List[Any] = []
-        if enable_search_pubmed or all:
+        if search_pubmed or all:
             tools.append(self.search_pubmed)
 
         super().__init__(name="pubmed", tools=tools, **kwargs)

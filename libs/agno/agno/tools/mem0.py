@@ -30,13 +30,13 @@ class Mem0Tools(Toolkit):
         **kwargs,
     ):
         tools: List[Any] = []
-        if enable_add_memory or all:
+        if add_memory or all:
             tools.append(self.add_memory)
-        if enable_search_memory or all:
+        if search_memory or all:
             tools.append(self.search_memory)
-        if enable_get_all_memories or all:
+        if get_all_memories or all:
             tools.append(self.get_all_memories)
-        if enable_delete_all_memories or all:
+        if delete_all_memories or all:
             tools.append(self.delete_all_memories)
 
         super().__init__(name="mem0_tools", tools=tools, **kwargs)

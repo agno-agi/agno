@@ -49,13 +49,13 @@ class OpenWeatherTools(Toolkit):
         self.geo_url = "https://api.openweathermap.org/geo/1.0"
 
         tools: List[Any] = []
-        if enable_current_weather or all:
+        if current_weather or all:
             tools.append(self.get_current_weather)
-        if enable_forecast or all:
+        if forecast or all:
             tools.append(self.get_forecast)
-        if enable_air_pollution or all:
+        if air_pollution or all:
             tools.append(self.get_air_pollution)
-        if enable_geocoding or all:
+        if geocoding or all:
             tools.append(self.geocode_location)
 
         super().__init__(name="openweather_tools", tools=tools, timeout=timeout, **kwargs)

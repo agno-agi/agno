@@ -50,17 +50,17 @@ class WorkflowTools(Toolkit):
             **kwargs,
         )
 
-        if enable_think or all:
+        if think or all:
             if async_mode:
                 self.register(self.async_think, name="think")
             else:
                 self.register(self.think, name="think")
-        if enable_run_workflow or all:
+        if run_workflow or all:
             if async_mode:
                 self.register(self.async_run_workflow, name="run_workflow")
             else:
                 self.register(self.run_workflow, name="run_workflow")
-        if enable_analyze or all:
+        if analyze or all:
             if async_mode:
                 self.register(self.async_analyze, name="analyze")
             else:

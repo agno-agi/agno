@@ -48,15 +48,15 @@ class JiraTools(Toolkit):
             self.jira = JIRA(server=self.server_url)
 
         tools: List[Any] = []
-        if enable_get_issue or all:
+        if get_issue or all:
             tools.append(self.get_issue)
-        if enable_create_issue or all:
+        if create_issue or all:
             tools.append(self.create_issue)
-        if enable_search_issues or all:
+        if search_issues or all:
             tools.append(self.search_issues)
-        if enable_add_comment or all:
+        if add_comment or all:
             tools.append(self.add_comment)
-        if enable_add_worklog or all:
+        if add_worklog or all:
             tools.append(self.add_worklog)
 
         super().__init__(name="jira_tools", tools=tools, **kwargs)

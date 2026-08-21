@@ -40,11 +40,11 @@ class MoviePyVideoTools(Toolkit):
         **kwargs,
     ):
         tools: List[Any] = []
-        if enable_process_video or all:
+        if process_video or all:
             tools.append(self.extract_audio)
-        if enable_generate_captions or all:
+        if generate_captions or all:
             tools.append(self.create_srt)
-        if enable_embed_captions or all:
+        if embed_captions or all:
             tools.append(self.embed_captions)
 
         super().__init__(name="video_tools", tools=tools, **kwargs)

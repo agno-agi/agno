@@ -69,7 +69,7 @@ class MLXTranscribeTools(Toolkit):
         self.decode_options: Optional[dict] = decode_options
 
         tools: List[Any] = [self.transcribe]
-        if enable_read_files_in_base_dir or all:
+        if read_files_in_base_dir or all:
             tools.append(self.read_files)
 
         super().__init__(name="mlx_transcribe", tools=tools, **kwargs)

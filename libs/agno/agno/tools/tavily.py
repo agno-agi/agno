@@ -102,13 +102,13 @@ class TavilyTools(Toolkit):
 
         tools: List[Any] = []
 
-        if enable_search or all:
+        if search or all:
             if search_context:
                 tools.append(self.web_search_with_tavily)
             else:
                 tools.append(self.web_search_using_tavily)
 
-        if enable_extract or all:
+        if extract or all:
             tools.append(self.extract_url_content)
 
         super().__init__(name="tavily_tools", tools=tools, **kwargs)

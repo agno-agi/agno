@@ -42,17 +42,17 @@ class MemoryTools(Toolkit):
         self.db: BaseDb = db
 
         tools: List[Any] = []
-        if enable_think or all:
+        if think or all:
             tools.append(self.think)
-        if enable_get_memories or all:
+        if get_memories or all:
             tools.append(self.get_memories)
-        if enable_add_memory or all:
+        if add_memory or all:
             tools.append(self.add_memory)
-        if enable_update_memory or all:
+        if update_memory or all:
             tools.append(self.update_memory)
-        if enable_delete_memory or all:
+        if delete_memory or all:
             tools.append(self.delete_memory)
-        if enable_analyze or all:
+        if analyze or all:
             tools.append(self.analyze)
 
         super().__init__(

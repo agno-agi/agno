@@ -40,15 +40,15 @@ class VisualizationTools(Toolkit):
         self.output_dir = output_dir
 
         tools: List[Any] = []
-        if enable_create_bar_chart or all:
+        if create_bar_chart or all:
             tools.append(self.create_bar_chart)
-        if enable_create_line_chart or all:
+        if create_line_chart or all:
             tools.append(self.create_line_chart)
-        if enable_create_pie_chart or all:
+        if create_pie_chart or all:
             tools.append(self.create_pie_chart)
-        if enable_create_scatter_plot or all:
+        if create_scatter_plot or all:
             tools.append(self.create_scatter_plot)
-        if enable_create_histogram or all:
+        if create_histogram or all:
             tools.append(self.create_histogram)
 
         super().__init__(name="visualization_tools", tools=tools, **kwargs)
