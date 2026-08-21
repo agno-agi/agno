@@ -7,6 +7,7 @@ from rich.text import Text
 from agnoctl import __version__
 from agnoctl.commands.connect import connect
 from agnoctl.commands.create import create
+from agnoctl.commands.db import db_app
 from agnoctl.commands.disconnect import disconnect
 from agnoctl.commands.lifecycle import down, restart, up
 from agnoctl.commands.status import status
@@ -26,6 +27,7 @@ app.command(name="disconnect")(disconnect)
 app.command(name="create")(create)
 app.command(name="status")(status)
 app.add_typer(tokens_app, name="tokens")
+app.add_typer(db_app, name="db")
 app.command(name="up")(up)
 app.command(name="down")(down)
 app.command(name="restart")(restart)
@@ -53,6 +55,7 @@ _GROUPS: List[Tuple[str, List[Tuple[str, str]]]] = [
         [
             ("agno up / down / restart", "Run your AgentOS"),
             ("agno status", "Show the AgentOS and which agents are connected"),
+            ("agno db status / migrate", "Check and apply database schema migrations"),
         ],
     ),
     (

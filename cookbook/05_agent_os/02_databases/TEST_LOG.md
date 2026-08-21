@@ -52,3 +52,22 @@ read back from SurrealDB. The isolated service used port 8001 because port 8000
 was already owned by another local AgentOS container.
 
 ---
+
+### migrations.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Staged `tmp/migrations.db` with an evals table stamped at
+schema version 2.0.0 (as an older Agno release would leave it), then started
+the AgentOS with `auto_migrate_dbs=True` under uvicorn and queried
+`GET /databases/migrations/pending` and `agno db status --url ...`.
+
+**Result:** Startup logs showed the migration run applying pending versions
+to every migratable table; the pending endpoint returned
+`{"total_pending": 0, ...}` and the CLI reported
+"All databases are up to date." Without `auto_migrate_dbs` the same setup logs
+a startup warning listing the stale table (covered by unit tests).
+
+---

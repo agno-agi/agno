@@ -267,6 +267,48 @@ class AgentOSAPI:
                 status_code=response.status_code,
             )
 
+    # -- Database migrations -------------------------------------------------------
+
+    def pending_migrations(self, db_id: Optional[str] = None) -> Dict[str, Any]:
+        """GET the pending-migration report: every database (or one) with the tables whose
+        schema version is behind the latest migration. Read-only on the server."""
+        path = "/databases/" + db_id + "/migrations/pending" if db_id else "/databases/migrations/pending"
+        response = self._request("GET", path)
+        if response.status_code == 404:
+            if db_id:
+                raise APIError("No database with id '" + db_id + "' on this AgentOS.", status_code=404)
+            raise APIError(
+                "This AgentOS does not expose pending migrations (agno 3.0+ required).",
+                status_code=404,
+            )
+        if response.status_code != 200:
+            raise APIError(
+                "Could not check pending migrations: " + _error_detail(response), status_code=response.status_code
+            )
+        payload = self._parse_json(response)
+        if not isinstance(payload, dict):
+            raise APIError("The AgentOS returned an unexpected pending-migrations payload.")
+        return payload
+
+    def migrate_databases(self, db_id: Optional[str] = None, target_version: Optional[str] = None) -> Dict[str, Any]:
+        """POST the migrate endpoint for every database (or one). Returns the server's
+        report; a 207 (some databases failed) is returned, not raised, so the caller
+        can show which ones."""
+        path = "/databases/" + db_id + "/migrate" if db_id else "/databases/all/migrate"
+        params: Dict[str, Any] = {}
+        if target_version:
+            params["target_version"] = target_version
+        response = self._request("POST", path, params=params)
+        if response.status_code == 404 and db_id:
+            raise APIError("No database with id '" + db_id + "' on this AgentOS.", status_code=404)
+        if response.status_code not in (200, 207):
+            raise APIError("Could not migrate: " + _error_detail(response), status_code=response.status_code)
+        payload = self._parse_json(response)
+        if not isinstance(payload, dict):
+            raise APIError("The AgentOS returned an unexpected migration payload.")
+        payload["_status_code"] = response.status_code
+        return payload
+
     # -- Internals -----------------------------------------------------------------
 
     def _parse_json(self, response: httpx.Response) -> Any:

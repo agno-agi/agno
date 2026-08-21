@@ -54,6 +54,11 @@ class FakeAgentOS:
         self.oauth: Optional[Dict[str, Any]] = dict(DEFAULT_OAUTH) if oauth is True else (oauth or None)
 
         self.accounts: Dict[str, Dict[str, Any]] = {}  # name -> account dict (with plaintext token)
+        # Pending schema migrations, keyed by db id -> list of pending-table dicts. POST migrate
+        # clears them; migrate_calls records (path, target_version) for assertions.
+        self.pending_migrations: Dict[str, List[Dict[str, Any]]] = {}
+        self.migrate_calls: List[Any] = []
+        self.migrate_failures: Dict[str, str] = {}
         self.create_calls = 0
         self.mcp_tools = ["run_agent", "run_team", "run_workflow", "get_agentos_config"]
         self._next_id = 1
@@ -231,6 +236,57 @@ class FakeAgentOS:
                     account["revoked_at"] = 1780000001
                     return httpx.Response(204)
             return httpx.Response(404, json={"detail": "Service account not found"})
+
+        if path == "/databases/migrations/pending" and method == "GET":
+            if not self._is_admin(request):
+                return httpx.Response(401, json={"detail": "Invalid authentication token"})
+            databases = [
+                {"db_id": db_id, "remote": False, "pending": list(pending)}
+                for db_id, pending in self.pending_migrations.items()
+            ]
+            total = sum(len(d["pending"]) for d in databases)
+            return httpx.Response(200, json={"total_pending": total, "databases": databases})
+
+        if path.startswith("/databases/") and path.endswith("/migrations/pending") and method == "GET":
+            if not self._is_admin(request):
+                return httpx.Response(401, json={"detail": "Invalid authentication token"})
+            db_id = path[len("/databases/") : -len("/migrations/pending")]
+            if db_id not in self.pending_migrations:
+                return httpx.Response(404, json={"detail": "Database not found"})
+            return httpx.Response(
+                200, json={"db_id": db_id, "remote": False, "pending": list(self.pending_migrations[db_id])}
+            )
+
+        if path.startswith("/databases/") and path.endswith("/migrate") and method == "POST":
+            if not self._is_admin(request):
+                return httpx.Response(401, json={"detail": "Invalid authentication token"})
+            target = request.url.params.get("target_version")
+            db_id = path[len("/databases/") : -len("/migrate")]
+            self.migrate_calls.append((path, target))
+            version_msg = "version " + target if target else "latest version"
+            if db_id == "all":
+                for key in self.pending_migrations:
+                    if key not in self.migrate_failures:
+                        self.pending_migrations[key] = []
+                if self.migrate_failures:
+                    ok = len(self.pending_migrations) - len(self.migrate_failures)
+                    return httpx.Response(
+                        207,
+                        json={
+                            "message": "Migrated "
+                            + str(ok)
+                            + "/"
+                            + str(len(self.pending_migrations))
+                            + " databases to "
+                            + version_msg,
+                            "failed": dict(self.migrate_failures),
+                        },
+                    )
+                return httpx.Response(200, json={"message": "All databases migrated successfully to " + version_msg})
+            if db_id not in self.pending_migrations:
+                return httpx.Response(404, json={"detail": "Database not found"})
+            self.pending_migrations[db_id] = []
+            return httpx.Response(200, json={"message": "Database migrated successfully to " + version_msg})
 
         if path == "/mcp":
             if not self.mcp_enabled:

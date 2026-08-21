@@ -1,5 +1,6 @@
 import importlib
-from typing import Optional, Union
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Union
 
 from packaging import version as packaging_version
 from packaging.version import Version
@@ -7,9 +8,51 @@ from packaging.version import Version
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.utils.log import log_error, log_info, log_warning
 
+# One place for "how do I apply pending migrations", reused by the AgentOS
+# startup warning and anything else that points a user at the migration path.
+MIGRATION_HINT = (
+    "Apply them with `asyncio.run(MigrationManager(db).up())` (from agno.db.migrations.manager), "
+    "`agno db migrate` with the Agno CLI, or `POST /databases/all/migrate` on AgentOS. "
+    "Preview with `agno db migrate --dry-run` or `GET /databases/migrations/pending`."
+)
+
+
+@dataclass
+class PendingMigration:
+    """A table whose stamped schema version is behind the latest available migration."""
+
+    table_type: str
+    table_name: str
+    current_version: str
+    target_version: str
+
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "table_type": self.table_type,
+            "table_name": self.table_name,
+            "current_version": self.current_version,
+            "target_version": self.target_version,
+        }
+
 
 class MigrationManager:
     """Manager class to handle database migrations"""
+
+    # Table types migrations know how to handle, mapped to the db attribute
+    # holding the configured table name. Tables outside this map are never
+    # migrated: they are created fresh at the current schema on first use.
+    TABLE_TYPE_TO_ATTR: Dict[str, str] = {
+        "memories": "memory_table_name",
+        "sessions": "session_table_name",
+        "metrics": "metrics_table_name",
+        "evals": "eval_table_name",
+        "knowledge": "knowledge_table_name",
+        "approvals": "approvals_table_name",
+        "components": "components_table_name",
+        "schedules": "schedules_table_name",
+        "schedule_runs": "schedule_runs_table_name",
+        "learnings": "learnings_table_name",
+    }
 
     available_versions: list[tuple[str, Version]] = [
         ("v2_0_0", packaging_version.parse("2.0.0")),
@@ -31,6 +74,50 @@ class MigrationManager:
         if invalidate is not None:
             invalidate(table_name)
 
+    async def _table_exists(self, table_name: str) -> bool:
+        """Whether the table is present. Adapters without an existence check are
+        treated as having the table, so they are never silently skipped."""
+        try:
+            if isinstance(self.db, AsyncBaseDb):
+                return bool(await self.db.table_exists(table_name))
+            return bool(self.db.table_exists(table_name))
+        except NotImplementedError:
+            return True
+
+    async def pending(self) -> List[PendingMigration]:
+        """List the tables whose stamped schema version is behind the latest migration.
+
+        Read-only: nothing is created, altered, or stamped. Tables that do not exist
+        yet are not pending; they are created at the current schema on first use.
+        Tables the adapter reports no version for are skipped the same way ``up()``
+        skips them.
+        """
+        latest = self.latest_schema_version
+        pending: List[PendingMigration] = []
+        for table_type, attr in self.TABLE_TYPE_TO_ATTR.items():
+            table_name = getattr(self.db, attr, None)
+            if not table_name:
+                continue
+            if not await self._table_exists(table_name):
+                continue
+            if isinstance(self.db, AsyncBaseDb):
+                raw_version = await self.db.get_latest_schema_version(table_name)
+            else:
+                raw_version = self.db.get_latest_schema_version(table_name)
+            if raw_version is None:
+                continue
+            current_version = packaging_version.parse(raw_version)
+            if current_version < latest:
+                pending.append(
+                    PendingMigration(
+                        table_type=table_type,
+                        table_name=table_name,
+                        current_version=current_version.public,
+                        target_version=latest.public,
+                    )
+                )
+        return pending
+
     async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False):
         """Handle executing an up migration.
 
@@ -48,19 +135,7 @@ class MigrationManager:
         else:
             _target_version = packaging_version.parse(target_version)
 
-        # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "approvals": "approvals_table_name",
-            "components": "components_table_name",
-            "schedules": "schedules_table_name",
-            "schedule_runs": "schedule_runs_table_name",
-            "learnings": "learnings_table_name",
-        }
+        _table_type_to_attr = self.TABLE_TYPE_TO_ATTR
 
         # Select tables to migrate
         if table_type:
@@ -159,19 +234,7 @@ class MigrationManager:
         """
         _target_version = packaging_version.parse(target_version)
 
-        # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "approvals": "approvals_table_name",
-            "components": "components_table_name",
-            "schedules": "schedules_table_name",
-            "schedule_runs": "schedule_runs_table_name",
-            "learnings": "learnings_table_name",
-        }
+        _table_type_to_attr = self.TABLE_TYPE_TO_ATTR
 
         # Select tables to migrate
         if table_type:

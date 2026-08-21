@@ -526,6 +526,8 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         # Database migration endpoints (admin-only operations, legacy scope: system:write)
         "POST /databases/all/migrate": ["config:write"],
         "POST /databases/*/migrate": ["config:write"],
+        "GET /databases/migrations/pending": ["config:read"],
+        "GET /databases/*/migrations/pending": ["config:read"],
         # Additional knowledge endpoints
         "POST /knowledge/remote-content": ["knowledge:write"],
         "GET /knowledge/*/sources": ["knowledge:read"],
