@@ -41,16 +41,16 @@ class SpiderTools(Toolkit):
         self.optional_params = optional_params or {}
 
         tools: List[Any] = []
-        if enable_search or all:
-            tools.append(self.search_web)
-        if enable_scrape or all:
-            tools.append(self.scrape)
-        if enable_crawl or all:
-            tools.append(self.crawl)
+        if search or all:
+            tools.append(self.spider_search_web)
+        if scrape or all:
+            tools.append(self.spider_scrape)
+        if crawl or all:
+            tools.append(self.spider_crawl)
 
         super().__init__(name="spider", tools=tools, **kwargs)
 
-    def search_web(self, query: str, max_results: Optional[int] = None) -> str:
+    def spider_search_web(self, query: str, max_results: Optional[int] = None) -> str:
         """Use this function to search the web.
         Args:
             query (str): The query to search the web with.
@@ -60,7 +60,7 @@ class SpiderTools(Toolkit):
         """
         return self._search(query, max_results=max_results)
 
-    def scrape(self, url: str) -> str:
+    def spider_scrape(self, url: str) -> str:
         """Use this function to scrape the content of a webpage.
         Args:
             url (str): The URL of the webpage to scrape.
@@ -69,7 +69,7 @@ class SpiderTools(Toolkit):
         """
         return self._scrape(url)
 
-    def crawl(self, url: str, limit: Optional[int] = None) -> str:
+    def spider_crawl(self, url: str, limit: Optional[int] = None) -> str:
         """Use this function to crawl the web.
         Args:
             url (str): The URL of the webpage to crawl.

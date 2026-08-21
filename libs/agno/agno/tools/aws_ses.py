@@ -21,13 +21,13 @@ class AWSSESTool(Toolkit):
     ):
         tools = []
         if all or send_email:
-            tools.append(self.send_email)
+            tools.append(self.aws_ses_send_email)
         super().__init__(name="aws_ses_tool", tools=tools, **kwargs)
         self.client = boto3.client("ses", region_name=region_name)
         self.sender_email = sender_email
         self.sender_name = sender_name
 
-    def send_email(self, subject: str, body: str, receiver_email: str) -> str:
+    def aws_ses_send_email(self, subject: str, body: str, receiver_email: str) -> str:
         """
         Use this tool to send an email using AWS SES.
 
