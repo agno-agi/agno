@@ -482,6 +482,12 @@ def get_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
+    # 1.3.5 Tell the model what a result envelope is and how to read the rest
+    if team._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
+
     # 2 Build the default system message for the Team.
     system_message_content: str = ""
 
@@ -726,6 +732,12 @@ async def aget_system_message(
     # 1.3.4 Add team name if provided
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
+
+    # 1.3.5 Tell the model what a result envelope is and how to read the rest
+    if team._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 2 Build the default system message for the Team.
     system_message_content: str = ""

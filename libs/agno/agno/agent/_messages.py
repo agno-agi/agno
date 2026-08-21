@@ -258,6 +258,11 @@ def get_system_message(
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
+    # Tell the model what a result envelope is and how to read the rest
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
@@ -559,6 +564,11 @@ async def aget_system_message(
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
+    # Tell the model what a result envelope is and how to read the rest
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""

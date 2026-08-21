@@ -209,6 +209,13 @@ def _determine_tools_for_model(
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
 
+    # Read-back tools for offloaded results
+    if team._result_store is not None:
+        from agno.offload.tools import get_read_result_function, get_search_result_function
+
+        _tools.append(get_read_result_function(team, run_context=run_context, async_mode=async_mode))
+        _tools.append(get_search_result_function(team, run_context=run_context, async_mode=async_mode))
+
     if team.search_past_sessions:
         _tools.append(
             _search_past_sessions_function(

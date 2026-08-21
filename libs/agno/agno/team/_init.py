@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.mode import TeamMode
     from agno.team.team import Team
+    from agno.offload.store import ResultStore
 
 from os import getenv
 from typing import (
@@ -154,6 +155,7 @@ def __init__(
     add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
@@ -334,6 +336,12 @@ def __init__(
     team.compress_tool_results = compress_tool_results
     team.compression_manager = compression_manager
 
+    # Result offloading settings
+    team.offload_tool_results = offload_tool_results
+    team._result_store = None
+    team._inherited_result_store = None
+    team._result_store_setting = None
+
     team.metadata = metadata
 
     team.reasoning_model = reasoning_model  # type: ignore[assignment]
@@ -472,6 +480,20 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
         member.debug_mode = True
         member.debug_level = team.debug_level
 
+    # Members offload through the team's store. One store plus the shared
+    # session id means a member can read back a result the leader or another
+    # member stored, so a result id in the task text is enough to hand over a
+    # large payload. A member's own ResultStore keeps its settings but is
+    # bound to the team's database, so its results stay reachable from the
+    # rest of the team. The binding is redone on every team initialization:
+    # a member moved to another team follows that team, a team without
+    # offloading clears a store an earlier team handed down, and the member's
+    # own declared setting is never modified. Membership is permanent in
+    # every other respect too (team_id, the team session), so the binding
+    # stays with the member between team runs.
+    if isinstance(member, (Agent, Team)):
+        _bind_member_result_store(team, member)
+
     if isinstance(member, Agent):
         member.team_id = team.id
         member._team = team
@@ -565,6 +587,105 @@ def _set_session_summary_manager(team: "Team") -> None:
 
     if team.add_session_summary_to_context is None:
         team.add_session_summary_to_context = team.enable_session_summaries or team.session_summary_manager is not None
+
+
+def _bind_member_result_store(team: "Team", member: Union[Agent, "Team"]) -> None:
+    """Give ``member`` the store it runs with inside ``team``."""
+    from agno.offload.store import ResultStore
+
+    inherited = member._inherited_result_store
+    declares_own_store = isinstance(member.offload_tool_results, ResultStore)
+    if not (
+        member._result_store is None
+        or member._result_store is inherited
+        or member._result_store.db is not team.db
+        # A member on the team's defaults takes the team's settings, even when
+        # it built a store of its own on the same database earlier.
+        or (team._result_store is not None and not declares_own_store)
+    ):
+        return
+    store: Optional[ResultStore] = None
+    # An explicit False keeps the member out of the team's store.
+    if team._result_store is not None and member.offload_tool_results is not False:
+        # A compressing member cannot take the team's store: compression
+        # rewrites the tool messages that hold stored-result envelopes. The
+        # member has to opt out of one of the two.
+        if getattr(member, "compress_tool_results", False):
+            member_name = member.name or member.id or "member"
+            raise ValueError(
+                f"Member '{member_name}' has compress_tool_results enabled and would inherit the "
+                "team's result store; the two cannot run together. Set offload_tool_results=False "
+                "on the member or disable its compression."
+            )
+        if declares_own_store:
+            from agno.offload.setup import build_result_store
+
+            # Settings only: a member store that names its own db or fs would
+            # put payloads where the rest of the team cannot read them. A
+            # sub-team may carry no db of its own; its members bind against
+            # the database of the store it inherited, so their declared
+            # settings survive one nesting level down.
+            bind_db = team.db if team.db is not None else team._result_store.db
+            if member.offload_tool_results.db is not None or member.offload_tool_results._fs is not None:  # type: ignore[union-attr]
+                log_warning(
+                    f"Member '{member.name or member.id}' declared a ResultStore with its own db or "
+                    "filesystem; inside a team only its settings apply and payloads go to the team's "
+                    "database, so the rest of the team can read them."
+                )
+            settings = ResultStore.from_dict(member.offload_tool_results.to_dict())  # type: ignore[union-attr]
+            store = (
+                build_result_store(setting=settings, db=bind_db, owner=member, owner_kind="member")
+                or team._result_store
+            )
+        else:
+            store = team._result_store
+    member._result_store = store
+    member._inherited_result_store = store
+
+
+def _set_result_store(team: "Team") -> None:
+    """Resolve ``team.offload_tool_results`` into the store the run uses.
+
+    A None store means offloading is off. The public setting keeps whatever the
+    caller passed, so a failure never rewrites their configuration.
+    """
+    from agno.offload.setup import build_result_store
+
+    # Compression rewrites the tool messages that hold stored-result
+    # envelopes, so the two features refuse to run together.
+    if team.compress_tool_results and team.offload_tool_results:
+        raise ValueError(
+            "offload_tool_results and compress_tool_results cannot be enabled together: "
+            "compression rewrites the tool messages that hold stored-result envelopes. "
+            "Disable one of the two."
+        )
+    team._result_store = build_result_store(
+        setting=team.offload_tool_results, db=team.db, owner=team, owner_kind="team"
+    )
+    team._result_store_setting = team.offload_tool_results
+
+
+def _ensure_result_store(team: "Team") -> None:
+    """Keep ``team._result_store`` in step with the setting and the db.
+
+    Mirrors the agent's resolution: a cleared setting drops the store, and a
+    changed setting object or a changed db rebuilds it, so payloads never keep
+    flowing to a database the sessions left. A store handed down by a parent
+    team is the parent's to manage.
+    """
+    if team._result_store is not None and team._result_store is team._inherited_result_store:
+        return
+    if not team.offload_tool_results:
+        team._result_store = None
+        team._result_store_setting = None
+        return
+    if (
+        team._result_store is not None
+        and team._result_store_setting is team.offload_tool_results
+        and team._result_store.db is team.db
+    ):
+        return
+    _set_result_store(team)
 
 
 def _set_compression_manager(team: "Team") -> None:
@@ -735,6 +856,18 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_session_summary_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
+    # Offloading and tool-result compression cannot run together: compression
+    # rewrites the tool messages that hold stored-result envelopes. Refuse the
+    # combination loudly instead of silently favouring one of them.
+    # Resolved when a setting is present or when a store exists.
+    if team.offload_tool_results or team._result_store is not None:
+        if team.compress_tool_results:
+            raise ValueError(
+                "offload_tool_results and compress_tool_results cannot be enabled together: "
+                "compression rewrites the tool messages that hold stored-result envelopes. "
+                "Disable one of the two."
+            )
+        _ensure_result_store(team)
     if team.learning is not None and team.learning is not False:
         _set_learning_machine(team)
 

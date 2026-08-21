@@ -277,6 +277,7 @@ class BaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
+        self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -1782,6 +1783,31 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Tool Results (Optional) ---
+    # Optional: the index table for result offloading (agno_tool_results).
+    # Implemented by PostgreSQL and SQLite; on any other backend the agent
+    # runs with offloading off.
+
+    def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        """Insert or replace one tool-result index row."""
+        raise NotImplementedError
+
+    def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        """Get one tool-result index row by id."""
+        raise NotImplementedError
+
+    def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's tool-result rows, newest first."""
+        raise NotImplementedError
+
+    def delete_tool_results(self, result_ids: List[str]) -> int:
+        """Delete index rows by id. Returns the number deleted."""
+        raise NotImplementedError
+
+    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        """Rows whose expires_at has passed."""
+        raise NotImplementedError
+
     # --- Approvals (Optional) ---
     # These methods are optional. Override in subclasses to enable approval persistence.
 
@@ -2031,6 +2057,7 @@ class AsyncBaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
+        self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -3120,6 +3147,31 @@ class AsyncBaseDb(ABC):
         Returns:
             Tuple of (runs, total_count)
         """
+        raise NotImplementedError
+
+    # --- Tool Results (Optional) ---
+    # Optional: the index table for result offloading (agno_tool_results).
+    # Implemented by PostgreSQL and SQLite; on any other backend the agent
+    # runs with offloading off.
+
+    async def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        """Insert or replace one tool-result index row."""
+        raise NotImplementedError
+
+    async def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        """Get one tool-result index row by id."""
+        raise NotImplementedError
+
+    async def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's tool-result rows, newest first."""
+        raise NotImplementedError
+
+    async def delete_tool_results(self, result_ids: List[str]) -> int:
+        """Delete index rows by id. Returns the number deleted."""
+        raise NotImplementedError
+
+    async def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        """Rows whose expires_at has passed."""
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
