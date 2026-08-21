@@ -4,11 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.compression.context import (
-    SUMMARY_PREFIX,
-    CompactionState,
-    ContextCompactionManager,
-)
+from agno.compression import CompactionManager
+from agno.compression.context import SUMMARY_PREFIX, CompactionState
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 
@@ -33,13 +30,14 @@ class TestSummaryDuplication:
 
         mock_model.response = capture_response
 
-        # Create manager - set model directly to avoid get_model() validation
-        manager = ContextCompactionManager(
-            model=None,  # Set to None first
-            token_limit=50000,
-            keep_recent=3,
+        # Create manager with new unified API
+        manager = CompactionManager(
+            model=None,
+            compact_context=True,
+            compact_context_token_limit=50000,
+            compact_context_keep_recent=3,
         )
-        manager.model = mock_model  # Then set mock directly
+        manager.model = mock_model
 
         # Create run_response with EXISTING compaction state (simulating after first compaction)
         existing_compaction = CompactionState(
@@ -62,15 +60,14 @@ class TestSummaryDuplication:
         # 4. Current user message
 
         injected_summary = existing_compaction.get_summary_message()
-        print(f"\n=== Injected summary message ===")
+        print("\n=== Injected summary message ===")
         print(f"ID: {injected_summary.id}")
         print(f"Content starts with SUMMARY_PREFIX: {injected_summary.content.startswith(SUMMARY_PREFIX)}")
         print(f"Content: {injected_summary.content[:100]}...")
 
         messages = [
             Message(id="system-1", role="system", content="You are a helpful assistant."),
-            injected_summary,  # This is what _messages.py injects
-            # History (these would be user4, asst4, etc. - not compacted)
+            injected_summary,
             Message(id="msg-4", role="user", content="Let's add database support"),
             Message(id="msg-5", role="assistant", content="Sure, I'll add PostgreSQL..."),
             Message(id="msg-6", role="user", content="Now add authentication"),
@@ -80,7 +77,7 @@ class TestSummaryDuplication:
             Message(id="msg-10", role="user", content="Deploy to production"),
         ]
 
-        print(f"\n=== Input messages to compact() ===")
+        print("\n=== Input messages to compact() ===")
         for m in messages:
             content_preview = str(m.content)[:50] if m.content else "None"
             print(f"  {m.role}: {content_preview}...")
@@ -89,14 +86,14 @@ class TestSummaryDuplication:
         result = manager.compact(messages, run_response=run_response)
 
         # Check what was sent to the LLM
-        print(f"\n=== Messages sent to _summarize() LLM call ===")
+        print("\n=== Messages sent to _summarize() LLM call ===")
         if captured_prompts:
             for i, msg in enumerate(captured_prompts[0]):
                 content_preview = str(msg.content)[:80] if msg.content else "None"
                 print(f"  [{i}] {msg.role}: {content_preview}...")
 
         # Analysis
-        print(f"\n=== Analysis ===")
+        print("\n=== Analysis ===")
         if captured_prompts:
             prompt_msgs = captured_prompts[0]
 
@@ -110,19 +107,17 @@ class TestSummaryDuplication:
             print(f"Times summary content appears: {count_summary_appearances}")
 
             if count_summary_appearances > 1:
-                print("⚠️  BUG CONFIRMED: Summary appears multiple times in LLM input!")
+                print("BUG CONFIRMED: Summary appears multiple times in LLM input!")
             else:
-                print("✓ Summary appears only once")
+                print("Summary appears only once")
 
         # Return result for inspection
-        print(f"\n=== Output messages ===")
+        print("\n=== Output messages ===")
         for m in result.compacted_messages:
             content_preview = str(m.content)[:50] if m.content else "None"
             print(f"  {m.role}: {content_preview}...")
 
-        return result, captured_prompts
-
 
 if __name__ == "__main__":
     test = TestSummaryDuplication()
-    result, prompts = test.test_what_goes_into_summarize_call()
+    test.test_what_goes_into_summarize_call()
