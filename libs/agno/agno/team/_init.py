@@ -26,6 +26,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.compression._context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
@@ -152,12 +153,14 @@ def __init__(
     add_session_summary_to_context: Optional[bool] = None,
     learning: Optional[Union[bool, LearningMachine]] = None,
     add_learnings_to_context: bool = True,
-    compact_tool_results: bool = False,
+    compact_tools: bool = False,
     compact_context: bool = False,
     compaction_manager: Optional["CompactionManager"] = None,
-    # Deprecated aliases (use compact_tool_results and compaction_manager)
+    # Deprecated aliases (use compact_tools and compaction_manager)
+    compact_tool_results: Optional[bool] = None,
     compress_tool_results: Optional[bool] = None,
     compression_manager: Optional["CompactionManager"] = None,
+    context_compaction_manager: Optional["ContextCompactionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
@@ -335,15 +338,31 @@ def __init__(
     team.add_learnings_to_context = add_learnings_to_context
 
     # Context compaction settings (with backward compat for old names)
-    if compress_tool_results is not None:
-        log_debug("compress_tool_results is deprecated, use compact_tool_results")
-        team.compact_tool_results = compress_tool_results
+    if compact_tool_results is not None:
+        log_debug("compact_tool_results is deprecated, use compact_tools")
+        team.compact_tools = compact_tool_results
+    elif compress_tool_results is not None:
+        log_debug("compress_tool_results is deprecated, use compact_tools")
+        team.compact_tools = compress_tool_results
     else:
-        team.compact_tool_results = compact_tool_results
+        team.compact_tools = compact_tools
 
     team.compact_context = compact_context
 
-    if compression_manager is not None:
+    if context_compaction_manager is not None:
+        # Auto-migrate old ContextCompactionManager to new CompactionManager
+        log_debug("context_compaction_manager is deprecated, use compaction_manager with compact_context=True")
+        team.compaction_manager = CompactionManager(
+            model=context_compaction_manager.model,
+            compact_context=True,
+            compact_context_message_limit=context_compaction_manager.message_limit,
+            compact_context_token_limit=context_compaction_manager.token_limit,
+            compact_context_keep_recent=context_compaction_manager.keep_recent,
+            compact_context_preserve_user_budget=context_compaction_manager.preserve_user_budget,
+            compact_context_instructions=context_compaction_manager.instructions,
+        )
+        team.compact_context = True
+    elif compression_manager is not None:
         log_debug("compression_manager is deprecated, use compaction_manager")
         team.compaction_manager = compression_manager
     else:
@@ -584,16 +603,16 @@ def _set_session_summary_manager(team: "Team") -> None:
 
 def _set_compaction_manager(team: "Team") -> None:
     # Auto-create if either compaction flag is set
-    if (team.compact_tool_results or team.compact_context) and team.compaction_manager is None:
+    if (team.compact_tools or team.compact_context) and team.compaction_manager is None:
         team.compaction_manager = CompactionManager(
             model=team.model,
-            compact_tool_results=team.compact_tool_results,
-            compact_history=team.compact_context,
+            compact_tools=team.compact_tools,
+            compact_context=team.compact_context,
         )
 
     # If manager exists, sync the compact_context flag to compact_history
     if team.compaction_manager is not None and team.compact_context:
-        team.compaction_manager.compact_history = True
+        team.compaction_manager.compact_context = True
 
     # Ensure model is set
     if team.compaction_manager is not None and team.compaction_manager.model is None:
@@ -601,9 +620,9 @@ def _set_compaction_manager(team: "Team") -> None:
 
     # Sync flags from manager back to team
     if team.compaction_manager is not None:
-        if team.compaction_manager.compact_tool_results:
-            team.compact_tool_results = True
-        if team.compaction_manager.compact_history:
+        if team.compaction_manager.compact_tools:
+            team.compact_tools = True
+        if team.compaction_manager.compact_context:
             team.compact_context = True
 
 
@@ -757,7 +776,7 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_memory_manager(team)
     if team.enable_session_summaries or team.session_summary_manager is not None:
         _set_session_summary_manager(team)
-    if team.compact_tool_results or team.compact_context or team.compaction_manager is not None:
+    if team.compact_tools or team.compact_context or team.compaction_manager is not None:
         _set_compaction_manager(team)
     if team.compaction_manager is not None:
         _set_compaction_manager(team)

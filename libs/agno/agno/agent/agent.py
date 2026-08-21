@@ -32,6 +32,7 @@ from agno.agent import (
     _tools,
     _utils,
 )
+from agno.compression._context import ContextCompactionManager
 from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -343,7 +344,7 @@ class Agent:
 
     # --- Context Compaction ---
     # If True, compact tool call results to save context
-    compact_tool_results: bool = False
+    compact_tools: bool = False
     # If True, compact conversation history to save context
     compact_context: bool = False
     # Compaction manager for tool results and/or conversation history
@@ -396,12 +397,14 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        compact_tool_results: bool = False,
+        compact_tools: bool = False,
         compact_context: bool = False,
         compaction_manager: Optional[CompactionManager] = None,
-        # Deprecated aliases (use compact_tool_results and compaction_manager)
+        # Deprecated aliases (use compact_tools and compaction_manager)
+        compact_tool_results: Optional[bool] = None,
         compress_tool_results: Optional[bool] = None,
         compression_manager: Optional[CompactionManager] = None,
+        context_compaction_manager: Optional["ContextCompactionManager"] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -526,15 +529,31 @@ class Agent:
         self.add_session_summary_to_context = add_session_summary_to_context
 
         # Context compaction settings (with backward compat for old names)
-        if compress_tool_results is not None:
-            log_debug("compress_tool_results is deprecated, use compact_tool_results")
-            self.compact_tool_results = compress_tool_results
+        if compact_tool_results is not None:
+            log_debug("compact_tool_results is deprecated, use compact_tools")
+            self.compact_tools = compact_tool_results
+        elif compress_tool_results is not None:
+            log_debug("compress_tool_results is deprecated, use compact_tools")
+            self.compact_tools = compress_tool_results
         else:
-            self.compact_tool_results = compact_tool_results
+            self.compact_tools = compact_tools
 
         self.compact_context = compact_context
 
-        if compression_manager is not None:
+        if context_compaction_manager is not None:
+            # Auto-migrate old ContextCompactionManager to new CompactionManager
+            log_debug("context_compaction_manager is deprecated, use compaction_manager with compact_context=True")
+            self.compaction_manager = CompactionManager(
+                model=context_compaction_manager.model,
+                compact_context=True,
+                compact_context_message_limit=context_compaction_manager.message_limit,
+                compact_context_token_limit=context_compaction_manager.token_limit,
+                compact_context_keep_recent=context_compaction_manager.keep_recent,
+                compact_context_preserve_user_budget=context_compaction_manager.preserve_user_budget,
+                compact_context_instructions=context_compaction_manager.instructions,
+            )
+            self.compact_context = True
+        elif compression_manager is not None:
             log_debug("compression_manager is deprecated, use compaction_manager")
             self.compaction_manager = compression_manager
         else:
