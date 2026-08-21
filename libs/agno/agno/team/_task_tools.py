@@ -462,6 +462,9 @@ def _get_task_management_tools(
             ):
                 from agno.agent._run import scrub_run_output_for_storage
 
+                # Recorded before the scrub: by here the ids exist nowhere else.
+                if not member_agent.store_media:
+                    _record_opted_out_media(run_response, member_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_run_response)  # type: ignore[arg-type]
             from agno.team._run import _amember_run_for_storage
 
