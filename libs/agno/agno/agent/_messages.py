@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import string
+from collections import ChainMap
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -60,12 +63,13 @@ def format_message_with_state_variables(
     run_context: Optional[RunContext] = None,
 ) -> Any:
     """Format a message with the session state variables from run_context."""
-    import re
-    import string
-    from collections import ChainMap
-    from copy import deepcopy
-
     if not isinstance(message, str):
+        return message
+
+    # A message without "{" cannot contain a {var} placeholder, and without "$"
+    # Template.safe_substitute is an identity transform - skip the regex and
+    # template machinery entirely for the common plain-text case.
+    if "{" not in message and "$" not in message:
         return message
 
     # Extract values from run_context
@@ -82,7 +86,7 @@ def format_message_with_state_variables(
         {"user_id": user_id} if user_id is not None else {},
     )
 
-    converted_msg = deepcopy(message)
+    converted_msg = message
     for var_name in format_variables.keys():
         # Only convert standalone {var_name} patterns, not nested ones
         pattern = r"\{" + re.escape(var_name) + r"\}"

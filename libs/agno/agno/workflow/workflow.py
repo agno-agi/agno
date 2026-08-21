@@ -5335,9 +5335,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from typing import get_args
-
-        from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
 
         # Initialize agent with stream_events=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
@@ -5392,7 +5390,7 @@ class Workflow:
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
         ):  # type: ignore
-            if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
+            if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
                 # Track if workflow was executed by checking for WorkflowCompletedEvent
@@ -5735,9 +5733,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from typing import get_args
-
-        from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
 
         logger.info("Workflow agent enabled - async streaming mode")
         log_debug(f"User input: {agent_input}")
@@ -5799,7 +5795,7 @@ class Workflow:
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
         ):  # type: ignore
-            if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
+            if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
                 if isinstance(event, WorkflowCompletedEvent):

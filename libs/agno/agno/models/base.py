@@ -22,7 +22,6 @@ from typing import (
     Tuple,
     Type,
     Union,
-    get_args,
 )
 
 if TYPE_CHECKING:
@@ -42,11 +41,11 @@ from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
 from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
+from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutput, TeamRunOutputEvent
-from agno.run.workflow import WorkflowRunOutputEvent
+from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 from agno.tools.function import (
     Function,
     FunctionCall,
@@ -58,6 +57,10 @@ from agno.tools.function import (
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
+
+# Every run-event type a tool-result generator can bubble up, cached once:
+# these isinstance checks run per streamed item on the hot path.
+_ALL_RUN_OUTPUT_EVENT_TYPES = RUN_OUTPUT_EVENT_TYPES + TEAM_RUN_OUTPUT_EVENT_TYPES + WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 
 
 @dataclass
@@ -2174,11 +2177,7 @@ class Model(ABC):
             try:
                 for item in function_execution_result.result:
                     # This function yields agent/team/workflow run events
-                    if (
-                        isinstance(item, tuple(get_args(RunOutputEvent)))
-                        or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
-                        or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
-                    ):
+                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events for output accumulation
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
@@ -2206,7 +2205,7 @@ class Model(ABC):
 
                         # Yield the event itself to bubble it up. The isinstance guards
                         # above narrow item at runtime, but mypy cannot see through
-                        # tuple(get_args(...)).
+                        # the cached union-member tuple.
                         yield item  # type: ignore[misc]
 
                     else:
@@ -2685,6 +2684,11 @@ class Model(ABC):
                 )
             ]
 
+        # gather even for a single call: its cancel bookkeeping re-raises
+        # caller cancellation even when a tool swallows the CancelledError
+        # thrown into it, and its task wrapper isolates the tool's contextvars.
+        # A bare await loses both; replicating them needs Task.cancelling(),
+        # which requires Python 3.11.
         results = await asyncio.gather(
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
@@ -2719,12 +2723,7 @@ class Model(ABC):
             try:
                 async for item in function_call.result:
                     # This function yields agent/team/workflow run events
-                    if isinstance(
-                        item,
-                        tuple(get_args(RunOutputEvent))
-                        + tuple(get_args(TeamRunOutputEvent))
-                        + tuple(get_args(WorkflowRunOutputEvent)),
-                    ):
+                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
@@ -2857,12 +2856,7 @@ class Model(ABC):
                 try:
                     for item in function_call.result:
                         # This function yields agent/team/workflow run events
-                        if isinstance(
-                            item,
-                            tuple(get_args(RunOutputEvent))
-                            + tuple(get_args(TeamRunOutputEvent))
-                            + tuple(get_args(WorkflowRunOutputEvent)),
-                        ):
+                        if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                             # We only capture content events
                             if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                                 if item.content is not None and isinstance(item.content, BaseModel):

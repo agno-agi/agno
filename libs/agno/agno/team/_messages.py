@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 import json
+import re
+import string
 from collections import ChainMap
 from typing import (
     Any,
@@ -1530,10 +1532,13 @@ def _format_message_with_state_variables(
     run_context: Optional[RunContext] = None,
 ) -> Any:
     """Format a message with the session state variables from run_context."""
-    import re
-    import string
-
     if not isinstance(message, str):
+        return message
+
+    # A message without "{" cannot contain a {var} placeholder, and without "$"
+    # Template.safe_substitute is an identity transform - skip the regex and
+    # template machinery entirely for the common plain-text case.
+    if "{" not in message and "$" not in message:
         return message
 
     # Extract values from run_context
