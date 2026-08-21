@@ -13,10 +13,14 @@ import time
 
 import pytest
 
-from agno.approval import approval
-from agno.run import RunContext
-from agno.tools import Function, Toolkit, tool
-from agno.tools.code import CodeMode
+pytest.importorskip("ipykernel")
+pytest.importorskip("jupyter_client")
+pytest.importorskip("dill")
+
+from agno.approval import approval  # noqa: E402
+from agno.run import RunContext  # noqa: E402
+from agno.tools import Function, Toolkit, tool  # noqa: E402
+from agno.tools.code import CodeMode  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
@@ -745,3 +749,69 @@ def test_a_user_input_tool_answers_with_the_refusal_not_a_type_error(make_code_m
     assert "TypeError" not in result.result
     assert "requires human approval or external execution" in result.result
     assert _sent == []
+
+
+# ------------------------------------------------------------------
+# A background task keeps the context of the cell that created it
+# ------------------------------------------------------------------
+
+_probe_contexts: list = []
+
+
+class _ContextProbeTools(Toolkit):
+    def __init__(self):
+        super().__init__(name="probe_tools", tools=[self.probe], async_tools=[(self.aprobe, "probe")])
+
+    def probe(self, run_context: RunContext, label: str) -> str:
+        """Record which run called.
+
+        Args:
+            label: Where the call came from.
+        """
+        _probe_contexts.append((label, run_context.run_id))
+        return "ok"
+
+    async def aprobe(self, run_context: RunContext, label: str) -> str:
+        """Record which run called.
+
+        Args:
+            label: Where the call came from.
+        """
+        _probe_contexts.append((label, run_context.run_id))
+        return "ok"
+
+
+def test_a_background_task_keeps_the_run_that_created_it(make_code_mode):
+    # A cell may leave an asyncio task running past its own end. When that
+    # task calls a bridged tool while a LATER run's cell is executing, the
+    # call must carry the run that created the task, not the later one.
+    _probe_contexts.clear()
+    cm = make_code_mode(tools=[_ContextProbeTools()], snapshot=False)
+    session_id = _sid("bg-context")
+    first = RunContext(run_id="run-one", session_id=session_id)
+    second = RunContext(run_id="run-two", session_id=session_id)
+    cell_one = (
+        "import asyncio\n"
+        "async def _bg():\n"
+        "    await asyncio.sleep(1.2)\n"
+        "    await probe.probe(label='background')\n"
+        "_t = asyncio.get_event_loop().create_task(_bg())\n"
+        "print('armed')\n"
+    )
+    out = cm.execute(first, cell_one)
+    assert "armed" in (out.content or "")
+    time.sleep(1.8)  # the background call fires while no cell is executing
+    out = cm.execute(second, "print('cell two')")
+    assert "cell two" in (out.content or "")
+    deadline = time.monotonic() + 5
+    while not _probe_contexts and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert _probe_contexts == [("background", "run-one")]
+
+
+def test_a_direct_call_carries_the_current_run(make_code_mode):
+    _probe_contexts.clear()
+    cm = make_code_mode(tools=[_ContextProbeTools()], snapshot=False)
+    session_id = _sid("fg-context")
+    cm.execute(RunContext(run_id="run-direct", session_id=session_id), "await probe.probe(label='direct')")
+    assert _probe_contexts == [("direct", "run-direct")]

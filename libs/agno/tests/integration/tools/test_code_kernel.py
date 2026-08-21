@@ -11,11 +11,15 @@ from typing import Optional
 
 import pytest
 
-from agno.run import RunContext
-from agno.tools import Toolkit
-from agno.tools.code import CodeMode, KernelBusyError, KernelDiedError
-from agno.tools.code.code_mode import OWNER_REFUSAL
-from agno.tools.code.kernel import RESET_NOTICE
+pytest.importorskip("ipykernel")
+pytest.importorskip("jupyter_client")
+pytest.importorskip("dill")
+
+from agno.run import RunContext  # noqa: E402
+from agno.tools import Toolkit  # noqa: E402
+from agno.tools.code import CodeMode, KernelBusyError, KernelDiedError  # noqa: E402
+from agno.tools.code.code_mode import OWNER_REFUSAL  # noqa: E402
+from agno.tools.code.kernel import RESET_NOTICE  # noqa: E402
 
 pytestmark = pytest.mark.integration
 

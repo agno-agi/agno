@@ -13,17 +13,22 @@ import uuid
 from typing import Optional
 
 import pytest
-from sqlalchemy import create_engine, text
 
-from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
-from agno.run import RunContext
-from agno.tools.code import CodeMode
-from agno.tools.code.bridge import ToolBridge
-from agno.tools.code.code_mode import OWNER_REFUSAL
-from agno.tools.code.kernel import KernelSession
-from agno.tools.code.snapshot import SnapshotManager
-from agno.tools.toolkit import Toolkit
+pytest.importorskip("ipykernel")
+pytest.importorskip("jupyter_client")
+pytest.importorskip("dill")
+
+from sqlalchemy import create_engine, text  # noqa: E402
+
+from agno.fs import FileSystem  # noqa: E402
+from agno.fs.db import DbFileSystem  # noqa: E402
+from agno.run import RunContext  # noqa: E402
+from agno.tools.code import CodeMode  # noqa: E402
+from agno.tools.code.bridge import ToolBridge  # noqa: E402
+from agno.tools.code.code_mode import OWNER_REFUSAL  # noqa: E402
+from agno.tools.code.kernel import KernelSession  # noqa: E402
+from agno.tools.code.snapshot import SnapshotManager  # noqa: E402
+from agno.tools.toolkit import Toolkit  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
@@ -570,3 +575,18 @@ def test_hostile_session_id_round_trips_and_does_not_nest(snapshot_fs, make_code
     revived_nested = cm.execute(_ctx(nested), "theirs")
     assert "parent" in revived_parent.content
     assert "nested" in revived_nested.content
+
+
+async def test_a_failed_manifest_read_tells_the_model_nothing_will_persist():
+    # A transient store failure holds snapshots back; the model must be told
+    # its new work will not outlive this kernel, not left to assume it saves.
+    class BrokenFs:
+        async def aread(self, path):
+            raise RuntimeError("store is down")
+
+    manager = SnapshotManager(BrokenFs())  # type: ignore[arg-type]
+    session = KernelSession(_sid("no-persist"))
+    notice = await manager.restore(session)
+    assert notice is not None
+    assert "code_mode_not_persisted" in notice
+    assert session.snapshot_writable is False

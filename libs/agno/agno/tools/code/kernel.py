@@ -16,8 +16,10 @@ import re
 import sys
 import threading
 import time
+from collections import OrderedDict
 from queue import Empty
 from typing import Any, Callable, Coroutine, List, Literal, Optional
+from uuid import uuid4
 
 from agno.media import Image
 from agno.tools.code.errors import KernelBusyError, KernelDiedError
@@ -42,6 +44,11 @@ RESET_NOTICE = (
 
 # Strips ANSI CSI sequences (color codes, cursor moves) from kernel tracebacks.
 _ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+# How many cell context tokens a session keeps. Each user cell gets a token
+# that maps a bridged call back to the run that created it; a background task
+# older than this window falls back to the current run's context.
+_MAX_CONTEXT_TOKENS = 8
 
 # Records the names IPython itself put in the user namespace (open, display,
 # ...) so variable listing and snapshots can tell them from user state. A name
@@ -220,6 +227,13 @@ class KernelSession:
         self.bridge_comm_id: Optional[str] = None
         # The RunContext of the run whose cell is currently executing.
         self.run_context: Optional[Any] = None
+        # Cell token -> the RunContext of the run that executed that cell. A
+        # bridged call carries the token of the cell that created its task, so
+        # a background task that calls a tool after its cell finished still
+        # resolves to the run that started it, not to whichever run is
+        # executing when the call is drained. Bounded and cleared on teardown
+        # so no RunContext outlives its kernel.
+        self.context_tokens: "OrderedDict[str, Any]" = OrderedDict()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -321,8 +335,10 @@ class KernelSession:
         self.maybe_busy = False
         self.bridge_comm_id = None
         # The RunContext carries the run's whole message list. A torn-down
-        # session must not pin it until the next run stamps a new one.
+        # session must not pin it until the next run stamps a new one; the
+        # token map holds the same contexts and dies with the kernel too.
         self.run_context = None
+        self.context_tokens.clear()
 
     async def restart(self, before_start: Optional[Callable[[], Coroutine[Any, Any, None]]] = None) -> str:
         """Tear the kernel down, start a fresh one, and return the reset notice.
@@ -404,6 +420,7 @@ class KernelSession:
                 if not cleared:
                     raise KernelBusyError()
             await self._drain_channels()
+            await self._stamp_context_token(run_context)
             self._cell_idle_seen = False
             try:
                 result = await self._execute_locked(code, timeout)
@@ -418,6 +435,24 @@ class KernelSession:
                 raise
             self.touch()
             return result
+
+    async def _stamp_context_token(self, run_context: Optional[Any]) -> None:
+        """Bind the coming cell, and every task it spawns, to this run's context.
+
+        The bridge bootstrap reads the token into a contextvar in a
+        pre_run_cell hook, and asyncio tasks copy the context they are created
+        in, so a bridged call made by a background task carries the token of
+        the cell that created the task. Silent cells fire no pre_run_cell, so
+        internal cells never disturb the binding. Without a bridge there is
+        nothing to bind.
+        """
+        if self.comm_handler is None or self.kc is None:
+            return
+        token = uuid4().hex[:16]
+        self.context_tokens[token] = run_context
+        while len(self.context_tokens) > _MAX_CONTEXT_TOKENS:
+            self.context_tokens.popitem(last=False)
+        await self._run_silent(f"_agno_cm_next_token = '{token}'")
 
     async def _execute_locked(self, code: str, timeout: Optional[float]) -> CellResult:
         assert self.kc is not None and self.km is not None

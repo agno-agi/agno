@@ -12,11 +12,13 @@ from agno.tools.toolkit import Toolkit
 _HANDLE_SUFFIX = "_tools"
 
 
-def derive_handle_name(name: str) -> str:
+def derive_handle_name(name: str, taken: Collection[str] = ()) -> str:
     """Derive the kernel-side handle for a toolkit name.
 
     A trailing ``_tools`` is stripped (``arcade_tools`` binds as ``arcade``),
-    then the result is coerced to a valid Python identifier.
+    then the result is coerced to a valid Python identifier. A handle already
+    taken by an earlier binding gets a numeric suffix: two toolkits reducing
+    to one name would otherwise silently shadow each other in the kernel.
     """
     base = name
     if base.endswith(_HANDLE_SUFFIX) and len(base) > len(_HANDLE_SUFFIX):
@@ -24,7 +26,12 @@ def derive_handle_name(name: str) -> str:
     handle = re.sub(r"\W", "_", base)
     if not handle or handle[0].isdigit():
         handle = "_" + handle
-    return handle
+    if handle not in taken:
+        return handle
+    suffix = 2
+    while f"{handle}_{suffix}" in taken:
+        suffix += 1
+    return f"{handle}_{suffix}"
 
 
 def safe_param_name(name: str, taken: Collection[str] = ()) -> str:
@@ -56,14 +63,17 @@ def handle_names_for(tools: Sequence[Union[Toolkit, Callable[..., Any], Function
 
     A tool name carries no Python constraints — an MCP server may call a tool
     ``get-forecast`` — and the bridge binds it under a name a cell can
-    reference, so these are the adapted names, not the tools' own.
+    reference, so these are the adapted names, not the tools' own. Toolkits
+    and top-level callables share one kernel namespace, so the names are
+    deduplicated across all of them, in input order, the same way the bridge
+    binds them.
     """
     names: List[str] = []
     for tool in tools:
         if isinstance(tool, Toolkit):
-            names.append(derive_handle_name(tool.name))
+            names.append(derive_handle_name(tool.name, names))
         elif isinstance(tool, Function):
-            names.append(safe_param_name(tool.name))
+            names.append(safe_param_name(tool.name, names))
         else:
-            names.append(safe_param_name(getattr(tool, "__name__", str(tool))))
+            names.append(safe_param_name(getattr(tool, "__name__", str(tool)), names))
     return names

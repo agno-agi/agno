@@ -32,6 +32,18 @@ from agno.utils.log import log_debug, log_warning
 from agno.utils.string import hash_string_sha256
 
 SNAPSHOT_MARKER = "__AGNO_CM_SNAPSHOT__"
+
+# Prefixed to the next execute result when stored state could not be read or
+# restored in time. The kernel is then held back from writing snapshots (its
+# namespace is not the stored state), so the model must know its new work
+# lives only as long as this kernel.
+NO_PERSIST_NOTICE = (
+    "<code_mode_not_persisted>\n"
+    "The stored state for this session could not be restored. Nothing was loaded, and to "
+    "avoid overwriting state this environment never read, nothing from this session will "
+    "be saved either. Variables you create last only until this kernel stops.\n"
+    "</code_mode_not_persisted>"
+)
 RESTORE_MARKER = "__AGNO_CM_RESTORE__"
 
 # Pickles each candidate name independently. Builtins go through the _cm_b
@@ -415,7 +427,7 @@ class SnapshotManager:
                 f"CodeMode restore for session {session_id}: manifest read failed: {e}. "
                 "Snapshots for this kernel are held back."
             )
-            return None
+            return NO_PERSIST_NOTICE
         if manifest_text is None:
             return None
         try:
@@ -475,10 +487,9 @@ class SnapshotManager:
                     # must not be written back over the whole of it either.
                     session.snapshot_writable = False
                     log_warning(
-                        f"CodeMode restore for session {session_id} timed out; emitting no restore notice. "
-                        "Snapshots for this kernel are held back."
+                        f"CodeMode restore for session {session_id} timed out. Snapshots for this kernel are held back."
                     )
-                    return None
+                    return NO_PERSIST_NOTICE
                 marker_payload = parse_marker_line(result.stdout, RESTORE_MARKER)
                 if marker_payload is None:
                     log_warning(

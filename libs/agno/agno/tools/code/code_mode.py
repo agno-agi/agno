@@ -180,6 +180,18 @@ class CodeMode(Toolkit):
     Attach it like any toolkit: ``Agent(tools=[CodeMode()])``. Kernels start
     lazily on the first ``execute`` of a session, are reused across runs in the
     same process, and are evicted after ``idle_ttl`` seconds of inactivity.
+
+    ``timeout`` bounds every cell; ``timeout=None`` removes the bound, and a
+    cell that never finishes then blocks the calling thread (and any shutdown
+    behind it) until the process is killed. Keep a timeout in any deployment
+    that cannot afford a wedged worker.
+
+    The kernel and its snapshot are keyed by ``session_id`` alone. A team
+    leader and its members share the team session id, so members sharing one
+    CodeMode instance share one kernel namespace, and two CodeMode instances
+    snapshotting into one FileSystem restore each other's variables for the
+    same session id. Give each its own FileSystem namespace when that sharing
+    is not wanted.
     """
 
     _requires_connect = True
@@ -301,6 +313,11 @@ class CodeMode(Toolkit):
         another run holds. Kernels are NOT killed: a resumed run inside
         ``idle_ttl`` reattaches to a warm kernel and skips the restore
         entirely. ``shutdown`` is the explicit flush-everything path.
+
+        Called from inside an event loop, the flush is handed to the kernel
+        loop and this returns; a one-shot async script that exits immediately
+        after its run can lose the last cell's snapshot. Await ``aclose()``
+        (or call ``shutdown()``) before exiting such a script.
         """
         if self._bridge is not None:
             self._bridge.close_tools()

@@ -7,15 +7,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from agno.tools import Function, Toolkit
-from agno.tools.code import CellResult, CodeMode, CodeModeError, KernelBusyError, ResultTooLarge
-from agno.tools.code.code_mode import (
+pytest.importorskip("ipykernel")
+pytest.importorskip("jupyter_client")
+pytest.importorskip("dill")
+
+from agno.tools import Function, Toolkit  # noqa: E402
+from agno.tools.code import CellResult, CodeMode, CodeModeError, KernelBusyError, ResultTooLarge  # noqa: E402
+from agno.tools.code.code_mode import (  # noqa: E402
     _MAX_EVICTED_IDS,
     build_instructions,
     derive_handle_name,
     handle_names_for,
 )
-from agno.tools.code.kernel import KernelSession, OutputAccumulator
+from agno.tools.code.kernel import KernelSession, OutputAccumulator  # noqa: E402
 
 # ------------------------------------------------------------------
 # Handle-name derivation
@@ -883,3 +887,38 @@ def test_a_tool_name_python_cannot_use_binds_under_one_it_can():
     assert bridge._registry[("", "get_forecast")].name == "get-forecast"
     assert "the tool's own name is 'get-forecast'" in bridge._spec["functions"][0]["doc"]
     assert handle_names_for([dashed]) == ["get_forecast"]
+
+
+# ------------------------------------------------------------------
+# Handle collisions bind under distinct names
+# ------------------------------------------------------------------
+
+
+def test_two_toolkits_reducing_to_one_handle_bind_under_distinct_names():
+    def alpha() -> str:
+        """Alpha."""
+        return "alpha"
+
+    def beta() -> str:
+        """Beta."""
+        return "beta"
+
+    first = Toolkit(name="foo_tools", tools=[alpha])
+    second = Toolkit(name="foo", tools=[beta])
+    assert handle_names_for([first, second]) == ["foo", "foo_2"]
+
+    from agno.tools.code.bridge import ToolBridge
+
+    bridge = ToolBridge([first, second])
+    assert bridge.handle_names == ["foo", "foo_2"]
+    assert ("foo", "alpha") in bridge._registry
+    assert ("foo_2", "beta") in bridge._registry
+
+
+def test_a_toolkit_and_a_callable_share_one_kernel_namespace():
+    def foo() -> str:
+        """Foo."""
+        return "foo"
+
+    kit = Toolkit(name="foo_tools", tools=[])
+    assert handle_names_for([kit, foo]) == ["foo", "foo_2"]

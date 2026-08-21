@@ -18,6 +18,10 @@ What a bridged call carries and what it does not:
 
 * The tool's own ``FunctionCall`` runs, so the tool's ``tool_hooks`` (sync and
   async), ``pre_hook``, ``post_hook`` and result caching all apply.
+* Every call runs under the ``RunContext`` of the cell whose task made it: the
+  host stamps a token per user cell, the kernel carries it in a contextvar
+  that ``asyncio`` tasks copy at creation, and the call sends it back — so a
+  background task that outlives its cell keeps the run that created it.
 * A tool that would pause the run — confirmation, user input, external
   execution, any ``@approval`` — is refused in the kernel. A cell cannot pause
   an agent run, so the call must not happen at all.
@@ -74,6 +78,7 @@ _BOOTSTRAP_TEMPLATE = (
     "import asyncio as _agno_asyncio\n"
     "import base64 as _agno_b64\n"
     "import builtins as _agno_b\n"
+    "import contextvars as _agno_cv\n"
     "import inspect as _agno_inspect\n"
     "import json as _agno_json\n"
     "import threading as _agno_threading\n"
@@ -90,6 +95,20 @@ _BOOTSTRAP_TEMPLATE = (
     "# ipykernel registers comm handlers on the shell channel only; route them\n"
     "# on the control channel too so replies arrive while a cell is executing.\n"
     "_agno_kernel.control_handlers['comm_msg'] = _agno_kernel.comm_manager.comm_msg\n"
+    "\n"
+    "# Each user cell runs with the context token the host stamped for it, and\n"
+    "# asyncio tasks copy the context they are created in, so a bridged call\n"
+    "# from a background task still names the cell that created the task.\n"
+    "# Silent cells fire no pre_run_cell and leave the binding alone.\n"
+    "_agno_ctx_token = _agno_cv.ContextVar('agno_ctx_token', default=None)\n"
+    "_agno_cm_next_token = None\n"
+    "\n"
+    "\n"
+    "def _agno_pre_run_cell(_agno_info):\n"
+    "    _agno_ctx_token.set(_agno_b.globals().get('_agno_cm_next_token'))\n"
+    "\n"
+    "\n"
+    "get_ipython().events.register('pre_run_cell', _agno_pre_run_cell)\n"
     "\n"
     "_agno_pending = {{}}\n"
     "_agno_seq = [0]\n"
@@ -113,7 +132,9 @@ _BOOTSTRAP_TEMPLATE = (
     "    _agno_seq[0] += 1\n"
     "    _agno_id = _agno_b.str(_agno_seq[0])\n"
     "    _agno_pending[_agno_id] = (_agno_ev, _agno_box)\n"
-    "    _agno_comm.send({{'id': _agno_id, 'handle': handle, 'method': method, 'kwargs': kwargs}})\n"
+    "    _agno_comm.send(\n"
+    "        {{'id': _agno_id, 'handle': handle, 'method': method, 'kwargs': kwargs, 'token': _agno_ctx_token.get()}}\n"
+    "    )\n"
     "    _agno_loop = _agno_asyncio.get_running_loop()\n"
     "    await _agno_loop.run_in_executor(None, _agno_ev.wait)\n"
     "    _agno_reply = _agno_box['reply']\n"
@@ -357,9 +378,19 @@ class ToolBridge:
         self._build(self._tools)
 
     def _build(self, tools: Sequence[Union[Toolkit, Callable[..., Any], Function]]) -> None:
+        # Toolkits and top-level callables share one kernel namespace; the
+        # names are deduplicated in input order, matching handle_names_for,
+        # so the instructions and the snapshot skip list name what is bound.
+        bound_names: Set[str] = set()
         for tool in tools:
             if isinstance(tool, Toolkit):
-                handle = derive_handle_name(tool.name)
+                handle = derive_handle_name(tool.name, bound_names)
+                if handle != derive_handle_name(tool.name):
+                    log_warning(
+                        f"CodeMode: toolkit '{tool.name}' binds as '{handle}' because an earlier "
+                        "binding took its handle"
+                    )
+                bound_names.add(handle)
                 try:
                     functions = dict(tool.get_async_functions())
                     specs: List[Dict[str, Any]] = []
@@ -407,7 +438,8 @@ class ToolBridge:
                         function = Function.from_callable(tool)
                         _apply_approval_sentinel(function, tool)
                     prepared = self._prepare_function(function)
-                    name = safe_param_name(prepared.name)
+                    name = safe_param_name(prepared.name, bound_names)
+                    bound_names.add(name)
                     self._registry[("", name)] = prepared
                     refusal = _pause_refusal(prepared)
                     if refusal is not None:
@@ -424,7 +456,8 @@ class ToolBridge:
                     # that failed to bind still has to exist in the kernel and
                     # say why it cannot be called.
                     if isinstance(tool_name, str) and tool_name:
-                        bind = safe_param_name(tool_name)
+                        bind = safe_param_name(tool_name, bound_names)
+                        bound_names.add(bind)
                         if not any(entry["name"] == bind for entry in self._spec["functions"]):
                             self._spec["functions"].append({"name": bind, "error": str(e)})
 
@@ -689,9 +722,10 @@ class ToolBridge:
         handle = data.get("handle") or ""
         method = data.get("method") or ""
         kwargs = data.get("kwargs") or {}
+        token = data.get("token")
         tool_label = f"{handle}.{method}" if handle else method
         try:
-            value = await self._call_tool(session, handle, method, kwargs)
+            value = await self._call_tool(session, handle, method, kwargs, token=token)
             reply: Dict[str, Any] = {"id": call_id, "ok": True, "value": value}
             payload_bytes = len(json.dumps(reply, default=str).encode("utf-8"))
             if payload_bytes > self.max_result_bytes:
@@ -725,7 +759,9 @@ class ToolBridge:
             },
         }
 
-    async def _call_tool(self, session: KernelSession, handle: str, method: str, kwargs: Dict[str, Any]) -> Any:
+    async def _call_tool(
+        self, session: KernelSession, handle: str, method: str, kwargs: Dict[str, Any], token: Optional[str] = None
+    ) -> Any:
         self._ensure_built()
         function = self._registry.get((handle, method))
         if function is None:
@@ -734,7 +770,13 @@ class ToolBridge:
         if refusal is not None:
             raise RuntimeError(refusal)
         prepared = function.model_copy(deep=True)
-        run_context = getattr(session, "run_context", None)
+        # The token names the cell whose task made this call, so a background
+        # task that outlives its cell still runs under the run that created it.
+        # Without one (a thread, a cell outside the token window, an old
+        # kernel), the currently executing run's context applies.
+        run_context = session.context_tokens.get(token) if token else None
+        if run_context is None:
+            run_context = getattr(session, "run_context", None)
         if run_context is None:
             run_context = RunContext(run_id=f"code-mode-{session.session_id}", session_id=session.session_id)
         prepared._run_context = run_context
@@ -820,7 +862,26 @@ class ToolBridge:
     def _marshal(result: Any) -> Any:
         """JSON-serializable values cross natively; everything else as its string form."""
         if isinstance(result, ToolResult):
-            result = result.content
+            # Media cannot cross the bridge; say so instead of dropping it
+            # silently, so the model knows to call the tool the regular way.
+            dropped = [
+                f"{len(media)} {label}(s)"
+                for label, media in (
+                    ("image", result.images),
+                    ("video", result.videos),
+                    ("audio", result.audios),
+                    ("file", result.files),
+                )
+                if media
+            ]
+            content = result.content
+            if dropped:
+                note = (
+                    f"[{', '.join(dropped)} attached; media does not cross the code bridge - "
+                    "call the tool as a regular tool call to receive it]"
+                )
+                content = f"{content}\n{note}" if content else note
+            result = content
         if result is None:
             return None
         try:
