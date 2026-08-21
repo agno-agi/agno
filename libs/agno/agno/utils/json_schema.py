@@ -1,3 +1,4 @@
+from dataclasses import MISSING
 from enum import Enum
 from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
 
@@ -190,7 +191,8 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
                 if non_null_type is not None:
                     field_schema["type"] = non_null_type
                     field_schema.pop("anyOf")
-            else:
+            elif field.default is MISSING and field.default_factory is MISSING:
+                # A field is only required when the dataclass itself has no fallback for it.
                 required.append(field_name)
 
             if field_schema:
