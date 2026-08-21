@@ -40,7 +40,13 @@ def _create_telemetry_client() -> HttpxClient:
 
 
 class _TelemetryDispatcher:
-    """Process-wide, bounded dispatcher for best-effort telemetry events."""
+    """Process-wide, bounded dispatcher for best-effort telemetry events.
+
+    On POSIX, worker processes must be forked before the first event is posted,
+    or created with a spawn-based start method. A live dispatcher owns a thread
+    and may own HTTP/TLS resources that cannot be inherited safely across
+    ``fork()``.
+    """
 
     def __init__(
         self,
@@ -193,9 +199,11 @@ class _TelemetryDispatcher:
             raise
 
     def _reset_after_fork(self, *, replace_fallback_lock: bool = True) -> None:
-        # Runs in the single surviving child thread for normal Python forks.
-        # Do not close the inherited client here: httpx/OpenSSL locks are not
-        # safe to acquire in an at-fork callback.
+        # Defensive recovery for an unsupported post-telemetry fork: fresh
+        # dispatcher state lets the child deliver, but cannot reclaim resources
+        # retained by vanished parent threads. Do not close the inherited client
+        # here: httpx/OpenSSL locks are not safe in an at-fork callback. Supported
+        # applications fork before the first event or use a spawn-based method.
         self._queue = Queue(maxsize=TELEMETRY_QUEUE_SIZE)
         self._worker = None
         self._client = None
@@ -253,6 +261,9 @@ class _TelemetryDispatcher:
             else:
                 queue.task_done()
                 if item is _STOP:
+                    # This flag only avoids duplicate sentinels. A racing closer
+                    # may enqueue one extra after producers stop; it stays in the
+                    # retired queue and cannot affect delivery.
                     self._stop_enqueued = False
 
     def _enqueue_stop(self, queue: "Queue[object]", worker: threading.Thread) -> None:
@@ -283,6 +294,11 @@ class Api:
     Delivery is best-effort. Process shutdown gives queued events a bounded
     chance to finish; events are dropped after that deadline or when the queue
     is full.
+
+    POSIX applications must create forked workers before posting telemetry or
+    use a spawn-based process start method. Forking after this dispatcher starts
+    its background thread is unsupported because live threads and HTTP/TLS
+    resources cannot be inherited safely.
     """
 
     def __init__(self, dispatcher: _TelemetryDispatcher = _telemetry_dispatcher) -> None:

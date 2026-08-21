@@ -754,39 +754,78 @@ assert started.wait(2)
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is not available on this platform")
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-def test_forked_child_resets_dispatcher_state(dispatcher_factory):
-    requests: list[httpx.Request] = []
+def test_fork_before_first_event_resets_child_dispatcher_state():
+    # Run in a fresh interpreter so unrelated pytest/plugin threads cannot make
+    # Python's process-wide multi-threaded-fork warning look telemetry-related.
+    script = """
+import os
+import time
+import warnings
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return httpx.Response(200)
+from agno.api.api import Api, _TelemetryDispatcher
 
-    dispatcher, constructed = dispatcher_factory(handler, register_at_fork=True)
-    instance = Api(dispatcher)
-    instance.post_in_background(ApiRoutes.RUN_CREATE, {"session_id": "parent"})
-    wait_for_drain(dispatcher)
-    assert dispatcher._worker is not None and dispatcher._worker.is_alive()
+requests = []
+constructed = []
 
-    read_fd, write_fd = os.pipe()
+class Client:
+    def __init__(self):
+        constructed.append(self)
+
+    def post(self, route, json):
+        requests.append((route, json))
+
+        class Response:
+            status_code = 200
+
+        return Response()
+
+    def close(self):
+        pass
+
+dispatcher = _TelemetryDispatcher(Client, register_at_fork=True)
+instance = Api(dispatcher)
+assert dispatcher._worker is None
+assert dispatcher._client is None
+assert constructed == []
+
+read_fd, write_fd = os.pipe()
+with warnings.catch_warnings(record=True) as fork_warnings:
+    warnings.simplefilter("always", DeprecationWarning)
     pid = os.fork()
-    if pid == 0:  # child: prove reset state can deliver through a new worker/client
-        try:
-            fresh = (
-                dispatcher._worker is None
-                and dispatcher._client is None
-                and dispatcher._queue.qsize() == 0
-                and dispatcher._pid == os.getpid()
-            )
-            instance.post_in_background(ApiRoutes.RUN_CREATE, {"session_id": "child"})
-            wait_for_drain(dispatcher)
-            delivered = len(requests) == 2 and b"child" in requests[-1].content and len(constructed) == 2
-            os.write(write_fd, b"1" if fresh and delivered else b"0")
-        finally:
-            os._exit(0)
-    os.close(write_fd)
+
+if pid == 0:
     try:
-        assert os.read(read_fd, 1) == b"1", "child must reset dispatcher state and deliver through a fresh worker"
+        fresh = (
+            dispatcher._worker is None
+            and dispatcher._client is None
+            and dispatcher._queue.qsize() == 0
+            and dispatcher._pid == os.getpid()
+        )
+        instance.post_in_background("/telemetry/test", {"session_id": "child"})
+        deadline = time.monotonic() + 2
+        while dispatcher._queue.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.01)
+        delivered = requests == [("/telemetry/test", {"session_id": "child"})] and len(constructed) == 1
+        os.write(write_fd, b"1" if fresh and delivered else b"0")
     finally:
-        os.close(read_fd)
-        os.waitpid(pid, 0)
+        os._exit(0)
+
+os.close(write_fd)
+try:
+    assert os.read(read_fd, 1) == b"1"
+finally:
+    os.close(read_fd)
+    _, status = os.waitpid(pid, 0)
+
+assert os.waitstatus_to_exitcode(status) == 0
+assert not [
+    warning
+    for warning in fork_warnings
+    if issubclass(warning.category, DeprecationWarning) and "multi-threaded" in str(warning.message)
+]
+"""
+    env = os.environ.copy()
+    package_root = str(Path(__file__).resolve().parents[3])
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
+
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=8, env=env)
