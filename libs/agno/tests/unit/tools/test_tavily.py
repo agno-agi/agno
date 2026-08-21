@@ -383,8 +383,8 @@ def test_extract_empty_response(tavily_tools, mock_tavily_client):
     # Call the method
     result = tavily_tools.extract_url_content("https://example.com")
 
-    # Verify error message
-    assert "Error" in result or "No content" in result
+    # Verify error message - v3.0 returns JSON with lowercase "error" key
+    assert "error" in result or "No content" in result
 
 
 def test_extract_no_results_key(tavily_tools, mock_tavily_client):
@@ -396,8 +396,8 @@ def test_extract_no_results_key(tavily_tools, mock_tavily_client):
     # Call the method
     result = tavily_tools.extract_url_content("https://example.com")
 
-    # Verify error message
-    assert "Error" in result
+    # Verify error message - v3.0 returns JSON with lowercase "error" key
+    assert "error" in result
 
 
 def test_extract_invalid_url(tavily_tools, mock_tavily_client):
@@ -405,8 +405,8 @@ def test_extract_invalid_url(tavily_tools, mock_tavily_client):
     # Call the method with empty string
     result = tavily_tools.extract_url_content("")
 
-    # Verify error message
-    assert "Error" in result or "No valid URLs" in result
+    # Verify error message - v3.0 returns JSON with lowercase "error" key
+    assert "error" in result or "No valid URLs" in result
     mock_tavily_client.extract.assert_not_called()
 
 
@@ -418,8 +418,8 @@ def test_extract_exception_handling(tavily_tools, mock_tavily_client):
     # Call the method
     result = tavily_tools.extract_url_content("https://example.com")
 
-    # Verify error is handled gracefully
-    assert "Error" in result
+    # Verify error is handled gracefully - v3.0 returns JSON with lowercase "error" key
+    assert "error" in result
     assert "API Error" in result
 
 

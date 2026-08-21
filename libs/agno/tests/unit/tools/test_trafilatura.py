@@ -174,8 +174,10 @@ class TestExtractTextMethod:
         # Execute
         result = trafilatura_tools.scrape("https://example.com")
 
-        # Assert
-        assert "Error: Could not fetch content from URL" in result
+        # Assert - v3.0 returns JSON error format
+        result_json = json.loads(result)
+        assert "error" in result_json
+        assert "Could not fetch content from URL" in result_json["error"]
         mock_trafilatura_modules["fetch_url"].assert_called_once_with("https://example.com")
         mock_trafilatura_modules["extract"].assert_not_called()
 
@@ -234,8 +236,10 @@ class TestExtractMetadataOnlyMethod:
         # Execute
         result = trafilatura_tools.get_metadata("https://example.com")
 
-        # Assert
-        assert "Error: Could not fetch content from URL" in result
+        # Assert - v3.0 returns JSON error format
+        result_json = json.loads(result)
+        assert "error" in result_json
+        assert "Could not fetch content from URL" in result_json["error"]
 
     def test_get_metadata_extraction_failure(self, trafilatura_tools, mock_trafilatura_modules):
         """Test get_metadata when extraction returns None."""
@@ -246,8 +250,10 @@ class TestExtractMetadataOnlyMethod:
         # Execute
         result = trafilatura_tools.get_metadata("https://example.com")
 
-        # Assert
-        assert "Error: Could not extract metadata" in result
+        # Assert - v3.0 returns JSON error format
+        result_json = json.loads(result)
+        assert "error" in result_json
+        assert "Could not extract metadata" in result_json["error"]
 
     def test_get_metadata_non_json_format(self, trafilatura_tools, mock_trafilatura_modules):
         """Test get_metadata with non-JSON format."""
@@ -293,8 +299,10 @@ class TestCrawlWebsiteMethod:
         # Execute
         result = trafilatura_tools.crawl("https://example.com")
 
-        # Assert
-        assert "Error: Web crawling functionality not available" in result
+        # Assert - v3.0 returns JSON error format
+        result_json = json.loads(result)
+        assert "error" in result_json
+        assert "crawl" in result_json["error"].lower() or "spider" in result_json["error"].lower()
 
     @patch("agno.tools.trafilatura.SPIDER_AVAILABLE", True)
     def test_crawl_with_content_extraction(self, trafilatura_tools, mock_trafilatura_modules):
@@ -352,8 +360,10 @@ class TestHtmlToTextMethod:
         # Execute
         result = trafilatura_tools.convert_html("<html></html>")
 
-        # Assert
-        assert "Error: Could not extract text from HTML content" in result
+        # Assert - v3.0 returns JSON error format
+        result_json = json.loads(result)
+        assert "error" in result_json
+        assert "Could not extract text from HTML content" in result_json["error"]
 
     def test_convert_html_exception_handling(self, trafilatura_tools, mock_trafilatura_modules):
         """Test HTML to text exception handling."""
