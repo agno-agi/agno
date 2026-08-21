@@ -479,6 +479,31 @@ class TestAProjectionFailureDoesNotFailACommittedMove:
         assert db.get_component(component_id)["current_version"] == 2
         assert any("could not be re-projected" in w for w in out["warnings"]), out
 
+    def test_the_warning_does_not_quote_the_driver(self, studio, db, monkeypatch):
+        """Warnings ride in a success envelope, so they land in the model's
+        context. A raw adapter exception carries the statement, its bound
+        parameters and -- on a connection error -- the URL with its
+        credentials, so the warning names the failure and leaves the text in
+        the log."""
+        import agno.db.base as db_base
+
+        secret = "postgresql://svc_user:hunter2@db.internal:5432/prod"
+
+        def boom(config):
+            raise RuntimeError(f"could not connect to server: {secret}")
+
+        component_id = _rollback_fixture(studio, db)
+        monkeypatch.setattr(db_base, "project_config_identity", boom)
+
+        out = _loads(studio.set_current_version(component_id, 2))
+
+        assert out["ok"] is True, out
+        warnings = " ".join(out["warnings"])
+        assert "could not be re-projected" in warnings, out
+        assert "RuntimeError" in warnings, out
+        assert secret not in warnings, out
+        assert "hunter2" not in warnings, out
+
     def test_publish_component_reports_the_publish_it_made(self, studio, db, monkeypatch):
         component_id = self._draft(studio, db, "Publisher")
         self._explode_projection(monkeypatch)

@@ -998,6 +998,22 @@ class StudioTools(Toolkit):
         logger.exception(fallback_message)
         return error_result("internal_error", fallback_message)
 
+    def _warning_from_exception(self, exc: Exception, message: str) -> str:
+        """Describe a best-effort failure to the caller without quoting the driver.
+
+        Warnings ride in a SUCCESS envelope, so they reach the model's context
+        the same way an error message would - and the same rule applies:
+        typed catalog errors are ours and safe to name, anything else keeps
+        its text in the log. A raw adapter exception carries the failing
+        statement, the bound parameter values -- which include the row's own
+        metadata, the field most likely to hold something a caller would not
+        publish -- and, on a connection error, the server it was reaching for.
+        """
+        if type(exc).__name__ in self._TYPED_ERROR_CODES or isinstance(exc, ValueError):
+            return f"{message}: {exc}"
+        logger.exception(message)
+        return f"{message}: {type(exc).__name__}. The server log has the details."
+
     def _require_db(self) -> Optional[str]:
         if self.db is None:
             return error_result("db_not_configured", "StudioTools has no db configured.")
@@ -4102,7 +4118,11 @@ class StudioTools(Toolkit):
                         updated_by_session_id=_agno_run_context.session_id,
                     )
                 except Exception as e:
-                    warnings.append(f"Updated schedule {schedule_id} but could not stamp provenance on it: {e}")
+                    warnings.append(
+                        self._warning_from_exception(
+                            e, f"Updated schedule {schedule_id} but could not stamp provenance on it"
+                        )
+                    )
             return ok_result(
                 "updated",
                 warnings=warnings,
@@ -4873,7 +4893,11 @@ class StudioTools(Toolkit):
         try:
             self._sync_component_row(component_id, version)
         except Exception as e:
-            return [f"{component_id} is live at v{version} but its catalog row could not be re-projected: {e}"]
+            return [
+                self._warning_from_exception(
+                    e, f"{component_id} is live at v{version} but its catalog row could not be re-projected"
+                )
+            ]
         return []
 
     def _sync_component_row(self, component_id: str, version: Optional[int]) -> None:
