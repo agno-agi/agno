@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_warning
@@ -11,27 +11,33 @@ except ImportError:
 
 
 class Newspaper4kTools(Toolkit):
-    """
-    Newspaper4kTools is a toolkit for getting the text of an article from a URL.
-    Args:
-        enable_read_article (bool): Whether to read an article from a URL.
-        include_summary (bool): Whether to include the summary of an article.
-        article_length (Optional[int]): The length of the article to read.
-    """
+    """Toolkit for extracting article content from URLs using newspaper4k."""
 
     def __init__(
         self,
         include_summary: bool = False,
         article_length: Optional[int] = None,
-        enable_read_article: bool = True,
+        read_article: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        """Initialize Newspaper4k toolkit.
+
+        Args:
+            include_summary: Whether to include article summary in output.
+            article_length: Max characters to return from article text. None for full.
+            read_article: Enable the read_article tool.
+            all: Enable all tools.
+        """
+        # Backwards compat: enable_X -> X
+        if "enable_read_article" in kwargs:
+            read_article = kwargs.pop("enable_read_article")
+
         self.include_summary: bool = include_summary
         self.article_length: Optional[int] = article_length
 
-        tools = []
-        if all or enable_read_article:
+        tools: List[Callable] = []
+        if all or read_article:
             tools.append(self.read_article)
 
         super().__init__(name="newspaper4k_tools", tools=tools, **kwargs)
@@ -40,10 +46,10 @@ class Newspaper4kTools(Toolkit):
         """Read and get article data from a URL.
 
         Args:
-            url (str): The URL of the article.
+            url: The URL of the article.
 
         Returns:
-            Dict[str, Any]: The article data.
+            Dict with title, authors, text, and optionally summary/publish_date.
         """
 
         try:
@@ -70,24 +76,23 @@ class Newspaper4kTools(Toolkit):
             return None
 
     def read_article(self, url: str) -> str:
-        """Use this function to read an article from a URL.
+        """Read and extract content from an article URL.
 
         Args:
-            url (str): The URL of the article.
+            url: The URL of the article.
 
         Returns:
-            str: JSON containing the article author, publish date, and text.
+            JSON with title, authors, text, and optionally summary/publish_date.
         """
-
         try:
             log_debug(f"Reading news: {url}")
             article_data = self.get_article_data(url)
             if not article_data:
-                return f"Error reading article from {url}: No data found."
+                return json.dumps({"error": f"No data found for {url}"})
 
             if self.article_length and "text" in article_data:
                 article_data["text"] = article_data["text"][: self.article_length]
 
-            return json.dumps(article_data, indent=2)
+            return json.dumps(article_data)
         except Exception as e:
-            return f"Error reading article from {url}: {e}"
+            return json.dumps({"error": f"Error reading article from {url}: {e}"})

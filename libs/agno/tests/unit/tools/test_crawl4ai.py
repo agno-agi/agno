@@ -1,5 +1,6 @@
 """Unit tests for Crawl4aiTools class."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -114,10 +115,12 @@ def test_initialization_custom(custom_crawl4ai_tools):
 def test_crawl_no_url(crawl4ai_tools):
     """Test crawl with no URL provided."""
     result = crawl4ai_tools.crawl("")
-    assert result == "Error: No URL provided"
+    parsed = json.loads(result)
+    assert parsed == {"error": "No URL provided"}
 
     result = crawl4ai_tools.crawl([])
-    assert result == "Error: No URL provided"
+    parsed = json.loads(result)
+    assert parsed == {"error": "No URL provided"}
 
 
 def test_crawl_single_url_success(crawl4ai_tools, mock_async_crawler, mock_browser_config, mock_crawler_run_config):
@@ -129,8 +132,10 @@ def test_crawl_single_url_success(crawl4ai_tools, mock_async_crawler, mock_brows
     # Execute
     result = crawl4ai_tools.crawl("https://example.com")
 
-    # Assert
-    assert result == "This is the extracted content from the webpage."
+    # Assert - v3.0 returns JSON with url and content
+    parsed = json.loads(result)
+    assert parsed["url"] == "https://example.com"
+    assert parsed["content"] == "This is the extracted content from the webpage."
     mock_browser_config.assert_called_once_with(headless=True, verbose=False)
     mock_crawler_run_config.assert_called_once()
 
@@ -156,8 +161,9 @@ def test_crawl_with_search_query(crawl4ai_tools, mock_async_crawler, mock_browse
         # Execute with search query
         result = crawl4ai_tools.crawl("https://example.com", search_query="machine learning")
 
-        # Assert
-        assert result == "This is the extracted content from the webpage."
+        # Assert - v3.0 returns JSON with url and content
+        parsed = json.loads(result)
+        assert parsed["content"] == "This is the extracted content from the webpage."
 
         # Verify BM25 content filter is used
         mock_bm25.assert_called_once_with(user_query="machine learning", bm25_threshold=1.0)
@@ -175,8 +181,9 @@ def test_crawl_with_fit_markdown(crawl4ai_tools, mock_async_crawler):
     # Execute
     result = crawl4ai_tools.crawl("https://example.com")
 
-    # Should return fit_markdown when available
-    assert result == "This is the filtered content."
+    # Should return fit_markdown when available - v3.0 returns JSON
+    parsed = json.loads(result)
+    assert parsed["content"] == "This is the filtered content."
 
 
 def test_crawl_length_truncation(crawl4ai_tools, mock_async_crawler):
@@ -188,10 +195,12 @@ def test_crawl_length_truncation(crawl4ai_tools, mock_async_crawler):
     # Execute
     result = crawl4ai_tools.crawl("https://example.com")
 
-    # Assert truncation
-    assert len(result) == 5003  # 5000 + "..."
-    assert result.endswith("...")
-    assert result[:5000] == "A" * 5000
+    # Assert truncation - v3.0 returns JSON, check content field
+    parsed = json.loads(result)
+    content = parsed["content"]
+    assert len(content) == 5003  # 5000 + "..."
+    assert content.endswith("...")
+    assert content[:5000] == "A" * 5000
 
 
 def test_crawl_multiple_urls(crawl4ai_tools, mock_async_crawler):
@@ -217,11 +226,12 @@ def test_crawl_multiple_urls(crawl4ai_tools, mock_async_crawler):
     urls = ["https://site1.com", "https://site2.com"]
     result = crawl4ai_tools.crawl(urls)
 
-    # Assert
-    assert isinstance(result, dict)
-    assert len(result) == 2
-    assert result["https://site1.com"] == "Content from site 1"
-    assert result["https://site2.com"] == "Content from site 2"
+    # Assert - v3.0 returns JSON string
+    parsed = json.loads(result)
+    assert isinstance(parsed, dict)
+    assert len(parsed) == 2
+    assert parsed["https://site1.com"] == "Content from site 1"
+    assert parsed["https://site2.com"] == "Content from site 2"
 
 
 def test_crawl_error_handling(crawl4ai_tools, mock_async_crawler):
@@ -242,8 +252,10 @@ def test_crawl_no_content(crawl4ai_tools, mock_async_crawler):
     # Execute
     result = crawl4ai_tools.crawl("https://example.com")
 
-    # Assert
-    assert result == "Error: No content found"
+    # Assert - v3.0: _crawl_url returns JSON error, wrapped as content
+    parsed = json.loads(result)
+    inner = json.loads(parsed["content"])
+    assert inner == {"error": "No content found"}
 
 
 def test_crawl_text_fallback(crawl4ai_tools, mock_async_crawler):
@@ -255,8 +267,9 @@ def test_crawl_text_fallback(crawl4ai_tools, mock_async_crawler):
     # Execute
     result = crawl4ai_tools.crawl("https://example.com")
 
-    # Should fall back to text
-    assert result == "Plain text content"
+    # Should fall back to text - v3.0 returns JSON
+    parsed = json.loads(result)
+    assert parsed["content"] == "Plain text content"
 
 
 def test_crawl_no_readable_content(crawl4ai_tools, mock_async_crawler):
@@ -268,8 +281,10 @@ def test_crawl_no_readable_content(crawl4ai_tools, mock_async_crawler):
     # Execute
     result = crawl4ai_tools.crawl("https://example.com")
 
-    # Should return error
-    assert result == "Error: No readable content extracted"
+    # Should return error - v3.0: _crawl_url returns JSON error, wrapped as content
+    parsed = json.loads(result)
+    inner = json.loads(parsed["content"])
+    assert inner == {"error": "No readable content extracted"}
 
 
 def test_pruning_configuration(mock_async_crawler, mock_browser_config, mock_crawler_run_config):
@@ -289,8 +304,9 @@ def test_pruning_configuration(mock_async_crawler, mock_browser_config, mock_cra
         # Execute
         result = toolkit.crawl("https://example.com")
 
-        # Assert
-        assert result == "This is the extracted content from the webpage."
+        # Assert - v3.0 returns JSON
+        parsed = json.loads(result)
+        assert parsed["content"] == "This is the extracted content from the webpage."
 
         # Verify pruning filter is used
         mock_pruning.assert_called_once_with(threshold=0.6, threshold_type="fixed", min_word_threshold=2)
@@ -315,9 +331,12 @@ def test_crawl_with_multiple_urls_and_errors(crawl4ai_tools, mock_async_crawler)
     urls = ["https://success.com", "https://fail.com"]
     result = crawl4ai_tools.crawl(urls)
 
-    # Assert
-    assert "Content from https://success.com" in result["https://success.com"]
-    assert "Error crawling https://fail.com: Connection failed" in result["https://fail.com"]
+    # Assert - v3.0 returns JSON string
+    parsed = json.loads(result)
+    assert "Content from https://success.com" in parsed["https://success.com"]
+    # Error is returned as JSON string from _crawl_url
+    error_data = json.loads(parsed["https://fail.com"])
+    assert "Error crawling https://fail.com: Connection failed" in error_data["error"]
 
 
 def test_browser_config_proxy_forwarding(mock_async_crawler, mock_browser_config):
@@ -350,8 +369,10 @@ def test_crawl_logging(mock_log_warning, crawl4ai_tools, mock_async_crawler):
     # Execute
     result = crawl4ai_tools.crawl("https://example.com")
 
-    # Check that error is returned and log was called
-    assert result == "Error: Could not extract markdown from page"
+    # Check that error is returned - v3.0: _crawl_url returns JSON error, wrapped as content
+    parsed = json.loads(result)
+    inner = json.loads(parsed["content"])
+    assert inner == {"error": "Could not extract markdown from page"}
 
     # Check warning was logged
     mock_log_warning.assert_called_once_with("Only HTML available, no markdown extracted")

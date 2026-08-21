@@ -1,7 +1,7 @@
 import json
 from inspect import Parameter, signature
 from os import getenv
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
@@ -34,11 +34,11 @@ class SeltzTools(Toolkit):
         endpoint: Optional Seltz gRPC endpoint. If not provided, uses SDK default.
         insecure: Use an insecure gRPC channel. Defaults to False.
         max_results: Default maximum number of results to return per search.
+        max_documents: Deprecated alias for `max_results`.
         context: Legacy SDK context to improve search quality.
         profile: Legacy SDK search profile to use for ranking.
         show_results: Log search results for debugging.
-        enable_search: Enable search tool functionality. Defaults to True.
-        all: Enable all tools. Overrides individual flags when True. Defaults to False.
+        search: Enable search tool functionality. Defaults to True.
     """
 
     def __init__(
@@ -47,14 +47,18 @@ class SeltzTools(Toolkit):
         endpoint: Optional[str] = None,
         insecure: bool = False,
         max_results: Optional[int] = None,
+        max_documents: Optional[int] = None,
         context: Optional[str] = None,
         profile: Optional[str] = None,
         show_results: bool = False,
-        enable_search: bool = True,
-        all: bool = False,
+        search: bool = True,
         **kwargs: Any,
     ):
-        default_max_results = self._resolve_max_results(max_results=max_results)
+        # Backwards compat: enable_X -> X
+        if "enable_search" in kwargs:
+            search = kwargs.pop("enable_search")
+
+        default_max_results = self._resolve_max_results(max_results=max_results, max_documents=max_documents)
 
         self.api_key = api_key or getenv("SELTZ_API_KEY")
         if not self.api_key:
@@ -63,6 +67,7 @@ class SeltzTools(Toolkit):
         self.endpoint = endpoint
         self.insecure = insecure
         self.max_results = default_max_results
+        self.max_documents = default_max_results
         self.context = context
         self.profile = profile
         self.show_results = show_results
@@ -76,8 +81,8 @@ class SeltzTools(Toolkit):
                 client_kwargs["insecure"] = self.insecure
             self.client = Seltz(**client_kwargs)
 
-        tools: List[Any] = []
-        if all or enable_search:
+        tools: List[Callable] = []
+        if search:
             tools.append(self.search_seltz)
 
         super().__init__(name="seltz", tools=tools, **kwargs)
@@ -98,12 +103,13 @@ class SeltzTools(Toolkit):
         return json.dumps(parsed, indent=4, ensure_ascii=False)
 
     @staticmethod
-    def _resolve_max_results(max_results: Optional[int] = None) -> int:
-        """Validate the result limit and apply the default."""
-        limit = max_results if max_results is not None else 10
+    def _resolve_max_results(max_results: Optional[int] = None, max_documents: Optional[int] = None) -> int:
+        """Resolve current and legacy result limit names into a positive integer."""
+        limit = max_results if max_results is not None else max_documents if max_documents is not None else 10
+        parameter_name = "max_results" if max_results is not None else "max_documents"
 
         if limit <= 0:
-            raise ValueError("max_results must be greater than 0")
+            raise ValueError(f"{parameter_name} must be greater than 0")
 
         return limit
 
@@ -176,6 +182,7 @@ class SeltzTools(Toolkit):
         self,
         query: str,
         max_results: Optional[int] = None,
+        max_documents: Optional[int] = None,
         scope: Optional[str] = None,
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
@@ -188,6 +195,7 @@ class SeltzTools(Toolkit):
         Args:
             query: The query to search for.
             max_results: Maximum number of results to return. Defaults to toolkit `max_results`.
+            max_documents: Deprecated alias for `max_results`.
             scope: Restrict the search to a supported scope, such as "news".
             include_domains: Only include results from these domains.
             exclude_domains: Exclude results from these domains.
@@ -199,18 +207,18 @@ class SeltzTools(Toolkit):
             str: Search results in JSON format.
         """
         if not query:
-            return "Error: Please provide a query to search for."
+            return json.dumps({"error": "Please provide a query to search for."})
 
         if not self.client:
-            return "Error: SELTZ_API_KEY not set. Please set the SELTZ_API_KEY environment variable."
+            return json.dumps({"error": "SELTZ_API_KEY not set. Please set the SELTZ_API_KEY environment variable."})
 
-        if max_results is None:
+        if max_results is None and max_documents is None:
             limit = self.max_results
         else:
             try:
-                limit = self._resolve_max_results(max_results=max_results)
+                limit = self._resolve_max_results(max_results=max_results, max_documents=max_documents)
             except ValueError as exc:
-                return f"Error: {exc}."
+                return json.dumps({"error": str(exc)})
 
         try:
             if self.show_results:
@@ -253,7 +261,7 @@ class SeltzTools(Toolkit):
             SeltzError,
         ) as exc:
             log_error(f"Seltz error: {exc}")
-            return f"Error: {exc}"
+            return json.dumps({"error": str(exc)})
         except Exception as exc:
             logger.exception("Failed to search Seltz")
-            return f"Error: {exc}"
+            return json.dumps({"error": str(exc)})

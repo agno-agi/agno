@@ -1,29 +1,47 @@
 import json
 import os
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_exception, log_info
 
 
 class VisualizationTools(Toolkit):
+    """Toolkit for creating charts and visualizations using matplotlib.
+
+    Args:
+        output_dir: Directory to save charts. Defaults to "charts".
+        create_bar_chart: Enable create_bar_chart tool. Defaults to True.
+        create_line_chart: Enable create_line_chart tool. Defaults to True.
+        create_pie_chart: Enable create_pie_chart tool. Defaults to True.
+        create_scatter_plot: Enable create_scatter_plot tool. Defaults to True.
+        create_histogram: Enable create_histogram tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         output_dir: str = "charts",
-        enable_create_bar_chart: bool = True,
-        enable_create_line_chart: bool = True,
-        enable_create_pie_chart: bool = True,
-        enable_create_scatter_plot: bool = True,
-        enable_create_histogram: bool = True,
+        create_bar_chart: bool = True,
+        create_line_chart: bool = True,
+        create_pie_chart: bool = True,
+        create_scatter_plot: bool = True,
+        create_histogram: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        """
-        Initialize the VisualizationTools toolkit.
+        # Backwards compat: enable_X -> X
+        if "enable_create_bar_chart" in kwargs:
+            create_bar_chart = kwargs.pop("enable_create_bar_chart")
+        if "enable_create_line_chart" in kwargs:
+            create_line_chart = kwargs.pop("enable_create_line_chart")
+        if "enable_create_pie_chart" in kwargs:
+            create_pie_chart = kwargs.pop("enable_create_pie_chart")
+        if "enable_create_scatter_plot" in kwargs:
+            create_scatter_plot = kwargs.pop("enable_create_scatter_plot")
+        if "enable_create_histogram" in kwargs:
+            create_histogram = kwargs.pop("enable_create_histogram")
 
-        Args:
-            output_dir (str): Directory to save charts. Default is "charts".
-        """
         # Check if matplotlib is available
         try:
             import matplotlib
@@ -39,16 +57,16 @@ class VisualizationTools(Toolkit):
 
         self.output_dir = output_dir
 
-        tools: List[Any] = []
-        if enable_create_bar_chart or all:
+        tools: List[Callable] = []
+        if all or create_bar_chart:
             tools.append(self.create_bar_chart)
-        if enable_create_line_chart or all:
+        if all or create_line_chart:
             tools.append(self.create_line_chart)
-        if enable_create_pie_chart or all:
+        if all or create_pie_chart:
             tools.append(self.create_pie_chart)
-        if enable_create_scatter_plot or all:
+        if all or create_scatter_plot:
             tools.append(self.create_scatter_plot)
-        if enable_create_histogram or all:
+        if all or create_histogram:
             tools.append(self.create_histogram)
 
         super().__init__(name="visualization_tools", tools=tools, **kwargs)
@@ -161,7 +179,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.exception("Error creating bar chart")
+            log_exception("Error creating bar chart")
             return json.dumps({"chart_type": "bar_chart", "error": str(e), "status": "error"})
 
     def create_line_chart(
@@ -234,7 +252,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.exception("Error creating line chart")
+            log_exception("Error creating line chart")
             return json.dumps({"chart_type": "line_chart", "error": str(e), "status": "error"})
 
     def create_pie_chart(
@@ -299,7 +317,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.exception("Error creating pie chart")
+            log_exception("Error creating pie chart")
             return json.dumps({"chart_type": "pie_chart", "error": str(e), "status": "error"})
 
     def create_scatter_plot(
@@ -388,7 +406,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.exception("Error creating scatter plot")
+            log_exception("Error creating scatter plot")
             return json.dumps({"chart_type": "scatter_plot", "error": str(e), "status": "error"})
 
     def create_histogram(
@@ -463,5 +481,5 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.exception("Error creating histogram")
+            log_exception("Error creating histogram")
             return json.dumps({"chart_type": "histogram", "error": str(e), "status": "error"})

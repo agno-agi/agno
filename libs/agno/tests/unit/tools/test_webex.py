@@ -63,12 +63,12 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
     with patch.dict("os.environ", {"WEBEX_ACCESS_TOKEN": "test_token"}):
         tools = WebexTools(
-            enable_send_message=True,
-            enable_list_rooms=False,
+            send_message=True,
+            list_rooms=False,
         )
 
-        assert "send_message" in [func.name for func in tools.functions.values()]
-        assert "list_rooms" not in [func.name for func in tools.functions.values()]
+        assert "send_webex_message" in [func.name for func in tools.functions.values()]
+        assert "list_webex_rooms" not in [func.name for func in tools.functions.values()]
 
 
 def test_send_message_success(webex_tools, mock_webex_api):
@@ -83,7 +83,7 @@ def test_send_message_success(webex_tools, mock_webex_api):
 
     mock_webex_api.messages.create.return_value = mock_response
 
-    result = webex_tools.send_message("room123", "Test message")
+    result = webex_tools.send_webex_message("room123", "Test message")
     result_data = json.loads(result)
 
     assert result_data["id"] == "msg123"
@@ -112,7 +112,7 @@ def test_list_rooms_success(webex_tools, mock_webex_api):
     # Set up the mock return value
     mock_webex_api.rooms.list.return_value = [mock_room1, mock_room2]
 
-    result = webex_tools.list_rooms()
+    result = webex_tools.list_webex_rooms()
     result_data = json.loads(result)
 
     assert len(result_data["rooms"]) == 2
@@ -129,7 +129,7 @@ def test_list_rooms_failure(webex_tools, mock_webex_api):
     response.reason = "Too Many Requests"
     mock_webex_api.rooms.list.side_effect = RateLimitError(response)
 
-    result = webex_tools.list_rooms()
+    result = webex_tools.list_webex_rooms()
     result_data = json.loads(result)
 
     assert "error" in result_data
@@ -140,7 +140,7 @@ def test_list_rooms_empty(webex_tools, mock_webex_api):
     """Test listing when no rooms are available."""
     mock_webex_api.rooms.list.return_value = []
 
-    result = webex_tools.list_rooms()
+    result = webex_tools.list_webex_rooms()
     result_data = json.loads(result)
 
     assert len(result_data["rooms"]) == 0
@@ -153,7 +153,7 @@ def test_send_message_rate_limit(webex_tools, mock_webex_api):
     response.reason = "Too Many Requests"
     mock_webex_api.messages.create.side_effect = RateLimitError(response)
 
-    result = webex_tools.send_message("room123", "")
+    result = webex_tools.send_webex_message("room123", "")
     result_data = json.loads(result)
 
     assert "error" in result_data

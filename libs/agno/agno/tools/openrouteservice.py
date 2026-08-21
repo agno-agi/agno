@@ -16,7 +16,7 @@ Prerequisites:
 Note:
 - OpenRouteService does not provide public transit / train routing. Use the
   `driving-car`, `cycling-*` or `foot-*` profiles for road-based routing, or
-  fall back to `GoogleMapTools` for transit directions.
+  fall back to `GoogleMapsTools` for transit directions.
 """
 
 from os import getenv
@@ -48,14 +48,13 @@ class OpenRouteServiceTools(Toolkit):
     """Toolkit for geocoding and accurate road routing via OpenRouteService.
 
     Args:
-        api_key (Optional[str]): OpenRouteService API token. If not provided, the
-            `ORS_API_KEY` environment variable is used.
-        base_url (str): Base URL for the OpenRouteService API.
-        timeout (float): Per-request HTTP timeout in seconds. Default is 30.
-        enable_directions (bool): Enable the `get_directions` tool. Default is True.
-        enable_distance_matrix (bool): Enable the `get_distance_matrix` tool. Default is True.
-        enable_geocoding (bool): Enable the `geocode_location` tool. Default is True.
-        all (bool): Enable all tools regardless of the individual flags. Default is False.
+        api_key: OpenRouteService API token. Falls back to ORS_API_KEY env var.
+        base_url: Base URL for the OpenRouteService API.
+        timeout: Per-request HTTP timeout in seconds. Default is 30.
+        directions: Enable the get_directions tool. Default is True.
+        distance_matrix: Enable the get_distance_matrix tool. Default is True.
+        geocoding: Enable the geocode_location tool. Default is True.
+        all: Enable all tools regardless of individual flags. Default is False.
     """
 
     def __init__(
@@ -63,12 +62,20 @@ class OpenRouteServiceTools(Toolkit):
         api_key: Optional[str] = None,
         base_url: str = "https://api.openrouteservice.org",
         timeout: float = 30.0,
-        enable_directions: bool = True,
-        enable_distance_matrix: bool = True,
-        enable_geocoding: bool = True,
+        directions: bool = True,
+        distance_matrix: bool = True,
+        geocoding: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_directions" in kwargs:
+            directions = kwargs.pop("enable_directions")
+        if "enable_distance_matrix" in kwargs:
+            distance_matrix = kwargs.pop("enable_distance_matrix")
+        if "enable_geocoding" in kwargs:
+            geocoding = kwargs.pop("enable_geocoding")
+
         self.api_key = api_key or getenv("ORS_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -84,13 +91,13 @@ class OpenRouteServiceTools(Toolkit):
         tools: List[Any] = []
         async_tools: List[Tuple[Any, str]] = []
 
-        if all or enable_geocoding:
+        if all or geocoding:
             tools.append(self.geocode_location)
             async_tools.append((self.ageocode_location, "geocode_location"))
-        if all or enable_directions:
+        if all or directions:
             tools.append(self.get_directions)
             async_tools.append((self.aget_directions, "get_directions"))
-        if all or enable_distance_matrix:
+        if all or distance_matrix:
             tools.append(self.get_distance_matrix)
             async_tools.append((self.aget_distance_matrix, "get_distance_matrix"))
 

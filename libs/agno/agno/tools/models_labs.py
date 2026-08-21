@@ -1,7 +1,7 @@
 import json
 import time
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.media import Audio, Image, Video
@@ -36,6 +36,22 @@ MODELS_LAB_FETCH_URLS = {
 
 
 class ModelsLabTools(Toolkit):
+    """Generate images, videos, and audio using ModelsLab AI APIs.
+
+    Requires a ModelsLab API key. Get one from https://modelslab.com/
+    Set MODELS_LAB_API_KEY environment variable or pass api_key parameter.
+
+    Args:
+        api_key: ModelsLab API key. Falls back to MODELS_LAB_API_KEY env var.
+        wait_for_completion: Wait for async generation to complete. Defaults to False.
+        add_to_eta: Extra seconds to wait beyond ETA. Defaults to 15.
+        max_wait_time: Maximum wait time in seconds. Defaults to 60.
+        file_type: Output format (MP4, MP3, GIF, WAV, PNG, JPG). Defaults to MP4.
+        model_id: Specific model to use. Defaults to flux (images) or cogvideox (video).
+        width: Output width in pixels. Defaults to 512.
+        height: Output height in pixels. Defaults to 512.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -63,8 +79,8 @@ class ModelsLabTools(Toolkit):
         if not self.api_key:
             log_error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
-        tools: List[Any] = []
-        tools.append(self.generate_media)
+        tools: List[Callable] = []
+        tools.append(self.models_lab_generate_media)
 
         super().__init__(name="models_labs", tools=tools, **kwargs)
 
@@ -161,8 +177,15 @@ class ModelsLabTools(Toolkit):
 
         return False
 
-    def generate_media(self, prompt: str) -> ToolResult:
-        """Generate media (video, image, or audio) given a prompt."""
+    def models_lab_generate_media(self, prompt: str) -> ToolResult:
+        """Generate media (video, image, or audio) given a prompt.
+
+        Args:
+            prompt: Text description of the media to generate.
+
+        Returns:
+            ToolResult with generated media (images, videos, or audios).
+        """
         if not self.api_key:
             return ToolResult(content="Please set the MODELS_LAB_API_KEY")
 

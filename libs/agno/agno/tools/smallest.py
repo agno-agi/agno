@@ -48,12 +48,18 @@ class SmallestTools(Toolkit):
         output_format: SmallestOutputFormat = "wav",
         target_directory: Optional[str] = None,
         base_url: str = SMALLEST_TTS_URL,
-        enable_get_voices: bool = True,
-        enable_text_to_speech: bool = True,
+        get_voices: bool = True,
+        text_to_speech: bool = True,
         all: bool = False,
         timeout: float = 30,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_get_voices" in kwargs:
+            get_voices = kwargs.pop("enable_get_voices")
+        if "enable_text_to_speech" in kwargs:
+            text_to_speech = kwargs.pop("enable_text_to_speech")
+
         self.api_key = api_key or getenv("SMALLEST_API_KEY")
         if not self.api_key:
             log_error("SMALLEST_API_KEY not set. Please set the SMALLEST_API_KEY environment variable.")
@@ -76,9 +82,9 @@ class SmallestTools(Toolkit):
             target_path.mkdir(parents=True, exist_ok=True)
 
         tools: List[Any] = []
-        if all or enable_get_voices:
+        if all or get_voices:
             tools.append(self.get_voices)
-        if all or enable_text_to_speech:
+        if all or text_to_speech:
             tools.append(self.text_to_speech)
 
         super().__init__(name="smallest_tools", tools=tools, **kwargs)

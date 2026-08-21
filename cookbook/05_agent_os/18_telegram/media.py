@@ -16,8 +16,8 @@ from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.os import AgentOS
 from agno.os.interfaces.telegram import Telegram
-from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
+from agno.tools.models.openai import OpenAITools
 
 # ---------------------------------------------------------------------------
 # Create Database
@@ -38,21 +38,22 @@ media_agent = Agent(
     model=Gemini(id="gemini-3.5-flash"),
     db=db,
     tools=[
-        DalleTools(
-            model="dall-e-3",
-            size="1024x1024",
-            quality="standard",
+        OpenAITools(
+            generate_image=True,
+            image_model="dall-e-3",
+            image_size="1024x1024",
+            image_quality="standard",
         ),
         ElevenLabsTools(
-            enable_get_voices=False,
-            enable_generate_sound_effect=True,
-            enable_text_to_speech=True,
+            get_voices=False,
+            generate_sound_effect=True,
+            text_to_speech=True,
         ),
     ],
     instructions=[
         "Help users understand the photos, audio, video, and documents they send.",
         "Use create_image when a user asks you to generate an image.",
-        "Use text_to_speech when a user asks you to read text aloud.",
+        "Use elevenlabs_text_to_speech when a user asks you to read text aloud.",
         "Use generate_sound_effect when a user asks for a sound effect.",
         "After using a media tool, briefly describe what you created.",
     ],

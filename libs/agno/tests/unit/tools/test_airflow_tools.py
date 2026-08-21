@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 
@@ -10,12 +11,13 @@ def test_save_and_read_dag_file_basic():
         airflow_tools = AirflowTools(dags_dir=dags_dir)
 
         contents = "from airflow import DAG\n"
-        result = airflow_tools.save_dag_file(contents=contents, dag_file="nested/example.py")
+        result = json.loads(airflow_tools.save_dag_file(contents=contents, dag_file="nested/example.py"))
 
         expected_path = dags_dir / "nested" / "example.py"
-        assert result == str(expected_path.resolve())
+        assert result["file_path"] == str(expected_path.resolve())
         assert expected_path.read_text() == contents
-        assert airflow_tools.read_dag_file("nested/example.py") == contents
+        read_result = json.loads(airflow_tools.read_dag_file("nested/example.py"))
+        assert read_result["contents"] == contents
 
 
 def test_save_dag_file_rejects_absolute_path():
@@ -25,9 +27,9 @@ def test_save_dag_file_rejects_absolute_path():
         outside_file = base_dir / "outside.py"
         airflow_tools = AirflowTools(dags_dir=dags_dir)
 
-        result = airflow_tools.save_dag_file(contents="malicious", dag_file=str(outside_file))
+        result = json.loads(airflow_tools.save_dag_file(contents="malicious", dag_file=str(outside_file)))
 
-        assert result.startswith("Error saving to file:")
+        assert "error" in result
         assert not outside_file.exists()
 
 
@@ -38,9 +40,9 @@ def test_save_dag_file_rejects_traversal():
         outside_file = base_dir / "outside.py"
         airflow_tools = AirflowTools(dags_dir=dags_dir)
 
-        result = airflow_tools.save_dag_file(contents="malicious", dag_file="../outside.py")
+        result = json.loads(airflow_tools.save_dag_file(contents="malicious", dag_file="../outside.py"))
 
-        assert result.startswith("Error saving to file:")
+        assert "error" in result
         assert not outside_file.exists()
 
 
@@ -52,10 +54,10 @@ def test_read_dag_file_rejects_absolute_path():
         outside_file.write_text("secret")
         airflow_tools = AirflowTools(dags_dir=dags_dir)
 
-        result = airflow_tools.read_dag_file(str(outside_file))
+        result = json.loads(airflow_tools.read_dag_file(str(outside_file)))
 
-        assert result.startswith("Error reading file:")
-        assert "secret" not in result
+        assert "error" in result
+        assert "secret" not in result.get("error", "")
 
 
 def test_read_dag_file_rejects_traversal():
@@ -66,10 +68,10 @@ def test_read_dag_file_rejects_traversal():
         outside_file.write_text("secret")
         airflow_tools = AirflowTools(dags_dir=dags_dir)
 
-        result = airflow_tools.read_dag_file("../outside.py")
+        result = json.loads(airflow_tools.read_dag_file("../outside.py"))
 
-        assert result.startswith("Error reading file:")
-        assert "secret" not in result
+        assert "error" in result
+        assert "secret" not in result.get("error", "")
 
 
 def test_dags_dir_resolved():

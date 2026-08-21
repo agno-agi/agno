@@ -66,30 +66,34 @@ def test_init_with_only_embed_video():
 
 
 def test_analyze_video_no_url(twelvelabs_tools):
-    assert twelvelabs_tools.analyze_video(video_url="", prompt="What happens?") == "No video_url provided"
+    result = json.loads(twelvelabs_tools.analyze_video(video_url="", prompt="What happens?"))
+    assert result["error"] == "No video_url provided"
 
 
 def test_analyze_video_no_prompt(twelvelabs_tools):
-    assert twelvelabs_tools.analyze_video(video_url="http://x/v.mp4", prompt="") == "No prompt provided"
+    result = json.loads(twelvelabs_tools.analyze_video(video_url="http://x/v.mp4", prompt=""))
+    assert result["error"] == "No prompt provided"
 
 
 def test_embed_text_no_text(twelvelabs_tools):
-    assert twelvelabs_tools.embed_text(text="") == "No text provided"
+    result = json.loads(twelvelabs_tools.embed_text(text=""))
+    assert result["error"] == "No text provided"
 
 
 def test_embed_video_no_url(twelvelabs_tools):
-    assert twelvelabs_tools.embed_video(video_url="") == "No video_url provided"
+    result = json.loads(twelvelabs_tools.embed_video(video_url=""))
+    assert result["error"] == "No video_url provided"
 
 
 def test_analyze_video_success(twelvelabs_tools):
-    """analyze_video should return the model's text answer."""
+    """analyze_video should return JSON with the model's text answer."""
     mock_client = MagicMock()
     mock_client.analyze.return_value = MagicMock(data="A cat plays piano.")
     twelvelabs_tools._client = mock_client
 
-    result = twelvelabs_tools.analyze_video(video_url="http://x/v.mp4", prompt="What happens?")
+    result = json.loads(twelvelabs_tools.analyze_video(video_url="http://x/v.mp4", prompt="What happens?"))
 
-    assert result == "A cat plays piano."
+    assert result["analysis"] == "A cat plays piano."
     _, kwargs = mock_client.analyze.call_args
     assert kwargs["model_name"] == "pegasus1.5"
     assert kwargs["prompt"] == "What happens?"
@@ -199,7 +203,8 @@ def test_embed_video_no_task_id(twelvelabs_tools):
     mock_client.embed.tasks.create.return_value = MagicMock(id=None)
     twelvelabs_tools._client = mock_client
 
-    assert twelvelabs_tools.embed_video(video_url="http://x/v.mp4") == "No embedding task id returned"
+    result = json.loads(twelvelabs_tools.embed_video(video_url="http://x/v.mp4"))
+    assert result["error"] == "No embedding task id returned"
     mock_client.embed.tasks.status.assert_not_called()
 
 
@@ -214,7 +219,8 @@ def test_embed_video_all_segments_without_vectors(twelvelabs_tools):
     mock_client.embed.tasks.retrieve.return_value = retrieve_response
     twelvelabs_tools._client = mock_client
 
-    assert twelvelabs_tools.embed_video(video_url="http://x/v.mp4") == "No embedding returned"
+    result = json.loads(twelvelabs_tools.embed_video(video_url="http://x/v.mp4"))
+    assert result["error"] == "No embedding returned"
 
 
 def test_embed_video_no_video_embedding_object(twelvelabs_tools):
@@ -228,7 +234,8 @@ def test_embed_video_no_video_embedding_object(twelvelabs_tools):
     mock_client.embed.tasks.retrieve.return_value = retrieve_response
     twelvelabs_tools._client = mock_client
 
-    assert twelvelabs_tools.embed_video(video_url="http://x/v.mp4") == "No embedding returned"
+    result = json.loads(twelvelabs_tools.embed_video(video_url="http://x/v.mp4"))
+    assert result["error"] == "No embedding returned"
 
 
 def test_embed_video_not_ready(twelvelabs_tools):

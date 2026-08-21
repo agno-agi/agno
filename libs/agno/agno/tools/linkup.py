@@ -1,8 +1,10 @@
+import json
 from os import getenv
-from typing import Any, List, Literal, Optional
+from typing import Callable, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
+from agno.utils.serialize import to_json_str
 
 try:
     from linkup import LinkupClient
@@ -14,12 +16,16 @@ class LinkupTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        depth: Literal["standard", "deep"] = "standard",
-        output_type: Literal["sourcedAnswer", "searchResults"] = "searchResults",
-        enable_web_search_with_linkup: bool = True,
+        depth: Literal["fast", "standard", "deep"] = "standard",
+        output_type: Literal["searchResults", "sourcedAnswer", "structured"] = "searchResults",
+        web_search_with_linkup: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_web_search_with_linkup" in kwargs:
+            web_search_with_linkup = kwargs.pop("enable_web_search_with_linkup")
+
         self.api_key = api_key or getenv("LINKUP_API_KEY")
         if not self.api_key:
             log_error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")
@@ -28,24 +34,22 @@ class LinkupTools(Toolkit):
         self.depth = depth
         self.output_type = output_type
 
-        tools: List[Any] = []
-        if all or enable_web_search_with_linkup:
+        tools: List[Callable] = []
+        if all or web_search_with_linkup:
             tools.append(self.web_search_with_linkup)
 
         super().__init__(name="linkup_tools", tools=tools, **kwargs)
 
     def web_search_with_linkup(self, query: str, depth: Optional[str] = None, output_type: Optional[str] = None) -> str:
-        """
-        Use this function to search the web for a given query.
-        This function uses the Linkup API to provide realtime online information about the query.
+        """Search the web using Linkup API.
 
         Args:
-            query (str): Query to search for.
-            depth (str): (deep|standard) Depth of the search. Defaults to 'standard'.
-            output_type (str): (sourcedAnswer|searchResults) Type of output. Defaults to 'searchResults'.
+            query: Query to search for.
+            depth: Search depth (standard, deep, or fast). Defaults to toolkit setting.
+            output_type: Output format (searchResults or sourcedAnswer). Defaults to toolkit setting.
 
         Returns:
-            str: string of results related to the query.
+            Search results from Linkup.
         """
         try:
             response = self.linkup.search(
@@ -53,6 +57,8 @@ class LinkupTools(Toolkit):
                 depth=depth or self.depth,  # type: ignore
                 output_type=output_type or self.output_type,  # type: ignore
             )
-            return response
+            if isinstance(response, str):
+                return response
+            return to_json_str(response)
         except Exception as e:
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})

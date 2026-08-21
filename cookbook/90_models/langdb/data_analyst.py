@@ -11,7 +11,7 @@ from agno.tools.duckdb import DuckDbTools
 # ---------------------------------------------------------------------------
 
 duckdb_tools = DuckDbTools()
-duckdb_tools.create_table_from_path(
+duckdb_tools.create_duckdb_table_from_path(
     path="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
     table="movies",
 )

@@ -7,33 +7,62 @@ from agno.utils.log import log_debug, log_error
 
 
 class CalculatorTools(Toolkit):
+    """Toolkit for basic mathematical operations.
+
+    Args:
+        add: Enable add tool. Defaults to True.
+        subtract: Enable subtract tool. Defaults to True.
+        multiply: Enable multiply tool. Defaults to True.
+        divide: Enable divide tool. Defaults to True.
+        exponentiate: Enable exponentiate tool. Defaults to True.
+        factorial: Enable factorial tool. Defaults to True.
+        is_prime: Enable is_prime tool. Defaults to True.
+        square_root: Enable square_root tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
+        add: bool = True,
+        subtract: bool = True,
+        multiply: bool = True,
+        divide: bool = True,
+        exponentiate: bool = True,
+        factorial: bool = True,
+        is_prime: bool = True,
+        square_root: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        tools: List[Callable] = [
-            self.add,
-            self.subtract,
-            self.multiply,
-            self.divide,
-            self.exponentiate,
-            self.factorial,
-            self.is_prime,
-            self.square_root,
-        ]
+        tools: List[Callable] = []
+        if all or add:
+            tools.append(self.add)
+        if all or subtract:
+            tools.append(self.subtract)
+        if all or multiply:
+            tools.append(self.multiply)
+        if all or divide:
+            tools.append(self.divide)
+        if all or exponentiate:
+            tools.append(self.exponentiate)
+        if all or factorial:
+            tools.append(self.factorial)
+        if all or is_prime:
+            tools.append(self.is_prime)
+        if all or square_root:
+            tools.append(self.square_root)
 
-        # Initialize the toolkit with auto-registration enabled
         super().__init__(name="calculator", tools=tools, **kwargs)
 
     def add(self, a: float, b: float) -> str:
         """Add two numbers and return the result.
 
         Args:
-            a (float): First number.
-            b (float): Second number.
+            a: First number.
+            b: Second number.
 
         Returns:
-            str: JSON string of the result.
+            JSON with the result.
         """
         result = a + b
         log_debug(f"Adding {a} and {b} to get {result}")
@@ -43,11 +72,11 @@ class CalculatorTools(Toolkit):
         """Subtract second number from first and return the result.
 
         Args:
-            a (float): First number.
-            b (float): Second number.
+            a: First number.
+            b: Second number.
 
         Returns:
-            str: JSON string of the result.
+            JSON with the result.
         """
         result = a - b
         log_debug(f"Subtracting {b} from {a} to get {result}")
@@ -57,11 +86,11 @@ class CalculatorTools(Toolkit):
         """Multiply two numbers and return the result.
 
         Args:
-            a (float): First number.
-            b (float): Second number.
+            a: First number.
+            b: Second number.
 
         Returns:
-            str: JSON string of the result.
+            JSON with the result.
         """
         result = a * b
         log_debug(f"Multiplying {a} and {b} to get {result}")
@@ -71,11 +100,11 @@ class CalculatorTools(Toolkit):
         """Divide first number by second and return the result.
 
         Args:
-            a (float): Numerator.
-            b (float): Denominator.
+            a: Numerator.
+            b: Denominator.
 
         Returns:
-            str: JSON string of the result.
+            JSON with the result.
         """
         if b == 0:
             log_error("Attempt to divide by zero")
@@ -88,14 +117,14 @@ class CalculatorTools(Toolkit):
         return json.dumps({"operation": "division", "result": result})
 
     def exponentiate(self, a: float, b: float) -> str:
-        """Raise first number to the power of the second number and return the result.
+        """Raise first number to the power of the second and return the result.
 
         Args:
-            a (float): Base.
-            b (float): Exponent.
+            a: Base.
+            b: Exponent.
 
         Returns:
-            str: JSON string of the result.
+            JSON with the result.
         """
         result = math.pow(a, b)
         log_debug(f"Raising {a} to the power of {b} to get {result}")
@@ -105,10 +134,10 @@ class CalculatorTools(Toolkit):
         """Calculate the factorial of a number and return the result.
 
         Args:
-            n (int): Number to calculate the factorial of.
+            n: Number to calculate the factorial of.
 
         Returns:
-            str: JSON string of the result.
+            JSON with the result.
         """
         if n < 0:
             log_error("Attempt to calculate factorial of a negative number")
@@ -121,10 +150,10 @@ class CalculatorTools(Toolkit):
         """Check if a number is prime and return the result.
 
         Args:
-            n (int): Number to check if prime.
+            n: Number to check.
 
         Returns:
-            str: JSON string of the result.
+            JSON with the result.
         """
         if n <= 1:
             return json.dumps({"operation": "prime_check", "result": False})
@@ -137,10 +166,10 @@ class CalculatorTools(Toolkit):
         """Calculate the square root of a number and return the result.
 
         Args:
-            n (float): Number to calculate the square root of.
+            n: Number to calculate the square root of.
 
         Returns:
-            str: JSON string of the result.
+            JSON with the result.
         """
         if n < 0:
             log_error("Attempt to calculate square root of a negative number")

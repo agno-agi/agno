@@ -17,7 +17,7 @@ provides high-quality transcription capabilities.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
@@ -32,7 +32,6 @@ class MLXTranscribeTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        enable_read_files_in_base_dir: bool = True,
         restrict_to_base_dir: bool = True,
         path_or_hf_repo: str = "mlx-community/whisper-large-v3-turbo",
         verbose: Optional[bool] = None,
@@ -48,9 +47,40 @@ class MLXTranscribeTools(Toolkit):
         clip_timestamps: Optional[Union[str, List[float]]] = None,
         hallucination_silence_threshold: Optional[float] = None,
         decode_options: Optional[dict] = None,
+        transcribe: bool = True,
+        read_files: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        """Initialize MLX Transcribe toolkit for audio transcription.
+
+        Uses Apple's MLX Whisper model optimized for Apple Silicon.
+
+        Args:
+            base_dir: Base directory for audio files. Defaults to cwd.
+            restrict_to_base_dir: If True, file operations cannot escape base_dir.
+            path_or_hf_repo: Whisper model path or HuggingFace repo.
+            verbose: Enable verbose output during transcription.
+            temperature: Sampling temperature(s) for decoding.
+            compression_ratio_threshold: Threshold for compression ratio filtering.
+            logprob_threshold: Log probability threshold for filtering.
+            no_speech_threshold: Threshold for detecting no speech.
+            condition_on_previous_text: Condition on previous text for context.
+            initial_prompt: Initial prompt for the model.
+            word_timestamps: Enable word-level timestamps.
+            prepend_punctuations: Punctuation to prepend.
+            append_punctuations: Punctuation to append.
+            clip_timestamps: Timestamps to clip to.
+            hallucination_silence_threshold: Threshold for hallucination detection.
+            decode_options: Additional decode options.
+            transcribe: Enable the transcribe tool.
+            read_files: Enable the read_files tool.
+            all: Enable all tools.
+        """
+        # Backwards compat: enable_X -> X
+        if "enable_read_files_in_base_dir" in kwargs:
+            read_files = kwargs.pop("enable_read_files_in_base_dir")
+
         self.base_dir: Path = (base_dir or Path.cwd()).resolve()
         self.restrict_to_base_dir = restrict_to_base_dir
         self.path_or_hf_repo: str = path_or_hf_repo
@@ -68,26 +98,27 @@ class MLXTranscribeTools(Toolkit):
         self.hallucination_silence_threshold: Optional[float] = hallucination_silence_threshold
         self.decode_options: Optional[dict] = decode_options
 
-        tools: List[Any] = [self.transcribe]
-        if enable_read_files_in_base_dir or all:
+        tools: List[Callable] = []
+        if all or transcribe:
+            tools.append(self.transcribe)
+        if all or read_files:
             tools.append(self.read_files)
 
         super().__init__(name="mlx_transcribe", tools=tools, **kwargs)
 
     def transcribe(self, file_name: str) -> str:
-        """
-        Transcribe uses Apple's MLX Whisper model.
+        """Transcribe an audio file using MLX Whisper.
 
         Args:
-            file_name (str): The name of the audio file to transcribe.
+            file_name: Path to the audio file to transcribe.
 
         Returns:
-            str: The transcribed text or an error message if the transcription fails.
+            JSON with transcribed text or error.
         """
         try:
             safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
             if not safe:
-                return f"Error: Path '{file_name}' is outside the allowed base directory"
+                return json.dumps({"error": f"Path '{file_name}' is outside the allowed base directory"})
             audio_file_path = str(file_path)
 
             log_info(f"Transcribing audio file {audio_file_path}")
@@ -122,21 +153,20 @@ class MLXTranscribeTools(Toolkit):
                 transcription_kwargs.update(self.decode_options)
 
             transcription = mlx_whisper.transcribe(audio_file_path, **transcription_kwargs)
-            return transcription.get("text", "")
+            return json.dumps({"text": transcription.get("text", "")})
         except Exception as e:
-            _e = f"Failed to transcribe audio file {e}"
-            log_error(_e)
-            return _e
+            log_error(f"Failed to transcribe audio file: {e}")
+            return json.dumps({"error": f"Failed to transcribe audio file: {e}"})
 
     def read_files(self) -> str:
-        """Returns a list of files in the base directory
+        """List files in the base directory.
 
         Returns:
-            str: A JSON string containing the list of files in the base directory.
+            JSON list of file paths in the base directory.
         """
         try:
-            log_info(f"Reading files in : {self.base_dir}")
-            return json.dumps([str(file_name) for file_name in self.base_dir.iterdir()], indent=4)
+            log_info(f"Reading files in: {self.base_dir}")
+            return json.dumps({"files": [str(f) for f in self.base_dir.iterdir()]})
         except Exception as e:
             logger.exception("Error reading files")
-            return f"Error reading files: {e}"
+            return json.dumps({"error": f"Error reading files: {e}"})

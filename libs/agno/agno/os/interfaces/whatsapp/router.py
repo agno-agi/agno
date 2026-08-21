@@ -39,14 +39,14 @@ _REASONING_SKIP_PREFIXES = ("Action:", "Next Action:", "Confidence:")
 # router skips duplicate text when any of these ran
 _WA_TOOL_NAMES = frozenset(
     {
-        "send_text_message",
-        "send_template_message",
-        "send_reply_buttons",
-        "send_list_message",
-        "send_image",
-        "send_document",
-        "send_location",
-        "send_reaction",
+        "send_whatsapp_text_message",
+        "send_whatsapp_template_message",
+        "send_whatsapp_reply_buttons",
+        "send_whatsapp_list_message",
+        "send_whatsapp_image",
+        "send_whatsapp_document",
+        "send_whatsapp_location",
+        "send_whatsapp_reaction",
     }
 )
 

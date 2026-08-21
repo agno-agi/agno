@@ -510,26 +510,29 @@ def test_enable_flags():
 
         tool_names = [fn for fn in tools.functions]
         assert "read_file" not in tool_names
-        assert "edit_file" in tool_names
-        assert "write_file" in tool_names
-        assert "run_shell" in tool_names
+        # v3.0 defaults: grep, find, ls are enabled; edit_file, write_file, run_shell are disabled
+        assert "grep" in tool_names
+        assert "find" in tool_names
+        assert "ls" in tool_names
 
 
-def test_exploration_tools_disabled_by_default():
-    """Test that grep, find, ls are disabled by default."""
+def test_default_tools():
+    """Test v3.0 defaults: read_file and exploration tools enabled, write tools disabled."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
         tools = CodingTools(base_dir=base_dir)
 
         tool_names = list(tools.functions.keys())
         assert len(tool_names) == 4
+        # v3.0 defaults: read_file + exploration tools (grep, find, ls)
         assert "read_file" in tool_names
-        assert "edit_file" in tool_names
-        assert "write_file" in tool_names
-        assert "run_shell" in tool_names
-        assert "grep" not in tool_names
-        assert "find" not in tool_names
-        assert "ls" not in tool_names
+        assert "grep" in tool_names
+        assert "find" in tool_names
+        assert "ls" in tool_names
+        # Write/mutate tools disabled by default
+        assert "edit_file" not in tool_names
+        assert "write_file" not in tool_names
+        assert "run_shell" not in tool_names
 
 
 def test_all_flag():
@@ -724,6 +727,9 @@ def test_instructions_read_only():
             enable_edit_file=False,
             enable_write_file=False,
             enable_run_shell=False,
+            enable_grep=False,
+            enable_find=False,
+            enable_ls=False,
         )
         instructions = tools.instructions
         assert "read_file" in instructions
@@ -749,18 +755,20 @@ def test_instructions_custom_bypass():
         assert tools.instructions == "Use the tools wisely."
 
 
-def test_instructions_default_no_exploration():
-    """Test that default config does not mention grep/find/ls."""
+def test_instructions_default_includes_exploration():
+    """Test that v3.0 default config includes exploration tools."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tools = CodingTools(base_dir=tmp_dir)
         instructions = tools.instructions
+        # v3.0 defaults: read_file + exploration tools
         assert "**read_file**" in instructions
-        assert "**edit_file**" in instructions
-        assert "**write_file**" in instructions
-        assert "**run_shell**" in instructions
-        assert "**grep**" not in instructions
-        assert "**find**" not in instructions
-        assert "**ls**" not in instructions
+        assert "**grep**" in instructions
+        assert "**find**" in instructions
+        assert "**ls**" in instructions
+        # Write/mutate tools disabled by default
+        assert "**edit_file**" not in instructions
+        assert "**write_file**" not in instructions
+        assert "**run_shell**" not in instructions
 
 
 def test_instructions_best_practices_conditional():

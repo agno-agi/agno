@@ -1,6 +1,6 @@
 from os import getenv
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -23,21 +23,29 @@ class GroqTools(Toolkit):
         api_key: Optional[str] = None,
         transcription_model: str = "whisper-large-v3",
         translation_model: str = "whisper-large-v3",
-        tts_model: str = "playai-tts",
-        tts_voice: str = "Chip-PlayAI",
-        enable_transcribe_audio: bool = True,
-        enable_translate_audio: bool = True,
-        enable_generate_speech: bool = True,
+        tts_model: str = "canopylabs/orpheus-v1-english",
+        tts_voice: str = "austin",
+        transcribe_audio: bool = True,
+        translate_audio: bool = True,
+        generate_speech: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        tools: List[Any] = []
-        if all or enable_transcribe_audio:
-            tools.append(self.transcribe_audio)
-        if all or enable_translate_audio:
-            tools.append(self.translate_audio)
-        if all or enable_generate_speech:
-            tools.append(self.generate_speech)
+        # Backwards compat: enable_X -> X
+        if "enable_transcribe_audio" in kwargs:
+            transcribe_audio = kwargs.pop("enable_transcribe_audio")
+        if "enable_translate_audio" in kwargs:
+            translate_audio = kwargs.pop("enable_translate_audio")
+        if "enable_generate_speech" in kwargs:
+            generate_speech = kwargs.pop("enable_generate_speech")
+
+        tools: List[Callable] = []
+        if all or transcribe_audio:
+            tools.append(self.groq_transcribe_audio)
+        if all or translate_audio:
+            tools.append(self.groq_translate_audio)
+        if all or generate_speech:
+            tools.append(self.groq_generate_speech)
 
         super().__init__(name="groq_tools", tools=tools, **kwargs)
 
@@ -52,7 +60,7 @@ class GroqTools(Toolkit):
         self.tts_voice = tts_voice
         self.tts_format = "wav"
 
-    def transcribe_audio(self, audio_source: str) -> str:
+    def groq_transcribe_audio(self, audio_source: str) -> str:
         """Transcribe audio file or URL using Groq's Whisper API.
         Args:
             audio_source: Path to the local audio file or a publicly accessible URL to the audio.
@@ -84,7 +92,7 @@ class GroqTools(Toolkit):
             log_error(f"Failed to transcribe audio source '{audio_source}' with Groq: {str(e)}")
             return f"Failed to transcribe audio source '{audio_source}' with Groq: {str(e)}"
 
-    def translate_audio(self, audio_source: str) -> str:
+    def groq_translate_audio(self, audio_source: str) -> str:
         """Translate audio file or URL to English using Groq's Whisper API.
         Args:
             audio_source: Path to the local audio file or a publicly accessible URL to the audio.
@@ -115,7 +123,7 @@ class GroqTools(Toolkit):
             log_error(f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}")
             return f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}"
 
-    def generate_speech(
+    def groq_generate_speech(
         self,
         agent: Agent,
         text_input: str,

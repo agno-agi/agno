@@ -1,5 +1,6 @@
 """Unit tests for EvmTools class."""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -176,6 +177,7 @@ class TestSendTransaction:
         tools = EvmTools(
             private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             rpc_url="https://0xrpc.io/sep",
+            send_transaction=True,
         )
 
         result = tools.send_transaction(
@@ -188,9 +190,10 @@ class TestSendTransaction:
         mock_web3_client.eth.send_raw_transaction.assert_called_once()
         mock_web3_client.eth.wait_for_transaction_receipt.assert_called_once()
 
-        # The successful transaction should return the transaction hash
-        assert result.startswith("0x")
-        assert len(result) > 10  # Transaction hash should be a reasonable length
+        # v3.0: Returns JSON string with transaction_hash
+        result_data = json.loads(result)
+        assert "transaction_hash" in result_data
+        assert result_data["transaction_hash"].startswith("0x")
 
     def test_send_transaction_invalid_address(self, mock_web3_constructor, mock_web3_client):
         """Test transaction sending with invalid address."""
@@ -200,13 +203,16 @@ class TestSendTransaction:
         tools = EvmTools(
             private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             rpc_url="https://0xrpc.io/sep",
+            send_transaction=True,
         )
 
         result = tools.send_transaction(to_address="invalid_address", amount_in_wei=1000000000000000)
 
+        # v3.0: Returns JSON string
         # Invalid address should still succeed in our mock (no validation in mock)
         # But in real implementation, this would be caught by Web3 validation
-        assert result.startswith("0x") or result.startswith("error:")
+        result_data = json.loads(result)
+        assert "transaction_hash" in result_data or "error" in result_data
 
     def test_send_transaction_zero_amount(self, mock_web3_constructor, mock_web3_client):
         """Test transaction sending with zero amount."""
@@ -216,13 +222,15 @@ class TestSendTransaction:
         tools = EvmTools(
             private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             rpc_url="https://0xrpc.io/sep",
+            send_transaction=True,
         )
 
         result = tools.send_transaction(to_address="0x3Dfc53E3C77bb4e30Ce333Be1a66Ce62558bE395", amount_in_wei=0)
 
-        # Zero amount transaction should still succeed and return transaction hash
-        assert result.startswith("0x")
-        assert len(result) > 10
+        # v3.0: Returns JSON string with transaction_hash
+        result_data = json.loads(result)
+        assert "transaction_hash" in result_data
+        assert result_data["transaction_hash"].startswith("0x")
 
 
 class TestErrorHandling:
@@ -237,14 +245,17 @@ class TestErrorHandling:
         tools = EvmTools(
             private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             rpc_url="https://0xrpc.io/sep",
+            send_transaction=True,
         )
 
         result = tools.send_transaction(
             to_address="0x3Dfc53E3C77bb4e30Ce333Be1a66Ce62558bE395", amount_in_wei=1000000000000000
         )
 
-        assert result.startswith("error:")
-        assert "Network error" in result
+        # v3.0: Returns JSON string with error
+        result_data = json.loads(result)
+        assert "error" in result_data
+        assert "Network error" in result_data["error"]
 
     def test_gas_calculation_exception(self, mock_web3_constructor, mock_web3_client):
         """Test handling of gas calculation exceptions."""
@@ -255,14 +266,17 @@ class TestErrorHandling:
         tools = EvmTools(
             private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             rpc_url="https://0xrpc.io/sep",
+            send_transaction=True,
         )
 
         result = tools.send_transaction(
             to_address="0x3Dfc53E3C77bb4e30Ce333Be1a66Ce62558bE395", amount_in_wei=1000000000000000
         )
 
-        assert result.startswith("error:")
-        assert "RPC error" in result
+        # v3.0: Returns JSON string with error
+        result_data = json.loads(result)
+        assert "error" in result_data
+        assert "RPC error" in result_data["error"]
 
 
 class TestTransactionParameters:
@@ -276,6 +290,7 @@ class TestTransactionParameters:
         tools = EvmTools(
             private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             rpc_url="https://0xrpc.io/sep",
+            send_transaction=True,
         )
 
         tools.send_transaction(to_address="0x3Dfc53E3C77bb4e30Ce333Be1a66Ce62558bE395", amount_in_wei=1000000000000000)
@@ -301,12 +316,43 @@ class TestToolkitIntegration:
         mock_web3_class, mock_http_provider = mock_web3_constructor
         mock_web3_class.return_value = mock_web3_client
 
+        # v3.0: Tools require explicit enable via flags
+        tools = EvmTools(
+            private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            rpc_url="https://0xrpc.io/sep",
+            send_transaction=True,
+        )
+
+        # Check that the send_transaction method is registered as a tool
+        assert hasattr(tools, "tools")
+        assert len(tools.tools) == 1
+        assert tools.tools[0] == tools.send_transaction
+
+    def test_tools_registration_default_empty(self, mock_web3_constructor, mock_web3_client):
+        """Test that no tools are registered by default (v3.0 behavior)."""
+        mock_web3_class, mock_http_provider = mock_web3_constructor
+        mock_web3_class.return_value = mock_web3_client
+
         tools = EvmTools(
             private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             rpc_url="https://0xrpc.io/sep",
         )
 
-        # Check that the send_transaction method is registered as a tool
+        # v3.0: No tools registered by default
+        assert hasattr(tools, "tools")
+        assert len(tools.tools) == 0
+
+    def test_tools_registration_all_flag(self, mock_web3_constructor, mock_web3_client):
+        """Test that all=True enables all tools."""
+        mock_web3_class, mock_http_provider = mock_web3_constructor
+        mock_web3_class.return_value = mock_web3_client
+
+        tools = EvmTools(
+            private_key="0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            rpc_url="https://0xrpc.io/sep",
+            all=True,
+        )
+
         assert hasattr(tools, "tools")
         assert len(tools.tools) == 1
         assert tools.tools[0] == tools.send_transaction

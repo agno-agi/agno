@@ -83,7 +83,7 @@ def test_get_all_space_detail(confluence_tools, mock_confluence):
     mock_confluence.get_all_spaces.return_value = mock_spaces
 
     result = confluence_tools.get_all_space_detail()
-    assert result == str(mock_spaces["results"])
+    assert json.loads(result) == mock_spaces["results"]
     mock_confluence.get_all_spaces.assert_called_once()
 
 
@@ -98,7 +98,7 @@ def test_get_space_key_existing(confluence_tools, mock_confluence):
     mock_confluence.get_all_spaces.return_value = mock_spaces
 
     result = confluence_tools.get_space_key("Space One")
-    assert result == "SPACE1"
+    assert json.loads(result) == {"key": "SPACE1"}
     mock_confluence.get_all_spaces.assert_called_once()
 
 
@@ -113,15 +113,15 @@ def test_get_space_key_not_found(confluence_tools, mock_confluence):
     mock_confluence.get_all_spaces.return_value = mock_spaces
 
     result = confluence_tools.get_space_key("Non-existent Space")
-    assert result == "No space found"
+    assert json.loads(result) == {"error": "No space found with name 'Non-existent Space'"}
     mock_confluence.get_all_spaces.assert_called_once()
 
 
 # Page Tests
 def test_get_page_content_success(confluence_tools, mock_confluence):
     """Test retrieving page content successfully."""
-    # Mock the get_space_key method
-    with patch.object(confluence_tools, "get_space_key", return_value="SPACE1"):
+    # Mock the internal space key lookup
+    with patch.object(confluence_tools, "_get_space_key_internal", return_value="SPACE1"):
         mock_page = {
             "id": "12345",
             "title": "Test Page",
@@ -136,8 +136,8 @@ def test_get_page_content_success(confluence_tools, mock_confluence):
 
 def test_get_page_content_not_found(confluence_tools, mock_confluence):
     """Test retrieving non-existent page content."""
-    # Mock the get_space_key method
-    with patch.object(confluence_tools, "get_space_key", return_value="SPACE1"):
+    # Mock the internal space key lookup
+    with patch.object(confluence_tools, "_get_space_key_internal", return_value="SPACE1"):
         mock_confluence.get_page_by_title.return_value = None
 
         result = confluence_tools.get_page_content("Space One", "Non-existent Page")
@@ -147,8 +147,8 @@ def test_get_page_content_not_found(confluence_tools, mock_confluence):
 
 def test_get_page_content_error(confluence_tools, mock_confluence):
     """Test error handling when retrieving page content."""
-    # Mock the get_space_key method
-    with patch.object(confluence_tools, "get_space_key", return_value="SPACE1"):
+    # Mock the internal space key lookup
+    with patch.object(confluence_tools, "_get_space_key_internal", return_value="SPACE1"):
         mock_confluence.get_page_by_title.side_effect = Exception("API Error")
 
         result = confluence_tools.get_page_content("Space One", "Test Page")
@@ -158,8 +158,8 @@ def test_get_page_content_error(confluence_tools, mock_confluence):
 
 def test_get_all_page_from_space(confluence_tools, mock_confluence):
     """Test retrieving all pages from a space."""
-    # Mock the get_space_key method
-    with patch.object(confluence_tools, "get_space_key", return_value="SPACE1"):
+    # Mock the internal space key lookup
+    with patch.object(confluence_tools, "_get_space_key_internal", return_value="SPACE1"):
         mock_pages = [
             {"id": "12345", "title": "Page One"},
             {"id": "67890", "title": "Page Two"},
@@ -167,8 +167,7 @@ def test_get_all_page_from_space(confluence_tools, mock_confluence):
         mock_confluence.get_all_pages_from_space.return_value = mock_pages
 
         result = confluence_tools.get_all_page_from_space("Space One")
-        expected_result = str([{"id": "12345", "title": "Page One"}, {"id": "67890", "title": "Page Two"}])
-        assert result == expected_result
+        assert json.loads(result) == [{"id": "12345", "title": "Page One"}, {"id": "67890", "title": "Page Two"}]
         mock_confluence.get_all_pages_from_space.assert_called_once_with(
             "SPACE1", status=None, expand=None, content_type="page"
         )
@@ -176,8 +175,8 @@ def test_get_all_page_from_space(confluence_tools, mock_confluence):
 
 def test_create_page_success(confluence_tools, mock_confluence):
     """Test creating a page successfully."""
-    # Mock the get_space_key method
-    with patch.object(confluence_tools, "get_space_key", return_value="SPACE1"):
+    # Mock the internal space key lookup
+    with patch.object(confluence_tools, "_get_space_key_internal", return_value="SPACE1"):
         mock_page = {"id": "12345", "title": "New Page"}
         mock_confluence.create_page.return_value = mock_page
 
@@ -188,8 +187,8 @@ def test_create_page_success(confluence_tools, mock_confluence):
 
 def test_create_page_with_parent(confluence_tools, mock_confluence):
     """Test creating a page with a parent page."""
-    # Mock the get_space_key method
-    with patch.object(confluence_tools, "get_space_key", return_value="SPACE1"):
+    # Mock the internal space key lookup
+    with patch.object(confluence_tools, "_get_space_key_internal", return_value="SPACE1"):
         mock_page = {"id": "12345", "title": "Child Page"}
         mock_confluence.create_page.return_value = mock_page
 
@@ -200,8 +199,8 @@ def test_create_page_with_parent(confluence_tools, mock_confluence):
 
 def test_create_page_error(confluence_tools, mock_confluence):
     """Test error handling when creating a page."""
-    # Mock the get_space_key method
-    with patch.object(confluence_tools, "get_space_key", return_value="SPACE1"):
+    # Mock the internal space key lookup
+    with patch.object(confluence_tools, "_get_space_key_internal", return_value="SPACE1"):
         mock_confluence.create_page.side_effect = Exception("API Error")
 
         result = confluence_tools.create_page("Space One", "New Page", "<p>Content</p>")

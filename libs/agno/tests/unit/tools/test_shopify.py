@@ -186,6 +186,7 @@ def test_tools_registration():
     tools = ShopifyTools(shop_name="test-store", access_token="test_token")
 
     function_names = [func.name for func in tools.functions.values()]
+    # get_customer_order_history defaults to False (token heavy)
     expected_tools = [
         "get_shop_info",
         "get_products",
@@ -195,7 +196,6 @@ def test_tools_registration():
         "get_sales_by_date_range",
         "get_order_analytics",
         "get_product_sales_breakdown",
-        "get_customer_order_history",
         "get_inventory_levels",
         "get_low_stock_products",
         "get_sales_trends",
@@ -205,6 +205,12 @@ def test_tools_registration():
 
     for tool_name in expected_tools:
         assert tool_name in function_names
+
+    # get_customer_order_history must be explicitly enabled
+    assert "get_customer_order_history" not in function_names
+
+    tools_with_all = ShopifyTools(shop_name="test-store", access_token="test_token", all=True)
+    assert "get_customer_order_history" in [func.name for func in tools_with_all.functions.values()]
 
 
 def test_successful_request(shopify_tools, mock_httpx_client):

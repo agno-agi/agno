@@ -18,35 +18,49 @@ def temp_output_dir():
 
 
 @pytest.fixture
-def viz_tools(temp_output_dir):
+def mock_matplotlib():
+    """Mock matplotlib module for tests."""
+    from unittest.mock import MagicMock
+
+    mock = MagicMock()
+    with patch.dict("sys.modules", {"matplotlib": mock, "matplotlib.pyplot": mock.pyplot}):
+        yield mock
+
+
+@pytest.fixture
+def viz_tools(temp_output_dir, mock_matplotlib):
     """Create a VisualizationTools instance with all chart types enabled."""
     return VisualizationTools(output_dir=temp_output_dir)
 
 
 @pytest.fixture
-def basic_viz_tools(temp_output_dir):
+def basic_viz_tools(temp_output_dir, mock_matplotlib):
     """Create a VisualizationTools instance with only basic chart types."""
     return VisualizationTools(output_dir=temp_output_dir)
 
 
 def test_initialization_with_selective_charts(temp_output_dir):
     """Test initialization with only selected chart types."""
-    tools = VisualizationTools(
-        output_dir=temp_output_dir,
-        enable_create_bar_chart=True,
-        enable_create_line_chart=True,
-        enable_create_pie_chart=False,
-        enable_create_scatter_plot=False,
-        enable_create_histogram=True,
-    )
+    from unittest.mock import MagicMock
 
-    function_names = [func.name for func in tools.functions.values()]
+    mock_matplotlib = MagicMock()
+    with patch.dict("sys.modules", {"matplotlib": mock_matplotlib}):
+        tools = VisualizationTools(
+            output_dir=temp_output_dir,
+            create_bar_chart=True,
+            create_line_chart=True,
+            create_pie_chart=False,
+            create_scatter_plot=False,
+            create_histogram=True,
+        )
 
-    assert "create_bar_chart" in function_names
-    assert "create_line_chart" in function_names
-    assert "create_pie_chart" not in function_names
-    assert "create_scatter_plot" not in function_names
-    assert "create_histogram" in function_names
+        function_names = [func.name for func in tools.functions.values()]
+
+        assert "create_bar_chart" in function_names
+        assert "create_line_chart" in function_names
+        assert "create_pie_chart" not in function_names
+        assert "create_scatter_plot" not in function_names
+        assert "create_histogram" in function_names
 
 
 def test_initialization_with_all_charts(viz_tools):
@@ -62,10 +76,14 @@ def test_initialization_with_all_charts(viz_tools):
 
 def test_output_directory_creation(temp_output_dir):
     """Test that output directory is created if it doesn't exist."""
+    from unittest.mock import MagicMock
+
     non_existent_dir = os.path.join(temp_output_dir, "charts")
     assert not os.path.exists(non_existent_dir)
 
-    VisualizationTools(output_dir=non_existent_dir)
+    mock_matplotlib = MagicMock()
+    with patch.dict("sys.modules", {"matplotlib": mock_matplotlib}):
+        VisualizationTools(output_dir=non_existent_dir)
 
     assert os.path.exists(non_existent_dir)
 

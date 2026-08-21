@@ -388,10 +388,11 @@ class Workspace(Toolkit):
             return None
         if file_path in self._read_paths:
             return None
-        return (
-            f"Error: require_read_before_write is enabled and {file_path.name} hasn't "
-            f"been read this session. Call read_file first to confirm contents before "
-            f"the {op}."
+        return json.dumps(
+            {
+                "error": f"require_read_before_write is enabled and {file_path.name} hasn't been read this session",
+                "hint": f"Call read_file first to confirm contents before the {op}",
+            }
         )
 
     # ------------------------------------------------------------------
@@ -425,24 +426,26 @@ class Workspace(Toolkit):
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
-                return "Error: path escapes workspace root"
+                return json.dumps({"error": "path escapes workspace root"})
             if not file_path.is_file():
-                return f"Error: file not found: {path}"
+                return json.dumps({"error": f"file not found: {path}"})
             contents = file_path.read_text(encoding=encoding)
             self._read_paths.add(file_path)
             if start_line is None and end_line is None:
                 if len(contents) > self.max_file_length:
-                    return (
-                        f"Error: file too long ({len(contents)} chars > {self.max_file_length}). "
-                        "Use start_line/end_line to read a chunk, "
-                        "or use search_content to find specific text first."
+                    return json.dumps(
+                        {
+                            "error": f"file too long ({len(contents)} chars > {self.max_file_length})",
+                            "hint": "Use start_line/end_line to read a chunk, or use search_content to find specific text first",
+                        }
                     )
                 line_count = contents.count("\n") + 1
                 if line_count > self.max_file_lines:
-                    return (
-                        f"Error: file too long ({line_count} lines > {self.max_file_lines}). "
-                        "Use start_line/end_line to read a chunk, "
-                        "or use search_content to find specific text first."
+                    return json.dumps(
+                        {
+                            "error": f"file too long ({line_count} lines > {self.max_file_lines})",
+                            "hint": "Use start_line/end_line to read a chunk, or use search_content to find specific text first",
+                        }
                     )
                 return _format_with_line_numbers(contents, start_line=1)
             lines = contents.split("\n")
@@ -454,7 +457,7 @@ class Workspace(Toolkit):
             return _format_with_line_numbers(chunk, start_line=start)
         except Exception as e:
             log_error(f"read_file failed: {e}")
-            return f"Error reading file: {e}"
+            return json.dumps({"error": f"Error reading file: {e}"})
 
     def list_files(
         self,
@@ -485,9 +488,9 @@ class Workspace(Toolkit):
         try:
             safe, d = self._check_path(directory, self.root)
             if not safe:
-                return "Error: directory escapes workspace root"
+                return json.dumps({"error": "directory escapes workspace root"})
             if not d.is_dir():
-                return f"Error: not a directory: {directory}"
+                return json.dumps({"error": f"not a directory: {directory}"})
 
             entries: List[Path] = []
             if recursive:
@@ -561,7 +564,7 @@ class Workspace(Toolkit):
             )
         except Exception as e:
             log_error(f"list_files failed: {e}")
-            return f"Error listing files: {e}"
+            return json.dumps({"error": f"Error listing files: {e}"})
 
     def search_content(self, query: str, directory: str = ".", limit: int = 10) -> str:
         """Recursive case-insensitive content grep across text files in the workspace.
@@ -577,12 +580,12 @@ class Workspace(Toolkit):
         """
         try:
             if not query or not query.strip():
-                return "Error: query cannot be empty"
+                return json.dumps({"error": "query cannot be empty"})
             safe, search_dir = self._check_path(directory, self.root)
             if not safe:
-                return "Error: directory escapes workspace root"
+                return json.dumps({"error": "directory escapes workspace root"})
             if not search_dir.is_dir():
-                return f"Error: not a directory: {directory}"
+                return json.dumps({"error": f"not a directory: {directory}"})
 
             lower_query = query.lower()
             matches: List[dict] = []
@@ -627,7 +630,7 @@ class Workspace(Toolkit):
             return json.dumps({"query": query, "matches_found": len(matches), "files": matches}, indent=2)
         except Exception as e:
             log_error(f"search_content failed: {e}")
-            return f"Error searching content: {e}"
+            return json.dumps({"error": f"Error searching content: {e}"})
 
     # ------------------------------------------------------------------
     # Write operations (require confirmation by default)
@@ -649,9 +652,9 @@ class Workspace(Toolkit):
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
-                return "Error: path escapes workspace root"
+                return json.dumps({"error": "path escapes workspace root"})
             if file_path.exists() and not overwrite:
-                return f"Error: file exists and overwrite=False: {path}"
+                return json.dumps({"error": f"file exists and overwrite=False: {path}"})
             check_err = self._check_read_before_write(file_path, op="write")
             if check_err:
                 return check_err
@@ -668,10 +671,10 @@ class Workspace(Toolkit):
             # Treat write as a read for require_read_before_write — the agent now knows
             # the contents, so subsequent edits to the same path are fair game.
             self._read_paths.add(file_path)
-            return f"Wrote {len(content)} chars to {path}"
+            return json.dumps({"status": "success", "path": path, "chars_written": len(content)})
         except Exception as e:
             log_error(f"write_file failed: {e}")
-            return f"Error writing file: {e}"
+            return json.dumps({"error": f"Error writing file: {e}"})
 
     def edit_file(
         self,
@@ -697,23 +700,25 @@ class Workspace(Toolkit):
         """
         try:
             if not old_str:
-                return "Error: old_str cannot be empty"
+                return json.dumps({"error": "old_str cannot be empty"})
             safe, file_path = self._check_path(path, self.root)
             if not safe:
-                return "Error: path escapes workspace root"
+                return json.dumps({"error": "path escapes workspace root"})
             if not file_path.is_file():
-                return f"Error: file not found: {path}"
+                return json.dumps({"error": f"file not found: {path}"})
             check_err = self._check_read_before_write(file_path, op="edit")
             if check_err:
                 return check_err
             contents = file_path.read_text(encoding=encoding)
             count = contents.count(old_str)
             if count == 0:
-                return f"Error: old_str not found in {path}"
+                return json.dumps({"error": f"old_str not found in {path}"})
             if count > 1 and not replace_all:
-                return (
-                    f"Error: old_str matches {count} times in {path}; "
-                    "provide a more unique snippet or pass replace_all=True"
+                return json.dumps(
+                    {
+                        "error": f"old_str matches {count} times in {path}",
+                        "hint": "provide a more unique snippet or pass replace_all=True",
+                    }
                 )
             new_contents = contents.replace(old_str, new_str) if replace_all else contents.replace(old_str, new_str, 1)
             tmp_path = file_path.with_name(file_path.name + ".tmp")
@@ -723,10 +728,11 @@ class Workspace(Toolkit):
             finally:
                 if tmp_path.exists():
                     tmp_path.unlink()
-            return f"Edited {path}: replaced {count if replace_all else 1} occurrence{'s' if (count if replace_all else 1) != 1 else ''}"
+            replaced = count if replace_all else 1
+            return json.dumps({"status": "success", "path": path, "occurrences_replaced": replaced})
         except Exception as e:
             log_error(f"edit_file failed: {e}")
-            return f"Error editing file: {e}"
+            return json.dumps({"error": f"Error editing file: {e}"})
 
     def move_file(self, src: str, dst: str, overwrite: bool = False) -> str:
         """Move or rename a file within the workspace.
@@ -744,16 +750,16 @@ class Workspace(Toolkit):
         try:
             safe_src, src_path = self._check_path(src, self.root)
             if not safe_src:
-                return "Error: src escapes workspace root"
+                return json.dumps({"error": "src escapes workspace root"})
             safe_dst, dst_path = self._check_path(dst, self.root)
             if not safe_dst:
-                return "Error: dst escapes workspace root"
+                return json.dumps({"error": "dst escapes workspace root"})
             if not src_path.exists():
-                return f"Error: src not found: {src}"
+                return json.dumps({"error": f"src not found: {src}"})
             if src_path.is_dir():
-                return f"Error: src is a directory, not a file: {src}"
+                return json.dumps({"error": f"src is a directory, not a file: {src}"})
             if dst_path.exists() and not overwrite:
-                return f"Error: dst exists and overwrite=False: {dst}"
+                return json.dumps({"error": f"dst exists and overwrite=False: {dst}"})
             check_err = self._check_read_before_write(src_path, op="move")
             if check_err:
                 return check_err
@@ -764,10 +770,10 @@ class Workspace(Toolkit):
             if src_path in self._read_paths:
                 self._read_paths.discard(src_path)
                 self._read_paths.add(dst_path)
-            return f"Moved {src} -> {dst}"
+            return json.dumps({"status": "success", "src": src, "dst": dst})
         except Exception as e:
             log_error(f"move_file failed: {e}")
-            return f"Error moving file: {e}"
+            return json.dumps({"error": f"Error moving file: {e}"})
 
     def delete_file(self, path: str) -> str:
         """Delete a file from the workspace. Refuses to delete directories.
@@ -778,20 +784,20 @@ class Workspace(Toolkit):
         try:
             safe, file_path = self._check_path(path, self.root)
             if not safe:
-                return "Error: path escapes workspace root"
+                return json.dumps({"error": "path escapes workspace root"})
             if not file_path.exists():
-                return f"Error: file not found: {path}"
+                return json.dumps({"error": f"file not found: {path}"})
             if file_path.is_dir():
-                return f"Error: path is a directory, not a file: {path}"
+                return json.dumps({"error": f"path is a directory, not a file: {path}"})
             check_err = self._check_read_before_write(file_path, op="delete")
             if check_err:
                 return check_err
             file_path.unlink()
             self._read_paths.discard(file_path)
-            return f"Deleted {path}"
+            return json.dumps({"status": "success", "path": path})
         except Exception as e:
             log_error(f"delete_file failed: {e}")
-            return f"Error deleting file: {e}"
+            return json.dumps({"error": f"Error deleting file: {e}"})
 
     def run_command(self, args: List[str], tail: int = 100, timeout: int = 120) -> str:
         """Run a shell command in the workspace root and return its output.
@@ -819,14 +825,14 @@ class Workspace(Toolkit):
             )
             if result.returncode != 0:
                 err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:])
-                return f"Error (exit {result.returncode}): {err}"
+                return json.dumps({"error": f"exit {result.returncode}", "stderr": err})
             return "\n".join(_strip_ansi(result.stdout).splitlines()[-tail:])
         except subprocess.TimeoutExpired:
             log_warning(f"run_command timed out after {timeout}s: {args}")
-            return f"Error: command timed out after {timeout} seconds"
+            return json.dumps({"error": f"command timed out after {timeout} seconds"})
         except Exception as e:
             log_warning(f"run_command failed: {e}")
-            return f"Error running command: {e}"
+            return json.dumps({"error": f"Error running command: {e}"})
 
     # ------------------------------------------------------------------
     # Async siblings

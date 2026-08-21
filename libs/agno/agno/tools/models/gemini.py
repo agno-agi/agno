@@ -26,18 +26,24 @@ class GeminiTools(Toolkit):
         vertexai: bool = False,
         project_id: Optional[str] = None,
         location: Optional[str] = None,
-        image_generation_model: str = "imagen-3.0-generate-002",
-        video_generation_model: str = "veo-2.0-generate-001",
-        enable_generate_image: bool = True,
-        enable_generate_video: bool = True,
+        image_generation_model: str = "imagen-4.0-generate-001",
+        video_generation_model: str = "veo-3.0-generate-001",
+        generate_image: bool = True,
+        generate_video: bool = False,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_generate_image" in kwargs:
+            generate_image = kwargs.pop("enable_generate_image")
+        if "enable_generate_video" in kwargs:
+            generate_video = kwargs.pop("enable_generate_video")
+
         tools = []
-        if all or enable_generate_image:
-            tools.append(self.generate_image)
-        if all or enable_generate_video:
-            tools.append(self.generate_video)
+        if all or generate_image:
+            tools.append(self.gemini_generate_image)
+        if all or generate_video:
+            tools.append(self.gemini_generate_video)
 
         super().__init__(name="gemini_tools", tools=tools, **kwargs)
 
@@ -73,7 +79,7 @@ class GeminiTools(Toolkit):
         self.image_model = image_generation_model
         self.video_model = video_generation_model
 
-    def generate_image(
+    def gemini_generate_image(
         self,
         agent: Agent,
         prompt: str,
@@ -130,7 +136,7 @@ class GeminiTools(Toolkit):
             log_error(f"Failed to generate image: Client or method not available (): {str(e)}")
             return ToolResult(content=f"Failed to generate image: Client or method not available ({e})")
 
-    def generate_video(
+    def gemini_generate_video(
         self,
         agent: Agent,
         prompt: str,

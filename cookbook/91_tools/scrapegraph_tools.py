@@ -17,11 +17,7 @@ from agno.tools.scrapegraph import ScrapeGraphTools
 
 
 agent = Agent(
-    tools=[
-        ScrapeGraphTools(
-            enable_smartscraper=True, enable_markdownify=True, enable_scrape=True
-        )
-    ],
+    tools=[ScrapeGraphTools(smartscraper=True, markdownify=True, scrape=True)],
     model=OpenAIResponses(id="gpt-5.4"),
     markdown=True,
 )

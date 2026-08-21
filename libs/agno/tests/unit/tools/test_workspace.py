@@ -162,15 +162,15 @@ def test_root_defaults_to_cwd():
 def test_path_escape_blocked_on_read():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        result = ws.read_file("../../../etc/passwd")
-        assert result.startswith("Error")
+        result = json.loads(ws.read_file("../../../etc/passwd"))
+        assert "error" in result
 
 
 def test_path_escape_blocked_on_write():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        result = ws.write_file("../escaped.txt", "boom")
-        assert result.startswith("Error")
+        result = json.loads(ws.write_file("../escaped.txt", "boom"))
+        assert "error" in result
         # File outside the workspace root should not have been created.
         assert not (Path(tmp_dir).parent / "escaped.txt").exists()
 
@@ -182,8 +182,8 @@ def test_path_escape_blocked_on_delete():
         outside = Path(tmp_dir).parent / "outside_test_file.txt"
         outside.write_text("keep me")
         try:
-            result = ws.delete_file("../outside_test_file.txt")
-            assert result.startswith("Error")
+            result = json.loads(ws.delete_file("../outside_test_file.txt"))
+            assert "error" in result
             assert outside.exists()
         finally:
             if outside.exists():
@@ -216,8 +216,9 @@ def test_read_file_chunked_uses_actual_file_line_numbers():
 def test_read_file_missing():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        result = ws.read_file("does_not_exist.txt")
-        assert result.startswith("Error: file not found")
+        result = json.loads(ws.read_file("does_not_exist.txt"))
+        assert "error" in result
+        assert "file not found" in result["error"]
 
 
 def test_read_file_too_long_by_chars_hint_includes_search():
@@ -473,7 +474,8 @@ def test_search_content_skips_agent_scratch_and_plural_venvs():
 def test_search_content_empty_query():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        assert ws.search_content(query="").startswith("Error")
+        result = json.loads(ws.search_content(query=""))
+        assert "error" in result
 
 
 # ------------------------------------------------------------------
@@ -484,8 +486,8 @@ def test_search_content_empty_query():
 def test_write_file_creates_parent_dirs():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        result = ws.write_file("nested/deep/file.txt", "hi")
-        assert "Wrote" in result
+        result = json.loads(ws.write_file("nested/deep/file.txt", "hi"))
+        assert result["status"] == "success"
         assert (Path(tmp_dir) / "nested" / "deep" / "file.txt").read_text() == "hi"
 
 
@@ -493,8 +495,8 @@ def test_write_file_no_overwrite():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         ws.write_file("a.txt", "first")
-        result = ws.write_file("a.txt", "second", overwrite=False)
-        assert result.startswith("Error")
+        result = json.loads(ws.write_file("a.txt", "second", overwrite=False))
+        assert "error" in result
         assert (Path(tmp_dir) / "a.txt").read_text() == "first"
 
 
@@ -516,8 +518,9 @@ def test_edit_file_replaces_unique_match():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "doc.md").write_text("Hello, alpha. Goodbye, beta.")
-        result = ws.edit_file("doc.md", old_str="alpha", new_str="ALPHA")
-        assert "replaced 1 occurrence" in result
+        result = json.loads(ws.edit_file("doc.md", old_str="alpha", new_str="ALPHA"))
+        assert result["status"] == "success"
+        assert result["occurrences_replaced"] == 1
         assert (Path(tmp_dir) / "doc.md").read_text() == "Hello, ALPHA. Goodbye, beta."
 
 
@@ -546,8 +549,9 @@ def test_edit_file_replace_all_replaces_every_occurrence():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "doc.md").write_text("foo bar foo baz foo")
-        result = ws.edit_file("doc.md", old_str="foo", new_str="QUX", replace_all=True)
-        assert "replaced 3 occurrences" in result
+        result = json.loads(ws.edit_file("doc.md", old_str="foo", new_str="QUX", replace_all=True))
+        assert result["status"] == "success"
+        assert result["occurrences_replaced"] == 3
         assert (Path(tmp_dir) / "doc.md").read_text() == "QUX bar QUX baz QUX"
 
 
@@ -556,8 +560,9 @@ def test_edit_file_empty_old_str_rejected():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "doc.md").write_text("Hello")
-        result = ws.edit_file("doc.md", old_str="", new_str="X")
-        assert result.startswith("Error: old_str cannot be empty")
+        result = json.loads(ws.edit_file("doc.md", old_str="", new_str="X"))
+        assert "error" in result
+        assert "old_str cannot be empty" in result["error"]
         # File must be untouched.
         assert (Path(tmp_dir) / "doc.md").read_text() == "Hello"
 
@@ -567,8 +572,9 @@ def test_edit_file_empty_old_str_with_replace_all_rejected():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "doc.md").write_text("Hello")
-        result = ws.edit_file("doc.md", old_str="", new_str="X", replace_all=True)
-        assert result.startswith("Error: old_str cannot be empty")
+        result = json.loads(ws.edit_file("doc.md", old_str="", new_str="X", replace_all=True))
+        assert "error" in result
+        assert "old_str cannot be empty" in result["error"]
         assert (Path(tmp_dir) / "doc.md").read_text() == "Hello"
 
 
@@ -581,8 +587,8 @@ def test_move_file_renames_within_workspace():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "old.txt").write_text("hi")
-        result = ws.move_file("old.txt", "new.txt")
-        assert "Moved old.txt -> new.txt" in result
+        result = json.loads(ws.move_file("old.txt", "new.txt"))
+        assert result["status"] == "success"
         assert not (Path(tmp_dir) / "old.txt").exists()
         assert (Path(tmp_dir) / "new.txt").read_text() == "hi"
 
@@ -591,8 +597,8 @@ def test_move_file_creates_dst_parent_dirs():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "src.txt").write_text("hi")
-        result = ws.move_file("src.txt", "nested/deep/dst.txt")
-        assert "Moved" in result
+        result = json.loads(ws.move_file("src.txt", "nested/deep/dst.txt"))
+        assert result["status"] == "success"
         assert (Path(tmp_dir) / "nested" / "deep" / "dst.txt").read_text() == "hi"
 
 
@@ -601,8 +607,9 @@ def test_move_file_refuses_existing_dst_without_overwrite():
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "a.txt").write_text("a")
         (Path(tmp_dir) / "b.txt").write_text("b")
-        result = ws.move_file("a.txt", "b.txt")
-        assert result.startswith("Error: dst exists")
+        result = json.loads(ws.move_file("a.txt", "b.txt"))
+        assert "error" in result
+        assert "dst exists" in result["error"]
         # Both still present, untouched.
         assert (Path(tmp_dir) / "a.txt").read_text() == "a"
         assert (Path(tmp_dir) / "b.txt").read_text() == "b"
@@ -613,8 +620,8 @@ def test_move_file_overwrite_true_replaces_dst():
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "a.txt").write_text("source")
         (Path(tmp_dir) / "b.txt").write_text("target")
-        result = ws.move_file("a.txt", "b.txt", overwrite=True)
-        assert "Moved" in result
+        result = json.loads(ws.move_file("a.txt", "b.txt", overwrite=True))
+        assert result["status"] == "success"
         assert not (Path(tmp_dir) / "a.txt").exists()
         assert (Path(tmp_dir) / "b.txt").read_text() == "source"
 
@@ -622,23 +629,26 @@ def test_move_file_overwrite_true_replaces_dst():
 def test_move_file_path_escape_blocked_on_src():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        result = ws.move_file("../outside.txt", "inside.txt")
-        assert result.startswith("Error: src escapes")
+        result = json.loads(ws.move_file("../outside.txt", "inside.txt"))
+        assert "error" in result
+        assert "src escapes" in result["error"]
 
 
 def test_move_file_path_escape_blocked_on_dst():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "a.txt").write_text("hi")
-        result = ws.move_file("a.txt", "../escape.txt")
-        assert result.startswith("Error: dst escapes")
+        result = json.loads(ws.move_file("a.txt", "../escape.txt"))
+        assert "error" in result
+        assert "dst escapes" in result["error"]
 
 
 def test_move_file_missing_src():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        result = ws.move_file("does_not_exist.txt", "wherever.txt")
-        assert "Error: src not found" in result
+        result = json.loads(ws.move_file("does_not_exist.txt", "wherever.txt"))
+        assert "error" in result
+        assert "src not found" in result["error"]
 
 
 # ------------------------------------------------------------------
@@ -651,8 +661,8 @@ def test_delete_file_removes_file():
         ws = Workspace(tmp_dir)
         target = Path(tmp_dir) / "byebye.txt"
         target.write_text("x")
-        result = ws.delete_file("byebye.txt")
-        assert "Deleted" in result
+        result = json.loads(ws.delete_file("byebye.txt"))
+        assert result["status"] == "success"
         assert not target.exists()
 
 
@@ -661,8 +671,8 @@ def test_delete_file_refuses_directory():
         ws = Workspace(tmp_dir)
         sub = Path(tmp_dir) / "subdir"
         sub.mkdir()
-        result = ws.delete_file("subdir")
-        assert result.startswith("Error")
+        result = json.loads(ws.delete_file("subdir"))
+        assert "error" in result
         assert sub.exists()
 
 
@@ -686,8 +696,8 @@ def test_require_read_before_write_allows_after_read():
         ws = Workspace(tmp_dir, require_read_before_write=True)
         (Path(tmp_dir) / "existing.txt").write_text("original")
         ws.read_file("existing.txt")
-        result = ws.write_file("existing.txt", "updated")
-        assert "Wrote" in result
+        result = json.loads(ws.write_file("existing.txt", "updated"))
+        assert result["status"] == "success"
         assert (Path(tmp_dir) / "existing.txt").read_text() == "updated"
 
 
@@ -695,8 +705,8 @@ def test_require_read_before_write_allows_new_file():
     """Creating a new file doesn't require a prior read (nothing to hallucinate)."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir, require_read_before_write=True)
-        result = ws.write_file("brand_new.txt", "content")
-        assert "Wrote" in result
+        result = json.loads(ws.write_file("brand_new.txt", "content"))
+        assert result["status"] == "success"
         assert (Path(tmp_dir) / "brand_new.txt").read_text() == "content"
 
 
@@ -743,8 +753,8 @@ def test_run_command_runs_in_root():
 def test_run_command_returns_error_on_nonzero_exit():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        out = ws.run_command(["ls", "definitely-does-not-exist-xyz"])
-        assert out.startswith("Error")
+        out = json.loads(ws.run_command(["ls", "definitely-does-not-exist-xyz"]))
+        assert "error" in out
 
 
 def test_run_command_strips_ansi_color_codes():
@@ -820,8 +830,8 @@ def test_async_move_file():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "src.txt").write_text("x")
-        out = asyncio.run(ws.amove_file("src.txt", "dst.txt"))
-        assert "Moved" in out
+        out = json.loads(asyncio.run(ws.amove_file("src.txt", "dst.txt")))
+        assert out["status"] == "success"
         assert (Path(tmp_dir) / "dst.txt").read_text() == "x"
 
 

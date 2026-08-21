@@ -1,21 +1,50 @@
 import json
+from dataclasses import dataclass, field
+from typing import Any, List, Optional
 from unittest.mock import Mock, patch
 
 import pytest
 
-from agno.tools.parallel import ParallelTools
+
+# Dataclasses that serialize properly via nested_model_dump
+@dataclass
+class MockSearchResult:
+    search_id: str
+    results: List[Any] = field(default_factory=list)
+    warnings: Optional[List[str]] = None
+    usage: Optional[Any] = None
+
+
+@dataclass
+class MockExtractResult:
+    extract_id: str
+    results: List[Any] = field(default_factory=list)
+    errors: List[Any] = field(default_factory=list)
+
+
+# Mock the parallel module before importing ParallelTools
+mock_parallel_module = Mock()
+mock_parallel_client_class = Mock()
+mock_parallel_module.Parallel = mock_parallel_client_class
+
+with patch.dict("sys.modules", {"parallel": mock_parallel_module}):
+    from agno.tools.parallel import ParallelTools
 
 
 @pytest.fixture
 def mock_parallel_client():
     with patch("agno.tools.parallel.ParallelClient") as mock_client:
+        mock_client.return_value = Mock()
         yield mock_client
 
 
 @pytest.fixture
 def parallel_tools(mock_parallel_client):
     with patch.dict("os.environ", {"PARALLEL_API_KEY": "test-api-key"}):
-        return ParallelTools(api_key="test-api-key")
+        tools = ParallelTools(api_key="test-api-key")
+        # The parallel_client is created in __init__, so grab the mock instance
+        tools.parallel_client = mock_parallel_client.return_value
+        return tools
 
 
 # === Initialization ===
@@ -98,12 +127,9 @@ def test_init_stores_constructor_params(mock_parallel_client):
 
 
 def test_search_returns_results(parallel_tools):
-    mock_result = Mock()
-    mock_result.model_dump = Mock(
-        return_value={
-            "search_id": "test-search-id",
-            "results": [{"title": "Test", "url": "https://example.com", "excerpts": ["content"]}],
-        }
+    mock_result = MockSearchResult(
+        search_id="test-search-id",
+        results=[{"title": "Test", "url": "https://example.com", "excerpts": ["content"]}],
     )
     parallel_tools.parallel_client.search = Mock(return_value=mock_result)
 
@@ -210,13 +236,10 @@ def test_search_error_returns_json(parallel_tools):
 
 
 def test_extract_returns_results(parallel_tools):
-    mock_result = Mock()
-    mock_result.model_dump = Mock(
-        return_value={
-            "extract_id": "test-id",
-            "results": [{"url": "https://example.com", "title": "Test", "excerpts": ["content"]}],
-            "errors": [],
-        }
+    mock_result = MockExtractResult(
+        extract_id="test-id",
+        results=[{"url": "https://example.com", "title": "Test", "excerpts": ["content"]}],
+        errors=[],
     )
     parallel_tools.parallel_client.extract = Mock(return_value=mock_result)
 

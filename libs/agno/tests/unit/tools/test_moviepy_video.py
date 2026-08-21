@@ -1,4 +1,5 @@
 import importlib
+import json
 import sys
 import types
 
@@ -36,7 +37,7 @@ def test_create_srt_cleans_temp_file_when_replace_fails(moviepy_video_module, mo
     tools = moviepy_video_module.MoviePyVideoTools(enable_process_video=False, enable_embed_captions=False)
     result = tools.create_srt("new subtitles", str(output_path))
 
-    assert result == "Failed to create SRT file: replace failed"
+    assert json.loads(result) == {"error": "Failed to create SRT file: replace failed"}
     assert output_path.read_text(encoding="utf-8") == "existing"
     assert list(tmp_path.glob(".*.tmp.srt")) == []
 
@@ -47,7 +48,7 @@ def test_create_srt_replaces_output_after_successful_temp_write(moviepy_video_mo
     tools = moviepy_video_module.MoviePyVideoTools(enable_process_video=False, enable_embed_captions=False)
     result = tools.create_srt("new subtitles", str(output_path))
 
-    assert result == str(output_path)
+    assert json.loads(result) == {"output_path": str(output_path)}
     assert output_path.read_text(encoding="utf-8") == "new subtitles"
     assert list(tmp_path.glob(".*.tmp.srt")) == []
 
@@ -90,7 +91,7 @@ def test_embed_captions_cleans_temp_video_when_render_fails(moviepy_video_module
     tools = moviepy_video_module.MoviePyVideoTools(enable_process_video=False, enable_generate_captions=False)
     result = tools.embed_captions(str(video_path), str(srt_path), str(output_path))
 
-    assert result == "Failed to embed captions: render failed"
+    assert json.loads(result) == {"error": "Failed to embed captions: render failed"}
     assert output_path.read_text(encoding="utf-8") == "existing video"
     assert list(tmp_path.glob(".*.tmp.mp4")) == []
     assert closed == ["final", "video"]

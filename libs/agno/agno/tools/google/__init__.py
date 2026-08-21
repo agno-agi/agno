@@ -6,7 +6,9 @@ __all__ = [
     "GoogleCalendarTools",
     "GoogleDriveTools",
     "GmailTools",
-    "GoogleMapTools",
+    "GoogleMapsTools",
+    "GoogleMapTools",  # Deprecated alias
+    "GooglePlacesTools",
     "GoogleSheetsTools",
 ]
 
@@ -40,10 +42,18 @@ def __getattr__(name: str):
         from agno.tools.google.gmail import GmailTools
 
         return GmailTools
+    if name == "GoogleMapsTools":
+        from agno.tools.google.maps import GoogleMapsTools
+
+        return GoogleMapsTools
     if name == "GoogleMapTools":
         from agno.tools.google.maps import GoogleMapTools
 
         return GoogleMapTools
+    if name == "GooglePlacesTools":
+        from agno.tools.google.places import GooglePlacesTools
+
+        return GooglePlacesTools
     if name == "GoogleSheetsTools":
         from agno.tools.google.sheets import GoogleSheetsTools
 

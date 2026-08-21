@@ -15,7 +15,7 @@ from agno.tools.sql import SQLTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-agent = Agent(tools=[SQLTools(db_url=db_url)])
+agent = Agent(tools=[SQLTools(db_url=db_url, run_sql_query=True)])
 
 # ---------------------------------------------------------------------------
 # Run Agent

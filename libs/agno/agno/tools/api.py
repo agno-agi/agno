@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -21,10 +21,14 @@ class CustomApiTools(Toolkit):
         headers: Optional[Dict[str, str]] = None,
         verify_ssl: bool = True,
         timeout: int = 30,
-        enable_make_request: bool = True,
+        make_request: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: enable_X -> X
+        if "enable_make_request" in kwargs:
+            make_request = kwargs.pop("enable_make_request")
+
         self.base_url = base_url
         self.username = username
         self.password = password
@@ -33,8 +37,8 @@ class CustomApiTools(Toolkit):
         self.verify_ssl = verify_ssl
         self.timeout = timeout
 
-        tools: List[Any] = []
-        if all or enable_make_request:
+        tools: List[Callable] = []
+        if all or make_request:
             tools.append(self.make_request)
 
         super().__init__(name="api_tools", tools=tools, **kwargs)
@@ -70,15 +74,15 @@ class CustomApiTools(Toolkit):
         """Make an HTTP request to the API.
 
         Args:
-            method (str): HTTP method (GET, POST, PUT, DELETE, PATCH)
-            endpoint (str): API endpoint (will be combined with base_url if set)
-            params (Optional[Dict[str, Any]]): Query parameters
-            data (Optional[Dict[str, Any]]): Form data to send
-            headers (Optional[Dict[str, str]]): Additional headers
-            json_data (Optional[Dict[str, Any]]): JSON data to send
+            endpoint: API endpoint (combined with base_url if set).
+            method: HTTP method (GET, POST, PUT, DELETE, PATCH).
+            params: Query parameters.
+            data: Form data to send.
+            headers: Additional headers.
+            json_data: JSON data to send.
 
         Returns:
-            str: JSON string containing response data or error message
+            JSON with status_code, headers, data, and optional error.
         """
         try:
             if self.base_url:

@@ -41,6 +41,7 @@ def mock_cartesia_client():
     mock_voice_obj2.language = "es"
 
     mock_pager.items = [mock_voice_obj1, mock_voice_obj2]
+    mock_pager.__iter__ = lambda self: iter([mock_voice_obj1, mock_voice_obj2])
     mock_client.voices.list.return_value = mock_pager
 
     # Mock tts.bytes to return an iterator
@@ -128,21 +129,21 @@ def test_feature_registration(mock_cartesia_client):
         # Test with only TTS and List enabled (defaults)
         tools = CartesiaTools()
         assert len(tools.functions) == 2
-        assert "text_to_speech" in tools.functions
+        assert "cartesia_text_to_speech" in tools.functions
         assert "list_voices" in tools.functions
 
         # Test with localize enabled as well
-        tools = CartesiaTools(enable_localize_voice=True)
+        tools = CartesiaTools(localize_voice=True)
         assert len(tools.functions) == 3
-        assert "text_to_speech" in tools.functions
+        assert "cartesia_text_to_speech" in tools.functions
         assert "list_voices" in tools.functions
         assert "localize_voice" in tools.functions
 
         # Test with all disabled
         tools = CartesiaTools(
-            enable_text_to_speech=False,
-            enable_list_voices=False,
-            enable_localize_voice=False,
+            text_to_speech=False,
+            list_voices=False,
+            localize_voice=False,
         )
         assert len(tools.functions) == 0
 
@@ -186,7 +187,7 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
     """Test text-to-speech functionality creates artifact."""
     # Mock client returns iterator with b"audio data"
 
-    result = cartesia_tools.text_to_speech(
+    result = cartesia_tools.cartesia_text_to_speech(
         agent=mock_agent,
         transcript="Hello world",
         # language="en",  # Removed: Language is no longer a parameter
@@ -229,7 +230,7 @@ def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):
     """Test error handling for text_to_speech."""
     mock_cartesia_client.tts.bytes.side_effect = Exception("TTS API Error")
 
-    result = cartesia_tools.text_to_speech(agent=mock_agent, transcript="Error test")
+    result = cartesia_tools.cartesia_text_to_speech(agent=mock_agent, transcript="Error test")
 
     # Verify ToolResult is returned with error message
     assert isinstance(result, ToolResult)
@@ -261,10 +262,11 @@ def test_localize_voice(cartesia_tools, mock_cartesia_client):
 
     mock_cartesia_client.voices.localize.assert_called_once_with(
         voice_id="original_voice_id",
-        language="es",
         name="Localized Voice",
         description="Test Localization",
+        language="es",
         original_speaker_gender="female",
+        accent="neutral",
     )
     assert result_data["id"] == "localized_voice_id"
     assert result_data["language"] == "es"

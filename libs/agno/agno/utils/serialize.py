@@ -1,8 +1,21 @@
 """JSON serialization utilities for handling datetime and enum objects."""
 
+import json
 from datetime import date, datetime, time
 from enum import Enum
 from typing import Any
+
+from agno.utils.common import nested_model_dump
+
+
+def to_json_str(value: Any) -> str:
+    """Convert any value to a JSON string safely.
+
+    Handles pydantic models, datetime, enum, and other non-serializable types.
+    Use this in toolkit return statements instead of raw json.dumps().
+    """
+    dumped = nested_model_dump(value)
+    return json.dumps(dumped, default=json_serializer)
 
 
 def json_serializer(obj: Any) -> Any:

@@ -19,8 +19,8 @@ def run_example() -> None:
         model=OpenAIChat(id="gpt-4o"),
         tools=[
             ReasoningTools(
-                enable_think=True,
-                enable_analyze=True,
+                think=True,
+                analyze=True,
                 add_instructions=True,
                 add_few_shot=True,
             ),

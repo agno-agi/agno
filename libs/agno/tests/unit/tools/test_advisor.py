@@ -107,10 +107,10 @@ def test_ask_advisor_without_system_message():
 
 def test_ask_advisor_unknown_advisor_lists_available():
     tools = AdvisorTools(advisors=[_mock_model("model-a"), _mock_model("model-b")])
-    result = tools.ask_advisor(advisor="nope", prompt="a question")
-    assert "unknown advisor 'nope'" in result
-    assert "model-a" in result
-    assert "model-b" in result
+    result = json.loads(tools.ask_advisor(advisor="nope", prompt="a question"))
+    assert "nope" in result["error"]
+    assert "model-a" in result["available"]
+    assert "model-b" in result["available"]
 
 
 def test_ask_advisor_handles_model_error():
@@ -138,9 +138,9 @@ async def test_aask_advisor_returns_model_content():
 
 async def test_aask_advisor_unknown_advisor_lists_available():
     tools = AdvisorTools(advisors=[_mock_model("model-a")])
-    result = await tools.aask_advisor(advisor="nope", prompt="a question")
-    assert "unknown advisor 'nope'" in result
-    assert "model-a" in result
+    result = json.loads(await tools.aask_advisor(advisor="nope", prompt="a question"))
+    assert "nope" in result["error"]
+    assert "model-a" in result["available"]
 
 
 async def test_aask_advisor_handles_model_error():

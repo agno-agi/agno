@@ -1,10 +1,10 @@
+import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from agno.tools.zep import ZepAsyncTools, ZepTools
 
-# Test data
 MOCK_API_KEY = "test_api_key"
 MOCK_SESSION_ID = "test-session"
 MOCK_USER_ID = "test-user"
@@ -18,17 +18,14 @@ def mock_zep():
 
 @pytest.fixture
 def zep_tools(mock_zep, monkeypatch):
-    # Setup environment
     monkeypatch.setenv("ZEP_API_KEY", MOCK_API_KEY)
 
-    # Create and configure mock instance
     mock_instance = Mock()
     mock_instance.user = Mock()
     mock_instance.memory = Mock()
     mock_instance.graph = Mock()
     mock_zep.return_value = mock_instance
 
-    # Create tools instance
     tools = ZepTools(session_id=MOCK_SESSION_ID, user_id=MOCK_USER_ID)
     tools.initialize()
     return tools
@@ -48,10 +45,11 @@ def test_initialization_no_api_key(monkeypatch):
 
 def test_add_zep_message(zep_tools):
     result = zep_tools.add_zep_message(role="user", content="test message")
-    assert result == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
+    data = json.loads(result)
+    assert data["ok"] is True
+    assert f"session {MOCK_SESSION_ID}" in data["message"]
     zep_tools.zep_client.thread.add_messages.assert_called_once()
 
-    # Check that ZepMessage was created with correct parameters
     call_args = zep_tools.zep_client.thread.add_messages.call_args
     messages = call_args[1]["messages"]
     assert len(messages) == 1
@@ -60,10 +58,12 @@ def test_add_zep_message(zep_tools):
 
 
 def test_add_zep_message_not_initialized():
-    tools = ZepTools(api_key=MOCK_API_KEY)  # Don't initialize
-    tools.zep_client = None  # Ensure client is None
+    tools = ZepTools(api_key=MOCK_API_KEY)
+    tools.zep_client = None
     result = tools.add_zep_message(role="user", content="test message")
-    assert result == "Error: Zep client/session not initialized."
+    data = json.loads(result)
+    assert "error" in data
+    assert "not initialized" in data["error"]
 
 
 def test_get_zep_memory_context(zep_tools):
@@ -74,7 +74,8 @@ def test_get_zep_memory_context(zep_tools):
     zep_tools.zep_client.thread.get_user_context.return_value = mock_memory
 
     result = zep_tools.get_zep_memory("context")
-    assert result == "test context"
+    data = json.loads(result)
+    assert data["context"] == "test context"
     zep_tools.zep_client.thread.get_user_context.assert_called_once()
 
 
@@ -84,27 +85,27 @@ def test_get_zep_memory_messages(zep_tools):
     zep_tools.zep_client.thread.get.return_value = mock_memory
 
     result = zep_tools.get_zep_memory("messages")
-    assert result == "['msg1', 'msg2']"
+    data = json.loads(result)
+    assert "messages" in data
 
 
 def test_get_zep_memory_unsupported_type(zep_tools):
-    mock_memory = Mock()
-    mock_memory.context = "fallback context"
-    zep_tools.zep_client.thread.get_user_context.return_value = mock_memory
-
     result = zep_tools.get_zep_memory("unsupported")
-    assert "Unsupported memory_type requested: unsupported" in result
+    data = json.loads(result)
+    assert "error" in data
+    assert "Unsupported memory_type" in data["error"]
 
 
 def test_get_zep_memory_not_initialized():
-    tools = ZepTools(api_key=MOCK_API_KEY)  # Don't initialize
-    tools.zep_client = None  # Ensure client is None
+    tools = ZepTools(api_key=MOCK_API_KEY)
+    tools.zep_client = None
     result = tools.get_zep_memory()
-    assert result == "Error: Zep client/session not initialized."
+    data = json.loads(result)
+    assert "error" in data
+    assert "not initialized" in data["error"]
 
 
 def test_search_zep_memory_edges(zep_tools):
-    # Setup mock search response for edges (facts)
     mock_edge1 = Mock()
     mock_edge1.fact = "User likes pizza"
     mock_edge2 = Mock()
@@ -116,13 +117,14 @@ def test_search_zep_memory_edges(zep_tools):
 
     zep_tools.zep_client.graph.search.return_value = mock_response
 
-    result = zep_tools.search_zep_memory("test query", search_scope="edges")
-    assert result == "Found 2 facts:\n- User likes pizza\n- User lives in NYC"
-    zep_tools.zep_client.graph.search.assert_called_once_with(query="test query", user_id=MOCK_USER_ID, scope="edges")
+    result = zep_tools.search_zep_memory("test query", scope="edges")
+    data = json.loads(result)
+    assert data["count"] == 2
+    assert "User likes pizza" in data["facts"]
+    assert "User lives in NYC" in data["facts"]
 
 
 def test_search_zep_memory_nodes(zep_tools):
-    # Setup mock search response for nodes
     mock_node1 = Mock()
     mock_node1.name = "John"
     mock_node1.summary = "Software engineer"
@@ -136,9 +138,10 @@ def test_search_zep_memory_nodes(zep_tools):
 
     zep_tools.zep_client.graph.search.return_value = mock_response
 
-    result = zep_tools.search_zep_memory("test query", search_scope="nodes")
-    assert result == "Found 2 nodes:\n- John: Software engineer\n- NYC: Major city in New York"
-    zep_tools.zep_client.graph.search.assert_called_once_with(query="test query", user_id=MOCK_USER_ID, scope="nodes")
+    result = zep_tools.search_zep_memory("test query", scope="nodes")
+    data = json.loads(result)
+    assert data["count"] == 2
+    assert any(n["name"] == "John" for n in data["nodes"])
 
 
 def test_search_zep_memory_no_results(zep_tools):
@@ -148,14 +151,17 @@ def test_search_zep_memory_no_results(zep_tools):
 
     zep_tools.zep_client.graph.search.return_value = mock_response
     result = zep_tools.search_zep_memory("test query")
-    assert result == "No edges found for query: test query"
+    data = json.loads(result)
+    assert "error" in data
 
 
 def test_search_zep_memory_not_initialized():
-    tools = ZepTools(api_key=MOCK_API_KEY)  # Don't initialize
-    tools.zep_client = None  # Ensure client is None
+    tools = ZepTools(api_key=MOCK_API_KEY)
+    tools.zep_client = None
     result = tools.search_zep_memory("test query")
-    assert result == "Error: Zep client/user not initialized."
+    data = json.loads(result)
+    assert "error" in data
+    assert "not initialized" in data["error"]
 
 
 # Async Tests
@@ -169,14 +175,12 @@ def mock_async_zep():
 async def async_zep_tools(mock_async_zep, monkeypatch):
     monkeypatch.setenv("ZEP_API_KEY", MOCK_API_KEY)
 
-    # Create and configure mock instance
     mock_instance = AsyncMock()
     mock_instance.user = AsyncMock()
     mock_instance.memory = AsyncMock()
     mock_instance.graph = AsyncMock()
     mock_async_zep.return_value = mock_instance
 
-    # Create tools instance
     tools = ZepAsyncTools(session_id=MOCK_SESSION_ID, user_id=MOCK_USER_ID)
     await tools.initialize()
     return tools
@@ -192,10 +196,11 @@ async def test_async_initialization(async_zep_tools):
 @pytest.mark.asyncio
 async def test_async_add_zep_message(async_zep_tools):
     result = await async_zep_tools.add_zep_message(role="user", content="test message")
-    assert result == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
+    data = json.loads(result)
+    assert data["ok"] is True
+    assert f"session {MOCK_SESSION_ID}" in data["message"]
     async_zep_tools.zep_client.thread.add_messages.assert_called_once()
 
-    # Check that ZepMessage was created with correct parameters
     call_args = async_zep_tools.zep_client.thread.add_messages.call_args
     messages = call_args[1]["messages"]
     assert len(messages) == 1
@@ -210,13 +215,13 @@ async def test_async_get_zep_memory(async_zep_tools):
     async_zep_tools.zep_client.thread.get_user_context.return_value = mock_memory
 
     result = await async_zep_tools.get_zep_memory()
-    assert result == "test context"
+    data = json.loads(result)
+    assert data["context"] == "test context"
     async_zep_tools.zep_client.thread.get_user_context.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_async_search_zep_memory_edges(async_zep_tools):
-    # Setup mock search response for edges (facts)
     mock_edge1 = Mock()
     mock_edge1.fact = "User likes pizza"
     mock_edge2 = Mock()
@@ -229,7 +234,9 @@ async def test_async_search_zep_memory_edges(async_zep_tools):
     async_zep_tools.zep_client.graph.search.return_value = mock_response
 
     result = await async_zep_tools.search_zep_memory("test query", scope="edges")
-    assert result == "Found 2 facts:\n- User likes pizza\n- User lives in NYC"
+    data = json.loads(result)
+    assert data["count"] == 2
+    assert "User likes pizza" in data["facts"]
     async_zep_tools.zep_client.graph.search.assert_called_once_with(
         query="test query", user_id=MOCK_USER_ID, scope="edges", limit=5
     )

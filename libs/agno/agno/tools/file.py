@@ -1,7 +1,8 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Callable, List, Optional, Tuple
+from uuid import uuid4
 
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
@@ -82,25 +83,71 @@ class FileTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        enable_save_file: bool = True,
-        enable_read_file: bool = True,
-        enable_delete_file: bool = False,
-        enable_list_files: bool = True,
-        enable_search_files: bool = True,
-        enable_read_file_chunk: bool = True,
-        enable_replace_file_chunk: bool = True,
-        enable_search_content: bool = True,
+        default_extension: str = "txt",
+        restrict_to_base_dir: bool = True,
+        save_file: bool = False,
+        read_file: bool = True,
+        delete_file: bool = False,
+        list_files: bool = True,
+        search_files: bool = True,
+        read_file_chunk: bool = True,
+        replace_file_chunk: bool = False,
+        search_content: bool = True,
         expose_base_directory: bool = False,
-        max_file_length: int = 10000000,
-        max_file_lines: int = 100000,
+        max_file_length: int = 400000,
+        max_file_lines: int = 8000,
         line_separator: str = "\n",
         exclude_patterns: Optional[List[str]] = None,
         all: bool = False,
         **kwargs,
     ):
-        self.base_dir: Path = (base_dir or Path.cwd()).resolve()
+        """Initialize FileTools for local file system operations.
 
-        tools: List[Any] = []
+        Args:
+            base_dir: Root directory for all file operations. Defaults to cwd.
+            default_extension: Default file extension when none specified.
+            restrict_to_base_dir: If True, all paths must stay within base_dir.
+            save_file: Enable the save_file tool.
+            read_file: Enable the read_file tool.
+            delete_file: Enable the delete_file tool.
+            list_files: Enable the list_files tool.
+            search_files: Enable the search_files tool.
+            read_file_chunk: Enable the read_file_chunk tool.
+            replace_file_chunk: Enable the replace_file_chunk tool.
+            search_content: Enable the search_content tool.
+            expose_base_directory: Include base_dir in search results.
+            max_file_length: Max file size for read_file (chars).
+            max_file_lines: Max file lines for read_file.
+            line_separator: Line separator for chunked operations.
+            exclude_patterns: Patterns to exclude from list/search operations.
+            all: Enable all tools.
+        """
+        # Backwards compat: enable_X -> X
+        if "enable_save_file" in kwargs:
+            save_file = kwargs.pop("enable_save_file")
+        if "enable_read_file" in kwargs:
+            read_file = kwargs.pop("enable_read_file")
+        if "enable_delete_file" in kwargs:
+            delete_file = kwargs.pop("enable_delete_file")
+        if "enable_list_files" in kwargs:
+            list_files = kwargs.pop("enable_list_files")
+        if "enable_search_files" in kwargs:
+            search_files = kwargs.pop("enable_search_files")
+        if "enable_read_file_chunk" in kwargs:
+            read_file_chunk = kwargs.pop("enable_read_file_chunk")
+        if "enable_replace_file_chunk" in kwargs:
+            replace_file_chunk = kwargs.pop("enable_replace_file_chunk")
+        if "enable_search_content" in kwargs:
+            search_content = kwargs.pop("enable_search_content")
+
+        self.base_dir: Path = Path(base_dir).resolve() if base_dir else Path.cwd().resolve()
+        self.restrict_to_base_dir = restrict_to_base_dir
+        # Only create base_dir when write tools are enabled
+        if all or save_file or replace_file_chunk:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.default_extension = default_extension.lstrip(".")
+
+        tools: List[Callable] = []
         self.max_file_length = max_file_length
         self.max_file_lines = max_file_lines
         self.line_separator = line_separator
@@ -108,21 +155,21 @@ class FileTools(Toolkit):
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
-        if all or enable_save_file:
+        if all or save_file:
             tools.append(self.save_file)
-        if all or enable_read_file:
+        if all or read_file:
             tools.append(self.read_file)
-        if all or enable_list_files:
+        if all or list_files:
             tools.append(self.list_files)
-        if all or enable_search_files:
+        if all or search_files:
             tools.append(self.search_files)
-        if all or enable_delete_file:
+        if all or delete_file:
             tools.append(self.delete_file)
-        if all or enable_read_file_chunk:
+        if all or read_file_chunk:
             tools.append(self.read_file_chunk)
-        if all or enable_replace_file_chunk:
+        if all or replace_file_chunk:
             tools.append(self.replace_file_chunk)
-        if all or enable_search_content:
+        if all or search_content:
             tools.append(self.search_content)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
@@ -131,74 +178,116 @@ class FileTools(Toolkit):
         """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""
         return path_matches_exclude(path, self.base_dir, self.exclude_patterns)
 
-    def save_file(self, contents: str, file_name: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
-        """Saves the contents to a file called `file_name` and returns the file name if successful.
+    def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
+        """Check if a file path is within the base directory.
 
-        :param contents: The contents to save.
-        :param file_name: The name of the file to save to.
-        :param overwrite: Overwrite the file if it already exists.
-        :return: The file name if successful, otherwise returns an error message.
+        Args:
+            relative_path: The file name or relative path to check.
+
+        Returns:
+            Tuple of (is_safe, resolved_path).
+        """
+        return self._check_path(relative_path, self.base_dir, self.restrict_to_base_dir)
+
+    def save_file(
+        self,
+        contents: str,
+        file_name: Optional[str] = None,
+        overwrite: bool = True,
+        encoding: str = "utf-8",
+        extension: Optional[str] = None,
+    ) -> str:
+        """Save contents to a file.
+
+        Args:
+            contents: The contents to save.
+            file_name: The name of the file. Auto-generated UUID if not provided.
+            overwrite: Overwrite the file if it already exists.
+            encoding: File encoding. Defaults to utf-8.
+            extension: File extension. Uses default_extension if not provided.
+
+        Returns:
+            JSON with file path and status or error.
         """
         try:
-            safe, file_path = self._check_path(file_name, self.base_dir)
-            if not (safe):
-                log_error(f"Attempted to save file: {file_name}")
-                return "Error saving file"
+            # Treat empty string same as None
+            auto_generated = not file_name
+            file_name = file_name or str(uuid4())
+            name_path = Path(file_name)
+            # Use extension param, or existing suffix, or default only for auto-generated names
+            if extension:
+                ext = extension.lstrip(".")
+                full_name = str(name_path.with_name(f"{name_path.stem}.{ext}"))
+            elif name_path.suffix:
+                full_name = file_name
+            elif auto_generated:
+                full_name = f"{file_name}.{self.default_extension}"
+            else:
+                # User passed explicit name without extension (Makefile, Dockerfile, LICENSE)
+                full_name = file_name
+
+            safe, file_path = self.check_escape(full_name)
+            if not safe:
+                log_error(f"Attempted to save file: {full_name}")
+                return json.dumps({"error": "Path is outside base directory"})
             log_debug(f"Saving contents to {file_path}")
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             if file_path.exists() and not overwrite:
-                return f"File {file_name} already exists"
+                return json.dumps({"error": f"File {full_name} already exists"})
             file_path.write_text(contents, encoding=encoding)
             log_debug(f"Saved: {file_path}")
-            return str(file_name)
+            return json.dumps({"file_path": str(file_path), "status": "saved"})
         except Exception as e:
             log_error(f"Error saving to file: {str(e)}")
-            return f"Error saving to file: {e}"
+            return json.dumps({"error": str(e)})
 
     def read_file_chunk(self, file_name: str, start_line: int, end_line: int, encoding: str = "utf-8") -> str:
-        """Reads the contents of the file `file_name` and returns lines from start_line to end_line.
+        """Read a range of lines from a file.
 
-        :param file_name: The name of the file to read.
-        :param start_line: Number of first line in the returned chunk
-        :param end_line: Number of the last line in the returned chunk
-        :param encoding: Encoding to use, default - utf-8
+        Args:
+            file_name: The name of the file to read.
+            start_line: First line number to read.
+            end_line: Last line number to read.
+            encoding: File encoding. Defaults to utf-8.
 
-        :return: The contents of the selected chunk
+        Returns:
+            The file contents or JSON error.
         """
         try:
             log_debug(f"Reading file: {file_name}")
-            safe, file_path = self._check_path(file_name, self.base_dir)
-            if not (safe):
+            safe, file_path = self.check_escape(file_name)
+            if not safe:
                 log_error(f"Attempted to read file: {file_name}")
-                return "Error reading file"
+                return json.dumps({"error": "Path is outside base directory"})
             contents = file_path.read_text(encoding=encoding)
             lines = contents.split(self.line_separator)
             return self.line_separator.join(lines[start_line : end_line + 1])
         except Exception as e:
             log_error(f"Error reading file: {str(e)}")
-            return f"Error reading file: {e}"
+            return json.dumps({"error": str(e)})
 
     def replace_file_chunk(
         self, file_name: str, start_line: int, end_line: int, chunk: str, encoding: str = "utf-8"
     ) -> str:
-        """Reads the contents of the file, replaces lines
-        between start_line and end_line with chunk and writes the file
+        """Replace a range of lines in a file with new content.
 
-        :param file_name: The name of the file to process.
-        :param start_line: Number of first line in the replaced chunk
-        :param end_line: Number of the last line in the replaced chunk
-        :param chunk: String to be inserted instead of lines from start_line to end_line. Can have multiple lines.
-        :param encoding: Encoding to use, default - utf-8
+        Args:
+            file_name: The name of the file to process.
+            start_line: First line number to replace.
+            end_line: Last line number to replace.
+            chunk: Content to insert (can have multiple lines).
+            encoding: File encoding. Defaults to utf-8.
 
-        :return: file name if successfull, error message otherwise
+        Returns:
+            JSON with file name or error.
         """
         try:
             log_debug(f"Patching file: {file_name}")
-            safe, file_path = self._check_path(file_name, self.base_dir)
-            if not (safe):
+            safe, file_path = self.check_escape(file_name)
+            if not safe:
                 log_error(f"Attempted to read file: {file_name}")
-                return "Error reading file"
+                return json.dumps({"error": "Path is outside base directory"})
             contents = file_path.read_text(encoding=encoding)
             lines = contents.split(self.line_separator)
             start = lines[0:start_line]
@@ -208,65 +297,73 @@ class FileTools(Toolkit):
             )
         except Exception as e:
             log_error(f"Error patching file: {str(e)}")
-            return f"Error patching file: {e}"
+            return json.dumps({"error": str(e)})
 
     def read_file(self, file_name: str, encoding: str = "utf-8") -> str:
-        """Reads the contents of the file `file_name` and returns the contents if successful.
+        """Read the contents of a file.
 
-        :param file_name: The name of the file to read.
-        :param encoding: Encoding to use, default - utf-8
-        :return: The contents of the file if successful, otherwise returns an error message.
+        Args:
+            file_name: The name of the file to read.
+            encoding: File encoding. Defaults to utf-8.
+
+        Returns:
+            The file contents or JSON error.
         """
         try:
             log_debug(f"Reading file: {file_name}")
-            safe, file_path = self._check_path(file_name, self.base_dir)
-            if not (safe):
+            safe, file_path = self.check_escape(file_name)
+            if not safe:
                 log_error(f"Attempted to read file: {file_name}")
-                return "Error reading file"
+                return json.dumps({"error": "Path is outside base directory"})
             contents = file_path.read_text(encoding=encoding)
             if len(contents) > self.max_file_length:
-                return "Error reading file: file too long. Use read_file_chunk instead"
+                return json.dumps({"error": "File too long. Use read_file_chunk instead"})
             if len(contents.split(self.line_separator)) > self.max_file_lines:
-                return "Error reading file: file too long. Use read_file_chunk instead"
-
-            return str(contents)
+                return json.dumps({"error": "File too long. Use read_file_chunk instead"})
+            return contents
         except Exception as e:
             log_error(f"Error reading file: {str(e)}")
-            return f"Error reading file: {e}"
+            return json.dumps({"error": str(e)})
 
     def delete_file(self, file_name: str) -> str:
-        """Deletes a file
-        :param file_name: Name of the file to delete
+        """Delete a file.
 
-        :return: Empty string, if operation succeeded, otherwise returns an error message
+        Args:
+            file_name: Name of the file to delete.
+
+        Returns:
+            JSON with status or error.
         """
-        safe, path = self._check_path(file_name, self.base_dir)
+        safe, path = self.check_escape(file_name)
         try:
             if safe:
                 if path.is_dir():
                     path.rmdir()
-                    return ""
+                    return json.dumps({"file": file_name, "status": "deleted"})
                 path.unlink()
-                return ""
+                return json.dumps({"file": file_name, "status": "deleted"})
             else:
                 log_error(f"Attempt to delete file outside {self.base_dir}: {file_name}")
-                return "Incorrect file_name"
+                return json.dumps({"error": "Path is outside base directory"})
         except Exception as e:
             log_error(f"Error removing {file_name}: {str(e)}")
-            return f"Error removing file: {e}"
+            return json.dumps({"error": str(e)})
 
     def list_files(self, directory: str = ".") -> str:
-        """Returns a list of files in directory
-        :param directory: (Optional) name of directory to list.
+        """List files in a directory.
 
-        :return: The contents of the file if successful, otherwise returns an error message.
+        Args:
+            directory: Directory to list. Defaults to current directory.
+
+        Returns:
+            JSON with files array or error.
         """
         try:
             d = self.base_dir
             if directory:
-                safe, d = self._check_path(directory, self.base_dir)
+                safe, d = self.check_escape(directory)
                 if not safe:
-                    return "{}"
+                    return json.dumps({"error": "Path is outside base directory"})
             log_debug(f"Reading files in : {d}")
             files = []
             for file_path in d.iterdir():
@@ -278,20 +375,23 @@ class FileTools(Toolkit):
                 if self._is_excluded(file_path):
                     continue
                 files.append(rel_path)
-            return json.dumps(files, indent=4)
+            return json.dumps({"directory": directory, "files": files})
         except Exception as e:
             log_error(f"Error reading files: {str(e)}")
-            return f"Error reading files: {e}"
+            return json.dumps({"error": str(e)})
 
     def search_files(self, pattern: str) -> str:
-        """Searches for files in the base directory that match the pattern
+        """Search for files matching a glob pattern.
 
-        :param pattern: The pattern to search for, e.g. "*.txt", "file*.csv", "**/*.py".
-        :return: JSON formatted list of matching file paths, or error message.
+        Args:
+            pattern: Glob pattern (e.g. "*.txt", "**/*.py").
+
+        Returns:
+            JSON with matching file paths.
         """
         try:
             if not pattern or not pattern.strip():
-                return "Error: Pattern cannot be empty"
+                return json.dumps({"error": "Pattern cannot be empty"})
 
             log_debug(f"Searching files in {self.base_dir} with pattern {pattern}")
             matching_files = []
@@ -323,33 +423,35 @@ class FileTools(Toolkit):
             return json.dumps(result, indent=2)
 
         except Exception as e:
-            error_msg = f"Error searching files with pattern '{pattern}': {e}"
-            log_error(error_msg)
-            return error_msg
+            log_error(f"Error searching files with pattern '{pattern}': {e}")
+            return json.dumps({"error": str(e)})
 
     def search_content(self, query: str, directory: Optional[str] = None, limit: int = 10) -> str:
-        """Search file contents within the base directory for a query string (case-insensitive).
+        """Search file contents for a query string (case-insensitive).
 
-        Only text files (by extension) under 500KB are searched.
+        Only text files under 500KB are searched.
 
-        :param query: The text to search for in file contents.
-        :param directory: Optional subdirectory to scope the search to.
-        :param limit: Maximum number of matching files to return (default 10).
-        :return: JSON formatted results with file paths, sizes, and content snippets.
+        Args:
+            query: Text to search for.
+            directory: Subdirectory to scope the search to.
+            limit: Maximum matching files to return. Defaults to 10.
+
+        Returns:
+            JSON with file paths, sizes, and content snippets.
         """
         try:
             if not query or not query.strip():
-                return "Error: Query cannot be empty"
+                return json.dumps({"error": "Query cannot be empty"})
 
             search_dir = self.base_dir
             if directory:
-                safe, search_dir = self._check_path(directory, self.base_dir)
+                safe, search_dir = self.check_escape(directory)
                 if not safe:
                     log_error(f"Attempted to search outside base directory: {directory}")
-                    return "Error: Directory is outside the allowed base directory"
+                    return json.dumps({"error": "Directory is outside base directory"})
 
             if not search_dir.is_dir():
-                return f"Error: '{directory}' is not a directory"
+                return json.dumps({"error": f"'{directory}' is not a directory"})
 
             log_debug(f"Searching file contents in {search_dir} for '{query}'")
             lower_query = query.lower()
@@ -406,6 +508,5 @@ class FileTools(Toolkit):
             return json.dumps(result, indent=2)
 
         except Exception as e:
-            error_msg = f"Error searching content for '{query}': {e}"
-            log_error(error_msg)
-            return error_msg
+            log_error(f"Error searching content for '{query}': {e}")
+            return json.dumps({"error": str(e)})

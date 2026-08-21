@@ -127,11 +127,10 @@ def test_update_sheet(sheets_tools, mock_sheets_service):
     # Execute test
     result = sheets_tools.update_sheet(data=test_data, spreadsheet_id="test_id", range_name="Sheet1!A1:B2")
 
-    # Execute test
-    result = sheets_tools.update_sheet(data=test_data, spreadsheet_id="test_id", range_name="Sheet1!A1:B2")
-
     # Verify the result
-    assert "Sheet updated successfully: test_id" in result
+    parsed_result = json.loads(result)
+    assert parsed_result["status"] == "success"
+    assert parsed_result["spreadsheet_id"] == "test_id"
 
 
 def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_service):

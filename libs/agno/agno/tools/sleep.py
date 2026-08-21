@@ -1,13 +1,29 @@
 import time
+from typing import Callable, List
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info
 
 
 class SleepTools(Toolkit):
-    def __init__(self, enable_sleep: bool = True, all: bool = False, **kwargs):
-        tools = []
-        if all or enable_sleep:
+    def __init__(
+        self,
+        sleep: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
+        """Initialize SleepTools for pausing execution.
+
+        Args:
+            sleep: Enable the sleep tool. Defaults to True.
+            all: Enable all tools. Defaults to False.
+        """
+        # Backwards compat: enable_X -> X
+        if "enable_sleep" in kwargs:
+            sleep = kwargs.pop("enable_sleep")
+
+        tools: List[Callable] = []
+        if all or sleep:
             tools.append(self.sleep)
 
         super().__init__(name="sleep", tools=tools, **kwargs)

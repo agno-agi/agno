@@ -42,30 +42,35 @@ def _build_mock_result(
 
 class TestDoclingToolsInitialization:
     def test_initialization_default(self, mock_converter):
+        # v3 defaults: only convert_to_markdown enabled
         tools = DoclingTools()
         assert tools.name == "docling_tools"
         function_names = [func.name for func in tools.functions.values()]
         assert "convert_to_markdown" in function_names
-        assert "convert_to_text" in function_names
-        assert "convert_to_html" in function_names
-        assert "convert_to_html_split_page" in function_names
-        assert "convert_to_json" in function_names
-        assert "convert_to_yaml" in function_names
-        assert "convert_to_doctags" in function_names
-        assert "convert_to_vtt" in function_names
-        assert "convert_string_content" in function_names
-        assert "list_supported_parsers" in function_names
+        # All others default to False in v3
+        assert "convert_to_text" not in function_names
+        assert "convert_to_html" not in function_names
+        assert "convert_to_html_split_page" not in function_names
+        assert "convert_to_json" not in function_names
+        assert "convert_to_yaml" not in function_names
+        assert "convert_to_doctags" not in function_names
+        assert "convert_to_vtt" not in function_names
+        assert "convert_string_content" not in function_names
+        assert "list_supported_parsers" not in function_names
 
     def test_initialization_flags(self, mock_converter):
+        # v3 uses flag names without enable_ prefix
         tools = DoclingTools(
-            enable_convert_to_html=False,
-            enable_convert_to_html_split_page=False,
-            enable_convert_to_json=False,
-            enable_convert_to_yaml=False,
-            enable_convert_to_doctags=False,
-            enable_convert_to_vtt=False,
-            enable_convert_string_content=False,
-            enable_list_supported_parsers=False,
+            convert_to_markdown=True,
+            convert_to_text=True,
+            convert_to_html=False,
+            convert_to_html_split_page=False,
+            convert_to_json=False,
+            convert_to_yaml=False,
+            convert_to_doctags=False,
+            convert_to_vtt=False,
+            convert_string_content=False,
+            list_supported_parsers=False,
         )
         function_names = [func.name for func in tools.functions.values()]
         assert "convert_to_markdown" in function_names
@@ -196,7 +201,7 @@ class TestDoclingToolsConversion:
     def test_convert_empty_source(self, mock_converter):
         tools = DoclingTools()
         result = tools.convert_to_markdown("")
-        assert result == "Error: No source provided"
+        assert json.loads(result) == {"error": "No source provided"}
 
     def test_convert_exception(self, mock_converter):
         tools = DoclingTools()
@@ -204,7 +209,7 @@ class TestDoclingToolsConversion:
 
         result = tools.convert_to_markdown("/tmp/doc.pdf")
 
-        assert result == "Error converting document: boom"
+        assert json.loads(result) == {"error": "Error converting document: boom"}
 
     def test_convert_to_json_truncation_keeps_valid_json(self, mock_converter):
         tools = DoclingTools(max_chars=8)
@@ -233,7 +238,9 @@ class TestDoclingToolsConversion:
 
         result = tools.convert_string_content("something", source_format="pdf", output_format="markdown")
 
-        assert "Error converting string content" in result
+        parsed = json.loads(result)
+        assert "error" in parsed
+        assert "Error converting string content" in parsed["error"]
 
     def test_list_supported_parsers_returns_json(self, mock_converter):
         tools = DoclingTools()
@@ -251,8 +258,9 @@ class TestDoclingToolsPdfPipeline:
         with patch("agno.tools.docling.DocumentConverter") as mock_converter_cls:
             mock_converter_cls.return_value = Mock()
 
+            # v3 uses pdf_ocr instead of pdf_enable_ocr
             DoclingTools(
-                pdf_enable_ocr=True,
+                pdf_ocr=True,
                 pdf_ocr_engine="auto",
                 pdf_ocr_lang=["en"],
                 pdf_force_full_page_ocr=True,

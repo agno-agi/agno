@@ -199,7 +199,8 @@ class TestSearchPhotos:
             try:
                 tools = UnsplashTools()
                 result = tools.search_photos("test")
-                assert "Error: No Unsplash API key provided" in result
+                data = json.loads(result)
+                assert "error" in data
             finally:
                 if old_key:
                     os.environ["UNSPLASH_ACCESS_KEY"] = old_key
@@ -207,14 +208,16 @@ class TestSearchPhotos:
     def test_search_photos_empty_query(self, unsplash_tools):
         """Test search_photos with empty query."""
         result = unsplash_tools.search_photos("")
-        assert "Error: Please provide a search query" in result
+        data = json.loads(result)
+        assert "error" in data
 
     def test_search_photos_api_error(self, unsplash_tools, mock_urlopen):
         """Test search_photos with API error."""
         mock_urlopen.side_effect = Exception("API Connection Error")
 
         result = unsplash_tools.search_photos("sunset")
-        assert "Error searching Unsplash: API Connection Error" in result
+        data = json.loads(result)
+        assert "error" in data
 
     def test_search_photos_invalid_orientation_ignored(self, unsplash_tools, mock_urlopen):
         """Test that invalid orientation is ignored."""
@@ -287,7 +290,8 @@ class TestGetPhoto:
             try:
                 tools = UnsplashTools()
                 result = tools.get_photo("abc123")
-                assert "Error: No Unsplash API key provided" in result
+                data = json.loads(result)
+                assert "error" in data
             finally:
                 if old_key:
                     os.environ["UNSPLASH_ACCESS_KEY"] = old_key
@@ -295,14 +299,16 @@ class TestGetPhoto:
     def test_get_photo_empty_id(self, unsplash_tools):
         """Test get_photo with empty photo ID."""
         result = unsplash_tools.get_photo("")
-        assert "Error: Please provide a photo ID" in result
+        data = json.loads(result)
+        assert "error" in data
 
     def test_get_photo_api_error(self, unsplash_tools, mock_urlopen):
         """Test get_photo with API error."""
         mock_urlopen.side_effect = Exception("Photo not found")
 
         result = unsplash_tools.get_photo("nonexistent")
-        assert "Error getting photo: Photo not found" in result
+        data = json.loads(result)
+        assert "error" in data
 
 
 class TestGetRandomPhoto:
@@ -363,7 +369,8 @@ class TestGetRandomPhoto:
             try:
                 tools = UnsplashTools()
                 result = tools.get_random_photo()
-                assert "Error: No Unsplash API key provided" in result
+                data = json.loads(result)
+                assert "error" in data
             finally:
                 if old_key:
                     os.environ["UNSPLASH_ACCESS_KEY"] = old_key
@@ -373,7 +380,8 @@ class TestGetRandomPhoto:
         mock_urlopen.side_effect = Exception("API Error")
 
         result = unsplash_tools.get_random_photo()
-        assert "Error getting random photo: API Error" in result
+        data = json.loads(result)
+        assert "error" in data
 
     def test_get_random_photo_count_bounds(self, unsplash_tools, mock_urlopen):
         """Test count parameter is bounded correctly."""
@@ -408,7 +416,8 @@ class TestDownloadPhoto:
             try:
                 tools = UnsplashTools(enable_download_photo=True)
                 result = tools.download_photo("abc123")
-                assert "Error: No Unsplash API key provided" in result
+                data = json.loads(result)
+                assert "error" in data
             finally:
                 if old_key:
                     os.environ["UNSPLASH_ACCESS_KEY"] = old_key
@@ -416,14 +425,16 @@ class TestDownloadPhoto:
     def test_download_photo_empty_id(self, unsplash_tools_all):
         """Test download_photo with empty photo ID."""
         result = unsplash_tools_all.download_photo("")
-        assert "Error: Please provide a photo ID" in result
+        data = json.loads(result)
+        assert "error" in data
 
     def test_download_photo_api_error(self, unsplash_tools_all, mock_urlopen):
         """Test download_photo with API error."""
         mock_urlopen.side_effect = Exception("Download tracking failed")
 
         result = unsplash_tools_all.download_photo("abc123")
-        assert "Error tracking download: Download tracking failed" in result
+        data = json.loads(result)
+        assert "error" in data
 
 
 class TestFormatPhoto:

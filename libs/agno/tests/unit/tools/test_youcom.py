@@ -401,5 +401,6 @@ def test_search_http_error_returns_message(youcom_tools):
         patch("agno.tools.youcom.log_error") as mock_log_error,
     ):
         result = youcom_tools.you_search("query")
-    assert result.startswith("Error:")
+    data = json.loads(result)
+    assert "error" in data
     mock_log_error.assert_called_once()

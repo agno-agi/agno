@@ -1,5 +1,6 @@
 """Unit tests for WebTools class."""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -24,7 +25,8 @@ def test_expand_url_success(web_tools):
     with patch("httpx.head", return_value=mock_response) as mock_head:
         result = web_tools.expand_url(mock_url)
 
-    assert result == final_url
+    data = json.loads(result)
+    assert data["expanded_url"] == final_url
     mock_head.assert_called_once_with(mock_url, follow_redirects=True, timeout=5)
 
 

@@ -30,7 +30,7 @@ def scavio_tools(mock_scavio_client):
 
 
 def _tool_names(tools: ScavioTools) -> list:
-    return [tool.__name__ for tool in tools.tools]
+    return [func.name for func in tools.functions.values()]
 
 
 # ============================================================================
@@ -66,29 +66,21 @@ def test_default_registers_every_provider():
     """By default every provider is enabled."""
     with patch("agno.tools.scavio.ScavioClient"):
         names = _tool_names(ScavioTools())
-        assert "google_search" in names
-        assert "amazon_product" in names
-        assert "walmart_product" in names
-        assert "youtube_metadata" in names
-        assert "reddit_post" in names
-        assert "tiktok_profile" in names
-        assert "instagram_profile" in names
+        assert "search_google" in names
+        assert "get_amazon_product" in names
+        assert "get_walmart_product" in names
+        assert "get_youtube_video" in names
+        assert "get_reddit_post" in names
+        assert "get_tiktok_profile" in names
+        assert "get_instagram_profile" in names
 
 
-def test_enable_flags_select_subset():
-    """Disabling providers removes their tools."""
+def test_include_tools_select_subset():
+    """include_tools selects only specified tools."""
     with patch("agno.tools.scavio.ScavioClient"):
-        tools = ScavioTools(
-            enable_google=True,
-            enable_amazon=False,
-            enable_walmart=False,
-            enable_youtube=False,
-            enable_reddit=False,
-            enable_tiktok=False,
-            enable_instagram=False,
-        )
+        tools = ScavioTools(include_tools=["search_google"])
         names = _tool_names(tools)
-        assert names == ["google_search"]
+        assert names == ["search_google"]
 
 
 def test_tool_names_are_unique():
@@ -103,11 +95,11 @@ def test_tool_names_are_unique():
 # ============================================================================
 
 
-def test_google_search_returns_json(scavio_tools, mock_scavio_client):
-    """google_search returns the SDK response as a JSON string."""
+def test_search_google_returns_json(scavio_tools, mock_scavio_client):
+    """search_google returns the SDK response as a JSON string."""
     mock_scavio_client.google.search.return_value = {"results": [{"title": "Result 1"}]}
 
-    result = scavio_tools.google_search("agno framework")
+    result = scavio_tools.search_google("agno framework")
 
     parsed = json.loads(result)
     assert parsed["results"][0]["title"] == "Result 1"
@@ -117,8 +109,8 @@ def test_google_search_returns_json(scavio_tools, mock_scavio_client):
     assert call.args[0] == "agno framework"
 
 
-def test_google_search_forwards_v2_params_verbatim(scavio_tools, mock_scavio_client):
-    """google_search mirrors the SDK: every v2 param is forwarded verbatim (no aliasing, no transform)."""
+def test_search_google_forwards_v2_params_verbatim(scavio_tools, mock_scavio_client):
+    """search_google mirrors the SDK: every v2 param is forwarded verbatim (no aliasing, no transform)."""
     mock_scavio_client.google.search.return_value = {"organic_results": []}
 
     kwargs = {
@@ -132,18 +124,18 @@ def test_google_search_forwards_v2_params_verbatim(scavio_tools, mock_scavio_cli
         "safe": "active",
         "time_period": "last_week",
     }
-    scavio_tools.google_search("agno framework", **kwargs)
+    scavio_tools.search_google("agno framework", **kwargs)
 
     call = mock_scavio_client.google.search.call_args
     assert call.args[0] == "agno framework"
     assert call.kwargs == kwargs
 
 
-def test_amazon_product_passes_asin(scavio_tools, mock_scavio_client):
-    """amazon_product forwards the ASIN to the SDK."""
+def test_get_amazon_product_passes_asin(scavio_tools, mock_scavio_client):
+    """get_amazon_product forwards the ASIN to the SDK."""
     mock_scavio_client.amazon.product.return_value = {"asin": "B000"}
 
-    result = scavio_tools.amazon_product("B000")
+    result = scavio_tools.get_amazon_product("B000")
 
     assert json.loads(result)["asin"] == "B000"
     assert mock_scavio_client.amazon.product.call_args.args[0] == "B000"
@@ -153,7 +145,7 @@ def test_error_is_returned_as_json(scavio_tools, mock_scavio_client):
     """Exceptions from the SDK are caught and returned as an error payload."""
     mock_scavio_client.reddit.search.side_effect = Exception("boom")
 
-    result = scavio_tools.reddit_search("test")
+    result = scavio_tools.search_reddit("test")
 
     parsed = json.loads(result)
     assert parsed["error"] == "boom"

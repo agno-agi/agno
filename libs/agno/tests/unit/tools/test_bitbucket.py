@@ -326,7 +326,9 @@ class TestBitbucketTools:
 
         result = bitbucket_tools.get_pull_request_changes(pull_request_id=123)
 
-        assert result == mock_diff
+        # v3.0: toolkit returns JSON string
+        result_data = json.loads(result)
+        assert result_data["diff"] == mock_diff
         mock_request.assert_called_once_with("GET", "/repositories/test_workspace/test_repo/pullrequests/123/diff")
 
     @patch.object(BitbucketTools, "_make_request")
@@ -335,7 +337,7 @@ class TestBitbucketTools:
         mock_response = {"values": [{"id": 1, "title": "Issue 1"}, {"id": 2, "title": "Issue 2"}]}
         mock_request.return_value = mock_response
 
-        result = bitbucket_tools.list_issues(count=10)
+        result = bitbucket_tools.bitbucket_list_issues(count=10)
 
         assert isinstance(result, str)
         result_data = json.loads(result)
@@ -350,7 +352,7 @@ class TestBitbucketTools:
         mock_response = {"values": []}
         mock_request.return_value = mock_response
 
-        bitbucket_tools.list_issues(count=100)
+        bitbucket_tools.bitbucket_list_issues(count=100)
 
         # Should be limited to 50
         mock_request.assert_called_once_with(
@@ -381,7 +383,7 @@ class TestBitbucketTools:
         assert hasattr(bitbucket_tools, "list_all_pull_requests")
         assert hasattr(bitbucket_tools, "get_pull_request_details")
         assert hasattr(bitbucket_tools, "get_pull_request_changes")
-        assert hasattr(bitbucket_tools, "list_issues")
+        assert hasattr(bitbucket_tools, "bitbucket_list_issues")
 
     @patch.object(BitbucketTools, "_make_request")
     def test_error_handling_returns_json_error(self, mock_request, bitbucket_tools):

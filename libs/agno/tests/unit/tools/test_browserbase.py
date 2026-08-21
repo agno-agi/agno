@@ -5,6 +5,10 @@ import os
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+
+pytest.importorskip("browserbase")
+pytest.importorskip("playwright")
+
 from playwright.async_api import Browser as AsyncBrowser
 from playwright.async_api import BrowserContext as AsyncBrowserContext
 from playwright.async_api import Page as AsyncPage
@@ -543,7 +547,7 @@ async def test_aclose_session_with_exception(async_browserbase_tools, mock_brows
 
 @pytest.mark.asyncio
 async def test_anavigate_to_with_error_cleanup(async_browserbase_tools, mock_async_playwright):
-    """Test anavigate_to properly cleans up on error."""
+    """Test anavigate_to properly cleans up on error and returns error JSON."""
     # Setup mock page that raises an error
     mock_page = mock_async_playwright["page"]
     mock_page.goto = AsyncMock(side_effect=Exception("Navigation failed"))
@@ -557,9 +561,13 @@ async def test_anavigate_to_with_error_cleanup(async_browserbase_tools, mock_asy
     cleanup_mock = AsyncMock()
     async_browserbase_tools._acleanup = cleanup_mock
 
-    # Call the method and expect an exception
-    with pytest.raises(Exception, match="Navigation failed"):
-        await async_browserbase_tools.anavigate_to("https://example.com")
+    # Call the method - it returns error JSON instead of raising
+    result = await async_browserbase_tools.anavigate_to("https://example.com")
+    result_data = json.loads(result)
+
+    # Verify error is returned
+    assert "error" in result_data
+    assert "Navigation failed" in result_data["error"]
 
     # Verify cleanup was called
     cleanup_mock.assert_called_once()
@@ -567,7 +575,7 @@ async def test_anavigate_to_with_error_cleanup(async_browserbase_tools, mock_asy
 
 @pytest.mark.asyncio
 async def test_ascreenshot_with_error_cleanup(async_browserbase_tools, mock_async_playwright):
-    """Test ascreenshot properly cleans up on error."""
+    """Test ascreenshot properly cleans up on error and returns error JSON."""
     # Setup mock page that raises an error
     mock_page = mock_async_playwright["page"]
     mock_page.screenshot = AsyncMock(side_effect=Exception("Screenshot failed"))
@@ -581,9 +589,13 @@ async def test_ascreenshot_with_error_cleanup(async_browserbase_tools, mock_asyn
     cleanup_mock = AsyncMock()
     async_browserbase_tools._acleanup = cleanup_mock
 
-    # Call the method and expect an exception
-    with pytest.raises(Exception, match="Screenshot failed"):
-        await async_browserbase_tools.ascreenshot("/path/to/screenshot.png")
+    # Call the method - it returns error JSON instead of raising
+    result = await async_browserbase_tools.ascreenshot("/path/to/screenshot.png")
+    result_data = json.loads(result)
+
+    # Verify error is returned
+    assert "error" in result_data
+    assert "Screenshot failed" in result_data["error"]
 
     # Verify cleanup was called
     cleanup_mock.assert_called_once()
@@ -591,7 +603,7 @@ async def test_ascreenshot_with_error_cleanup(async_browserbase_tools, mock_asyn
 
 @pytest.mark.asyncio
 async def test_aget_page_content_with_error_cleanup(async_browserbase_tools, mock_async_playwright):
-    """Test aget_page_content properly cleans up on error."""
+    """Test aget_page_content properly cleans up on error and returns error JSON."""
     # Setup mock page that raises an error
     mock_page = mock_async_playwright["page"]
     mock_page.content = AsyncMock(side_effect=Exception("Content retrieval failed"))
@@ -605,9 +617,13 @@ async def test_aget_page_content_with_error_cleanup(async_browserbase_tools, moc
     cleanup_mock = AsyncMock()
     async_browserbase_tools._acleanup = cleanup_mock
 
-    # Call the method and expect an exception
-    with pytest.raises(Exception, match="Content retrieval failed"):
-        await async_browserbase_tools.aget_page_content()
+    # Call the method - it returns error JSON instead of raising
+    result = await async_browserbase_tools.aget_page_content()
+    result_data = json.loads(result)
+
+    # Verify error is returned
+    assert "error" in result_data
+    assert "Content retrieval failed" in result_data["error"]
 
     # Verify cleanup was called
     cleanup_mock.assert_called_once()

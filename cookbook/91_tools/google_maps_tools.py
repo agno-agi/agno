@@ -17,7 +17,7 @@ Prerequisites:
 
 from agno.agent import Agent
 from agno.tools.crawl4ai import Crawl4aiTools
-from agno.tools.google.maps import GoogleMapTools
+from agno.tools.google.maps import GoogleMapsTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -28,7 +28,7 @@ from agno.tools.google.maps import GoogleMapTools
 agent_full = Agent(
     name="Full Maps API Agent",
     tools=[
-        GoogleMapTools(),  # All functions enabled by default
+        GoogleMapsTools(),  # All functions enabled by default
         Crawl4aiTools(max_length=5000),
     ],
     description="You are a location and business information specialist with full Google Maps access.",
@@ -45,9 +45,9 @@ agent_full = Agent(
 agent_search = Agent(
     name="Search-focused Maps Agent",
     tools=[
-        GoogleMapTools(
+        GoogleMapsTools(
             include_tools=[
-                "search_places",
+                "get_directions",
             ]
         ),
     ],
@@ -65,7 +65,7 @@ agent_search = Agent(
 agent_safe = Agent(
     name="Safe Maps API Agent",
     tools=[
-        GoogleMapTools(
+        GoogleMapsTools(
             exclude_tools=[
                 "get_distance_matrix",  # Can be expensive with many origins/destinations
                 "get_directions",  # Excludes detailed route calculations

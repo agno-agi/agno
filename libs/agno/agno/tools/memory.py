@@ -92,7 +92,7 @@ class MemoryTools(Toolkit):
             return formatted_thoughts
         except Exception as e:
             log_error(f"Error recording memory thought: {str(e)}")
-            return f"Error recording memory thought: {e}"
+            return json.dumps({"error": f"Error recording memory thought: {e}"})
 
     def get_memories(self, run_context: RunContext) -> str:
         """
@@ -333,7 +333,7 @@ class MemoryTools(Toolkit):
             return formatted_analysis
         except Exception as e:
             log_error(f"Error recording memory analysis: {str(e)}")
-            return f"Error recording memory analysis: {e}"
+            return json.dumps({"error": f"Error recording memory analysis: {e}"})
 
     DEFAULT_INSTRUCTIONS = dedent("""\
         You have access to the Think, Add Memory, Update Memory, Delete Memory, and Analyze tools that will help you manage user memories and analyze their operations. Use these tools as frequently as needed to successfully complete memory management tasks.

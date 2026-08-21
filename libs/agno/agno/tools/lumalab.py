@@ -1,7 +1,7 @@
 import time
 import uuid
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, TypedDict
+from typing import Callable, Dict, List, Literal, Optional, TypedDict, Union
 
 from agno.agent import Agent
 from agno.media import Video
@@ -28,14 +28,40 @@ class LumaLabTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
+        model: Literal["ray-2", "ray-flash-2"] = "ray-2",
+        duration: Optional[Literal["5s", "9s"]] = None,
+        resolution: Optional[Union[Literal["540p", "720p", "1080p", "4k"], str]] = None,
         wait_for_completion: bool = True,
         poll_interval: int = 3,
-        max_wait_time: int = 300,  # 5 minutes
-        enable_generate_video: bool = True,
-        enable_image_to_video: bool = True,
+        max_wait_time: int = 300,
+        generate_video: bool = True,
+        image_to_video: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        """Initialize LumaLab video generation toolkit.
+
+        Args:
+            api_key: LumaAI API key. Defaults to LUMAAI_API_KEY env var.
+            model: Model to use for generation.
+            duration: Default video duration. None lets API decide.
+            resolution: Default video resolution. None lets API decide.
+            wait_for_completion: Whether to wait for video generation to complete.
+            poll_interval: Seconds between status checks.
+            max_wait_time: Maximum seconds to wait for completion.
+            generate_video: Enable the generate_video tool.
+            image_to_video: Enable the image_to_video tool.
+            all: Enable all tools.
+        """
+        # Backwards compat: enable_X -> X
+        if "enable_generate_video" in kwargs:
+            generate_video = kwargs.pop("enable_generate_video")
+        if "enable_image_to_video" in kwargs:
+            image_to_video = kwargs.pop("enable_image_to_video")
+
+        self.model: Literal["ray-2", "ray-flash-2"] = model
+        self.duration = duration
+        self.resolution = resolution
         self.wait_for_completion = wait_for_completion
         self.poll_interval = poll_interval
         self.max_wait_time = max_wait_time
@@ -46,10 +72,10 @@ class LumaLabTools(Toolkit):
 
         self.client = LumaAI(auth_token=self.api_key)
 
-        tools: List[Any] = []
-        if all or enable_generate_video:
-            tools.append(self.generate_video)
-        if all or enable_image_to_video:
+        tools: List[Callable] = []
+        if all or generate_video:
+            tools.append(self.lumalab_generate_video)
+        if all or image_to_video:
             tools.append(self.image_to_video)
 
         super().__init__(name="luma_lab", tools=tools, **kwargs)
@@ -62,36 +88,45 @@ class LumaLabTools(Toolkit):
         end_image_url: Optional[str] = None,
         loop: bool = False,
         aspect_ratio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"] = "16:9",
+        duration: Optional[Literal["5s", "9s"]] = None,
+        resolution: Optional[str] = None,
     ) -> ToolResult:
         """Generate a video from one or two images with a prompt.
 
         Args:
-            agent: The agent instance
-            prompt: Text description of the desired video
-            start_image_url: URL of the starting image
-            end_image_url: Optional URL of the ending image
-            loop: Whether the video should loop
-            aspect_ratio: Aspect ratio of the output video
+            agent: The agent instance.
+            prompt: Text description of the desired video.
+            start_image_url: URL of the starting image.
+            end_image_url: Optional URL of the ending image for transitions.
+            loop: Whether the video should loop seamlessly.
+            aspect_ratio: Output video aspect ratio.
+            duration: Video duration (5s or 9s). Uses toolkit default if not specified.
+            resolution: Video resolution (540p, 720p, 1080p, 4k). Uses toolkit default if not specified.
 
         Returns:
-            ToolResult: A ToolResult containing the generated video or error message.
+            ToolResult with generated video or error message.
         """
-
         try:
-            # Construct keyframes
             keyframes: Dict[str, Dict[str, str]] = {"frame0": {"type": "image", "url": start_image_url}}
 
-            # Add end image if provided
             if end_image_url:
                 keyframes["frame1"] = {"type": "image", "url": end_image_url}
 
-            # Create generation with keyframes
-            generation = self.client.generations.create(
-                prompt=prompt,
-                loop=loop,
-                aspect_ratio=aspect_ratio,
-                keyframes=keyframes,  # type: ignore
-            )
+            params: Dict[str, object] = {
+                "model": self.model,
+                "prompt": prompt,
+                "loop": loop,
+                "aspect_ratio": aspect_ratio,
+                "keyframes": keyframes,
+            }
+            actual_duration = duration or self.duration
+            actual_resolution = resolution or self.resolution
+            if actual_duration:
+                params["duration"] = actual_duration
+            if actual_resolution:
+                params["resolution"] = actual_resolution
+
+            generation = self.client.generations.create(**params)  # type: ignore
 
             video_id = str(uuid.uuid4())
 
@@ -127,23 +162,43 @@ class LumaLabTools(Toolkit):
             logger.exception("Failed to generate video")
             return ToolResult(content=f"Error: {e}")
 
-    def generate_video(
+    def lumalab_generate_video(
         self,
         agent: Agent,
         prompt: str,
         loop: bool = False,
         aspect_ratio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"] = "16:9",
+        duration: Optional[Literal["5s", "9s"]] = None,
+        resolution: Optional[str] = None,
         keyframes: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> ToolResult:
-        """Use this function to generate a video given a prompt."""
+        """Generate a video from a text prompt.
 
+        Args:
+            agent: The agent instance.
+            prompt: Text description of the desired video.
+            loop: Whether the video should loop seamlessly.
+            aspect_ratio: Output video aspect ratio.
+            duration: Video duration (5s or 9s). None lets API decide.
+            resolution: Video resolution (540p, 720p, 1080p, 4k). None lets API decide.
+            keyframes: Optional keyframe images for guided generation.
+
+        Returns:
+            ToolResult with generated video or error message.
+        """
         try:
-            generation_params: Dict[str, Any] = {
+            generation_params: Dict[str, object] = {
+                "model": self.model,
                 "prompt": prompt,
                 "loop": loop,
                 "aspect_ratio": aspect_ratio,
             }
-
+            actual_duration = duration or self.duration
+            actual_resolution = resolution or self.resolution
+            if actual_duration:
+                generation_params["duration"] = actual_duration
+            if actual_resolution:
+                generation_params["resolution"] = actual_resolution
             if keyframes is not None:
                 generation_params["keyframes"] = keyframes
 

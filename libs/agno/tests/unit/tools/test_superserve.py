@@ -112,22 +112,24 @@ CORE_TOOLS = {
     "get_preview_url",
 }
 
+# Default tools registered (read-only safe operations)
+DEFAULT_TOOLS = {"read_file", "get_sandbox_info"}
+
 
 def test_default_tools_registered():
     tools = SuperserveTools(api_key=TEST_API_KEY)
     names = set(tools.functions.keys())
-    assert CORE_TOOLS.issubset(names)
-    # Opt-in extras are off by default.
+    assert DEFAULT_TOOLS.issubset(names)
+    # Most tools are opt-in by default
+    assert "run_command" not in names
+    assert "delete_file" not in names
     assert "pause_sandbox" not in names
-    assert "resume_sandbox" not in names
-    assert "attach_secret" not in names
-    assert "detach_secret" not in names
 
 
 def test_async_variants_registered():
     """Every sync tool has a matching async variant under the same name."""
     tools = SuperserveTools(api_key=TEST_API_KEY)
-    assert CORE_TOOLS.issubset(set(tools.async_functions.keys()))
+    assert DEFAULT_TOOLS.issubset(set(tools.async_functions.keys()))
 
 
 def test_lifecycle_tools_opt_in():
@@ -154,23 +156,24 @@ def test_all_flag_enables_every_tool():
 
 
 def test_disable_individual_core_tool():
-    tools = SuperserveTools(api_key=TEST_API_KEY, enable_shutdown_sandbox=False)
+    tools = SuperserveTools(api_key=TEST_API_KEY, read_file=False)
     names = set(tools.functions.keys())
-    assert "shutdown_sandbox" not in names
-    assert "run_command" in names
+    assert "read_file" not in names
+    assert "get_sandbox_info" in names
 
 
 def test_include_tools_filter():
-    tools = SuperserveTools(api_key=TEST_API_KEY, include_tools=["run_command", "read_file"])
+    # Must enable tools first before filtering with include_tools
+    tools = SuperserveTools(api_key=TEST_API_KEY, run_command=True, include_tools=["run_command", "read_file"])
     names = set(tools.functions.keys())
     assert names == {"run_command", "read_file"}
 
 
 def test_exclude_tools_filter():
-    tools = SuperserveTools(api_key=TEST_API_KEY, exclude_tools=["shutdown_sandbox"])
+    tools = SuperserveTools(api_key=TEST_API_KEY, exclude_tools=["read_file"])
     names = set(tools.functions.keys())
-    assert "shutdown_sandbox" not in names
-    assert "run_command" in names
+    assert "read_file" not in names
+    assert "get_sandbox_info" in names
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +187,9 @@ def test_run_command(agent):
         result = tools.run_command(agent, "echo hello")
 
     sandbox.commands.run.assert_called_once_with("echo hello", timeout_seconds=tools.command_timeout)
-    assert "STDOUT:\nhello world" in result
-    assert "Exit code: 0" in result
+    data = json.loads(result)
+    assert data["stdout"] == "hello world"
+    assert data["exit_code"] == 0
 
 
 def test_run_python_code_writes_then_executes(agent):
@@ -203,7 +207,8 @@ def test_run_python_code_writes_then_executes(agent):
     assert "print('hi')" in written_code
     run_cmd = sandbox.commands.run.call_args[0][0]
     assert run_cmd.startswith("python3 ")
-    assert "STDOUT:\nhello world" in result
+    data = json.loads(result)
+    assert data["stdout"] == "hello world"
 
 
 def test_run_python_code_normalizes_keywords(agent):
@@ -227,7 +232,9 @@ def test_create_file(agent):
         result = tools.create_file(agent, "/app/main.py", "print(1)")
 
     sandbox.files.write.assert_called_once_with("/app/main.py", "print(1)")
-    assert "/app/main.py" in result
+    data = json.loads(result)
+    assert data["status"] == "success"
+    assert data["path"] == "/app/main.py"
 
 
 def test_read_file(agent):
@@ -250,7 +257,9 @@ def test_list_files_uses_ls(agent):
         result = tools.list_files(agent, "/app")
 
     assert sandbox.commands.run.call_args[0][0].startswith("ls -la ")
-    assert "Contents of /app:" in result
+    data = json.loads(result)
+    assert data["status"] == "success"
+    assert data["contents"] == "total 0\ndrwxr-xr-x ..."
 
 
 def test_delete_file_uses_rm(agent):
@@ -262,7 +271,8 @@ def test_delete_file_uses_rm(agent):
         result = tools.delete_file(agent, "/app/old.py")
 
     assert sandbox.commands.run.call_args[0][0].startswith("rm -rf ")
-    assert "Deleted: /app/old.py" in result
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 def test_download_directory_writes_within_output_dir(agent, tmp_path):
@@ -274,7 +284,8 @@ def test_download_directory_writes_within_output_dir(agent, tmp_path):
 
     written = tmp_path / "out.zip"
     assert written.read_bytes() == b"PK\x03\x04zip-bytes"
-    assert str(written) in result
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 def test_download_directory_rejects_traversal(agent, tmp_path):
@@ -321,7 +332,9 @@ def test_get_preview_url(agent):
         result = tools.get_preview_url(agent, 8080)
 
     sandbox.get_preview_url.assert_called_once_with(8080)
-    assert result == "https://sbx-123-8080.superserve.run"
+    data = json.loads(result)
+    assert data["status"] == "success"
+    assert data["url"] == "https://sbx-123-8080.superserve.run"
 
 
 def test_shutdown_sandbox_by_id(agent):
@@ -330,7 +343,8 @@ def test_shutdown_sandbox_by_id(agent):
         result = tools.shutdown_sandbox_by_id(agent, "sbx-gone")
 
     mock_cls.kill_by_id.assert_called_once_with("sbx-gone", api_key=TEST_API_KEY, base_url=None)
-    assert "shut down" in result
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 def test_shutdown_sandbox_by_id_clears_active_cache(agent):
@@ -345,7 +359,8 @@ def test_shutdown_sandbox_by_id_clears_active_cache(agent):
 
     assert tools._sandbox is None
     assert SESSION_STATE_SANDBOX_ID not in agent.session_state
-    assert "shut down" in result
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 def test_shutdown_sandbox_by_id_keeps_unrelated_cache(agent):
@@ -407,13 +422,15 @@ def test_shutdown_sandbox_clears_state(agent):
 
     sandbox.kill.assert_called_once()
     assert SESSION_STATE_SANDBOX_ID not in agent.session_state
-    assert "shut down" in result
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 def test_shutdown_without_active_sandbox(agent):
     tools = SuperserveTools(api_key=TEST_API_KEY)
     result = tools.shutdown_sandbox(agent)
-    assert "No active sandbox" in result
+    data = json.loads(result)
+    assert data["status"] == "info"
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +460,8 @@ async def test_arun_command(agent):
         result = await tools.arun_command(agent, "echo hello")
 
     sandbox.commands.run.assert_awaited_once_with("echo hello", timeout_seconds=tools.command_timeout)
-    assert "STDOUT:\nhello world" in result
+    data = json.loads(result)
+    assert data["stdout"] == "hello world"
 
 
 async def test_arun_python_code(agent):
@@ -455,7 +473,8 @@ async def test_arun_python_code(agent):
 
     sandbox.files.write.assert_awaited_once()
     sandbox.commands.run.assert_awaited_once()
-    assert "STDOUT:\nhello world" in result
+    data = json.loads(result)
+    assert data["stdout"] == "hello world"
 
 
 async def test_ashutdown_sandbox(agent):
@@ -468,7 +487,8 @@ async def test_ashutdown_sandbox(agent):
 
     sandbox.kill.assert_awaited_once()
     assert SESSION_STATE_SANDBOX_ID not in agent.session_state
-    assert "shut down" in result
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 async def test_ashutdown_sandbox_by_id(agent):
@@ -478,7 +498,8 @@ async def test_ashutdown_sandbox_by_id(agent):
         result = await tools.ashutdown_sandbox_by_id(agent, "sbx-gone")
 
     mock_cls.kill_by_id.assert_awaited_once_with("sbx-gone", api_key=TEST_API_KEY, base_url=None)
-    assert "shut down" in result
+    data = json.loads(result)
+    assert data["status"] == "success"
 
 
 async def test_aget_preview_url(agent):
@@ -491,4 +512,6 @@ async def test_aget_preview_url(agent):
         result = await tools.aget_preview_url(agent, 9000)
 
     sandbox.get_preview_url.assert_called_once_with(9000)
-    assert result == "https://sbx-async-9000.superserve.run"
+    data = json.loads(result)
+    assert data["status"] == "success"
+    assert data["url"] == "https://sbx-async-9000.superserve.run"

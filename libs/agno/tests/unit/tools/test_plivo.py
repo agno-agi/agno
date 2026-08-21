@@ -1,5 +1,6 @@
 """Unit tests for Plivo Tools"""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -24,6 +25,18 @@ class TestPlivoTools:
         mock_rest_client.assert_called_once_with(auth_id="test-auth-id", auth_token="test-auth-token")
         assert tool.client is mock_rest_client.return_value
         assert tool.name == "plivo"
+        # send_sms and make_call default to False (destructive operations)
+        assert set(tool.functions.keys()) == {
+            "get_call_details",
+            "list_messages",
+            "list_calls",
+            "lookup_number",
+        }
+
+    def test_initialization_with_all_tools(self, mock_rest_client):
+        """Test all tools enabled with all=True"""
+        tool = PlivoTools(auth_id="test-auth-id", auth_token="test-auth-token", all=True)
+
         assert set(tool.functions.keys()) == {
             "send_sms",
             "make_call",
@@ -34,8 +47,9 @@ class TestPlivoTools:
         }
 
     def test_disabled_flag_unregisters_tool(self):
-        """A disabled enable_* flag keeps that function out of the registry"""
-        tool = PlivoTools(auth_id="id", auth_token="token", enable_send_sms=False)
+        """A disabled flag keeps that function out of the registry"""
+        # Enable send_sms and make_call but disable send_sms
+        tool = PlivoTools(auth_id="id", auth_token="token", send_sms=False, make_call=True)
 
         assert "send_sms" not in tool.functions
         assert "make_call" in tool.functions
@@ -142,8 +156,10 @@ class TestPlivoTools:
         tool = PlivoTools(auth_id="id", auth_token="token")
 
         result = tool.list_messages(message_direction="sideways")
+        data = json.loads(result)
 
-        assert "message_direction" in result[0]["error"]
+        assert "error" in data
+        assert "message_direction" in data["error"]
         tool.client.messages.list.assert_not_called()
 
     def test_list_calls_clamps_limit_and_forwards_paging(self):
@@ -169,29 +185,35 @@ class TestPlivoTools:
         tool = PlivoTools(auth_id="id", auth_token="token")
 
         result = tool.list_calls(call_direction="sideways")
+        data = json.loads(result)
 
-        assert "call_direction" in result[0]["error"]
+        assert "error" in data
+        assert "call_direction" in data["error"]
         tool.client.calls.list.assert_not_called()
 
     def test_lookup_number_success(self):
         """lookup_number returns the carrier and line-type metadata for a number"""
         tool = PlivoTools(auth_id="id", auth_token="token")
-        tool.client.lookup.get.return_value = Mock(
-            phone_number="+14155551234",
-            country={"iso2": "US"},
-            carrier={"name": "Acme Wireless", "type": "mobile"},
-        )
+        # Create mock with spec=[] to avoid auto-creating Mock attributes
+        mock_response = Mock(spec=[])
+        mock_response.phone_number = "+14155551234"
+        mock_response.country = {"iso2": "US"}
+        mock_response.carrier = {"name": "Acme Wireless", "type": "mobile"}
+        mock_response.format = {"e164": "+14155551234"}
+        tool.client.lookup.get.return_value = mock_response
 
         result = tool.lookup_number(number="+14155551234")
+        data = json.loads(result)
 
         tool.client.lookup.get.assert_called_once_with("+14155551234")
-        assert result["carrier"]["name"] == "Acme Wireless"
+        assert data["carrier"]["name"] == "Acme Wireless"
 
     def test_lookup_number_rejects_non_e164(self):
         """lookup_number fails closed on a non-E.164 number and never calls the API"""
         tool = PlivoTools(auth_id="id", auth_token="token")
 
         result = tool.lookup_number(number="14155551234")
+        data = json.loads(result)
 
-        assert "E.164" in result["error"]
+        assert "E.164" in data["error"]
         tool.client.lookup.get.assert_not_called()
