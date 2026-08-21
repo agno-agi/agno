@@ -1,5 +1,6 @@
 """Unit tests for AgentQLTools class."""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -63,7 +64,7 @@ def test_init_without_api_key():
 def test_scrape_website_no_url(agentql_tools):
     """Test scraping with no URL provided."""
     result = agentql_tools.agentql_scrape_website("")
-    assert result == "No URL provided"
+    assert json.loads(result) == {"error": "No URL provided"}
 
 
 def test_scrape_website_no_api_key():
@@ -77,7 +78,8 @@ def test_scrape_website_no_api_key():
 def test_custom_scrape_no_query(agentql_tools):
     """Test custom scraping without a query."""
     result = agentql_tools.agentql_custom_scrape_website("https://example.com")
-    assert "Custom AgentQL query not provided" in result
+    result_json = json.loads(result)
+    assert result_json["error"] == "Custom AgentQL query not provided"
 
 
 @pytest.mark.skip(reason="This test doesn't mock playwright module correctly.")
