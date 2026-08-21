@@ -14,21 +14,22 @@ identical conditions.
 
 ## Reference results
 
-Measured 2026-08-21 on an Apple M4 Max, Python 3.12, all four frameworks
+Measured 2026-08-22 on an Apple M4 Max, Python 3.12, all four frameworks
 installed in a single environment, one sequential run, medians reported.
 Framework versions: LangGraph 1.2.11, PydanticAI 2.31.1, CrewAI 1.15.17;
-Agno at the feat/v3.0 tip.
+Agno at the feat/v3.0 tip, which includes the copy-on-write history and
+incremental run-persistence changes.
 
 | Metric | Agno | LangGraph | PydanticAI | CrewAI |
 |---|---|---|---|---|
-| Single-turn run (mocked model) | 66 us | 319 us (4.8x) | 1,536 us (23x) | 4,682 us (71x) |
-| Tool-call run (mocked model) | 325 us | 910 us (2.8x) | 2,490 us (7.7x) | excluded |
-| 5-turn conversation, in-memory | 1.9 ms | 3.8 ms (2.0x) | 8.5 ms (4.4x) | 20.6 ms (11x) |
-| 25-turn conversation, in-memory | 32.4 ms | 23.7 ms (0.7x) | 48.5 ms (1.5x) | 102.8 ms (3.2x) |
-| 25-turn conversation, durable (SQLite) | 60.3 ms | 38.8 ms (0.6x) | excluded | excluded |
-| Agent construction (1 tool) | 4.6 us | 1,113 us (241x) | 10,083 us (2,180x) | 19,732 us (4,266x) |
-| Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.5x) | 24 KiB (3.3x) |
-| Cold import | 251 ms | 384 ms (1.5x) | 540 ms (2.2x) | 1,158 ms (4.6x) |
+| Single-turn run (mocked model) | 65 us | 303 us (4.6x) | 1,580 us (24x) | 4,439 us (68x) |
+| Tool-call run (mocked model) | 327 us | 787 us (2.4x) | 2,394 us (7.3x) | excluded |
+| 5-turn conversation, in-memory | 1.0 ms | 3.5 ms (3.4x) | 8.0 ms (7.9x) | 19.0 ms (19x) |
+| 25-turn conversation, in-memory | 12.2 ms | 22.3 ms (1.8x) | 39.2 ms (3.2x) | 92.9 ms (7.6x) |
+| 25-turn conversation, durable (SQLite) | 52.3 ms | 39.0 ms (0.7x) | excluded | excluded |
+| Agent construction (1 tool) | 4.7 us | 1,256 us (269x) | 9,546 us (2,046x) | 19,101 us (4,094x) |
+| Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.6x) | 24 KiB (3.3x) |
+| Cold import | 147 ms | 313 ms (2.1x) | 419 ms (2.9x) | 1,031 ms (7.0x) |
 
 Multipliers are relative to Agno. The committed reference runs, including
 per-benchmark distributions, are under `baselines/`; the definition of each
@@ -40,17 +41,20 @@ Three results deserve explicit discussion. First, the tool-call run: Agno
 defers tool-schema extraction from construction to run time, so this is
 the benchmark where that deferred cost is paid — it still measures
 fastest, but at a far narrower margin than construction, and reading those
-two rows together is the honest picture. Second, the 25-turn conversation,
-which Agno loses in both matched configurations: in-memory against
-LangGraph's reference-holding checkpointer with Agno's own session cache
-enabled, and durable against LangGraph's SQLite checkpointer with both
-sides serializing every turn. The cause is Agno's per-turn write path,
-which re-serializes conversation state that grows with length; it is a
-known optimization target, and both rows will be re-measured when that
-work lands. Third, the same mechanism is visible in reverse at short
-lengths — the 5-turn row — where per-turn fixed overhead dominates and
-Agno's margin widens; where the crossover falls on a given machine is
-exactly what these two rows bracket.
+two rows together is the honest picture. Second, the 25-turn in-memory
+conversation. Earlier revisions of this suite reported it as a loss
+(32.4 ms against LangGraph's 23.7 ms): Agno deep-copied every history
+message on every turn and re-serialized the whole runs list on every
+session save, both costs growing with conversation length. Those two
+paths were rewritten — history messages are copied on write, and the
+in-memory store persists runs incrementally — and the row now measures
+a 1.8x win under the same matched configuration, against LangGraph's
+reference-holding checkpointer with Agno's session cache enabled. Third,
+the durable 25-turn row is the benchmark Agno still loses. Both sides
+serialize every turn to SQLite; Agno's SQL adapter write path spends more
+per turn on serializing session state that grows with length. It is the
+remaining known optimization target, and the row will be re-measured when
+that work lands.
 
 ## 1. Environment setup
 
@@ -164,7 +168,11 @@ call real models, see `cookbook/09_evals/performance/`.
   particular scale with the number of installed packages, so the comparison
   environment (which carries all four frameworks) reads higher than a lean
   install for every framework. Ratios transfer across environments;
-  absolute values should only be compared within one.
+  absolute values should only be compared within one. Packages that
+  register pydantic plugins are a specific hazard: pydantic imports every
+  registered plugin when the first model class is defined, which taxes the
+  import time of every framework here. Benchmark in an environment created
+  by `perf_setup.sh`, not one that has accumulated extra packages.
 - Mocked-run numbers are per-framework floors, not full provider-path
   costs. A comparison at the HTTP boundary — a canned response beneath each
   framework's real provider adapter — would include client-side provider
