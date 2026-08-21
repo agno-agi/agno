@@ -672,3 +672,65 @@ class TestASharedRegistryBindsPerOS:
         assert seen_at_declaration, "the catalog db was never declared"
         assert all("builder-private" not in ids for ids in seen_at_declaration), seen_at_declaration
         assert studio.db is None
+
+
+class TestACallableToolsFactoryBindsWhenItRuns:
+    """`Agent.tools` may be a factory, and a factory cannot be called while the
+    OS is being constructed. The toolkit inside one still has to reach the db
+    of the OS that SERVES it: resolving the registry-wide declaration instead
+    hands it to whichever AgentOS declared first, so a write reports success
+    into a catalog the serving OS never reads.
+    """
+
+    def _wiring(self, tmp_path, tools_are_a_factory: bool):
+        """OS-B declares the catalog first but serves something else; OS-A
+        serves the builder. The two answers differ, so this tells them apart."""
+        registry = Registry(name="R", models=[_model()])
+        studio = StudioTools(registry=registry)
+        tools = (lambda: [studio]) if tools_are_a_factory else [studio]
+        builder = Agent(id="builder", name="Builder", model=_model(), tools=tools)
+        bystander = Agent(id="bystander", name="Bystander", model=_model())
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        db_b = SqliteDb(id="db-b", db_file=str(tmp_path / "b.db"))
+        # Held: a serving AgentOS is alive for the runs it serves, and the
+        # binding is deliberately not resurrected from a collected one.
+        os_b = AgentOS(agents=[bystander], registry=registry, db=db_b)
+        os_a = AgentOS(agents=[builder], registry=registry, db=db_a)
+        return studio, builder, db_a, db_b, os_a, os_b
+
+    def test_a_factory_delivered_toolkit_writes_to_the_serving_os_db(self, tmp_path):
+        from agno.run import RunContext
+        from agno.utils.callables import resolve_callable_tools
+
+        studio, builder, db_a, db_b, _os_a, _os_b = self._wiring(tmp_path, tools_are_a_factory=True)
+        run_context = RunContext(run_id="r1", session_id="s1", user_id="u1")
+
+        # The factory runs on the first dispatch, which is where the binding
+        # it could not get at construction time has to happen.
+        resolve_callable_tools(builder, run_context)
+        created = _loads(studio.create_agent(name="Probe", instructions="i", _agno_run_context=run_context))
+
+        assert created["ok"] is True, created
+        component_id = created["data"]["id"]
+        assert db_a.get_component(component_id) is not None, "write did not land in the serving OS's db"
+        assert db_b.get_component(component_id) is None, "write landed in an OS that does not serve this toolkit"
+
+    def test_a_factory_matches_the_plain_list_it_replaces(self, tmp_path):
+        studio_list, _b, db_a, _db_b, _os_a, _os_b = self._wiring(tmp_path, tools_are_a_factory=False)
+
+        assert studio_list.db is db_a
+
+    def test_the_first_os_to_stamp_a_carrier_keeps_it(self, tmp_path):
+        # Two OS instances serving one component must not have the answer
+        # decided by which was constructed last -- the same rule the
+        # materialized-list binding follows.
+        registry = Registry(name="R", models=[_model()])
+        studio = StudioTools(registry=registry)
+        builder = Agent(id="builder", name="Builder", model=_model(), tools=lambda: [studio])
+        db_a = SqliteDb(id="db-a", db_file=str(tmp_path / "a.db"))
+        db_b = SqliteDb(id="db-b", db_file=str(tmp_path / "b.db"))
+
+        first = AgentOS(agents=[builder], registry=registry, db=db_a)
+        AgentOS(agents=[builder], registry=registry, db=db_b)
+
+        assert builder._studio_catalog_os() is first

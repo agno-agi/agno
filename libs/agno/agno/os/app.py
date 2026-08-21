@@ -1017,61 +1017,95 @@ class AgentOS:
         """
         from weakref import ref
 
-        from agno.tools.studio import StudioTools
-        from agno.tools.studio_runner import StudioRunnerTools
-
-        os_db = self.db if isinstance(self.db, BaseDb) else None
         for component in self._iter_component_carriers():
             tools = getattr(component, "tools", None)
             # tools may be a callable factory; only a materialized list can be
             # inspected here, and a factory cannot be called safely at
-            # construction time.
+            # construction time. Stamp the carrier instead and bind when the
+            # factory first runs (agno.utils.callables): a toolkit delivered by
+            # a factory otherwise never learns which OS serves it, falls through
+            # to the registry-wide declaration - which belongs to whichever
+            # AgentOS declared FIRST - and writes its catalog into a db the
+            # serving OS never reads, reporting success either way.
             if not isinstance(tools, list):
+                if tools is not None:
+                    # First stamp wins, exactly as the first binding does for a
+                    # materialized list: two OS instances serving one component
+                    # must not have the answer decided by which constructed
+                    # last. Only the OS that made the stamp may move it, so a
+                    # resync or a swapped db still follows its own OS. A stamp
+                    # whose OS has been collected is left alone rather than
+                    # replaced, so the outcome never depends on when the
+                    # garbage collector ran.
+                    existing = getattr(component, "_studio_catalog_os", None)
+                    stamped_by = existing() if existing is not None else None
+                    if existing is None or stamped_by is self:
+                        try:
+                            component._studio_catalog_os = ref(self)
+                        except AttributeError:
+                            # A slotted or frozen carrier cannot hold the
+                            # stamp; it keeps the registry-declaration
+                            # behaviour it had before.
+                            pass
                 continue
-            for tool in tools:
-                if not isinstance(tool, (StudioTools, StudioRunnerTools)):
-                    continue
-                # A toolkit on another registry is a different catalog entirely
-                # (warned about separately), and an explicit db always wins.
-                if getattr(tool, "registry", None) is not self.registry or getattr(tool, "_db", None) is not None:
-                    continue
-                already = getattr(tool, "_os_db", None)
-                binding = getattr(tool, "_os_binding", None)
-                # Held weakly, so a collected OS reads as None here. That is
-                # not this OS either way, and the first binding stands: making
-                # a rebind depend on whether the other OS happens to still be
-                # alive would make the outcome depend on collection timing.
-                bound_by = binding() if binding is not None else None
-                if bound_by is not self and already is not None and already is not os_db:
-                    if os_db is not None:
-                        label = getattr(component, "id", None) or getattr(component, "name", None)
-                        bound_id = getattr(already, "id", None)
-                        this_id = getattr(os_db, "id", None)
-                        # Two dbs can carry the same id, and naming both would
-                        # then read as a contradiction rather than a conflict.
-                        which = (
-                            f"two distinct db instances sharing the id '{bound_id}'"
-                            if bound_id == this_id
-                            else f"bound '{bound_id}', this OS '{this_id}'"
-                        )
-                        # Says what is true in every case this can fire. A
-                        # count of AgentOS instances is not: replacing the OS
-                        # object over the same toolkit reaches here with
-                        # exactly one AgentOS in the user's code.
-                        log_warning(
-                            f"Component '{label}' carries {type(tool).__name__} already bound to a different "
-                            f"database ({which}); keeping the first binding. Pass the toolkit its own db "
-                            "(StudioTools(db=...)) to make the choice explicit."
-                        )
-                else:
-                    # StudioTools delegates its component lookups to an embedded
-                    # runner toolkit, so both halves have to resolve one db.
-                    tool._os_db = os_db
-                    tool._os_binding = ref(self)
-                    embedded = getattr(tool, "_runner_tools", None)
-                    if embedded is not None and getattr(embedded, "_db", None) is None:
-                        embedded._os_db = os_db
-                        embedded._os_binding = ref(self)
+            self._bind_studio_tools(component, tools)
+
+    def _bind_studio_tools(self, component: Any, tools: List[Any]) -> None:
+        """Bind the Studio toolkits in one materialized tool list to this OS's db.
+
+        Called with a plain list at construction time, and again from the
+        callable-tools resolver the first time a factory produces its list.
+        """
+        from weakref import ref
+
+        from agno.tools.studio import StudioTools
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        os_db = self.db if isinstance(self.db, BaseDb) else None
+        for tool in tools:
+            if not isinstance(tool, (StudioTools, StudioRunnerTools)):
+                continue
+            # A toolkit on another registry is a different catalog entirely
+            # (warned about separately), and an explicit db always wins.
+            if getattr(tool, "registry", None) is not self.registry or getattr(tool, "_db", None) is not None:
+                continue
+            already = getattr(tool, "_os_db", None)
+            binding = getattr(tool, "_os_binding", None)
+            # Held weakly, so a collected OS reads as None here. That is
+            # not this OS either way, and the first binding stands: making
+            # a rebind depend on whether the other OS happens to still be
+            # alive would make the outcome depend on collection timing.
+            bound_by = binding() if binding is not None else None
+            if bound_by is not self and already is not None and already is not os_db:
+                if os_db is not None:
+                    label = getattr(component, "id", None) or getattr(component, "name", None)
+                    bound_id = getattr(already, "id", None)
+                    this_id = getattr(os_db, "id", None)
+                    # Two dbs can carry the same id, and naming both would
+                    # then read as a contradiction rather than a conflict.
+                    which = (
+                        f"two distinct db instances sharing the id '{bound_id}'"
+                        if bound_id == this_id
+                        else f"bound '{bound_id}', this OS '{this_id}'"
+                    )
+                    # Says what is true in every case this can fire. A
+                    # count of AgentOS instances is not: replacing the OS
+                    # object over the same toolkit reaches here with
+                    # exactly one AgentOS in the user's code.
+                    log_warning(
+                        f"Component '{label}' carries {type(tool).__name__} already bound to a different "
+                        f"database ({which}); keeping the first binding. Pass the toolkit its own db "
+                        "(StudioTools(db=...)) to make the choice explicit."
+                    )
+            else:
+                # StudioTools delegates its component lookups to an embedded
+                # runner toolkit, so both halves have to resolve one db.
+                tool._os_db = os_db
+                tool._os_binding = ref(self)
+                embedded = getattr(tool, "_runner_tools", None)
+                if embedded is not None and getattr(embedded, "_db", None) is None:
+                    embedded._os_db = os_db
+                    embedded._os_binding = ref(self)
 
     def _iter_component_carriers(self) -> Iterator[Any]:
         """Every served component that can carry a toolkit: top-level
