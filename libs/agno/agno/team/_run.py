@@ -7144,6 +7144,19 @@ def continue_run_dispatch(
         original_member_req_ids = {id(r) for r in member_reqs}
         run_response.requirements = member_reqs
 
+        # Snapshot whether EVERY routed member requirement was rejected by the
+        # user. When that holds (pure rejection, no approvals/pending), the team
+        # run can be completed directly with the members' decline responses and
+        # must NOT re-invoke the team-leader model (otherwise it would re-delegate
+        # and re-ask the user). See issue #9663.
+        member_all_rejected = any(
+            getattr(req, "tool_execution", None) is not None and req.tool_execution.confirmed is False
+            for req in member_reqs
+        ) and all(
+            getattr(req, "tool_execution", None) is not None and req.tool_execution.confirmed is False
+            for req in member_reqs
+        )
+
         if opts.stream:
             # Streaming: use the generator variant that yields member events.
             # We collect member_results via a mutable list and chain with the
@@ -7184,6 +7197,7 @@ def continue_run_dispatch(
                 original_member_req_ids=original_member_req_ids,
                 team_level_reqs=team_level_reqs,
                 has_team_level=has_team_level,
+                member_all_rejected=member_all_rejected,
                 team_session=team_session,
                 run_context=run_context,
                 opts=opts,
@@ -7307,6 +7321,16 @@ def continue_run_dispatch(
 
     # Member-only case: continue the same run with member results
     if member_results and not has_team_level:
+        # Pure-rejection short-circuit: every routed member requirement was
+        # rejected by the user, so forward the members' decline directly to the
+        # user and complete the run WITHOUT re-invoking the team-leader model
+        # (which would otherwise re-delegate and re-ask the user). See #9663.
+        if member_all_rejected:
+            run_response.status = RunStatus.completed
+            run_response.content = _build_continuation_message(member_results)
+            _cleanup_and_store(team, run_response=run_response, session=team_session)
+            return run_response
+
         response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
         team.model = cast(Model, team.model)
 
@@ -7385,6 +7409,7 @@ def _continue_run_dispatch_stream_with_member_events(
     original_member_req_ids: set,
     team_level_reqs: list,
     has_team_level: bool,
+    member_all_rejected: bool,
     team_session: TeamSession,
     run_context: RunContext,
     opts: "ResolvedRunOptions",
@@ -7522,6 +7547,26 @@ def _continue_run_dispatch_stream_with_member_events(
         return
 
     if member_results:
+        # Pure-rejection short-circuit: every routed member requirement was
+        # rejected, so forward the members' decline directly to the user and
+        # complete the run WITHOUT re-invoking the team-leader model (issue #9663).
+        if member_all_rejected:
+            from agno.utils.events import create_team_run_completed_event
+
+            run_response.status = RunStatus.completed
+            run_response.content = _build_continuation_message(member_results)
+            _cleanup_and_store(team, run_response=run_response, session=team_session)
+            if opts.stream_events:
+                yield handle_event(
+                    create_team_run_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+            if opts.yield_run_output:
+                yield run_response
+            return
+
         response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
         team.model = cast(Model, team.model)
 
@@ -8765,6 +8810,7 @@ async def _acontinue_run(
 
                 # Route member requirements
                 member_results: List[str] = list(routed_member_results)
+                member_all_rejected = False
                 if has_member:
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
@@ -8774,6 +8820,19 @@ async def _acontinue_run(
                     ]
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
+                    # Snapshot whether EVERY routed member requirement was
+                    # rejected (pure rejection). If so, complete the run with the
+                    # members' decline instead of re-invoking the team-leader
+                    # model (issue #9663). See sync path for details.
+                    member_all_rejected = any(
+                        getattr(r, "tool_execution", None) is not None
+                        and r.tool_execution.confirmed is False
+                        for r in member_reqs
+                    ) and all(
+                        getattr(r, "tool_execution", None) is not None
+                        and r.tool_execution.confirmed is False
+                        for r in member_reqs
+                    )
                     try:
                         member_results = await _aroute_requirements_to_members(
                             team,
@@ -8872,6 +8931,20 @@ async def _acontinue_run(
 
                 elif member_results:
                     # Member-only: continue the same run with results
+                    # Pure-rejection short-circuit: every routed member
+                    # requirement was rejected, so forward the members' decline
+                    # directly and complete WITHOUT re-invoking the team-leader
+                    # model (issue #9663).
+                    if member_all_rejected:
+                        run_response.status = RunStatus.completed
+                        run_response.content = _build_continuation_message(member_results)
+                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                        await alog_team_telemetry(
+                            team, session_id=team_session.session_id, run_id=run_response.run_id
+                        )
+                        log_debug(f"Team Continue Run End: {run_response.run_id}", center=True, symbol="*")
+                        return run_response
+
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
@@ -9230,6 +9303,7 @@ async def _acontinue_run_stream(
                 # this list in place, so seeding it with the banked results
                 # keeps earlier attempts' routing and this attempt's together.
                 member_results: List[str] = list(routed_member_results)
+                member_all_rejected = False
                 if has_member:
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
@@ -9239,6 +9313,19 @@ async def _acontinue_run_stream(
                     ]
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
+                    # Snapshot whether EVERY routed member requirement was
+                    # rejected (pure rejection). If so, complete the run with the
+                    # members' decline instead of re-invoking the team-leader
+                    # model (issue #9663). See sync path for details.
+                    member_all_rejected = any(
+                        getattr(r, "tool_execution", None) is not None
+                        and r.tool_execution.confirmed is False
+                        for r in member_reqs
+                    ) and all(
+                        getattr(r, "tool_execution", None) is not None
+                        and r.tool_execution.confirmed is False
+                        for r in member_reqs
+                    )
                     try:
                         # Streaming: use the async generator variant that yields member events
                         async for event in _aroute_requirements_to_members_stream(
@@ -9424,6 +9511,30 @@ async def _acontinue_run_stream(
 
                 elif member_results:
                     # Member-only: continue the same run with member results
+                    # Pure-rejection short-circuit: every routed member
+                    # requirement was rejected, so forward the members' decline
+                    # directly and complete WITHOUT re-invoking the team-leader
+                    # model (issue #9663).
+                    if member_all_rejected:
+                        run_response.status = RunStatus.completed
+                        run_response.content = _build_continuation_message(member_results)
+                        completed_event = handle_event(
+                            create_team_run_completed_event(run_response),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                        if stream_events:
+                            yield completed_event
+                        if yield_run_output:
+                            yield run_response
+                        await alog_team_telemetry(
+                            team, session_id=team_session.session_id, run_id=run_response.run_id
+                        )
+                        log_debug(f"Team Continue Run End: {run_response.run_id}", center=True, symbol="*")
+                        return
+
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
