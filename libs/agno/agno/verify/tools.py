@@ -10,10 +10,15 @@ for one predicted step per turn.
 import functools
 import inspect
 import re
-from typing import Any, Callable, Union
+from typing import Any, Callable, Optional, TypeVar, Union, cast
 
 from agno.verify.types import REPORT_CAP_BYTES, Verdict, cap_text
 from agno.verify.verifiers import _traceback_tail
+
+# The decorated tool keeps its own type. This package ships py.typed, so returning a bare
+# Callable would erase the signature for every downstream caller: a wrong argument type and a
+# wrong assignment from the result would both type-check clean.
+F = TypeVar("F", bound=Callable[..., Any])
 
 DIVERGENCE_DIRECTIVE = (
     "Your prediction for this call was wrong. Do not continue the plan that produced it; "
@@ -85,8 +90,10 @@ def _apply(compare: Callable[[Any, str], Union[bool, Verdict]], result: Any, exp
         context = outcome.report
     elif outcome is False:
         context = ""
+    elif isinstance(outcome, str):
+        context = outcome  # a reason for the mismatch, the same shape a verifier may return
     else:
-        context = f"compare returned {type(outcome).__name__}; return True, False, or a Verdict"
+        context = f"compare returned {type(outcome).__name__}; return True, False, a str, or a Verdict"
     block = divergence_report(expect, cap_text(text, REPORT_CAP_BYTES // 2), context)
     return _with_prefix(result, block)
 
@@ -112,7 +119,7 @@ def _check_return_annotation(fn: Callable) -> None:
         )
 
 
-def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: str = "expect") -> Callable:
+def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: str = "expect") -> Callable[[F], F]:
     """Decorate a tool function that declares an optional `expect: Optional[str] = None`.
 
     Apply it to the plain function, beneath `@tool` when both are used. A prediction is
@@ -128,15 +135,22 @@ def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: st
     `cache_results=True` a cached call is not re-compared, so a divergence recorded once is
     replayed for the same arguments and prediction; leave caching off for stateful tools.
 
-    Hooks outrank the check. `tool_hooks` wrap the decorated function, so a hook that
-    rewrites an argument in place changes the prediction the comparison uses, a hook that
-    rewrites the result replaces what the model sees after the comparison ran, and a hook
-    that answers without calling the wrapped function skips the comparison entirely; the
-    same holds for a `pre_hook` rewriting `fc.arguments`. Keep argument- and
-    result-transforming hooks off a verified tool.
+    Hooks are refused, not tolerated. `tool_hooks` wrap the decorated function, so a hook can
+    rewrite the prediction, replace the result the comparison produced, or answer without
+    calling the wrapped function at all — in every case the prediction would look checked when
+    it was not. A tool that is both decorated and hooked therefore fails its call with an
+    explanation rather than passing quietly. Check the result inside the hook instead, or keep
+    the hooks off this tool.
     """
 
-    def decorate(fn: Callable) -> Callable:
+    if inspect.iscoroutinefunction(compare):
+        raise TypeError(
+            "verified_tool runs compare synchronously after the tool returns; an async compare "
+            "would never be awaited and every call would read as a divergence. Make it a plain "
+            "function, or await inside the tool and compare the resolved value."
+        )
+
+    def decorate(fn: F) -> F:
         from agno.tools.function import Function
         from agno.tools.toolkit import Toolkit
 
@@ -171,7 +185,8 @@ def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: st
                     return result
                 return _apply(compare, result, str(expect))
 
-            return async_wrapper
+            async_wrapper.__agno_verified_tool__ = True  # type: ignore[attr-defined]
+            return cast(F, async_wrapper)
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -181,9 +196,48 @@ def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: st
                 return result
             return _apply(compare, result, str(expect))
 
-        return wrapper
+        wrapper.__agno_verified_tool__ = True  # type: ignore[attr-defined]
+        return cast(F, wrapper)
 
     return decorate
+
+
+def is_verified_tool(fn: Any) -> bool:
+    """True when `fn` is a callable produced by `verified_tool`.
+
+    The marker is what lets the tool-execution path refuse to run a verified tool behind hooks
+    that can silently defeat its comparison.
+    """
+    return bool(getattr(fn, "__agno_verified_tool__", False))
+
+
+def hook_conflict(function: Any) -> Optional[str]:
+    """The reason a hook-bearing Function may not wrap a verified tool, or None.
+
+    A hook that rewrites the result replaces the divergence block after the comparison ran, a
+    hook that rewrites `expect` in place changes the prediction being checked, and a hook that
+    answers without calling the wrapped function skips the comparison altogether. Each of those
+    turns a falsifiable prediction back into an unchecked claim, which is the one thing this
+    decorator exists to prevent — so the call fails loudly rather than passing quietly.
+    """
+    if not is_verified_tool(getattr(function, "entrypoint", None)):
+        return None
+    offenders = []
+    if getattr(function, "tool_hooks", None):
+        offenders.append("tool_hooks")
+    if getattr(function, "pre_hook", None):
+        offenders.append("pre_hook")
+    if getattr(function, "post_hook", None):
+        offenders.append("post_hook")
+    if not offenders:
+        return None
+    return (
+        f"{getattr(function, 'name', 'tool')!r} is decorated with @verified_tool and also has "
+        f"{' and '.join(offenders)}. Hooks wrap the decorated function, so they can rewrite the "
+        "prediction, replace the result the comparison produced, or skip the call entirely — the "
+        "prediction would look checked when it was not. Remove the hooks from this tool, or drop "
+        "@verified_tool and check the result inside the hook instead."
+    )
 
 
 __all__ = ["DIVERGENCE_DIRECTIVE", "divergence_report", "verified_tool"]

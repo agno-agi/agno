@@ -293,9 +293,28 @@ def test_shell_cwd_default_is_process_cwd_and_cwd_is_honoured(tmp_path, monkeypa
     assert ShellVerifier(f'test "$(pwd -P)" = "{target.resolve()}"').verify(None).passed is False
 
 
-def test_shell_child_does_not_inherit_stdin():
-    v = ShellVerifier("read -r line && exit 3 || exit 0", timeout_s=5).verify(None)
-    assert v.passed is True, v.report
+def test_shell_child_does_not_inherit_stdin(tmp_path):
+    """Run the check inside a child that HAS real stdin. pytest's own stdin is already closed,
+    so an in-process assertion passes whether or not the verifier redirects stdin at all."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = tmp_path / "stdin_probe.py"
+    script.write_text(
+        textwrap.dedent("""
+        from agno.verify import ShellVerifier
+        v = ShellVerifier("read -r line && exit 3 || exit 7", timeout_s=10).verify(None)
+        print("RC", v.data["returncode"], flush=True)
+        """)
+    )
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [os.environ.get("PYTHONPATH"), os.getcwd()]))}
+    proc = subprocess.run(
+        [sys.executable, str(script)], input=b"a line the child must not see\n", capture_output=True, env=env
+    )
+    # exit 7 = the read found EOF. exit 3 = the child inherited the parent's stdin.
+    assert b"RC 7" in proc.stdout, proc.stdout + proc.stderr
 
 
 def test_shell_missing_command_is_harness_error():

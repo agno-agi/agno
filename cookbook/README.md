@@ -59,6 +59,9 @@ Hundreds of examples. Copy, paste, run.
 ### FileSystem
 [13_filesystem](./13_filesystem) — Give your agent a durable, private filesystem for its own working state: records of what it has processed, decisions, progress checkpoints. Database-backed by default, local disk optional.
 
+### Verification
+[14_verify](./14_verify) — Hold an agent to executable evidence. Verifiers run when the model stops, a failure feeds the evidence back and continues the run, and a run that never passes ends as `unverified` instead of a false success.
+
 ### Models
 [90_models](./90_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
 

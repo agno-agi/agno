@@ -1690,6 +1690,20 @@ class FunctionExecutionResult(BaseModel):
     files: Optional[List[File]] = None
 
 
+def _refuse_hooks_on_a_verified_tool(function: "Function") -> None:
+    """Fail closed when hooks would silently defeat an @verified_tool comparison.
+
+    Kept behind a local import so agno.tools never depends on agno.verify at module scope.
+    """
+    try:
+        from agno.verify.tools import hook_conflict
+    except ImportError:  # narrow on purpose: a broad guard here would hide a real defect
+        return
+    reason = hook_conflict(function)
+    if reason:
+        raise ValueError(reason)
+
+
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
 
@@ -2069,6 +2083,8 @@ class FunctionCall(BaseModel):
         if not self.function.tool_hooks:
             return execute_entrypoint
 
+        _refuse_hooks_on_a_verified_tool(self.function)
+
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
 
@@ -2375,6 +2391,8 @@ class FunctionCall(BaseModel):
         # If no hooks, just return the async entrypoint execution function
         if not self.function.tool_hooks:
             return execute_entrypoint_async
+
+        _refuse_hooks_on_a_verified_tool(self.function)
 
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""

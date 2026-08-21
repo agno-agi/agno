@@ -48,7 +48,11 @@ print("total tokens across attempts:", total_tokens)
 
 # The RunOutput still says completed. Read VerifiedRun.status, not output.status.
 print("output.status:", result.output.status)
+
+# A run that ended on the status gate (paused for a confirmation, errored, cancelled) carries
+# no stamp of ours at all, so this is a get, not a subscript.
+stamp = (result.output.metadata or {}).get("verification")
 print(
     "final record on the returned output:",
-    result.output.metadata["verification"]["status"],
+    stamp["status"] if stamp else "none (ended on the status gate)",
 )

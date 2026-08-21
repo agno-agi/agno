@@ -200,8 +200,11 @@ class Verification:
 class VerifiedRun:
     """What `run_verified` returns: the final attempt's RunOutput and the verification record.
 
-    `output.status` is RunStatus.completed even when `verification.status` is "unverified".
-    Read `VerifiedRun.status`, not `output.status`. The returned VerifiedRun is the only place
+    `output.status` is RunStatus.completed even when `verification.status` is "unverified" —
+    the model finished its turn, the evidence just did not agree. It is NOT always completed:
+    a run that ended on the status gate carries that attempt's own paused, error or cancelled
+    status. Either way, read `VerifiedRun.status` for the verification outcome, never
+    `output.status`. The returned VerifiedRun is the only place
     the final verdict exists; persisted run rows carry at most an in-progress snapshot in
     `metadata["verification"]`. `output` is the final attempt's run, which for a continued run
     is a forked sibling of the first attempt with its own run_id; `output.metrics` covers that

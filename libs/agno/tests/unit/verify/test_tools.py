@@ -331,29 +331,39 @@ def _hooked(decorated, hook):
     return fn
 
 
-def test_hook_precedence_pinned_in_place_mutation_bypasses_comparison():
-    # Documented hazard: a tool_hook that rewrites an argument in place changes the
-    # prediction the comparison uses. Pinned so a future behaviour change is noticed.
+def _assert_refused(out, *, tool_ran):
+    """A verified tool behind hooks must fail its call, not quietly skip the comparison."""
+    assert out.status == "failure", f"expected a refusal, got {out.result!r}"
+    assert "@verified_tool" in str(out.error)
+    assert "tool_hooks" in str(out.error)
+    assert tool_ran == [] or tool_ran, tool_ran
+
+
+def test_argument_rewriting_hook_is_refused():
+    # A tool_hook that rewrites an argument in place would change the prediction the
+    # comparison checks, so a wrong prediction would read as correct.
     def rewrite_expect(name, func, args):
         args["expect"] = "5"
         return func(**args)
 
     fn = _hooked(verified_tool(same)(make_counter()[0]), rewrite_expect)
     out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
-    assert not str(out.result).startswith("<divergence>")
+    _assert_refused(out, tool_ran=[])
 
 
-def test_hook_precedence_pinned_result_transform_after_comparison():
+def test_result_rewriting_hook_is_refused():
+    # A hook that rewrites the result replaces the divergence block after the comparison
+    # produced it, so the model never sees that its prediction was wrong.
     def strip_blocks(name, func, args):
         result = func(**args)
         return str(result).split("</divergence>")[-1].lstrip()
 
     fn = _hooked(verified_tool(same)(make_counter()[0]), strip_blocks)
     out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
-    assert "<divergence>" not in str(out.result)
+    _assert_refused(out, tool_ran=[])
 
 
-def test_hook_precedence_pinned_short_circuit_skips_comparison():
+def test_short_circuiting_hook_is_refused():
     calls = []
 
     def probe(expect: Optional[str] = None) -> str:
@@ -365,5 +375,43 @@ def test_hook_precedence_pinned_short_circuit_skips_comparison():
 
     fn = _hooked(verified_tool(same)(probe), answer_directly)
     out = FunctionCall(function=fn, arguments={"expect": "real"}).execute()
-    assert out.result == "hook answer"
+    assert out.status == "failure"
+    assert out.result != "hook answer"
     assert calls == []
+
+
+def test_an_unhooked_verified_tool_still_works():
+    """The refusal must be scoped to hooks, not to every verified tool."""
+    fn = Function.from_callable(verified_tool(same)(make_counter()[0]))
+    out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
+    assert out.status != "failure"
+
+
+def test_a_hooked_plain_tool_is_untouched():
+    """And it must not fire for a tool that was never decorated."""
+
+    def plain(amount: int) -> str:
+        return str(amount)
+
+    fn = _hooked(plain, lambda name, func, args: func(**args))
+    out = FunctionCall(function=fn, arguments={"amount": 9}).execute()
+    assert out.status != "failure"
+    assert out.result == "9"
+
+
+def test_an_async_compare_is_rejected_at_decoration_time():
+    async def acompare(result, expect):
+        return True
+
+    with pytest.raises(TypeError, match="async compare"):
+        verified_tool(acompare)
+
+
+def test_a_compare_returning_a_reason_uses_it_as_the_divergence_context():
+    def why(result, expect):
+        return "the counter is capped at 5"
+
+    fn = Function.from_callable(verified_tool(why)(make_counter()[0]))
+    out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
+    assert "the counter is capped at 5" in str(out.result)
+    assert "compare returned str" not in str(out.result)
