@@ -361,7 +361,7 @@ def _run_tasks(
         accumulated_messages = run_messages.messages
 
         # Pre-loop compaction: compress history BEFORE first iteration
-        if team.compaction_manager is not None:
+        if team.compaction_manager is not None and team.compaction_manager.compact_history:
             log_debug(f"[TEAM-TASKS-SYNC] Pre-loop compaction check: {len(accumulated_messages)} messages")
             compaction_result = team.compaction_manager.compact(
                 accumulated_messages,
@@ -1237,7 +1237,7 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Pre-loop compaction: compress history BEFORE first model call
-                if team.compaction_manager is not None:
+                if team.compaction_manager is not None and team.compaction_manager.compact_history:
                     log_debug(f"[TEAM-RUN-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
                     compaction_result = team.compaction_manager.compact(
                         run_messages.messages,
@@ -2253,7 +2253,7 @@ async def _arun_tasks(
         accumulated_messages = run_messages.messages
 
         # Pre-loop compaction: compress history BEFORE first iteration
-        if team.compaction_manager is not None:
+        if team.compaction_manager is not None and team.compaction_manager.compact_history:
             log_debug(f"[TEAM-TASKS-ASYNC] Pre-loop compaction check: {len(accumulated_messages)} messages")
             compaction_result = await team.compaction_manager.acompact(
                 accumulated_messages,
@@ -3220,7 +3220,7 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Pre-loop compaction: compress history BEFORE first model call
-                if team.compaction_manager is not None:
+                if team.compaction_manager is not None and team.compaction_manager.compact_history:
                     log_debug(f"[TEAM-RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
                     compaction_result = await team.compaction_manager.acompact(
                         run_messages.messages,

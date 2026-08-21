@@ -1679,7 +1679,7 @@ async def _arun(
                 # Two-list architecture:
                 #   - messages: canonical list for DB storage (always full history)
                 #   - compacted_messages: compressed view for model (summary + recent)
-                if agent.compaction_manager is not None:
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
                     log_debug(f"[RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
                     compaction_result = await agent.compaction_manager.acompact(
                         run_messages.messages,
