@@ -196,8 +196,10 @@ def test_search_with_error(firecrawl_tools, mock_firecrawl):
     # Call the method
     result = firecrawl_tools.firecrawl_search_web("test query")
 
-    # Verify results
-    assert result == "Error searching with the Firecrawl tool: Search failed"
+    # Verify results - v3.0 returns JSON error format
+    result_data = json.loads(result)
+    assert "error" in result_data
+    assert "Search failed" in result_data["error"]
     mock_firecrawl.search.assert_called_once_with("test query", limit=10)
 
 
