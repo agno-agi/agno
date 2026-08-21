@@ -14,6 +14,7 @@ class HackerNewsTools(Toolkit):
     Args:
         get_top_stories (bool): Enable getting top stories from Hacker News. Default is True.
         get_user_details (bool): Enable getting user details from Hacker News. Default is True.
+        all (bool): Enable all tools. Default is False.
         timeout (int): Per-request HTTP timeout in seconds. Defaults to 30.
     """
 
@@ -21,6 +22,7 @@ class HackerNewsTools(Toolkit):
         self,
         get_top_stories: bool = True,
         get_user_details: bool = True,
+        all: bool = False,
         timeout: int = 30,
         **kwargs,
     ):
@@ -31,9 +33,9 @@ class HackerNewsTools(Toolkit):
             get_user_details = kwargs.pop("enable_get_user_details")
 
         tools: List[Callable] = []
-        if get_top_stories:
+        if all or get_top_stories:
             tools.append(self.get_top_hackernews_stories)
-        if get_user_details:
+        if all or get_user_details:
             tools.append(self.get_user_details)
 
         super().__init__(name="hackers_news", tools=tools, timeout=timeout, **kwargs)

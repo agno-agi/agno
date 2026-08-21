@@ -58,6 +58,14 @@ class OpenAITools(Toolkit):
         image_style: Optional[Literal["vivid", "natural"]] = None,
         **kwargs,
     ):
+        # Backwards compat: 2.x enable_transcription / enable_image_generation / enable_speech_generation
+        if "enable_transcription" in kwargs:
+            transcribe_audio = kwargs.pop("enable_transcription")
+        if "enable_image_generation" in kwargs:
+            generate_image = kwargs.pop("enable_image_generation")
+        if "enable_speech_generation" in kwargs:
+            generate_speech = kwargs.pop("enable_speech_generation")
+
         self.api_key = api_key or getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")

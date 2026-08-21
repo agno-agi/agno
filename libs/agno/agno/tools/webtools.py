@@ -13,12 +13,14 @@ class WebTools(Toolkit):
     Args:
         retries: Number of retry attempts. Defaults to 3.
         expand_url: Enable expand_url tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
         self,
         retries: int = 3,
         expand_url: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         # Backwards compat: enable_X -> X
@@ -28,7 +30,7 @@ class WebTools(Toolkit):
         self.retries = retries
 
         tools: List[Callable] = []
-        if expand_url:
+        if all or expand_url:
             tools.append(self.expand_url)
 
         super().__init__(name="web_tools", tools=tools, **kwargs)

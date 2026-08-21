@@ -36,6 +36,9 @@ class SpiderTools(Toolkit):
             crawl: Enable web crawling. Defaults to False (token heavy).
             all: Enable all tools. Defaults to False.
         """
+        # Backwards compat: url -> default_url
+        if "url" in kwargs:
+            default_url = kwargs.pop("url")
         # Backwards compat: enable_X -> X
         if "enable_search" in kwargs:
             search = kwargs.pop("enable_search")

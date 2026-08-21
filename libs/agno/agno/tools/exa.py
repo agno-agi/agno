@@ -78,6 +78,9 @@ class ExaTools(Toolkit):
             find_similar = kwargs.pop("enable_find_similar")
         if "enable_answer" in kwargs:
             answer = kwargs.pop("enable_answer")
+        if "research_model" in kwargs:
+            # The research tool no longer selects a dedicated model; accept and ignore the 2.x kwarg
+            kwargs.pop("research_model")
         if "enable_research" in kwargs:
             research = kwargs.pop("enable_research")
 

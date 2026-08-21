@@ -49,6 +49,14 @@ class YouTubeTools(Toolkit):
 
         self.languages: Optional[List[str]] = languages
 
+        # Backwards compat: proxies (dict) -> proxy (URL)
+        if "proxies" in kwargs:
+            legacy_proxies = kwargs.pop("proxies")
+            if proxy is None and isinstance(legacy_proxies, dict):
+                proxy = legacy_proxies.get("https") or legacy_proxies.get("http")
+            elif proxy is None and isinstance(legacy_proxies, str):
+                proxy = legacy_proxies
+
         # Create transcript API with proxy config if provided
         proxy_config = GenericProxyConfig(https_url=proxy) if proxy else None
         self._transcript_api = YouTubeTranscriptApi(proxy_config=proxy_config)

@@ -228,6 +228,14 @@ class GoogleMapTools(GoogleMapsTools):
     def __init__(self, *args, **kwargs):
         import warnings
 
+        if "search_places" in kwargs:
+            kwargs.pop("search_places")
+            warnings.warn(
+                "search_places moved to GooglePlacesTools (agno.tools.google.places); ignoring it here.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         warnings.warn(
             "GoogleMapTools is deprecated, use GoogleMapsTools instead.",
             DeprecationWarning,

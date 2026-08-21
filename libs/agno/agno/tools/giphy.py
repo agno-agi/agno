@@ -18,6 +18,7 @@ class GiphyTools(Toolkit):
         api_key: Optional[str] = None,
         limit: int = 1,
         search_gifs: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize Giphy tools.
@@ -26,6 +27,7 @@ class GiphyTools(Toolkit):
             api_key: Giphy API key. Defaults to GIPHY_API_KEY environment variable.
             limit: Number of GIFs to return. Defaults to 1.
             search_gifs: Whether to enable GIF search functionality. Defaults to True.
+            all: Enable all tools. Defaults to False.
         """
         # Backwards compat: enable_X -> X
         if "enable_search_gifs" in kwargs:
@@ -38,7 +40,7 @@ class GiphyTools(Toolkit):
         self.limit: int = limit
 
         tools: List[Callable] = []
-        if search_gifs:
+        if all or search_gifs:
             tools.append(self.search_gifs)
 
         super().__init__(name="giphy_tools", tools=tools, **kwargs)

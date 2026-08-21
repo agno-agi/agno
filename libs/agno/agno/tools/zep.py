@@ -298,6 +298,13 @@ class ZepAsyncTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: 2.x names add_zep_message / get_zep_memory / search_zep_memory
+        if "add_zep_message" in kwargs:
+            add_message = kwargs.pop("add_zep_message")
+        if "get_zep_memory" in kwargs:
+            get_memory = kwargs.pop("get_zep_memory")
+        if "search_zep_memory" in kwargs:
+            search_memory = kwargs.pop("search_zep_memory")
         # Backwards compat: enable_X_zep_Y -> X_Y
         if "enable_add_zep_message" in kwargs:
             add_message = kwargs.pop("enable_add_zep_message")

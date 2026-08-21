@@ -39,6 +39,7 @@ class SeltzTools(Toolkit):
         profile: Legacy SDK search profile to use for ranking.
         show_results: Log search results for debugging.
         search: Enable search tool functionality. Defaults to True.
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -52,6 +53,7 @@ class SeltzTools(Toolkit):
         profile: Optional[str] = None,
         show_results: bool = False,
         search: bool = True,
+        all: bool = False,
         **kwargs: Any,
     ):
         # Backwards compat: enable_X -> X
@@ -82,7 +84,7 @@ class SeltzTools(Toolkit):
             self.client = Seltz(**client_kwargs)
 
         tools: List[Callable] = []
-        if search:
+        if all or search:
             tools.append(self.search_seltz)
 
         super().__init__(name="seltz", tools=tools, **kwargs)

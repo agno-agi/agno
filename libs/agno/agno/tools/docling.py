@@ -74,6 +74,17 @@ class DoclingTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        # Backwards compat: pdf_enable_X -> pdf_X
+        if "pdf_enable_ocr" in kwargs:
+            pdf_ocr = kwargs.pop("pdf_enable_ocr")
+        if "pdf_enable_table_structure" in kwargs:
+            pdf_table_structure = kwargs.pop("pdf_enable_table_structure")
+        if "pdf_enable_picture_description" in kwargs:
+            pdf_picture_description = kwargs.pop("pdf_enable_picture_description")
+        if "pdf_enable_picture_classification" in kwargs:
+            pdf_picture_classification = kwargs.pop("pdf_enable_picture_classification")
+        if "pdf_enable_remote_services" in kwargs:
+            pdf_remote_services = kwargs.pop("pdf_enable_remote_services")
         # Backwards compat: enable_X -> X
         if "enable_convert_to_markdown" in kwargs:
             convert_to_markdown = kwargs.pop("enable_convert_to_markdown")
