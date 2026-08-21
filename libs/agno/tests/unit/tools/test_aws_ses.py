@@ -1,5 +1,6 @@
 """Unit tests for AWS SES Tool"""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -60,8 +61,10 @@ class TestAWSSESTool:
             subject="Test Subject", body="Test Body", receiver_email="receiver@example.com"
         )
 
-        # Assert
-        assert result == "Email sent successfully!"
+        # Assert - v3.0 returns JSON
+        result_json = json.loads(result)
+        assert result_json["success"] is True
+        assert "message_id" in result_json
         mock_client.send_email.assert_called_once_with(
             Source="Test Sender <sender@example.com>",
             Destination={
@@ -93,8 +96,10 @@ class TestAWSSESTool:
         # Act
         result = tool.aws_ses_send_email(subject="", body="Test Body", receiver_email="receiver@example.com")
 
-        # Assert
-        assert result == "Email subject cannot be empty."
+        # Assert - v3.0 returns JSON error
+        result_json = json.loads(result)
+        assert "error" in result_json
+        assert "subject" in result_json["error"].lower()
         mock_client.send_email.assert_not_called()
 
     @patch("boto3.client")
@@ -109,8 +114,10 @@ class TestAWSSESTool:
         # Act
         result = tool.aws_ses_send_email(subject="Test Subject", body="", receiver_email="receiver@example.com")
 
-        # Assert
-        assert result == "Email body cannot be empty."
+        # Assert - v3.0 returns JSON error
+        result_json = json.loads(result)
+        assert "error" in result_json
+        assert "body" in result_json["error"].lower()
         mock_client.send_email.assert_not_called()
 
     @patch("boto3.client")
@@ -124,12 +131,13 @@ class TestAWSSESTool:
 
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
 
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            tool.aws_ses_send_email(subject="Test Subject", body="Test Body", receiver_email="invalidemailformat")
+        # Act - v3.0 returns JSON error instead of raising
+        result = tool.aws_ses_send_email(subject="Test Subject", body="Test Body", receiver_email="invalidemailformat")
+        result_json = json.loads(result)
 
-        assert "Failed to send email" in str(exc_info.value)
-        assert "Missing final '@domain'" in str(exc_info.value)
+        # Assert
+        assert "error" in result_json
+        assert "Failed to send email" in result_json["error"]
 
     @patch("boto3.client")
     def test_send_email_aws_error(self, mock_boto_client):
@@ -142,12 +150,13 @@ class TestAWSSESTool:
 
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
 
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            tool.aws_ses_send_email(subject="Test Subject", body="Test Body", receiver_email="unverified@example.com")
+        # Act - v3.0 returns JSON error instead of raising
+        result = tool.aws_ses_send_email(subject="Test Subject", body="Test Body", receiver_email="unverified@example.com")
+        result_json = json.loads(result)
 
-        assert "Failed to send email" in str(exc_info.value)
-        assert "Email address is not verified" in str(exc_info.value)
+        # Assert
+        assert "error" in result_json
+        assert "Failed to send email" in result_json["error"]
 
     @patch("boto3.client")
     def test_send_email_no_client(self, mock_boto_client):
@@ -156,11 +165,13 @@ class TestAWSSESTool:
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
         tool.client = None  # Simulate client not initialized
 
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            tool.aws_ses_send_email(subject="Test Subject", body="Test Body", receiver_email="receiver@example.com")
+        # Act - v3.0 returns JSON error instead of raising
+        result = tool.aws_ses_send_email(subject="Test Subject", body="Test Body", receiver_email="receiver@example.com")
+        result_json = json.loads(result)
 
-        assert "AWS SES client not initialized" in str(exc_info.value)
+        # Assert
+        assert "error" in result_json
+        assert "Failed to send email" in result_json["error"]
 
     @patch("boto3.client")
     def test_send_email_with_special_characters(self, mock_boto_client):
@@ -180,8 +191,9 @@ class TestAWSSESTool:
             receiver_email="receiver@example.com",
         )
 
-        # Assert
-        assert result == "Email sent successfully!"
+        # Assert - v3.0 returns JSON
+        result_json = json.loads(result)
+        assert result_json["success"] is True
         call_args = mock_client.send_email.call_args[1]
         assert call_args["Message"]["Subject"]["Data"] == "Test Subject with émojis 🎉"
         assert "中文" in call_args["Message"]["Body"]["Text"]["Data"]

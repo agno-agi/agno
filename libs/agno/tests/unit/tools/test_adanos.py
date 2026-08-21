@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -44,7 +45,7 @@ def test_get_stock_sentiment_maps_source_dates_and_auth(mock_client_class):
 
     result = tools.get_stock_sentiment("$aapl", source="news", start_date="2026-07-01", end_date="2026-07-07")
 
-    assert result == {"ticker": "AAPL", "found": True}
+    assert json.loads(result) == {"ticker": "AAPL", "found": True}
     client.get.assert_called_once_with(
         "https://example.test/news/stocks/v1/stock/AAPL",
         headers={"X-API-Key": "test-key"},
@@ -63,7 +64,7 @@ def test_get_crypto_sentiment_uses_reddit_crypto_endpoint(mock_client_class):
 
     result = tools.get_crypto_sentiment("btc")
 
-    assert result["symbol"] == "BTC"
+    assert json.loads(result)["symbol"] == "BTC"
     assert client.get.call_args.args[0] == "https://api.adanos.org/reddit/crypto/v1/token/BTC"
 
 
@@ -88,7 +89,7 @@ def test_crypto_rejects_non_reddit_source_without_request(mock_client_class):
 
     result = tools.get_market_sentiment(asset_type="crypto", source="news")
 
-    assert result == {"error": "crypto sentiment is currently available from reddit only"}
+    assert json.loads(result) == {"error": "crypto sentiment is currently available from reddit only"}
     mock_client_class.assert_not_called()
 
 
@@ -99,7 +100,7 @@ def test_missing_api_key_returns_actionable_error(mock_client_class):
 
     result = tools.get_stock_sentiment("AAPL")
 
-    assert result == {"error": "Adanos API key is required. Set ADANOS_API_KEY or pass api_key."}
+    assert json.loads(result) == {"error": "Adanos API key is required. Set ADANOS_API_KEY or pass api_key."}
     mock_client_class.return_value.__enter__.return_value.get.assert_not_called()
 
 
@@ -116,7 +117,7 @@ def test_http_error_preserves_status_and_api_detail(mock_client_class):
 
     result = tools.get_stock_sentiment("AAPL")
 
-    assert result == {
+    assert json.loads(result) == {
         "error": "Adanos API request failed",
         "status_code": 429,
         "detail": {"error": "Rate limit exceeded"},
@@ -135,7 +136,7 @@ async def test_async_tool_uses_same_endpoint_contract(mock_client_class):
 
     result = await tools.aget_market_sentiment(source="polymarket")
 
-    assert result == {"market_sentiment": "bullish"}
+    assert json.loads(result) == {"market_sentiment": "bullish"}
     client.get.assert_awaited_once_with(
         "https://api.adanos.org/polymarket/stocks/v1/market-sentiment",
         headers={"X-API-Key": "test-key"},
