@@ -10,7 +10,7 @@ were present but not executed (paused), leading to OpenAI API errors like
 from typing import Dict, List
 
 from agno.models.message import Message
-from agno.models.openai.responses import OpenAIResponses
+from agno.models.openai.responses import MISSING_TOOL_RESULT_PLACEHOLDER, OpenAIResponses
 
 
 def _make_assistant_message_with_tool_calls(tool_calls: List[Dict]) -> Message:
@@ -308,9 +308,12 @@ class TestFormatFunctionCallResultsMixedTools:
         # Find the function_call_output items
         outputs = [item for item in formatted if isinstance(item, dict) and item.get("type") == "function_call_output"]
 
-        assert len(outputs) == 1
-        assert outputs[0]["call_id"] == "call_regular"
-        assert outputs[0]["output"] == "August 1st, 2024"
+        # The regular result is emitted as recorded; the still-pending external call is
+        # paired with a placeholder result so the payload stays valid.
+        assert len(outputs) == 2
+        outputs_by_call_id = {output["call_id"]: output for output in outputs}
+        assert outputs_by_call_id["call_regular"]["output"] == "August 1st, 2024"
+        assert outputs_by_call_id["call_external"]["output"] == MISSING_TOOL_RESULT_PLACEHOLDER
 
     def test_multi_turn_conversation_maps_correctly(self):
         """In a multi-turn conversation, tool_call_id mapping should use the correct
