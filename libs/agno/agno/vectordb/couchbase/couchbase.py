@@ -140,7 +140,7 @@ class CouchbaseSearch(VectorDb):
                 self._cluster = cluster
             except Exception as e:
                 logger.exception("Failed to connect to Couchbase")
-                raise ConnectionError(f"Failed to connect to Couchbase: {e}")
+                raise ConnectionError(f"Failed to connect to Couchbase: {e}") from e
         return self._cluster
 
     @property

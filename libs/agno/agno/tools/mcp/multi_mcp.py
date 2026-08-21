@@ -565,7 +565,7 @@ class MultiMCPTools(Toolkit):
 
             except Exception as e:
                 if not self.allow_partial_failure:
-                    raise ValueError(f"MCP connection failed: {e}")
+                    raise ValueError(f"MCP connection failed: {e}") from e
 
                 log_error(f"Failed to initialize MCP server with params {server_params}: {str(e)}")
                 server_connection_errors.append(str(e))
