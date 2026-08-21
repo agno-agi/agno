@@ -116,6 +116,10 @@ from agno.utils.print_response.workflow import (
 from agno.utils.string import generate_id_from_name
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
+from agno.workflow.conversational import (
+    apply_conversational_pause,
+    create_conversational_paused_event,
+)
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
@@ -2215,8 +2219,13 @@ class Workflow:
                 # for the in-flight step (mirrors _execute_stream's behaviour).
                 current_step_name = ""
                 current_step = None
+                # Forwarded user message for conversational goto / resume within this run
+                pending_conversational_message: Optional[Any] = None
 
-                for i, step in enumerate(self.steps):  # type: ignore[arg-type]
+                i = 0
+                steps_list = cast(List[Any], self.steps)
+                while i < len(steps_list):
+                    step = steps_list[i]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     current_step_name = step_name
@@ -2232,6 +2241,23 @@ class Workflow:
                         shared_audio=shared_audio,
                         shared_files=shared_files,
                     )
+
+                    # Inject conversational user message (resume / goto)
+                    if pending_conversational_message is not None:
+                        if step_input.additional_data is None:
+                            step_input.additional_data = {}
+                        step_input.additional_data["conversational_user_message"] = pending_conversational_message
+                        pending_conversational_message = None
+
+                    # Refresh goto targets for conversational agents
+                    if isinstance(step, Step) and step.conversational:
+                        from agno.workflow.conversational import collect_completed_goto_targets
+
+                        step._conversational_control.available_goto_steps = collect_completed_goto_targets(
+                            steps_list,
+                            collected_step_outputs,
+                            step_name,
+                        )
 
                     # Check for cancellation before executing step
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -2320,6 +2346,50 @@ class Workflow:
                             save_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
 
+                    # Conversational sticky step: not complete → pause for next user message
+                    if not getattr(step_output, "conversational_complete", True):
+                        apply_conversational_pause(
+                            workflow_run_response,
+                            step,
+                            i,
+                            step_name,
+                            step_output,
+                            collected_step_outputs,
+                        )
+                        save_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
+
+                    # Conversational goto: prune results, clear keys, re-run target immediately
+                    if getattr(step_output, "goto_step", None):
+                        from agno.workflow.conversational import (
+                            clear_session_state_keys,
+                            find_step_index_by_name,
+                            prune_step_results,
+                            require_conversational_goto_target,
+                        )
+
+                        target_name = step_output.goto_step
+                        assert target_name is not None
+                        require_conversational_goto_target(steps_list, target_name)
+                        collected_step_outputs, previous_step_outputs = prune_step_results(
+                            collected_step_outputs,
+                            previous_step_outputs,
+                            target_name,
+                            steps_list,
+                        )
+                        clear_session_state_keys(
+                            run_context.session_state if run_context else None,
+                            step_output.goto_clear_keys or [],
+                        )
+                        target_index = find_step_index_by_name(steps_list, target_name)
+                        if target_index is None:
+                            raise ValueError(f"goto target '{target_name}' not found in workflow steps")
+                        # Forward the current user message to the target host step
+                        pending_conversational_message = execution_input.input
+                        log_debug(f"goto: jumping from '{step_name}' to '{target_name}' (index {target_index})")
+                        i = target_index
+                        continue
+
                     # Check for cancellation after step execution
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -2383,6 +2453,8 @@ class Workflow:
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
+
+                    i += 1
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
@@ -2598,7 +2670,11 @@ class Workflow:
                 partial_step_content = ""
                 cancelled_step_output: Optional[StepOutput] = None
 
-                for i, step in enumerate(self.steps):  # type: ignore[arg-type]
+                pending_conversational_message = None
+                i = 0
+                steps_list = cast(List[Any], self.steps)
+                while i < len(steps_list):
+                    step = steps_list[i]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step_name}")
@@ -2609,6 +2685,7 @@ class Workflow:
                     # Reset partial data for this step
                     partial_step_content = ""
                     cancelled_step_output = None
+                    conversational_goto = False
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -2619,6 +2696,21 @@ class Workflow:
                         shared_audio=shared_audio,
                         shared_files=shared_files,
                     )
+
+                    if pending_conversational_message is not None:
+                        if step_input.additional_data is None:
+                            step_input.additional_data = {}
+                        step_input.additional_data["conversational_user_message"] = pending_conversational_message
+                        pending_conversational_message = None
+
+                    if isinstance(step, Step) and step.conversational:
+                        from agno.workflow.conversational import collect_completed_goto_targets
+
+                        step._conversational_control.available_goto_steps = collect_completed_goto_targets(
+                            steps_list,
+                            collected_step_outputs,
+                            step_name,
+                        )
 
                     # Check for HITL requirements
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
@@ -2698,6 +2790,32 @@ class Workflow:
                                         )
                                         save_paused_session(self, session, workflow_run_response)
                                         return
+
+                                control = self._apply_conversational_step_control(
+                                    step=step,
+                                    step_output=step_output,
+                                    step_index=i,
+                                    step_name=step_name,
+                                    collected_step_outputs=collected_step_outputs,
+                                    previous_step_outputs=previous_step_outputs,
+                                    workflow_run_response=workflow_run_response,
+                                    session=session,
+                                    run_context=run_context,
+                                    steps_list=steps_list,
+                                    execution_input=execution_input,
+                                )
+                                if control is not None:
+                                    if control["action"] == "paused":
+                                        paused_event = create_conversational_paused_event(
+                                            workflow_run_response, step, step_name, i, step_output
+                                        )
+                                        yield self._handle_event(paused_event, workflow_run_response)
+                                        return
+                                    if control["action"] == "goto":
+                                        pending_conversational_message = control["message"]
+                                        i = control["index"]
+                                        conversational_goto = True
+                                        break
 
                                 collected_step_outputs.append(step_output)
 
@@ -2891,9 +3009,14 @@ class Workflow:
                         save_paused_session(self, session, workflow_run_response)
                         return
 
+                    if conversational_goto:
+                        continue
+
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
+
+                    i += 1
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
@@ -3187,6 +3310,26 @@ class Workflow:
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
+        # Conversational sticky resume (arun is sync and returns coroutines, so check here)
+        from agno.workflow.conversational import get_last_paused_run, is_conversational_pause_kind
+
+        paused_run = get_last_paused_run(workflow_session)
+        if (
+            paused_run is not None
+            and is_conversational_pause_kind(getattr(paused_run, "pause_kind", None))
+            and execution_input.input is not None
+        ):
+            return await self._aresume_conversational_run(
+                paused_run=paused_run,
+                user_message=execution_input.input,
+                session=workflow_session,
+                run_context=run_context,
+                background_tasks=background_tasks,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                **kwargs,
+            )
+
         workflow_run_response.status = RunStatus.running
 
         if callable(self.steps):
@@ -3250,8 +3393,12 @@ class Workflow:
                 # for the in-flight step (mirrors _aexecute_stream's behaviour).
                 current_step_name = ""
                 current_step = None
+                pending_conversational_message = None
 
-                for i, step in enumerate(self.steps):  # type: ignore[arg-type]
+                i = 0
+                steps_list = cast(List[Any], self.steps)
+                while i < len(steps_list):
+                    step = steps_list[i]
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     current_step_name = step_name
@@ -3267,6 +3414,21 @@ class Workflow:
                         shared_audio=shared_audio,
                         shared_files=shared_files,
                     )
+
+                    if pending_conversational_message is not None:
+                        if step_input.additional_data is None:
+                            step_input.additional_data = {}
+                        step_input.additional_data["conversational_user_message"] = pending_conversational_message
+                        pending_conversational_message = None
+
+                    if isinstance(step, Step) and step.conversational:
+                        from agno.workflow.conversational import collect_completed_goto_targets
+
+                        step._conversational_control.available_goto_steps = collect_completed_goto_targets(
+                            steps_list,
+                            collected_step_outputs,
+                            step_name,
+                        )
 
                     # Check for cancellation before executing step
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -3360,6 +3522,29 @@ class Workflow:
                             await asave_paused_session(self, workflow_session, workflow_run_response)
                             return workflow_run_response
 
+                    control = self._apply_conversational_step_control(
+                        step=step,
+                        step_output=step_output,
+                        step_index=i,
+                        step_name=step_name,
+                        collected_step_outputs=collected_step_outputs,
+                        previous_step_outputs=previous_step_outputs,
+                        workflow_run_response=workflow_run_response,
+                        session=workflow_session,
+                        run_context=run_context,
+                        steps_list=steps_list,
+                        execution_input=execution_input,
+                        async_save=True,
+                    )
+                    if control is not None:
+                        if control["action"] == "paused":
+                            await asave_paused_session(self, workflow_session, workflow_run_response)
+                            return workflow_run_response
+                        if control["action"] == "goto":
+                            pending_conversational_message = control["message"]
+                            i = control["index"]
+                            continue
+
                     # Check for cancellation after step execution
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -3422,7 +3607,10 @@ class Workflow:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
 
+                    i += 1
+
                 # Update the workflow_run_response with completion data
+
                 if collected_step_outputs:
                     # Stop the timer for the Run duration
                     if workflow_run_response.metrics:
@@ -3553,6 +3741,63 @@ class Workflow:
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
+        from agno.workflow.conversational import get_last_paused_run, is_conversational_pause_kind
+
+        paused_run = get_last_paused_run(workflow_session)
+        if (
+            paused_run is not None
+            and is_conversational_pause_kind(getattr(paused_run, "pause_kind", None))
+            and execution_input.input is not None
+        ):
+            result = await self._aresume_conversational_run(
+                paused_run=paused_run,
+                user_message=execution_input.input,
+                session=workflow_session,
+                run_context=run_context,
+                background_tasks=background_tasks,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                **kwargs,
+            )
+            # Mirror resume outcome into the streaming channel
+            if result.status == RunStatus.paused and result.pause_kind:
+                from agno.workflow.types import PauseKind
+
+                if result.pause_kind == PauseKind.CONVERSATIONAL or str(result.pause_kind) == "conversational":
+                    step_obj: Any = None
+                    step_name = result.paused_step_name or "step"
+                    step_index = result.paused_step_index or 0
+                    if (
+                        self.steps
+                        and result.paused_step_index is not None
+                        and result.paused_step_index < len(self.steps)  # type: ignore[arg-type]
+                    ):
+                        step_obj = self.steps[result.paused_step_index]  # type: ignore[index]
+                    step_output = StepOutput(content=result.content)
+                    paused_event = create_conversational_paused_event(
+                        result,
+                        step_obj if step_obj is not None else type("S", (), {"step_id": None})(),
+                        step_name,
+                        step_index,
+                        step_output,
+                    )
+                    yield self._handle_event(paused_event, result)
+                    return
+            # Completed (or other terminal) — emit completed event with content
+            from agno.run.workflow import WorkflowCompletedEvent
+
+            yield self._handle_event(
+                WorkflowCompletedEvent(
+                    run_id=result.run_id or "",
+                    workflow_name=result.workflow_name,
+                    workflow_id=result.workflow_id,
+                    session_id=result.session_id,
+                    content=result.content,
+                ),
+                result,
+            )
+            return
+
         workflow_run_response.status = RunStatus.running
 
         workflow_started_event = WorkflowStartedEvent(
@@ -3665,7 +3910,11 @@ class Workflow:
                 partial_step_content = ""
                 cancelled_step_output: Optional[StepOutput] = None
 
-                for i, step in enumerate(self.steps):  # type: ignore[arg-type]
+                pending_conversational_message = None
+                i = 0
+                steps_list = cast(List[Any], self.steps)
+                while i < len(steps_list):
+                    step = steps_list[i]
                     if workflow_run_response.run_id:
                         await araise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
@@ -3676,6 +3925,7 @@ class Workflow:
                     # Reset partial data for this step
                     partial_step_content = ""
                     cancelled_step_output = None
+                    conversational_goto = False
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -3686,6 +3936,21 @@ class Workflow:
                         shared_audio=shared_audio,
                         shared_files=shared_files,
                     )
+
+                    if pending_conversational_message is not None:
+                        if step_input.additional_data is None:
+                            step_input.additional_data = {}
+                        step_input.additional_data["conversational_user_message"] = pending_conversational_message
+                        pending_conversational_message = None
+
+                    if isinstance(step, Step) and step.conversational:
+                        from agno.workflow.conversational import collect_completed_goto_targets
+
+                        step._conversational_control.available_goto_steps = collect_completed_goto_targets(
+                            steps_list,
+                            collected_step_outputs,
+                            step_name,
+                        )
 
                     # Check for HITL requirements
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
@@ -3779,6 +4044,34 @@ class Workflow:
                                         )
                                         await asave_paused_session(self, workflow_session, workflow_run_response)
                                         return
+
+                                control = self._apply_conversational_step_control(
+                                    step=step,
+                                    step_output=step_output,
+                                    step_index=i,
+                                    step_name=step_name,
+                                    collected_step_outputs=collected_step_outputs,
+                                    previous_step_outputs=previous_step_outputs,
+                                    workflow_run_response=workflow_run_response,
+                                    session=workflow_session,
+                                    run_context=run_context,
+                                    steps_list=steps_list,
+                                    execution_input=execution_input,
+                                    async_save=True,
+                                )
+                                if control is not None:
+                                    if control["action"] == "paused":
+                                        paused_event = create_conversational_paused_event(
+                                            workflow_run_response, step, step_name, i, step_output
+                                        )
+                                        yield self._handle_event(paused_event, workflow_run_response)
+                                        await asave_paused_session(self, workflow_session, workflow_run_response)
+                                        return
+                                    if control["action"] == "goto":
+                                        pending_conversational_message = control["message"]
+                                        i = control["index"]
+                                        conversational_goto = True
+                                        break
 
                                 collected_step_outputs.append(step_output)
 
@@ -3989,9 +4282,14 @@ class Workflow:
                         await asave_paused_session(self, workflow_session, workflow_run_response)
                         return
 
+                    if conversational_goto:
+                        continue
+
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
+
+                    i += 1
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
@@ -6071,6 +6369,7 @@ class Workflow:
             router_selection = kwargs.get("router_selection")
             rejection_feedback = kwargs.get("rejection_feedback")
             retry_count = kwargs.get("retry_count", 0)
+            conversational_user_message = kwargs.get("conversational_user_message")
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
@@ -6112,6 +6411,21 @@ class Workflow:
                     shared_audio=shared_audio,
                     shared_files=shared_files,
                 )
+
+                # Inject conversational user message on the first continued step
+                if i == start_step_index and conversational_user_message is not None:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["conversational_user_message"] = conversational_user_message
+
+                if isinstance(step, Step) and step.conversational:
+                    from agno.workflow.conversational import collect_completed_goto_targets
+
+                    step._conversational_control.available_goto_steps = collect_completed_goto_targets(
+                        cast(List[Any], self.steps),
+                        collected_step_outputs,
+                        step_name,
+                    )
 
                 # Inject user input into step_input for the first step (the one that was paused)
                 if i == start_step_index and user_input:
@@ -6377,8 +6691,10 @@ class Workflow:
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
-                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                # Skip the check for the step whose HITL was just resolved, or a conversational sticky resume.
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                conversational_resumed_index = kwargs.get("conversational_resumed_for_step")
+                skip_hitl_check = i in (hitl_resolved_index, conversational_resumed_index)
                 if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
                     # Step-level HITL was just resolved — store StepContinuedEvent
                     self._handle_event(
@@ -6393,7 +6709,7 @@ class Workflow:
                         ),
                         workflow_run_response,
                     )
-                if i != hitl_resolved_index:
+                if not skip_hitl_check:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
                     # For Router, also check route selection if confirmation didn't trigger
@@ -6526,6 +6842,65 @@ class Workflow:
                     )
                     save_paused_session(self, session, workflow_run_response)
                     return workflow_run_response
+
+                # Conversational sticky step: not complete → pause for next user message
+                if not getattr(step_output, "conversational_complete", True):
+                    apply_conversational_pause(
+                        workflow_run_response,
+                        step,
+                        i,
+                        step_name,
+                        step_output,
+                        collected_step_outputs,
+                    )
+                    save_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
+
+                # Conversational goto: prune, clear keys, recurse from target with same user message
+                if getattr(step_output, "goto_step", None):
+                    from agno.workflow.conversational import (
+                        clear_session_state_keys,
+                        find_step_index_by_name,
+                        prune_step_results,
+                        require_conversational_goto_target,
+                    )
+
+                    target_name = step_output.goto_step
+                    assert target_name is not None
+                    require_conversational_goto_target(cast(List[Any], self.steps), target_name)
+                    collected_step_outputs, previous_step_outputs = prune_step_results(
+                        collected_step_outputs,
+                        previous_step_outputs,
+                        target_name,
+                        cast(List[Any], self.steps),
+                    )
+                    # Keep state in sync for ContinueExecutionState consumers
+                    state.collected_step_outputs = collected_step_outputs
+                    state.previous_step_outputs = previous_step_outputs
+                    clear_session_state_keys(
+                        run_context.session_state if run_context else None,
+                        step_output.goto_clear_keys or [],
+                    )
+                    target_index = find_step_index_by_name(cast(List[Any], self.steps), target_name)
+                    if target_index is None:
+                        raise ValueError(f"goto target '{target_name}' not found in workflow steps")
+                    workflow_run_response.step_results = collected_step_outputs
+                    goto_message = conversational_user_message or execution_input.input
+                    log_debug(f"goto (continue): jumping from '{step_name}' to '{target_name}' (index {target_index})")
+                    kwargs = dict(kwargs)
+                    kwargs["conversational_user_message"] = goto_message
+                    kwargs.pop("executor_step_requirement", None)
+                    kwargs.pop("conversational_resumed_for_step", None)
+                    kwargs.pop("hitl_resolved_for_step", None)
+                    return self._continue_execute(
+                        session=session,
+                        execution_input=execution_input,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                        start_step_index=target_index,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
@@ -7312,8 +7687,10 @@ class Workflow:
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
-                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                # Skip the check for the step whose HITL was just resolved, or a conversational sticky resume.
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                conversational_resumed_index = kwargs.get("conversational_resumed_for_step")
+                skip_hitl_check = i in (hitl_resolved_index, conversational_resumed_index)
                 if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
                     # Step-level HITL was just resolved — emit StepContinuedEvent
                     yield self._handle_event(
@@ -7328,7 +7705,7 @@ class Workflow:
                         ),
                         workflow_run_response,
                     )
-                if i != hitl_resolved_index:
+                if not skip_hitl_check:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
                     # For Router, also check route selection if confirmation didn't trigger
@@ -8117,6 +8494,7 @@ class Workflow:
             router_selection = kwargs.get("router_selection")
             rejection_feedback = kwargs.get("rejection_feedback")
             retry_count = kwargs.get("retry_count", 0)
+            conversational_user_message = kwargs.get("conversational_user_message")
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
@@ -8146,6 +8524,21 @@ class Workflow:
                     shared_audio=shared_audio,
                     shared_files=shared_files,
                 )
+
+                # Inject conversational user message on the first continued step
+                if i == start_step_index and conversational_user_message is not None:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["conversational_user_message"] = conversational_user_message
+
+                if isinstance(step, Step) and step.conversational:
+                    from agno.workflow.conversational import collect_completed_goto_targets
+
+                    step._conversational_control.available_goto_steps = collect_completed_goto_targets(
+                        cast(List[Any], self.steps),
+                        collected_step_outputs,
+                        step_name,
+                    )
 
                 # Inject user input into step_input for the first step (the one that was paused)
                 if i == start_step_index and user_input:
@@ -8398,8 +8791,10 @@ class Workflow:
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
-                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                # Skip the check for the step whose HITL was just resolved, or a conversational sticky resume.
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                conversational_resumed_index = kwargs.get("conversational_resumed_for_step")
+                skip_hitl_check = i in (hitl_resolved_index, conversational_resumed_index)
                 if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
                     # Step-level HITL was just resolved — store StepContinuedEvent
                     self._handle_event(
@@ -8414,7 +8809,7 @@ class Workflow:
                         ),
                         workflow_run_response,
                     )
-                if i != hitl_resolved_index:
+                if not skip_hitl_check:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
                     # For Router, also check route selection if confirmation didn't trigger
@@ -8542,6 +8937,64 @@ class Workflow:
                     )
                     await asave_paused_session(self, session, workflow_run_response)
                     return workflow_run_response
+
+                # Conversational sticky step: not complete → pause for next user message
+                if not getattr(step_output, "conversational_complete", True):
+                    apply_conversational_pause(
+                        workflow_run_response,
+                        step,
+                        i,
+                        step_name,
+                        step_output,
+                        collected_step_outputs,
+                    )
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
+
+                # Conversational goto: prune, clear keys, recurse from target
+                if getattr(step_output, "goto_step", None):
+                    from agno.workflow.conversational import (
+                        clear_session_state_keys,
+                        find_step_index_by_name,
+                        prune_step_results,
+                        require_conversational_goto_target,
+                    )
+
+                    target_name = step_output.goto_step
+                    assert target_name is not None
+                    require_conversational_goto_target(cast(List[Any], self.steps), target_name)
+                    collected_step_outputs, previous_step_outputs = prune_step_results(
+                        collected_step_outputs,
+                        previous_step_outputs,
+                        target_name,
+                        cast(List[Any], self.steps),
+                    )
+                    state.collected_step_outputs = collected_step_outputs
+                    state.previous_step_outputs = previous_step_outputs
+                    clear_session_state_keys(
+                        run_context.session_state if run_context else None,
+                        step_output.goto_clear_keys or [],
+                    )
+                    target_index = find_step_index_by_name(cast(List[Any], self.steps), target_name)
+                    if target_index is None:
+                        raise ValueError(f"goto target '{target_name}' not found in workflow steps")
+                    workflow_run_response.step_results = collected_step_outputs
+                    goto_message = conversational_user_message or execution_input.input
+                    log_debug(f"goto (acontinue): jumping from '{step_name}' to '{target_name}' (index {target_index})")
+                    kwargs = dict(kwargs)
+                    kwargs["conversational_user_message"] = goto_message
+                    kwargs.pop("executor_step_requirement", None)
+                    kwargs.pop("conversational_resumed_for_step", None)
+                    kwargs.pop("hitl_resolved_for_step", None)
+                    return await self._acontinue_execute(
+                        session=session,
+                        execution_input=execution_input,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                        start_step_index=target_index,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
@@ -9062,8 +9515,10 @@ class Workflow:
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
-                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                # Skip the check for the step whose HITL was just resolved, or a conversational sticky resume.
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                conversational_resumed_index = kwargs.get("conversational_resumed_for_step")
+                skip_hitl_check = i in (hitl_resolved_index, conversational_resumed_index)
                 if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
                     # Step-level HITL was just resolved — emit StepContinuedEvent
                     yield self._handle_event(
@@ -9079,7 +9534,7 @@ class Workflow:
                         workflow_run_response,
                         websocket_handler=websocket_handler,
                     )
-                if i != hitl_resolved_index:
+                if not skip_hitl_check:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
                     # For Router, also check route selection if confirmation didn't trigger
@@ -9663,6 +10118,27 @@ class Workflow:
             metadata=resolved["metadata"],
         )
 
+        # Conversational sticky resume: prefer continuing a paused conversational run
+        # over starting a new run or letting WorkflowAgent call run_workflow from step 0.
+        from agno.workflow.conversational import get_last_paused_run, is_conversational_pause_kind
+
+        paused_run = get_last_paused_run(workflow_session)
+        if (
+            paused_run is not None
+            and is_conversational_pause_kind(getattr(paused_run, "pause_kind", None))
+            and input is not None
+        ):
+            return self._resume_conversational_run(
+                paused_run=paused_run,
+                user_message=input,
+                session=workflow_session,
+                run_context=run_context,
+                background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
+                **kwargs,
+            )
+
         # Execute workflow agent if configured
         if self.agent is not None:
             return self._execute_workflow_agent(
@@ -10023,6 +10499,179 @@ class Workflow:
 
             self.steps = prepared_steps  # type: ignore
             log_debug("Step preparation completed")
+
+            from agno.workflow.conversational import validate_no_conversational_in_parallel
+
+            validate_no_conversational_in_parallel(self.steps)
+
+    def _apply_conversational_step_control(
+        self,
+        *,
+        step: Any,
+        step_output: StepOutput,
+        step_index: int,
+        step_name: str,
+        collected_step_outputs: List[Any],
+        previous_step_outputs: Dict[str, StepOutput],
+        workflow_run_response: WorkflowRunOutput,
+        session: WorkflowSession,
+        run_context: RunContext,
+        steps_list: List[Any],
+        execution_input: WorkflowExecutionInput,
+        async_save: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Handle conversational sticky pause or goto after a step runs.
+
+        Returns:
+            None if no conversational control applied (caller continues normally).
+            {"action": "paused"} if sticky pause was applied (caller should return).
+            {"action": "goto", "index": int, "message": Any} if goto should jump.
+        """
+        if not getattr(step_output, "conversational_complete", True):
+            apply_conversational_pause(
+                workflow_run_response,
+                step,
+                step_index,
+                step_name,
+                step_output,
+                collected_step_outputs,
+            )
+            if not async_save:
+                save_paused_session(self, session, workflow_run_response)
+            return {"action": "paused"}
+
+        if getattr(step_output, "goto_step", None):
+            from agno.workflow.conversational import (
+                clear_session_state_keys,
+                find_step_index_by_name,
+                prune_step_results,
+                require_conversational_goto_target,
+            )
+
+            target_name = step_output.goto_step
+            assert target_name is not None
+            require_conversational_goto_target(steps_list, target_name)
+            pruned_results, rebuilt_previous = prune_step_results(
+                collected_step_outputs,
+                previous_step_outputs,
+                target_name,
+                steps_list,
+            )
+            collected_step_outputs[:] = pruned_results
+            previous_step_outputs.clear()
+            previous_step_outputs.update(rebuilt_previous)
+            clear_session_state_keys(
+                run_context.session_state if run_context else None,
+                step_output.goto_clear_keys or [],
+            )
+            target_index = find_step_index_by_name(steps_list, target_name)
+            if target_index is None:
+                raise ValueError(f"goto target '{target_name}' not found in workflow steps")
+            log_debug(f"goto: jumping from '{step_name}' to '{target_name}' (index {target_index})")
+            return {
+                "action": "goto",
+                "index": target_index,
+                "message": execution_input.input,
+            }
+
+        return None
+
+    def _resume_conversational_run(
+        self,
+        paused_run: WorkflowRunOutput,
+        user_message: Any,
+        session: WorkflowSession,
+        run_context: RunContext,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput:
+        """Resume a conversational-paused workflow with a new user chat message.
+
+        Reuses the paused run_id and continues from paused_step_index, forwarding
+        ``user_message`` as conversational_user_message to the sticky step.
+        """
+        paused_step_index = paused_run.paused_step_index
+        if paused_step_index is None:
+            raise ValueError("Cannot resume conversational run without paused_step_index")
+
+        # Mark conversational requirement as no longer active for this resume
+        if paused_run.step_requirements:
+            for req in paused_run.step_requirements:
+                if getattr(req, "requires_conversational_input", False):
+                    req.requires_conversational_input = False
+
+        paused_run.status = RunStatus.running
+        # Keep content from prior assistant turn until the new turn produces output
+        execution_input = WorkflowExecutionInput(input=user_message)
+
+        # Align run_context with the paused run
+        run_context.run_id = paused_run.run_id or run_context.run_id
+        if session.session_data and session.session_data.get("session_state") is not None:
+            run_context.session_state = session.session_data["session_state"]
+
+        # Continue from the paused conversational step with the new user message.
+        # conversational_resumed_for_step skips pre-execution HITL checks without
+        # emitting StepContinuedEvent (unlike hitl_resolved_for_step).
+        kwargs = dict(kwargs)
+        kwargs["conversational_user_message"] = user_message
+        kwargs["conversational_resumed_for_step"] = paused_step_index
+
+        return self._continue_execute(
+            session=session,
+            execution_input=execution_input,
+            workflow_run_response=paused_run,
+            run_context=run_context,
+            start_step_index=paused_step_index,
+            background_tasks=background_tasks,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            **kwargs,
+        )
+
+    async def _aresume_conversational_run(
+        self,
+        paused_run: WorkflowRunOutput,
+        user_message: Any,
+        session: WorkflowSession,
+        run_context: RunContext,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput:
+        """Async resume for a conversational-paused workflow run."""
+        paused_step_index = paused_run.paused_step_index
+        if paused_step_index is None:
+            raise ValueError("Cannot resume conversational run without paused_step_index")
+
+        if paused_run.step_requirements:
+            for req in paused_run.step_requirements:
+                if getattr(req, "requires_conversational_input", False):
+                    req.requires_conversational_input = False
+
+        paused_run.status = RunStatus.running
+        execution_input = WorkflowExecutionInput(input=user_message)
+        run_context.run_id = paused_run.run_id or run_context.run_id
+        if session.session_data and session.session_data.get("session_state") is not None:
+            run_context.session_state = session.session_data["session_state"]
+
+        kwargs = dict(kwargs)
+        kwargs["conversational_user_message"] = user_message
+        kwargs["conversational_resumed_for_step"] = paused_step_index
+
+        return await self._acontinue_execute(
+            session=session,
+            execution_input=execution_input,
+            workflow_run_response=paused_run,
+            run_context=run_context,
+            start_step_index=paused_step_index,
+            background_tasks=background_tasks,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            **kwargs,
+        )
 
     def print_response(
         self,

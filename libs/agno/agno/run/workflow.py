@@ -328,6 +328,10 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
     user_input_message: Optional[str] = None
     user_input_schema: Optional[List[Dict[str, Any]]] = None
 
+    # Conversational sticky step: waiting for the next free-form chat message
+    requires_conversational_input: bool = False
+    content: Optional[Any] = None
+
 
 @dataclass
 class StepContinuedEvent(BaseWorkflowRunOutputEvent):
