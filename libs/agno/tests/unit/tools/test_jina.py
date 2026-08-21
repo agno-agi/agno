@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -159,8 +160,9 @@ def test_jina_read_url_successful(mock_httpx_get, sample_jina_read_url_response)
     expected_url = f"{tools.config.base_url}https://example.com"
     mock_httpx_get.assert_called_once_with(expected_url, headers=tools._get_headers())
 
-    # Verify result contains the response data
-    assert str(sample_jina_read_url_response) in result
+    # Verify result contains the response data (v3.0 returns JSON string)
+    result_json = json.loads(result)
+    assert result_json == sample_jina_read_url_response
 
 
 @patch("agno.tools.jina.httpx.get")
@@ -228,8 +230,9 @@ def test_search_query_successful(mock_httpx_post, sample_search_query_response):
     expected_body = {"q": "test query"}
     mock_httpx_post.assert_called_once_with(str(tools.config.search_url), headers=expected_headers, json=expected_body)
 
-    # Verify result contains the response data
-    assert str(sample_search_query_response) in result
+    # Verify result contains the response data (v3.0 returns JSON string)
+    result_json = json.loads(result)
+    assert result_json == sample_search_query_response
 
 
 @patch("agno.tools.jina.httpx.post")
