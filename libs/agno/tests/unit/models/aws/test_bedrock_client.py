@@ -4,6 +4,35 @@ import pytest
 from boto3.session import Session
 
 from agno.models.aws import AwsBedrock
+from agno.models.message import Message
+
+
+class FakeAsyncClient:
+    """Async Bedrock client without the async context manager protocol."""
+
+    def __init__(self):
+        self.converse_calls = 0
+
+    async def converse(self, **kwargs):
+        self.converse_calls += 1
+        return {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hello"}]}},
+            "stopReason": "end_turn",
+        }
+
+
+class FakeContextManagedAsyncClient(FakeAsyncClient):
+    """Async Bedrock client that is also an async context manager, as aiobotocore clients are."""
+
+    def __init__(self):
+        super().__init__()
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.closed = True
 
 
 def _make_frozen_creds(access_key="ASIATEMP", secret_key="secret", token="token"):
@@ -112,6 +141,111 @@ class TestSessionTokenEnv:
 
             call_kwargs = MockClient.call_args[1]
             assert call_kwargs["aws_session_token"] is None
+
+
+class TestProvidedAsyncClient:
+    @pytest.mark.asyncio
+    async def test_async_client_does_not_require_aioboto3(self):
+        provided = FakeAsyncClient()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        with patch("agno.models.aws.bedrock.AIOBOTO3_AVAILABLE", False):
+            async with model._async_client() as client:
+                assert client is provided
+
+    @pytest.mark.asyncio
+    async def test_async_client_takes_precedence_over_session(self):
+        mock_session, mock_creds, _ = _make_mock_session()
+        provided = FakeAsyncClient()
+        model = AwsBedrock(
+            id="anthropic.claude-3-sonnet-20240229-v1:0",
+            session=mock_session,
+            async_client=provided,
+        )
+
+        async with model._async_client() as client:
+            assert client is provided
+
+        mock_session.get_credentials.assert_not_called()
+        mock_creds.get_frozen_credentials.assert_not_called()
+
+    def test_get_async_client_ignores_provided_client(self):
+        """`get_async_client` is a factory: it builds a model-owned client regardless of injection."""
+        provided = FakeAsyncClient()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        with patch("agno.models.aws.bedrock.AIOBOTO3_AVAILABLE", False):
+            with pytest.raises(ImportError, match="aioboto3"):
+                model.get_async_client()
+
+    def test_async_client_not_created_when_none_provided(self):
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+
+        with patch("agno.models.aws.bedrock.AIOBOTO3_AVAILABLE", False):
+            with pytest.raises(ImportError, match="aioboto3"):
+                model.get_async_client()
+
+
+class TestProvidedAsyncClientLifecycle:
+    @pytest.mark.asyncio
+    async def test_plain_client_used_without_entering_context(self):
+        """A provided client that is not an async context manager is usable as-is."""
+        provided = FakeAsyncClient()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        async with model._async_client() as client:
+            assert client is provided
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_with_plain_client(self):
+        provided = FakeAsyncClient()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        response = await model.ainvoke(
+            messages=[Message(role="user", content="hi")],
+            assistant_message=Message(role="assistant"),
+        )
+
+        assert response.content == "hello"
+        assert provided.converse_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_provided_client_not_closed_and_reusable(self):
+        """A caller-owned client stays open across requests."""
+        provided = FakeContextManagedAsyncClient()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        for _ in range(2):
+            await model.ainvoke(
+                messages=[Message(role="user", content="hi")],
+                assistant_message=Message(role="assistant"),
+            )
+
+        assert provided.closed is False
+        assert provided.converse_calls == 2
+
+    @pytest.mark.asyncio
+    async def test_client_context_manager_rejected(self):
+        """An unentered client context manager is single use, so it is rejected with guidance."""
+        provided = MagicMock(spec=["__aenter__", "__aexit__"])
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        with pytest.raises(ValueError, match="must be an initialized async Bedrock client"):
+            async with model._async_client():
+                pass
+
+    @pytest.mark.asyncio
+    async def test_owned_client_is_entered_and_closed(self):
+        """Clients created by the model are still entered and closed per request."""
+        owned = FakeContextManagedAsyncClient()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+
+        with patch.object(model, "get_async_client", return_value=owned):
+            async with model._async_client() as client:
+                assert client is owned
+                assert owned.closed is False
+
+        assert owned.closed is True
 
 
 class TestSessionNullCredentials:
