@@ -18,6 +18,7 @@ from agno.verify.types import Verdict
 
 _bridge_lock = threading.Lock()
 _bridge_loop: Optional[asyncio.AbstractEventLoop] = None
+_bridge_thread: Optional[threading.Thread] = None
 
 
 def _get_bridge_loop() -> asyncio.AbstractEventLoop:
@@ -25,23 +26,38 @@ def _get_bridge_loop() -> asyncio.AbstractEventLoop:
 
     Sync callers submit coroutines here instead of calling `asyncio.run` per call: inside a
     running loop (notebooks, request handlers) `asyncio.run` raises, and a fresh loop per
-    call leaves model clients cached on a closed loop by the next attempt.
+    call leaves model clients cached on a closed loop by the next attempt. The loop is
+    rebuilt if its thread has died.
     """
-    global _bridge_loop
+    global _bridge_loop, _bridge_thread
     with _bridge_lock:
-        if _bridge_loop is None or _bridge_loop.is_closed():
+        alive = _bridge_thread is not None and _bridge_thread.is_alive()
+        if _bridge_loop is None or _bridge_loop.is_closed() or not alive:
             loop = asyncio.new_event_loop()
             thread = threading.Thread(target=loop.run_forever, name="agno-verify-bridge", daemon=True)
             thread.start()
-            _bridge_loop = loop
+            _bridge_loop, _bridge_thread = loop, thread
         return _bridge_loop
+
+
+async def _shield_base_exceptions(coro: Awaitable[Any]) -> tuple:
+    # A KeyboardInterrupt or SystemExit raised inside a task tears run_forever off the bridge
+    # thread before the result is handed back, which would block the caller forever. Carry it
+    # across as a value and re-raise it in the calling thread instead.
+    try:
+        return True, await coro
+    except BaseException as exc:  # noqa: BLE001
+        return False, exc
 
 
 def run_sync(coro: Awaitable[Any]) -> Any:
     """Run `coro` on the bridge loop and block for its result. Safe with or without a running
-    loop in the calling thread."""
+    loop in the calling thread; exceptions, including BaseException, propagate to the caller."""
     loop = _get_bridge_loop()
-    return asyncio.run_coroutine_threadsafe(coro, loop).result()  # type: ignore[arg-type]
+    ok, value = asyncio.run_coroutine_threadsafe(_shield_base_exceptions(coro), loop).result()
+    if ok:
+        return value
+    raise value
 
 
 def _is_async_callable(fn: Any) -> bool:
@@ -136,44 +152,62 @@ def verifier(fn: Callable[[Any], Any], name: Optional[str] = None) -> Verifier:
     return CallableVerifier(fn, name=name)
 
 
-class _HalfVerifier:
-    """Wraps an object that implements only `verify` or only `averify`, deriving the other."""
+class GuardedVerifier:
+    """The guard every user-supplied Verifier runs behind.
+
+    Delegates to the object's own `verify` / `averify`, derives a missing half (sync from
+    async through the bridge, async from sync through a thread), maps a non-Verdict return
+    through the adapter's rules, and turns an exception into a failing Verdict. A broken
+    verifier can never crash a run, whichever shape it was written in.
+    """
 
     def __init__(self, inner: Any) -> None:
         self.inner = inner
         self.name: str = str(getattr(inner, "name", None) or type(inner).__name__)
+        sync_half = getattr(inner, "verify", None)
+        async_half = getattr(inner, "averify", None)
+        # An `async def verify` is an async half under the wrong name; honour what it is.
+        self._sync: Optional[Callable[[Any], Any]] = (
+            sync_half if callable(sync_half) and not _is_async_callable(sync_half) else None
+        )
+        self._async: Optional[Callable[[Any], Awaitable[Any]]] = None
+        if callable(async_half) and _is_async_callable(async_half):
+            self._async = async_half
+        elif callable(sync_half) and _is_async_callable(sync_half):
+            self._async = sync_half
 
     def verify(self, run: Any) -> Verdict:
         try:
-            if hasattr(self.inner, "verify"):
-                return self.inner.verify(run).named(self.name)
-            return run_sync(self.inner.averify(run)).named(self.name)
+            if self._sync is not None:
+                result = self._sync(run)
+            else:
+                result = run_sync(self._async(run))  # type: ignore[misc]
         except Exception as exc:
             return exception_verdict(self.name, exc)
+        return _map_return(result, self.name)
 
     async def averify(self, run: Any) -> Verdict:
         try:
-            if hasattr(self.inner, "averify"):
-                return (await self.inner.averify(run)).named(self.name)
-            return (await asyncio.to_thread(self.inner.verify, run)).named(self.name)
+            if self._async is not None:
+                result = await self._async(run)
+            else:
+                result = await asyncio.to_thread(self._sync, run)  # type: ignore[arg-type]
         except Exception as exc:
             return exception_verdict(self.name, exc)
+        return _map_return(result, self.name)
 
 
 def coerce_verifier(obj: Any) -> Verifier:
     """Classify one entry of `verifiers`.
 
-    Both halves present: used as-is. Exactly one half: the other is derived. A callable with
-    neither: adapted via `verifier()`. Anything else is a programmer error.
+    An object with `verify` and/or `averify` is used through `GuardedVerifier`, which calls
+    its own methods, derives a missing half, and guards against exceptions. A callable with
+    neither is adapted via `verifier()`. Anything else is a programmer error.
     """
     has_sync = callable(getattr(obj, "verify", None))
     has_async = callable(getattr(obj, "averify", None))
-    if has_sync and has_async:
-        if not getattr(obj, "name", None):
-            return _HalfVerifier(obj)
-        return obj
     if has_sync or has_async:
-        return _HalfVerifier(obj)
+        return GuardedVerifier(obj)
     if callable(obj):
         return verifier(obj)
     raise ValueError(
@@ -257,6 +291,7 @@ class ShellVerifier:
                 shell=True,
                 cwd=self.cwd,
                 env=self._env(),
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 **popen_kwargs,
@@ -269,8 +304,13 @@ class ShellVerifier:
         except subprocess.TimeoutExpired:
             timed_out = True
             self._kill_group(proc.pid)
-            # Retrying communicate after a timeout does not lose the output read so far.
-            out, _ = proc.communicate()
+            # Retrying communicate after a timeout does not lose the output read so far. The
+            # group is dead, so this returns at once; the bound covers a kill that was refused.
+            try:
+                out, _ = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                out, _ = proc.communicate()
         output = (out or b"").decode("utf-8", errors="replace")
         return self._report(proc.returncode, output, timed_out)
 
@@ -285,6 +325,7 @@ class ShellVerifier:
                 self.command,
                 cwd=self.cwd,
                 env=self._env(),
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 **popen_kwargs,
@@ -301,14 +342,23 @@ class ShellVerifier:
                     break
                 chunks.append(chunk)
 
+        async def pump_and_wait() -> None:
+            # Both the read and the exit are under the deadline: a child that closes its
+            # pipes and keeps running must not outlive the timeout either.
+            await pump()
+            await proc.wait()
+
         timed_out = False
         try:
-            await asyncio.wait_for(pump(), timeout=self.timeout_s)
-            await proc.wait()
+            await asyncio.wait_for(pump_and_wait(), timeout=self.timeout_s)
         except asyncio.TimeoutError:
             timed_out = True
             self._kill_group(proc.pid)
-            await proc.wait()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
         output = b"".join(chunks).decode("utf-8", errors="replace")
         return self._report(proc.returncode, output, timed_out)
 
@@ -366,6 +416,7 @@ class ScorerVerifier:
 
 __all__ = [
     "CallableVerifier",
+    "GuardedVerifier",
     "ScorerVerifier",
     "ShellVerifier",
     "Verifier",

@@ -36,8 +36,9 @@ export OPENAI_API_KEY=...
 ```
 
 Every example creates its own scratch directory (or scratch git repository) and points the tools, the
-verifier and the fingerprint at it, so nothing touches your checkout. Every agent carries `VERIFICATION_NOTICE`
-in its instructions so the model knows up front that the host checks completion.
+verifier and the fingerprint at it, so nothing touches your checkout. Every agent driven by `run_verified`
+carries `VERIFICATION_NOTICE` in its instructions so the model knows up front that the host checks completion;
+`04_predictions` uses a plain `agent.run`, since `verified_tool` works per call and needs no notice.
 
 ## What to read in the output
 

@@ -63,9 +63,11 @@ the pass rule; its reason is the evidence the model reads.
 **Description:** A counter tool that silently caps each step at 5. The model predicts each result through
 `expect`; one step call per message so each result is read before the next step is spent.
 
-**Result:** Calls `(17, expect 17, got 5)`, `(5, 10, 10)`, `(5, 15, 15)`, `(2, 17, 17)`. The first divergence
-forced a replan from the real value; the model reported the cap. An earlier wording ("one step per turn") made
-the model stop after a single step, which is why the instructions now say "one step call per message".
+**Result:** Calls `(17, expect 17, got 5)`, `(5, 10, 10)`, `(5, 15, 15)`, `(2, 17, 17)`. The first call
+diverged and the block was read before the second call was issued: the planned remaining steps were never spent
+and the replan started from the real value 5; the model reported the cap. An earlier wording ("one step per
+turn") made the model stop after a single step, which is why the instructions now say "one step call per
+message".
 
 ---
 

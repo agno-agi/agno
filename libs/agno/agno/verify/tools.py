@@ -9,6 +9,7 @@ for one predicted step per turn.
 
 import functools
 import inspect
+import re
 from typing import Any, Callable, Union
 
 from agno.verify.types import REPORT_CAP_BYTES, Verdict, cap_text
@@ -20,11 +21,19 @@ DIVERGENCE_DIRECTIVE = (
 )
 
 
+_CLOSE_TAG = re.compile(r"<\s*/\s*divergence\s*>", re.IGNORECASE)
+
+
+def _escape(text: str) -> str:
+    return _CLOSE_TAG.sub("<\\/divergence>", text)
+
+
 def divergence_report(expected: str, actual: str, context: str = "") -> str:
-    """The standard block: expected, actual, optional context, and the directive. Capped."""
-    lines = ["<divergence>", f"expected: {expected}", f"actual: {actual}"]
+    """The standard block: expected, actual, optional context, and the directive. Capped. The
+    tool's own output cannot close the block."""
+    lines = ["<divergence>", f"expected: {_escape(expected)}", f"actual: {_escape(actual)}"]
     if context:
-        lines.append(context)
+        lines.append(_escape(context))
     lines.extend([DIVERGENCE_DIRECTIVE, "</divergence>"])
     return cap_text("\n".join(lines), REPORT_CAP_BYTES)
 
@@ -84,6 +93,11 @@ def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: st
     passed through unchanged. The tool body receives `expect` exactly as sent. The wrapper
     matches the tool's kind (sync or async); generator tools are rejected. Tool exceptions
     propagate untouched.
+
+    The block is addressed to the model: do not combine with `stop_after_tool_call` or a
+    `show_result` tool used as the final answer, which hand the tool output to the user. With
+    `cache_results=True` a cached call is not re-compared, so a divergence recorded once is
+    replayed for the same arguments and prediction; leave caching off for stateful tools.
     """
 
     def decorate(fn: Callable) -> Callable:

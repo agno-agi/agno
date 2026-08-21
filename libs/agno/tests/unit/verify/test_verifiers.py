@@ -11,7 +11,7 @@ import pytest
 
 from agno.scorer import Score
 from agno.verify import ScorerVerifier, ShellVerifier, Verdict, Verifier, verifier
-from agno.verify.verifiers import coerce_verifier, run_sync
+from agno.verify.verifiers import GuardedVerifier, coerce_verifier, run_sync
 
 # ---------------------------------------------------------------------------
 # Adapter return mapping (test 6)
@@ -103,6 +103,30 @@ def test_adapter_keyboard_interrupt_propagates():
         verifier(interrupt).verify(object())
 
 
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize("exc_type", [KeyboardInterrupt, SystemExit])
+def test_base_exception_in_async_verifier_propagates_through_bridge(exc_type):
+    async def interrupt(run):
+        raise exc_type
+
+    with pytest.raises(exc_type):
+        verifier(interrupt).verify(object())
+    # The bridge survives: the next call still works.
+    assert verifier(lambda run: True).verify(object()).passed is True
+
+
+def test_adapter_exception_report_keeps_the_traceback_tail():
+    def deep(run):
+        def inner():
+            raise RuntimeError("deep failure")
+
+        inner()
+
+    report = verifier(deep).verify(object()).report
+    assert report.startswith("RuntimeError: deep failure")
+    assert "in inner" in report and 'raise RuntimeError("deep failure")' in report
+
+
 # ---------------------------------------------------------------------------
 # Entry classification (test 19)
 # ---------------------------------------------------------------------------
@@ -131,10 +155,41 @@ class AsyncOnly:
         return Verdict(passed=False, report="async half")
 
 
-def test_full_verifier_satisfies_protocol_and_is_used_as_is():
+def test_full_verifier_satisfies_protocol_and_runs_behind_the_guard():
     full = FullVerifier()
     assert isinstance(full, Verifier)
-    assert coerce_verifier(full) is full
+    guarded = coerce_verifier(full)
+    assert isinstance(guarded, GuardedVerifier) and guarded.inner is full
+    assert guarded.name == "full"
+    assert guarded.verify(object()).passed is True
+    assert asyncio.run(guarded.averify(object())).passed is True
+
+
+def test_full_verifier_exception_and_non_verdict_return_are_guarded():
+    class Raises:
+        name = "judge"
+
+        def verify(self, run):
+            raise ConnectionError("judge endpoint refused")
+
+        async def averify(self, run):
+            raise ConnectionError("judge endpoint refused")
+
+    class ReturnsBool:
+        name = "loose"
+
+        def verify(self, run):
+            return True
+
+        async def averify(self, run):
+            return None
+
+    raising = coerce_verifier(Raises())
+    assert "ConnectionError: judge endpoint refused" in raising.verify(object()).report
+    assert "ConnectionError: judge endpoint refused" in asyncio.run(raising.averify(object())).report
+    loose = coerce_verifier(ReturnsBool())
+    assert loose.verify(object()).passed is True
+    assert "returned None" in asyncio.run(loose.averify(object())).report
 
 
 def test_half_verifiers_get_their_twin():
@@ -145,6 +200,16 @@ def test_half_verifiers_get_their_twin():
     async_wrapped = coerce_verifier(AsyncOnly())
     assert async_wrapped.verify(object()).report == "async half"
     assert async_wrapped.name == "AsyncOnly"
+
+
+def test_async_def_verify_is_treated_as_the_async_half():
+    class AsyncUnderSyncName:
+        async def verify(self, run):
+            return "wrong name, right half"
+
+    wrapped = coerce_verifier(AsyncUnderSyncName())
+    assert wrapped.verify(object()).report == "wrong name, right half"
+    assert asyncio.run(wrapped.averify(object())).report == "wrong name, right half"
 
 
 def test_bare_scorer_is_rejected_at_entry():
@@ -178,28 +243,59 @@ def test_shell_merges_stderr():
     assert "out" in v.report and "err" in v.report
 
 
+def _grandchild_alive(marker: str) -> bool:
+    ps = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True)
+    return ps.stdout.strip() != ""
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="process groups are POSIX here")
 def test_shell_timeout_kills_group_and_keeps_partial_output():
-    v = ShellVerifier("echo started; sleep 30; echo finished", timeout_s=0.5, name="hang").verify(None)
+    marker = f"sleep 30.{os.getpid()}"
+    v = ShellVerifier(f"echo started; {marker}; echo finished", timeout_s=0.5, name="hang").verify(None)
     assert v.passed is False
     assert v.report.splitlines()[0].startswith("timed out after 0.5s")
     assert "started" in v.report
     assert "finished" not in v.report
     # The sleep grandchild must be gone, not just the shell.
     time.sleep(0.2)
-    ps = subprocess.run(["pgrep", "-f", "sleep 30"], capture_output=True, text=True)
-    assert ps.stdout.strip() == "", ps.stdout
+    assert not _grandchild_alive(marker)
 
 
-def test_shell_env_is_merged_not_replaced():
-    v = ShellVerifier('test -n "$PATH" && test "$VERIFY_X" = 1 && exit 0 || exit 9', env={"VERIFY_X": "1"}).verify(None)
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups are POSIX here")
+def test_shell_timeout_applies_after_child_closes_its_pipes():
+    # A child that closes stdout/stderr and keeps running must still hit the deadline.
+    marker = f"sleep 25.{os.getpid()}"
+    started = time.monotonic()
+    v = ShellVerifier(f"echo begin; exec 1>/dev/null 2>&1; {marker}", timeout_s=1.0).verify(None)
+    assert time.monotonic() - started < 8
+    assert v.passed is False and v.report.startswith("timed out after 1s") and "begin" in v.report
+    time.sleep(0.2)
+    assert not _grandchild_alive(marker)
+
+
+def test_shell_env_is_merged_not_replaced(monkeypatch):
+    monkeypatch.setenv("VERIFY_INHERITED", "from-parent")
+    v = ShellVerifier(
+        'test "$VERIFY_INHERITED" = from-parent && test "$VERIFY_X" = 1 && exit 0 || exit 9',
+        env={"VERIFY_X": "1"},
+    ).verify(None)
     assert v.passed is True, v.report
 
 
-def test_shell_cwd_default_is_process_cwd(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    assert ShellVerifier('test "$(pwd -P)" = "$(cd . && pwd -P)"').verify(None).passed is True
-    assert ShellVerifier("test -d .", cwd=str(tmp_path)).verify(None).passed is True
+def test_shell_cwd_default_is_process_cwd_and_cwd_is_honoured(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert ShellVerifier(f'test "$(pwd -P)" = "{elsewhere.resolve()}"').verify(None).passed is True
+    assert ShellVerifier(f'test "$(pwd -P)" = "{target.resolve()}"', cwd=str(target)).verify(None).passed is True
+    assert ShellVerifier(f'test "$(pwd -P)" = "{target.resolve()}"').verify(None).passed is False
+
+
+def test_shell_child_does_not_inherit_stdin():
+    v = ShellVerifier("read -r line && exit 3 || exit 0", timeout_s=5).verify(None)
+    assert v.passed is True, v.report
 
 
 def test_shell_missing_command_is_harness_error():
@@ -231,6 +327,29 @@ async def test_shell_async_timeout_keeps_partial_output():
     assert v.report.startswith("timed out after")
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups are POSIX here")
+async def test_shell_async_timeout_applies_after_child_closes_its_pipes():
+    marker = f"sleep 26.{os.getpid()}"
+    started = time.monotonic()
+    v = await ShellVerifier(f"echo begin; exec 1>/dev/null 2>&1; {marker}", timeout_s=1.0).averify(None)
+    assert time.monotonic() - started < 8
+    assert v.passed is False and v.report.startswith("timed out after 1s") and "begin" in v.report
+    await asyncio.sleep(0.2)
+    assert not _grandchild_alive(marker)
+
+
+@pytest.mark.asyncio
+async def test_shell_async_cwd_and_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("VERIFY_INHERITED", "from-parent")
+    v = await ShellVerifier(
+        f'test "$(pwd -P)" = "{tmp_path.resolve()}" && test "$VERIFY_INHERITED" = from-parent && test "$X" = 1',
+        cwd=str(tmp_path),
+        env={"X": "1"},
+    ).averify(None)
+    assert v.passed is True, v.report
+
+
 # ---------------------------------------------------------------------------
 # ScorerVerifier and the bridge (test 10)
 # ---------------------------------------------------------------------------
@@ -260,6 +379,15 @@ def test_scorer_verifier_report_carries_value_and_reason():
     assert verdict.passed is False
     assert verdict.report == "score 0.25: too vague"
     assert verdict.data["value"] == 0.25
+
+
+def test_scorer_verifier_never_calls_the_scorers_own_score():
+    class WithSyncScore(AscoreOnly):
+        def score(self, run, expected=None):
+            raise AssertionError("score() must not be used")
+
+    v = ScorerVerifier(WithSyncScore(Score(value=1.0, passed=True)))
+    assert v.verify(object()).passed is True
 
 
 def test_scorer_verifier_has_no_threshold_parameter():

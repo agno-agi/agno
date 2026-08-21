@@ -1,5 +1,6 @@
 """Core types for agno.verify: Verdict, the attempt and verification records, limits, constants."""
 
+import json
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Literal, Optional
 
@@ -19,6 +20,17 @@ VERIFICATION_NOTICE = (
 )
 
 StopReason = Literal["passed", "exhausted", "timeout", "noop", "paused", "error", "cancelled"]
+
+
+def _json_safe(value: Any) -> Any:
+    """Coerce verifier-supplied data into something every JSON serialiser accepts. The record
+    is stamped into a run row; one Path or set in a verdict must not drop the row."""
+    if value is None:
+        return None
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return None
 
 
 def cap_text(text: str, cap: int = REPORT_CAP_BYTES) -> str:
@@ -115,7 +127,8 @@ class VerificationAttempt:
             "run_id": self.run_id,
             "status": self.status,
             "verdicts": [
-                {"name": v.name, "passed": v.passed, "report": v.report, "data": v.data} for v in self.verdicts
+                {"name": v.name, "passed": v.passed, "report": v.report, "data": _json_safe(v.data)}
+                for v in self.verdicts
             ],
             "fingerprint": self.fingerprint,
             "noop": self.noop,

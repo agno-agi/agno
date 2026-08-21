@@ -56,6 +56,16 @@ def test_attempt_passed_requires_verdicts():
     assert VerificationAttempt(index=0, run_id="r", status="COMPLETED", verdicts=[Verdict(True)]).passed is True
 
 
+def test_to_dict_coerces_non_json_verdict_data():
+    from pathlib import Path
+
+    attempt = VerificationAttempt(
+        index=0, run_id="r", status="COMPLETED", verdicts=[Verdict(False, "x", "v", {"p": Path("/tmp"), "s": {1, 2}})]
+    )
+    payload = json.dumps(Verification(status="pending", stop_reason=None, attempts=[attempt]).to_dict())
+    assert '"/tmp"' in payload
+
+
 def test_verification_to_dict_is_json_serialisable():
     attempt = VerificationAttempt(
         index=0, run_id="r0", status="COMPLETED", verdicts=[Verdict(False, "why", "v", {"k": 1})], fingerprint="f"

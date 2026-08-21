@@ -65,9 +65,10 @@ def _check_entry(
     fingerprint: Optional[Any],
     run_kwargs: Dict[str, Any],
 ) -> Tuple[List[Verifier], Optional[StateFingerprint]]:
-    if not verifiers:
+    entries = list(verifiers)
+    if not entries:
         raise ValueError("verification with no verifiers is a lie: pass at least one verifier")
-    coerced = [coerce_verifier(v) for v in verifiers]
+    coerced = [coerce_verifier(v) for v in entries]
     fp = coerce_fingerprint(fingerprint) if fingerprint is not None else None
     if limits.stop_on_noop and fp is None:
         raise ValueError("VerifierLimits(stop_on_noop=True) needs a fingerprint to detect a no-op")
@@ -143,6 +144,11 @@ def _escape(text: str) -> str:
     return _CLOSE_TAG.sub("<\\/verification>", text)
 
 
+def _label(name: str) -> str:
+    # A name is one line of the block; a newline in it would forge a summary or state line.
+    return _escape(" ".join(name.splitlines())) or "verifier"
+
+
 def _first_line(report: str) -> str:
     line = report.strip().splitlines()[0] if report.strip() else ""
     return cap_text(line, SUMMARY_EXCERPT_BYTES)
@@ -180,9 +186,9 @@ def build_report(
     failing: List[Verdict] = []
     for v in attempt.verdicts:
         if v.passed:
-            summary.append(f"[PASS] {_escape(v.name)}")
+            summary.append(f"[PASS] {_label(v.name)}")
         else:
-            summary.append(f"[FAIL] {_escape(v.name)}: {_escape(_first_line(v.report))}")
+            summary.append(f"[FAIL] {_label(v.name)}: {_escape(_first_line(v.report))}")
             failing.append(v)
     state = _state_line(attempt, previous_fingerprint, has_fingerprint)
     directive = VERIFICATION_DIRECTIVE.format(remaining_sentence=remaining_sentence)
@@ -198,12 +204,17 @@ def build_report(
 
     bodies: List[str] = []
     for v in failing:
-        name = _escape(v.name)
+        name = _label(v.name)
         open_fence = f"--- {name} ---"
         close_fence = f"--- end {name} ---"
-        fence_bytes = len(open_fence.encode("utf-8")) + len(close_fence.encode("utf-8")) + 3
-        body_cap = max(share - fence_bytes, 0)
-        body = cap_text(_escape(v.report), min(body_cap, REPORT_CAP_BYTES)) if body_cap > 0 else ""
+        # Four newlines: the blank separator, the two fences, and the body line.
+        fence_bytes = len(open_fence.encode("utf-8")) + len(close_fence.encode("utf-8")) + 4
+        body_cap = share - fence_bytes
+        if body_cap <= 0:
+            # The summary line already names the failure; an empty fenced body adds nothing
+            # and would push the block past its cap.
+            continue
+        body = cap_text(_escape(v.report), min(body_cap, REPORT_CAP_BYTES))
         bodies.extend(["", open_fence, body, close_fence])
 
     return "\n".join(fixed_parts + bodies + tail_parts)
@@ -254,6 +265,8 @@ class _Loop:
 
     def gate(self, index: int, output: Any) -> Optional[str]:
         """The status gate: the stop reason for a non-completed attempt, else None."""
+        if output is None:
+            return "error"
         status = _status_value(output)
         if status == "COMPLETED":
             return None

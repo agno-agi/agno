@@ -62,11 +62,17 @@ def _normalise(value: Any) -> Optional[str]:
     return value or None
 
 
+def _warn_unknown(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        log_warning("Fingerprint capture returned no value; treating state as unknown")
+    return value
+
+
 def safe_capture(fp: StateFingerprint) -> Optional[str]:
     """capture() with the failure rule applied: an exception, None or "" is unknown (None),
     logged, and never ends a run."""
     try:
-        return _normalise(fp.capture())
+        return _warn_unknown(_normalise(fp.capture()))
     except Exception as exc:
         log_warning(f"Fingerprint capture failed; treating state as unknown: {type(exc).__name__}: {exc}")
         return None
@@ -74,7 +80,7 @@ def safe_capture(fp: StateFingerprint) -> Optional[str]:
 
 async def asafe_capture(fp: StateFingerprint) -> Optional[str]:
     try:
-        return _normalise(await fp.acapture())
+        return _warn_unknown(_normalise(await fp.acapture()))
     except Exception as exc:
         log_warning(f"Fingerprint capture failed; treating state as unknown: {type(exc).__name__}: {exc}")
         return None
@@ -180,10 +186,15 @@ class GitWorktreeFingerprint:
         return digest.hexdigest()
 
     def capture(self) -> Optional[str]:
-        top = self._toplevel()
-        if top is None:
-            return self._listing_digest()
-        return self._git_digest(top)
+        """The digest, or None when git is unavailable or any step fails (unknown state)."""
+        try:
+            top = self._toplevel()
+            if top is None:
+                return self._listing_digest()
+            return self._git_digest(top)
+        except Exception as exc:
+            log_warning(f"GitWorktreeFingerprint could not capture {self.path}: {type(exc).__name__}: {exc}")
+            return None
 
     async def acapture(self) -> Optional[str]:
         return await asyncio.to_thread(self.capture)

@@ -2,6 +2,7 @@
 model run, and the always-fail case deliberately burns the whole budget."""
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -103,4 +104,4 @@ def test_shell_verifier_gates_a_real_pytest_fix():
             limits=VerifierLimits(max_continuations=2),
         )
         assert result.status == "verified", [a.verdicts for a in result.attempts]
-        assert "return a + b" in (workdir / "calc.py").read_text().replace(" ", " ")
+        assert re.search(r"return\s+a\s*\+\s*b", (workdir / "calc.py").read_text())

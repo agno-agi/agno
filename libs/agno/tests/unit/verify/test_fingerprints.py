@@ -122,7 +122,38 @@ def test_missing_git_binary_returns_none(tmp_path, monkeypatch):
         raise FileNotFoundError("git")
 
     monkeypatch.setattr(subprocess, "run", no_git)
+    assert fp.capture() is None
     assert safe_capture(fp) is None
+
+
+def test_head_and_staged_diff_are_digest_inputs(repo):
+    fp = GitWorktreeFingerprint(str(repo))
+    before = fp.capture()
+    (repo / "tracked.txt").write_text("staged\n")
+    _git("add", "tracked.txt", cwd=repo)
+    staged = fp.capture()
+    assert staged != before
+    _git("commit", "-q", "-m", "advance head", cwd=repo)
+    assert fp.capture() not in (before, staged)
+
+
+def test_deleted_tracked_file_and_removed_untracked_file_change_digest(repo):
+    fp = GitWorktreeFingerprint(str(repo))
+    base = fp.capture()
+    (repo / "scratch.txt").write_text("x")
+    with_untracked = fp.capture()
+    (repo / "scratch.txt").unlink()
+    assert fp.capture() == base
+    (repo / "tracked.txt").unlink()
+    assert fp.capture() not in (base, with_untracked)
+
+
+def test_path_with_space_is_hashed(repo):
+    fp = GitWorktreeFingerprint(str(repo))
+    (repo / "my notes.md").write_text("a")
+    first = fp.capture()
+    (repo / "my notes.md").write_text("b")
+    assert fp.capture() != first
 
 
 @pytest.mark.asyncio
