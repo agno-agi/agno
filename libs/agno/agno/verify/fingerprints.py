@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 import os
 import subprocess
-from typing import Any, Awaitable, Callable, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Awaitable, Callable, List, Optional, Protocol, Sequence, Tuple, runtime_checkable
 
 from agno.utils.log import log_warning
 
@@ -91,6 +91,35 @@ def _excluded(rel_path: str, exclude: Sequence[str]) -> bool:
     return any(part in exclude for part in parts if part)
 
 
+def _walk_stats(root: str, exclude: Sequence[str]) -> List[Tuple[str, os.stat_result]]:
+    """Every non-excluded file under `root` as (relative path, lstat), sorted.
+
+    Traversal errors are raised, never swallowed. `os.walk` reports them to `onerror` and
+    otherwise skips that subtree silently, which would produce a stable digest over only the
+    readable part of the tree: work done inside an unlistable directory would then read as a
+    no-op and end the run early, with nothing to say it had gone blind.
+    """
+
+    def blow_up(error: OSError) -> None:
+        raise error
+
+    found: List[Tuple[str, os.stat_result]] = []
+    for dirpath, dirnames, filenames in os.walk(root, onerror=blow_up):
+        dirnames[:] = sorted(d for d in dirnames if d not in exclude)
+        for filename in sorted(filenames):
+            full = os.path.join(dirpath, filename)
+            rel = os.path.relpath(full, root)
+            if _excluded(rel, exclude):
+                continue
+            try:
+                found.append((rel, os.lstat(full)))
+            except FileNotFoundError:
+                # A file vanishing mid-walk is normal while an agent works; skip it. Any other
+                # OSError propagates, for the same reason traversal errors do.
+                continue
+    return found
+
+
 class GitWorktreeFingerprint:
     """Digest of a git worktree: HEAD, status, staged and unstaged diffs, and the content of
     every untracked file.
@@ -102,15 +131,32 @@ class GitWorktreeFingerprint:
     under `path`. Paths with a component in `exclude` are skipped on both paths.
     """
 
-    def __init__(self, path: str = ".", exclude: Sequence[str] = DEFAULT_EXCLUDES) -> None:
+    def __init__(
+        self, path: str = ".", exclude: Sequence[str] = DEFAULT_EXCLUDES, extra_excludes: Sequence[str] = ()
+    ) -> None:
+        # `exclude` replaces the defaults, `extra_excludes` adds to them. Passing one entry to
+        # `exclude` used to silently drop .git/__pycache__/.venv filtering, which is the
+        # opposite of what someone adding an entry wants.
+        self.exclude = tuple(exclude) + tuple(extra_excludes)
         self.path = path
-        self.exclude = tuple(exclude)
 
     def _git(self, *args: str, cwd: str) -> "subprocess.CompletedProcess[bytes]":
         # LC_ALL=C keeps git's messages in English so the not-a-repository detection below
-        # does not break under locale packs.
+        # does not break under locale packs. GIT_DIR / GIT_WORK_TREE are dropped: inherited
+        # from the environment they would silently point the digest at a different repository
+        # than `path`, and the no-op guard would then be measuring the wrong world.
         env = {**os.environ, "LC_ALL": "C", "LC_MESSAGES": "C"}
+        for leaked in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
+            env.pop(leaked, None)
         return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False, env=env)
+
+    def _exclude_pathspec(self) -> List[str]:
+        """Pathspecs that keep the two diffs to the same scope as the status listing."""
+        specs: List[str] = []
+        for name in self.exclude:
+            specs.append(f":(exclude,glob){name}/**")
+            specs.append(f":(exclude,glob)**/{name}/**")
+        return specs
 
     def _toplevel(self) -> Optional[str]:
         """The repository root, or None when `path` is not inside a repository. Raises when
@@ -128,8 +174,15 @@ class GitWorktreeFingerprint:
         if os.path.islink(full):
             digest.update(b"\x00link:" + os.readlink(full).encode("utf-8", errors="surrogateescape"))
         elif os.path.isdir(full):
-            # `-uall` still lists a nested repository as a directory entry.
+            # `-uall` still lists a nested repository as a single directory entry, so digesting
+            # a constant here would make every edit inside it invisible — an agent working in a
+            # cloned dependency would read as completely idle. Walk it instead.
             digest.update(b"\x00dir")
+            for sub_rel, stat in _walk_stats(full, self.exclude):
+                digest.update(
+                    f"\x00{sub_rel}\x00{stat.st_size}\x00{stat.st_mtime_ns}\x00"
+                    f"{'x' if stat.st_mode & 0o111 else '-'}".encode("utf-8", errors="surrogateescape")
+                )
         else:
             # The executable bit is world state an agent changes on purpose (chmod +x on a
             # script); mirror what git records for tracked files (100644 vs 100755).
@@ -165,8 +218,9 @@ class GitWorktreeFingerprint:
             if code == b"??":
                 untracked.append(rel_path)
 
+        pathspec = self._exclude_pathspec()
         for args in (("diff", "--binary"), ("diff", "--binary", "--staged")):
-            diff = self._git(*args, cwd=top)
+            diff = self._git(*args, "--", ".", *pathspec, cwd=top)
             if diff.returncode != 0:
                 raise RuntimeError(diff.stderr.decode("utf-8", errors="replace").strip() or "git diff failed")
             digest.update(diff.stdout)
@@ -179,27 +233,13 @@ class GitWorktreeFingerprint:
     def _listing_digest(self) -> str:
         digest = hashlib.sha256()
         root = os.path.abspath(self.path)
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = sorted(d for d in dirnames if d not in self.exclude)
-            for filename in sorted(filenames):
-                full = os.path.join(dirpath, filename)
-                rel = os.path.relpath(full, root)
-                if _excluded(rel, self.exclude):
-                    continue
-                try:
-                    stat = os.lstat(full)
-                except FileNotFoundError:
-                    # A file vanishing mid-walk is normal while an agent works; skip it.
-                    continue
-                # Any other OSError (permissions, I/O) propagates: a digest that silently
-                # ignored part of the tree would report "unchanged" while blind. The runner
-                # treats the raise as unknown state, which never flags a no-op.
-                executable = "x" if stat.st_mode & 0o111 else "-"
-                digest.update(
-                    f"{rel}\x00{stat.st_size}\x00{stat.st_mtime_ns}\x00{executable}\n".encode(
-                        "utf-8", errors="surrogateescape"
-                    )
+        for rel, stat in _walk_stats(root, self.exclude):
+            executable = "x" if stat.st_mode & 0o111 else "-"
+            digest.update(
+                f"{rel}\x00{stat.st_size}\x00{stat.st_mtime_ns}\x00{executable}\n".encode(
+                    "utf-8", errors="surrogateescape"
                 )
+            )
         return digest.hexdigest()
 
     def capture(self) -> Optional[str]:

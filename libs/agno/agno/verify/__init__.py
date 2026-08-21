@@ -29,7 +29,12 @@ How this relates to what already exists:
 read `VerifiedRun.status`.
 """
 
-from agno.verify.fingerprints import CallableFingerprint, GitWorktreeFingerprint, StateFingerprint
+from agno.verify.fingerprints import (
+    DEFAULT_EXCLUDES,
+    CallableFingerprint,
+    GitWorktreeFingerprint,
+    StateFingerprint,
+)
 from agno.verify.runner import arun_verified, run_verified
 from agno.verify.tools import DIVERGENCE_DIRECTIVE, divergence_report, verified_tool
 from agno.verify.types import (
@@ -45,6 +50,7 @@ from agno.verify.types import (
 from agno.verify.verifiers import ScorerVerifier, ShellVerifier, Verifier, verifier
 
 __all__ = [
+    "DEFAULT_EXCLUDES",
     "DIVERGENCE_DIRECTIVE",
     "REPORT_CAP_BYTES",
     "VERIFICATION_NOTICE",

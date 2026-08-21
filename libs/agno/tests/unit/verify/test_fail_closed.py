@@ -276,3 +276,49 @@ def test_sigint_during_sync_verify_kills_the_process_group(tmp_path):
     assert "INTERRUPTED" in out
     time.sleep(0.3)
     assert not _alive(marker)
+
+
+def test_mixed_nesting_through_to_thread_does_not_deadlock_the_bridge(tmp_path):
+    """Async verifier on the bridge -> a sync call that escapes to a private loop (parking the
+    bridge thread in join) -> that loop's `to_thread` running a sync-only verifier -> a sync
+    call back out. The escape marker has to survive `asyncio.to_thread`, which copies the
+    context but not thread-locals; if it does not, the submission lands on the parked bridge
+    loop and the process hangs with no message.
+
+    Bounded by the subprocess deadline rather than @pytest.mark.timeout, so it fails the run
+    instead of wedging it even where pytest-timeout is not installed.
+    """
+    script = tmp_path / "nested.py"
+    script.write_text(
+        textwrap.dedent("""
+        from agno.verify import verifier
+        from agno.verify.verifiers import coerce_verifier
+
+        async def leaf(run):
+            return True
+        v_leaf = verifier(leaf, name="leaf")
+
+        class SyncOnlyC:                       # reached through the derived async half
+            name = "C"
+            def verify(self, run):
+                return v_leaf.verify(run)      # run_sync from a to_thread worker
+        v_c = coerce_verifier(SyncOnlyC())
+
+        async def b(run):
+            return await v_c.averify(run)      # -> asyncio.to_thread on the private loop
+        v_b = verifier(b, name="B")
+
+        async def outer(run):
+            return v_b.verify(run)             # sync call while ON the bridge thread
+        print("RESULT", verifier(outer, name="outer").verify(object()).passed, flush=True)
+        """)
+    )
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [os.environ.get("PYTHONPATH"), os.getcwd()]))}
+    child = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True, env=env)
+    try:
+        out, _ = child.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.communicate()
+        raise AssertionError("the bridge deadlocked on mixed sync/async nesting through to_thread")
+    assert "RESULT True" in out, out

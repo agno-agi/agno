@@ -33,6 +33,21 @@ def _json_safe(value: Any) -> Any:
         return None
 
 
+def encodable(text: str) -> str:
+    """`text` with any lone surrogate rendered as its escape.
+
+    Surrogates reach a report through anything that decoded bytes with `errors="surrogateescape"`
+    — a filename that is not valid UTF-8 is the common route. They cannot be UTF-8 encoded, so
+    left alone they raise inside the cap and take the whole run down; and even capped they would
+    fail again in the model client. Rendering them keeps the evidence readable and the run alive.
+    """
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-8", errors="backslashreplace").decode("utf-8")
+
+
 def cap_text(text: str, cap: int = REPORT_CAP_BYTES) -> str:
     """Truncate `text` to at most `cap` bytes of UTF-8, keeping the head and the tail.
 
@@ -40,6 +55,7 @@ def cap_text(text: str, cap: int = REPORT_CAP_BYTES) -> str:
     put the summary at the end and the first error at the top. The elision marker counts
     against the cap. Multi-byte characters split by the cut are dropped, never corrupted.
     """
+    text = encodable(text)
     raw = text.encode("utf-8")
     if len(raw) <= cap:
         return text
@@ -115,7 +131,10 @@ class VerificationAttempt:
 
     Not the same unit as `agno.environments.AttemptResult`, which is one whole run of a task.
     `run_id` is this attempt's RunOutput.run_id; each continuation is a forked sibling run
-    with its own id. `fingerprint` is captured after the attempt's run and before its
+    with its own id. The fork carries the lineage with it, so the RunOutput a verifier is
+    handed on attempt N lists the tool calls of every earlier attempt as well as its own: a
+    check written as "did it call deploy()?" answers for the verified run as a whole, not for
+    the last attempt. Scope such a check to the world it changed, not to the call list. `fingerprint` is captured after the attempt's run and before its
     verifiers; None means no fingerprint was configured or the capture failed, and None
     never compares equal to anything, so `noop` is False whenever either side is unknown.
     """

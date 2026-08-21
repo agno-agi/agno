@@ -389,6 +389,13 @@ def test_report_layout():
 
 
 def make_fp(values):
+    """A fingerprint that returns `values` in order.
+
+    Two captures happen per completed attempt: one after the agent's run (what the verifiers
+    are judged against, and what lands on the attempt record) and one after the verifiers have
+    run (what the NEXT attempt is compared against, so verifier artefacts are never charged to
+    the agent). So a sequence reads: baseline, run0, settle0, run1, settle1, ...
+    """
     it = iter(values)
     return CallableFingerprint(lambda: next(it))
 
@@ -409,7 +416,8 @@ def test_idle_first_attempt_with_stop_on_noop(mode):
 @pytest.mark.parametrize("mode", RUNNERS)
 def test_changed_then_unchanged_state_lines(mode):
     agent = StubAgent()
-    fp = make_fp(["base", "a", "a", "b"])
+    # baseline, run0=a, settle0=a, run1=a (unchanged since settle0), settle1=a, run2=b
+    fp = make_fp(["base", "a", "a", "a", "a", "b"])
     result = drive(mode, agent, "task", [always_fail], limits=VerifierLimits(max_continuations=2), fingerprint=fp)
     assert [a.noop for a in result.attempts] == [False, True, False]
     assert "state: changed" in agent.continue_calls[0]["input"]
@@ -469,7 +477,40 @@ def test_capture_precedes_verifiers(mode):
         return True
 
     drive(mode, StubAgent(), "task", [check], fingerprint=Fp())
-    assert order == ["capture", "capture", "verify"]  # baseline, attempt 0 capture, then verify
+    # baseline, attempt 0 capture, verify, then the settle capture that the next attempt
+    # is compared against - so nothing a verifier writes is charged to the agent.
+    assert order == ["capture", "capture", "verify", "capture"]
+
+
+@pytest.mark.parametrize("mode", RUNNERS)
+def test_verifier_artefacts_are_not_charged_to_the_agent(mode):
+    """A verifier that writes something new on every run — `pytest --junitxml`, a coverage db,
+    a build directory — must not make an idle agent look productive. Comparing an attempt
+    against the previous attempt's PRE-verifier capture would do exactly that, and stop_on_noop
+    would never fire again for anyone using a realistic shell verifier."""
+    world = {"agent": 0, "verifier": 0}
+
+    def check(run):
+        world["verifier"] += 1  # the artefact the verifier leaves behind, every single run
+        return "still failing"
+
+    def edit_on_first_attempt(index):
+        if index == 0:
+            world["agent"] += 1
+
+    agent = StubAgent(on_run=edit_on_first_attempt)
+    fp = CallableFingerprint(lambda: "agent={agent},verifier={verifier}".format(**world))
+    result = drive(
+        mode,
+        agent,
+        "task",
+        [check],
+        limits=VerifierLimits(max_continuations=5, stop_on_noop=True),
+        fingerprint=fp,
+    )
+    assert result.stop_reason == "noop"
+    assert [a.noop for a in result.attempts] == [False, True]
+    assert len(result.attempts) == 2  # attempt 0 did work, attempt 1 was idle and ended the run
 
 
 @pytest.mark.asyncio
@@ -578,7 +619,7 @@ def test_record_fields_are_populated():
         "task",
         [verifier(always_fail, name="f")],
         limits=VerifierLimits(max_continuations=1),
-        fingerprint=make_fp(["b", "a", "c"]),
+        fingerprint=make_fp(["b", "a", "a", "c"]),  # baseline, run0, settle0, run1
     )
     record = result.verification
     assert record.status == "unverified" and record.stop_reason == "exhausted"

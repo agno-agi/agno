@@ -45,8 +45,12 @@ def _prediction_present(value: Any) -> bool:
 def _result_text(result: Any) -> str:
     from agno.tools.function import ToolResult
 
+    if result is None:
+        # `Optional[str]` is a legal annotation the decorator accepts, so a None result must
+        # compare as an empty result rather than fail the call it was meant to check.
+        return ""
     if isinstance(result, ToolResult):
-        return result.content
+        return result.content or ""
     if isinstance(result, str):
         return result
     raise TypeError(
@@ -59,7 +63,11 @@ def _with_prefix(result: Any, block: str) -> Any:
     from agno.tools.function import ToolResult
 
     if isinstance(result, ToolResult):
-        return result.model_copy(update={"content": f"{block}\n{result.content}"})
+        content = f"{block}\n{result.content}" if result.content else block
+        return result.model_copy(update={"content": content})
+    if result is None:
+        # The tool returned nothing; "None" is not evidence, the block alone is.
+        return block
     return f"{block}\n{result}"
 
 

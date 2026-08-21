@@ -4,6 +4,7 @@ The StubAgent hides core behaviour these regressions live in: real continue_run 
 session-state loading, and the HITL pause machinery.
 """
 
+import asyncio
 import json
 from typing import Any, AsyncIterator, Iterator, List, Optional
 
@@ -132,6 +133,59 @@ async def test_session_state_carries_to_continuation_without_a_db_async():
     )
     assert result.status == "verified"
     assert seen[1].get("k") == "CALLER_STATE"
+
+
+def _clearing_probe(seen: List[dict]):
+    def probe_state(run_context: Optional[RunContext] = None) -> str:
+        """Record the session state this call can see, then empty it."""
+        state = run_context.session_state if run_context else None
+        seen.append(dict(state or {}))
+        if state is not None:
+            state.clear()
+        return "cleared"
+
+    return probe_state
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "sync",
+        pytest.param(
+            "async",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "core divergence: _acontinue_run reloads session_state through "
+                    "load_session_state, which MERGES the stored state back over the carried "
+                    "one, so a deletion cannot survive. The sync _continue_run does not reload "
+                    "at all. Six call sites share that reload, so straightening it out belongs "
+                    "in a core change, not here."
+                ),
+            ),
+        ),
+    ],
+)
+def test_a_cleared_session_state_stays_cleared_across_continuations(mode):
+    """An attempt that empties session_state must not have the agent's declared state
+    resurrected under it. Carrying state forward on a truthiness check skips the empty dict,
+    and the continuation reloads the seed — silently undoing deliberate work."""
+    seen: List[dict] = []
+    # The seed lives on the Agent: that is what a continuation reloads when no run_context is
+    # threaded through, and therefore what resurrects over the cleared state.
+    agent = Agent(
+        model=ScriptedModel(_probe_script()),
+        tools=[_clearing_probe(seen)],
+        session_state={"cart": ["seed"]},
+    )
+    kwargs = dict(limits=VerifierLimits(max_continuations=1))
+    if mode == "sync":
+        run_verified(agent, "probe twice", [_fail_once()], **kwargs)
+    else:
+        asyncio.run(arun_verified(agent, "probe twice", [_fail_once()], **kwargs))
+    assert len(seen) == 2
+    assert seen[0].get("cart") == ["seed"]
+    assert "cart" not in seen[1], f"the continuation resurrected cleared state: {seen[1]}"
 
 
 def test_run_context_in_run_kwargs_is_rejected():

@@ -1,15 +1,19 @@
 """Verifiers: the protocol, the callable adapter, ShellVerifier, ScorerVerifier, and the sync bridge."""
 
 import asyncio
+import contextvars
 import inspect
 import os
+import shlex
 import signal
 import subprocess
 import sys
 import threading
 import traceback
 from collections import deque
-from typing import Any, Awaitable, Callable, Deque, Dict, Optional, Protocol, runtime_checkable
+from io import BufferedReader
+from time import monotonic
+from typing import Any, Awaitable, Callable, Deque, Dict, Optional, Protocol, cast, runtime_checkable
 
 from agno.verify.types import Verdict
 
@@ -51,7 +55,11 @@ async def _shield_base_exceptions(coro: Awaitable[Any]) -> tuple:
         return False, exc
 
 
-_detached = threading.local()
+# A ContextVar, not a threading.local: `asyncio.to_thread` copies the calling context into its
+# worker thread, but a thread-local does not follow. Without this, a sync-only verifier reached
+# through a derived async half loses the marker, submits back to the shared bridge loop — which
+# is parked in the join() below — and the process hangs with no message.
+_detached: "contextvars.ContextVar[bool]" = contextvars.ContextVar("agno_verify_detached", default=False)
 
 
 def _run_on_private_loop(coro: Awaitable[Any]) -> Any:
@@ -62,7 +70,8 @@ def _run_on_private_loop(coro: Awaitable[Any]) -> Any:
     box: Dict[str, Any] = {}
 
     def target() -> None:
-        _detached.flag = True
+        # A new thread starts with an empty context, so this marks this subtree only.
+        _detached.set(True)
         try:
             box["result"] = asyncio.run(_shield_base_exceptions(coro))
         except BaseException as exc:  # noqa: BLE001 - carried across the thread boundary
@@ -82,7 +91,7 @@ def run_sync(coro: Awaitable[Any]) -> Any:
     loop in the calling thread; exceptions, including BaseException, propagate to the caller.
     Re-entrant calls (a verifier composed inside another verifier's sync path) detect that
     they are already on the bridge and escape to a private loop instead of deadlocking."""
-    if threading.current_thread() is _bridge_thread or getattr(_detached, "flag", False):
+    if threading.current_thread() is _bridge_thread or _detached.get():
         return _run_on_private_loop(coro)
     loop = _get_bridge_loop()
     ok, value = asyncio.run_coroutine_threadsafe(_shield_base_exceptions(coro), loop).result()
@@ -197,15 +206,19 @@ class GuardedVerifier:
         self.name: str = str(getattr(inner, "name", None) or type(inner).__name__)
         sync_half = getattr(inner, "verify", None)
         async_half = getattr(inner, "averify", None)
-        # An `async def verify` is an async half under the wrong name; honour what it is.
-        self._sync: Optional[Callable[[Any], Any]] = (
-            sync_half if callable(sync_half) and not _is_async_callable(sync_half) else None
-        )
+        # Classify by what each half IS, not by what it is called: an `async def verify` is an
+        # async half under the wrong name, and a plain `def averify` is a sync one. Trusting
+        # the names left a verifier written with only a sync `averify` with neither half wired,
+        # so every attempt failed on a confusing NoneType error instead of running the check.
+        self._sync: Optional[Callable[[Any], Any]] = None
         self._async: Optional[Callable[[Any], Awaitable[Any]]] = None
-        if callable(async_half) and _is_async_callable(async_half):
-            self._async = async_half
-        elif callable(sync_half) and _is_async_callable(sync_half):
-            self._async = sync_half
+        for half in (sync_half, async_half):
+            if not callable(half):
+                continue
+            if _is_async_callable(half):
+                self._async = self._async or half
+            else:
+                self._sync = self._sync or half
 
     def verify(self, run: Any) -> Verdict:
         try:
@@ -259,43 +272,88 @@ _SHELL_KEEP_BYTES = 65536
 
 class _BoundedOutput:
     """Bounded head-and-tail store for a stream: absorb() keeps the first and last
-    _SHELL_KEEP_BYTES and drops the middle."""
+    _SHELL_KEEP_BYTES and drops the middle.
+
+    Locked: the sync path fills this from a reader thread and reads it from the caller once
+    the grace period is up, which may be while the reader is still going.
+    """
 
     def __init__(self, keep: int = _SHELL_KEEP_BYTES) -> None:
         self.keep = keep
         self.head = bytearray()
         self.tail: Deque[bytes] = deque()
         self.tail_bytes = 0
+        self._lock = threading.Lock()
 
     def absorb(self, chunk: bytes) -> None:
-        if len(self.head) < self.keep:
-            take = self.keep - len(self.head)
-            self.head += chunk[:take]
-            chunk = chunk[take:]
-        if not chunk:
-            return
-        self.tail.append(chunk)
-        self.tail_bytes += len(chunk)
-        while self.tail and self.tail_bytes - len(self.tail[0]) >= self.keep:
-            self.tail_bytes -= len(self.tail.popleft())
+        with self._lock:
+            if len(self.head) < self.keep:
+                take = self.keep - len(self.head)
+                self.head += chunk[:take]
+                chunk = chunk[take:]
+            if not chunk:
+                return
+            self.tail.append(chunk)
+            self.tail_bytes += len(chunk)
+            while self.tail and self.tail_bytes - len(self.tail[0]) >= self.keep:
+                self.tail_bytes -= len(self.tail.popleft())
 
     def text(self) -> str:
-        return (bytes(self.head) + b"".join(self.tail)).decode("utf-8", errors="replace")
+        with self._lock:
+            return (bytes(self.head) + b"".join(self.tail)).decode("utf-8", errors="replace")
 
 
 _HARNESS_EXIT_CODES = {126, 127}
+
+# Budget for the default verifier name. It is one line of the report block and the model reads
+# it to tell one failing check from another.
+_SHELL_NAME_BYTES = 40
+
+
+def _default_shell_name(command: str) -> str:
+    """A name from the informative end of a command, not its first 40 characters.
+
+    The form the cookbooks and tests use is `f"{sys.executable} -m pytest ..."`, and an absolute
+    interpreter path eats the whole budget: two different checks both end up called
+    "/Users/me/project/.venv/bin/python -m " and the model cannot tell which one failed.
+    """
+    text = " ".join(command.split())
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        tokens = text.split()
+    if tokens and ("/" in tokens[0] or "\\" in tokens[0]):
+        tokens[0] = os.path.basename(tokens[0])
+    return (" ".join(tokens) if tokens else text)[:_SHELL_NAME_BYTES] or "shell"
+
+
+# How long to wait for the killed group to be reaped, and for the reader to hand over what it
+# already has. Both are teardown budgets, not part of the command's own deadline.
+_REAP_GRACE_S = 5.0
+_DRAIN_GRACE_S = 5.0
+
+# How often the async path checks whether the command leader has exited.
+_EXIT_POLL_S = 0.05
 
 
 class ShellVerifier:
     """Run a shell command; exit code 0 passes.
 
     `env` is merged over the current environment. `cwd=None` is the process's cwd at verify
-    time. Stdout and stderr are merged. The command runs in its own process group and the
-    whole group is killed on timeout, so a hung test run does not outlive the attempt. The
-    report starts with the exit line, then the full merged output; Verdict applies the
-    head+tail cap so the runner summary at the end survives. Exit codes 126 and 127 (not
-    executable, not found) are marked as harness errors rather than handed to the model as
-    work to do.
+    time. Stdout and stderr are merged. Exit codes 126 and 127 (not executable, not found) are
+    marked as harness errors rather than handed to the model as work to do.
+
+    The contract, identical on both twins:
+
+    - The verdict follows the command leader's exit code. `timeout_s` bounds how long that
+      leader may run; a descendant that outlives it never turns a successful command into a
+      failure, and never turns a failing one into a pass.
+    - The command runs in its own process group, and the whole group is killed and reaped
+      before this returns — on success, on timeout, and while unwinding from Ctrl-C or task
+      cancellation. Nothing the command started outlives the verifier.
+    - Output is drained as it arrives and collected best effort under a short grace period
+      once the group is gone. The report starts with the exit line, then the merged output;
+      Verdict applies the head+tail cap so a runner summary at the end survives.
     """
 
     def __init__(
@@ -311,7 +369,7 @@ class ShellVerifier:
         self.cwd = cwd
         self.timeout_s = timeout_s
         self.env = env
-        self.name = name or command[:40]
+        self.name = name or _default_shell_name(command)
 
     def _env(self) -> Dict[str, str]:
         merged = dict(os.environ)
@@ -364,40 +422,44 @@ class ShellVerifier:
         buffer = _BoundedOutput()
 
         def drain() -> None:
-            stream = proc.stdout
-            assert stream is not None
-            while True:
-                chunk = stream.read(65536)
-                if not chunk:
-                    break
-                buffer.absorb(chunk)
+            assert proc.stdout is not None
+            # A binary Popen pipe is a BufferedReader; the stubs only promise IO[Any].
+            stream = cast(BufferedReader, proc.stdout)
+            try:
+                while True:
+                    # read1, not read: read() on a BufferedReader blocks until it has a full
+                    # buffer or EOF, and a command that backgrounds anything holding stdout
+                    # never reaches EOF - so every byte the command did write would be lost.
+                    chunk = stream.read1(65536)
+                    if not chunk:
+                        break
+                    buffer.absorb(chunk)
+            except (ValueError, OSError):
+                pass  # the pipe was closed under us during teardown
 
         reader = threading.Thread(target=drain, name="agno-verify-shell-drain", daemon=True)
         reader.start()
         timed_out = False
-        finished = False
         try:
             try:
                 proc.wait(timeout=self.timeout_s)
             except subprocess.TimeoutExpired:
                 timed_out = True
-                self._kill_group(proc.pid)
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-            finished = True
         finally:
-            if not finished:
-                # Ctrl-C or any other exceptional exit: the command and its whole process
-                # group must not outlive the verifier.
-                self._kill_group(proc.pid)
-                try:
-                    proc.wait(timeout=5)
-                except Exception:
-                    pass
-        reader.join(timeout=5)
+            # Always, on every exit path including Ctrl-C: the group never outlives the
+            # verifier. This also closes the write end of the pipe, which is what lets the
+            # reader thread finish when a descendant was holding it open.
+            self._kill_group(proc.pid)
+            try:
+                proc.wait(timeout=_REAP_GRACE_S)
+            except Exception:
+                pass
+        reader.join(timeout=_DRAIN_GRACE_S)
+        try:
+            if proc.stdout is not None:
+                proc.stdout.close()
+        except Exception:
+            pass
         return self._report(proc.returncode, buffer.text(), timed_out)
 
     async def averify(self, run: Any) -> Verdict:
@@ -420,36 +482,45 @@ class ShellVerifier:
             return exception_verdict(self.name, exc)
         buffer = _BoundedOutput()
 
-        async def pump_and_wait() -> None:
-            # Both the read and the exit are under the deadline: a child that closes its
-            # pipes and keeps running must not outlive the timeout either.
+        async def pump() -> None:
             assert proc.stdout is not None
-            while True:
-                chunk = await proc.stdout.read(65536)
-                if not chunk:
-                    break
-                buffer.absorb(chunk)
-            await proc.wait()
-
-        timed_out = False
-        finished = False
-        try:
             try:
-                await asyncio.wait_for(pump_and_wait(), timeout=self.timeout_s)
-            except asyncio.TimeoutError:
-                timed_out = True
-                self._kill_group(proc.pid)
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    await proc.wait()
-            finished = True
+                while True:
+                    chunk = await proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    buffer.absorb(chunk)
+            except (asyncio.CancelledError, ValueError, OSError):
+                pass
+
+        pump_task = asyncio.ensure_future(pump())
+        timed_out = False
+        try:
+            # NOT `await proc.wait()`: asyncio resolves that only once every pipe is closed as
+            # well, so a command that exited cleanly while a descendant still held stdout is
+            # reported as a timeout - while the sync twin, judging on the exit code, passes the
+            # very same command. The leader's exit shows up on `returncode` as soon as SIGCHLD
+            # lands, whatever the pipe is doing, so the deadline is measured against that.
+            deadline = monotonic() + self.timeout_s
+            while proc.returncode is None:
+                if monotonic() >= deadline:
+                    timed_out = True
+                    break
+                await asyncio.sleep(_EXIT_POLL_S)
         finally:
-            if not finished:
-                # Cancellation, KeyboardInterrupt, or any other exceptional exit: kill the
-                # whole group before the exception propagates.
-                self._kill_group(proc.pid)
+            # Runs on cancellation and KeyboardInterrupt too: kill the group and reap it
+            # before the exception propagates, so no child and no transport is left behind.
+            self._kill_group(proc.pid)
+            try:
+                await asyncio.wait_for(asyncio.shield(proc.wait()), timeout=_REAP_GRACE_S)
+            except BaseException:  # noqa: BLE001 - teardown must not mask the original exit
+                pass
+            if not pump_task.done():
+                pump_task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(pump_task), timeout=_DRAIN_GRACE_S)
+            except BaseException:  # noqa: BLE001 - the drain is best effort
+                pass
         return self._report(proc.returncode, buffer.text(), timed_out)
 
 
@@ -477,6 +548,14 @@ class ScorerVerifier:
         self.name = name or type(scorer).__name__
 
     def _to_verdict(self, score: Any) -> Verdict:
+        if score is None:
+            # "score None" reads like a legitimate low score; say what actually happened.
+            return Verdict(
+                passed=False,
+                report=f"{self.name} scorer returned no Score object; treating it as a failure",
+                name=self.name,
+                data={"value": None, "reason": "scorer returned None", "detail": None},
+            )
         value = getattr(score, "value", None)
         reason = getattr(score, "reason", None) or ""
         raw_passed = getattr(score, "passed", False)

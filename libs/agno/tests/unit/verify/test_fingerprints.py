@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from agno.verify import CallableFingerprint, GitWorktreeFingerprint, StateFingerprint
+from agno.verify import DEFAULT_EXCLUDES, CallableFingerprint, GitWorktreeFingerprint, StateFingerprint
 from agno.verify.fingerprints import coerce_fingerprint, noop_between, safe_capture
 
 
@@ -237,3 +237,75 @@ def test_chmod_changes_listing_fallback_digest(tmp_path):
     before = fp.capture()
     os.chmod(script, 0o755)
     assert fp.capture() != before
+
+
+def test_edit_inside_an_untracked_nested_repository_is_visible(repo):
+    """`git status -uall` lists a nested repository as a single directory entry, so digesting a
+    constant for it would make an agent working inside a vendored checkout read as idle."""
+    fp = GitWorktreeFingerprint(str(repo))
+    (repo / "vendor").mkdir()
+    _git("init", "-q", cwd=repo / "vendor")
+    (repo / "vendor" / "lib.py").write_text("x = 1")
+    before = fp.capture()
+    (repo / "vendor" / "lib.py").write_text("x = 2  # real work")
+    assert fp.capture() != before
+
+
+def test_unlistable_directory_is_unknown_not_a_partial_digest(tmp_path):
+    """os.walk skips a subtree it cannot list and says nothing. A digest over only the readable
+    part is stable, so work inside the unreadable part would read as a no-op and end the run."""
+    work = tmp_path / "work"
+    (work / "secret").mkdir(parents=True)
+    (work / "visible.txt").write_text("v")
+    (work / "secret" / "out.txt").write_text("before")
+    os.chmod(work / "secret", 0o111)  # traversable by path, not listable
+    try:
+        fp = GitWorktreeFingerprint(str(work))  # not a repo -> listing fallback
+        assert fp.capture() is None
+    finally:
+        os.chmod(work / "secret", 0o700)
+
+
+def test_equal_length_edit_outside_a_repo_is_visible(tmp_path):
+    """The listing fallback never hashes content, so this is the only thing standing between an
+    `a - b` -> `a + b` fix and a false no-op."""
+    work = tmp_path / "plain"
+    work.mkdir()
+    target = work / "calc.py"
+    target.write_text("def add(a, b):\n    return a - b\n")
+    fp = GitWorktreeFingerprint(str(work))
+    before = fp.capture()
+    target.write_text("def add(a, b):\n    return a + b\n")  # identical byte count
+    os.utime(target, ns=(0, os.stat(target).st_mtime_ns + 1_000_000))
+    assert fp.capture() != before
+
+
+def test_inherited_git_dir_does_not_redirect_the_digest(repo, tmp_path, monkeypatch):
+    other = tmp_path / "other"
+    other.mkdir()
+    _git("init", "-q", cwd=other)
+    fp = GitWorktreeFingerprint(str(repo))
+    clean = fp.capture()
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    assert fp.capture() == clean
+
+
+def test_excluded_directory_is_ignored_in_the_tracked_diffs_too(repo):
+    """The docstring promises `exclude` applies on both paths; the two diffs used to ignore it,
+    so a tracked file under node_modules still moved the digest."""
+    vendor = repo / "node_modules"
+    vendor.mkdir()
+    (vendor / "pkg.js").write_text("v1")
+    _git("add", "-f", "-A", cwd=repo)
+    _git("commit", "-q", "-m", "vendor", cwd=repo)
+    fp = GitWorktreeFingerprint(str(repo))
+    before = fp.capture()
+    (vendor / "pkg.js").write_text("v2 changed")
+    assert fp.capture() == before
+
+
+def test_extra_excludes_adds_to_the_defaults_instead_of_replacing_them():
+    fp = GitWorktreeFingerprint(extra_excludes=(".coverage",))
+    assert ".coverage" in fp.exclude
+    assert set(DEFAULT_EXCLUDES).issubset(set(fp.exclude))

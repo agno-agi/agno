@@ -45,6 +45,9 @@ dev = [
   "pytest-asyncio==1.4.0",
   "pytest-cov==7.1.0",
   "pytest-mock==3.15.1",
+  # Implements @pytest.mark.timeout(N). Without it the mark is an unknown no-op, and the
+  # deadlock guards in the unit suite hang the job instead of failing it.
+  "pytest-timeout",
   "timeout-decorator",
   "types-pyyaml",
   "types-aiofiles",
@@ -484,6 +487,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
   "integration: tests that need live services (kernels, databases)",
+  "timeout: per-test wall clock, implemented by pytest-timeout (in the dev extra)",
 ]
 
 [tool.ruff]

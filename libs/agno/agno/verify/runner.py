@@ -129,7 +129,10 @@ def _continuation_kwargs(run_kwargs: Dict[str, Any], agent: Any, output: Any) ->
     # start with empty state; carry the last attempt's final state forward through the one
     # channel continue_run accepts. With a db the session row already carries it.
     state = getattr(output, "session_state", None)
-    if state and getattr(agent, "db", None) is None:
+    # `is not None`, not truthiness: an attempt that deliberately emptied the state must carry
+    # the empty state forward. A falsy check would send no run_context, and the continuation
+    # would reload the agent's declared session_state, silently resurrecting what was cleared.
+    if state is not None and getattr(agent, "db", None) is None:
         from agno.run.base import RunContext
 
         kwargs["run_context"] = RunContext(
@@ -307,6 +310,10 @@ class _Loop:
         self.total_attempts = 1 + limits.max_continuations
         self.attempts: List[VerificationAttempt] = []
         self.baseline: Optional[str] = None
+        # settled[i] is the fingerprint taken AFTER attempt i's verifiers ran. Attempt i+1
+        # compares against that, not against attempt i's pre-verifier capture, so that only
+        # the agent's own work sits between the two samples a no-op decision is made from.
+        self.settled: List[Optional[str]] = []
         self.started_at = monotonic()
         self.stamped = False
 
@@ -329,7 +336,11 @@ class _Loop:
         return VerifiedRun(output=output, verification=verification)
 
     def previous_fingerprint(self, index: int) -> Optional[str]:
-        return self.baseline if index == 0 else self.attempts[index - 1].fingerprint
+        """What attempt `index` is compared against: the baseline for the first attempt, and
+        otherwise the previous attempt's post-verifier capture."""
+        if index == 0:
+            return self.baseline
+        return self.settled[index - 1] if index - 1 < len(self.settled) else None
 
     def gate(self, index: int, output: Any) -> Optional[str]:
         """The status gate: the stop reason for a non-completed attempt, else None."""
@@ -404,6 +415,11 @@ def run_verified(
             attempt.noop = noop_between(loop.previous_fingerprint(index), attempt.fingerprint)
 
         attempt.verdicts = [v.verify(output).named(v.name) for v in loop.verifiers]
+        if fp is not None:
+            # Settle after the verifiers: whatever they wrote (a junit file, a coverage db, a
+            # build directory) is their work, not the next attempt's, and charging it to the
+            # agent would keep the no-op guard from ever firing.
+            loop.settled.append(safe_capture(fp))
         loop.attempts.append(attempt)
         if attempt.passed:
             return loop.finish(output, "verified", "passed")
@@ -457,6 +473,10 @@ async def arun_verified(
         for v in loop.verifiers:
             verdicts.append((await v.averify(output)).named(v.name))
         attempt.verdicts = verdicts
+        if fp is not None:
+            # See the sync twin: settle after the verifiers so their own artefacts are never
+            # charged to the next attempt's agent.
+            loop.settled.append(await asafe_capture(fp))
         loop.attempts.append(attempt)
         if attempt.passed:
             return loop.finish(output, "verified", "passed")
