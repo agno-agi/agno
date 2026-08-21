@@ -260,6 +260,21 @@ def test_get_json_schema_with_dataclass():
     assert user_schema["properties"]["age"]["type"] == "integer"
     assert user_schema["properties"]["is_active"]["type"] == "boolean"
     assert user_schema["properties"]["tags"]["type"] == "array"
+    assert user_schema["required"] == ["name", "age"]
+
+
+def test_get_json_schema_dataclass_required_fields_follow_defaults():
+    @dataclass
+    class Config:
+        required_value: str
+        optional_required_value: Optional[str]
+        default_value: int = 10
+        generated_value: List[str] = field(default_factory=list)
+        optional_default_value: Optional[str] = None
+
+    schema = get_json_schema_for_arg(Config)
+
+    assert schema["required"] == ["required_value", "optional_required_value"]
 
 
 def test_get_json_schema_dataclass_optional_field_without_type():
