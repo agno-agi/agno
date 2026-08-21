@@ -116,7 +116,9 @@ class WorkflowResponse(BaseModel):
         )
 
     @classmethod
-    async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def _resolve_agents_and_teams_recursively(
+        cls, steps: List[Dict[str, Any]], expose_config: bool = True
+    ) -> List[Dict[str, Any]]:
         """Parse Agents and Teams into AgentResponse and TeamResponse objects.
 
         If the given steps have nested steps, recursively work on those."""
@@ -134,18 +136,22 @@ class WorkflowResponse(BaseModel):
         for idx, step in enumerate(steps):
             if step.get("agent"):
                 # Convert to dict and exclude fields that are None
-                agent_response = await AgentResponse.from_agent(step.get("agent"))  # type: ignore
+                agent_response = await AgentResponse.from_agent(step.get("agent"), expose_config=expose_config)  # type: ignore
                 step["agent"] = agent_response.model_dump(exclude_none=True)
 
             if step.get("team"):
-                team_response = await TeamResponse.from_team(step.get("team"))  # type: ignore
+                team_response = await TeamResponse.from_team(step.get("team"), expose_config=expose_config)  # type: ignore
                 step["team"] = team_response.model_dump(exclude_none=True)
 
             if step.get("steps"):
-                step["steps"] = await cls._resolve_agents_and_teams_recursively(step["steps"])
+                step["steps"] = await cls._resolve_agents_and_teams_recursively(
+                    step["steps"], expose_config=expose_config
+                )
 
             if step.get("else_steps"):
-                step["else_steps"] = await cls._resolve_agents_and_teams_recursively(step["else_steps"])
+                step["else_steps"] = await cls._resolve_agents_and_teams_recursively(
+                    step["else_steps"], expose_config=expose_config
+                )
 
             # Prune None values in the entire step
             steps[idx] = _prune_none(step)
@@ -157,12 +163,13 @@ class WorkflowResponse(BaseModel):
         cls,
         workflow: Workflow,
         is_component: bool = False,
+        expose_config: bool = True,
     ) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict_for_steps()
         steps = workflow_dict.get("steps")
 
         if steps:
-            steps = await cls._resolve_agents_and_teams_recursively(steps)
+            steps = await cls._resolve_agents_and_teams_recursively(steps, expose_config=expose_config)
 
         return cls(
             id=workflow.id,

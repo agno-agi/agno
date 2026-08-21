@@ -71,6 +71,7 @@ class AgentResponse(BaseModel):
         cls,
         agent: Agent,
         is_component: bool = False,
+        expose_config: bool = True,
     ) -> "AgentResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
@@ -129,6 +130,23 @@ class AgentResponse(BaseModel):
             # Streaming defaults
             "stream_events": False,
         }
+
+        streaming_info = {
+            "stream": agent.stream,
+            "stream_events": agent.stream_events,
+        }
+
+        if not expose_config:
+            return cls(
+                id=agent.id,
+                name=agent.name,
+                description=agent.description,
+                introduction=agent.introduction,
+                streaming=filter_meaningful_config(streaming_info, agent_defaults),
+                is_component=is_component,
+                current_version=getattr(agent, "_version", None),
+                stage=getattr(agent, "_stage", None),
+            )
 
         session_id = str(uuid4())
         run_id = str(uuid4())
@@ -301,11 +319,6 @@ class AgentResponse(BaseModel):
                 model=agent.parser_model.id,
                 provider=agent.parser_model.provider,
             ).model_dump()
-
-        streaming_info = {
-            "stream": agent.stream,
-            "stream_events": agent.stream_events,
-        }
 
         return AgentResponse(
             id=agent.id,
