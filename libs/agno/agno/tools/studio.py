@@ -78,7 +78,7 @@ from agno.tools.function import Function
 from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools, _slugify
 from agno.tools.studio_schema import WorkflowStepSpec, error_result, ok_result
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.string import generate_component_id_from_name, validate_component_id
 
 if TYPE_CHECKING:
@@ -307,6 +307,7 @@ class StudioTools(Toolkit):
             self.list_functions,
             self.list_knowledge,
             self.list_schemas,
+            self.list_learning,
             self.list_components,
             self.get_component,
         ]
@@ -355,6 +356,7 @@ class StudioTools(Toolkit):
             (self.alist_functions, "list_functions"),
             (self.alist_knowledge, "list_knowledge"),
             (self.alist_schemas, "list_schemas"),
+            (self.alist_learning, "list_learning"),
             (self.alist_components, "list_components"),
             (self.aget_component, "get_component"),
         ]
@@ -1121,7 +1123,7 @@ class StudioTools(Toolkit):
         return None
 
     def _resolve_registry_ref(self, kind: str, name: Optional[str]) -> tuple:
-        """(value, error) for knowledge / schema / memory manager / model refs."""
+        """(value, error) for knowledge / schema / memory manager / learning / model refs."""
         if name is None:
             return None, None
         if kind == "knowledge":
@@ -1133,6 +1135,9 @@ class StudioTools(Toolkit):
         elif kind == "memory_manager":
             value = self.registry.get_memory_manager(name)
             code = "memory_manager_not_found"
+        elif kind == "learning":
+            value = self.registry.get_learning(name)
+            code = "learning_not_found"
         elif kind == "model":
             value = self.registry.get_model(name)
             code = "model_not_found"
@@ -1304,6 +1309,16 @@ class StudioTools(Toolkit):
             knowledge = config.get("knowledge")
             if isinstance(knowledge, dict) and knowledge.get("name"):
                 view["knowledge_name"] = knowledge.get("name")
+            learning = config.get("learning")
+            # A registry reference is {"name": ...} and nothing else; any
+            # other dict is a machine inlined before Studio authored learning
+            # by reference, and True is the framework default machine.
+            if isinstance(learning, dict) and set(learning) == {"name"} and learning.get("name"):
+                view["learning_name"] = learning["name"]
+            elif isinstance(learning, dict):
+                view["learning"] = "inline"
+            elif learning is True:
+                view["learning"] = True
             schema = config.get("output_schema")
             # A registry-referenced schema is stored as its class name (a
             # string); an inline JSON schema stays a dict and has no name.
@@ -1434,6 +1449,19 @@ class StudioTools(Toolkit):
         """
         names = sorted(getattr(s, "__name__", str(s)) for s in self.registry.schemas)
         return ok_result("listed", schemas=names, count=len(names))
+
+    def list_learning(self) -> str:
+        """List the learning machines attachable to a component via learning_name.
+
+        Returns:
+            str: StudioResult JSON; data.learning is a list of {name, namespace,
+            stores: {store: {mode, namespace}}, model_id, db, knowledge}. Every
+            component wired to a machine reads and writes its namespace, so pick
+            by namespace; a machine with model_id null captures with the model
+            of the first component that runs it.
+        """
+        rows = _learning_rows(self.registry.learning)
+        return ok_result("listed", learning=rows, count=len(rows))
 
     # ------------------------------------------------------------------
     # Component reads
@@ -1691,6 +1719,7 @@ class StudioTools(Toolkit):
         reasoning_model_id: Optional[str] = None,
         memory_manager_id: Optional[str] = None,
         enable_agentic_memory: Optional[bool] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Apply the shared agent/team fields. Returns an error envelope or None.
@@ -1771,6 +1800,28 @@ class StudioTools(Toolkit):
             replaced_keys.add("memory_manager")
         if enable_agentic_memory is not None:
             component.enable_agentic_memory = enable_agentic_memory
+        if learning_name is not None:
+            if learning_name == "":
+                component.learning = None
+            else:
+                machine, err = self._resolve_registry_ref("learning", learning_name)
+                if err is not None:
+                    return err
+                component.learning = machine
+                # Studio authors learning only. A component wired to a
+                # learning machine drops the legacy user-memory pair: both
+                # register a tool named update_user_memory and the legacy one
+                # would shadow the store's.
+                component.enable_agentic_memory = False
+                component.memory_manager = None
+                replaced_keys.add("memory_manager")
+                if getattr(machine, "model", None) is None:
+                    log_warning(
+                        f"Learning machine '{learning_name}' declares no model: the first component to run "
+                        "binds its own model into it for every component sharing it. Give the machine a "
+                        "model on the Registry if it should capture with one of its own."
+                    )
+            replaced_keys.add("learning")
         if metadata is not None:
             existing = getattr(component, "metadata", None) or {}
             studio_meta = existing.get("studio")
@@ -1817,6 +1868,7 @@ class StudioTools(Toolkit):
         reasoning_model_id: Optional[str] = None,
         memory_manager_id: Optional[str] = None,
         enable_agentic_memory: Optional[bool] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
@@ -1850,6 +1902,8 @@ class StudioTools(Toolkit):
             reasoning_model_id (Optional[str]): Exact model id used for reasoning.
             memory_manager_id (Optional[str]): Registered memory manager id.
             enable_agentic_memory (Optional[bool]): Give the agent user-memory tools.
+            learning_name (Optional[str]): Exact name from list_learning; wires the
+                agent to that shared learning machine.
             metadata (Optional[Dict]): Arbitrary metadata stored on the component.
 
         Returns:
@@ -1896,6 +1950,7 @@ class StudioTools(Toolkit):
                 reasoning_model_id=reasoning_model_id,
                 memory_manager_id=memory_manager_id,
                 enable_agentic_memory=enable_agentic_memory,
+                learning_name=learning_name,
                 metadata=metadata,
             )
             if field_err is not None:
@@ -1928,6 +1983,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
@@ -1957,6 +2013,8 @@ class StudioTools(Toolkit):
             add_datetime_to_context (bool): Show the current date and time. Default True.
             knowledge_name (Optional[str]): Exact name from list_knowledge.
             output_schema_name (Optional[str]): Exact name from list_schemas.
+            learning_name (Optional[str]): Exact name from list_learning; wires the
+                team to that shared learning machine.
             metadata (Optional[Dict]): Arbitrary metadata stored on the component.
 
         Returns:
@@ -2023,6 +2081,7 @@ class StudioTools(Toolkit):
                 additional_context=additional_context,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                learning_name=learning_name,
                 metadata=metadata,
             )
             if field_err is not None:
@@ -2410,6 +2469,7 @@ class StudioTools(Toolkit):
         reasoning_model_id: Optional[str] = None,
         memory_manager_id: Optional[str] = None,
         enable_agentic_memory: Optional[bool] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
         publish: bool = False,
@@ -2444,6 +2504,7 @@ class StudioTools(Toolkit):
             reasoning_model_id (Optional[str]): Reasoning model id; "" detaches.
             memory_manager_id (Optional[str]): Memory manager id; "" detaches.
             enable_agentic_memory (Optional[bool]): User-memory tools on or off.
+            learning_name (Optional[str]): Exact name from list_learning; "" detaches.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard against the
                 latest version you read; a conflict means someone else edited.
@@ -2478,6 +2539,7 @@ class StudioTools(Toolkit):
                 reasoning_model_id=reasoning_model_id,
                 memory_manager_id=memory_manager_id,
                 enable_agentic_memory=enable_agentic_memory,
+                learning_name=learning_name,
                 metadata=metadata,
             )
             return err, None
@@ -2501,6 +2563,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
         publish: bool = False,
@@ -2526,6 +2589,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (Optional[bool]): Date and time in context.
             knowledge_name (Optional[str]): Exact name from list_knowledge; "" detaches.
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
+            learning_name (Optional[str]): Exact name from list_learning; "" detaches.
             metadata (Optional[Dict]): Replacement metadata.
             expected_version (Optional[int]): Compare-and-set guard.
             publish (bool): True publishes this edit immediately, replacing the
@@ -2587,6 +2651,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                learning_name=learning_name,
                 metadata=metadata,
             )
             return err, pinned
@@ -3328,6 +3393,10 @@ class StudioTools(Toolkit):
         """Async variant of list_schemas."""
         return await self._run_sync_tool(self.list_schemas)
 
+    async def alist_learning(self) -> str:
+        """Async variant of list_learning."""
+        return await self._run_sync_tool(self.list_learning)
+
     async def alist_components(
         self, component_type: Optional[str] = None, _agno_run_context: Optional[RunContext] = None
     ) -> str:
@@ -3368,6 +3437,7 @@ class StudioTools(Toolkit):
         reasoning_model_id: Optional[str] = None,
         memory_manager_id: Optional[str] = None,
         enable_agentic_memory: Optional[bool] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
@@ -3394,6 +3464,7 @@ class StudioTools(Toolkit):
             reasoning_model_id=reasoning_model_id,
             memory_manager_id=memory_manager_id,
             enable_agentic_memory=enable_agentic_memory,
+            learning_name=learning_name,
             metadata=metadata,
             _agno_run_context=_agno_run_context,
         )
@@ -3416,6 +3487,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         _agno_run_context: Optional[RunContext] = None,
     ) -> str:
@@ -3438,6 +3510,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            learning_name=learning_name,
             metadata=metadata,
             _agno_run_context=_agno_run_context,
         )
@@ -3485,6 +3558,7 @@ class StudioTools(Toolkit):
         reasoning_model_id: Optional[str] = None,
         memory_manager_id: Optional[str] = None,
         enable_agentic_memory: Optional[bool] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
         publish: bool = False,
@@ -3512,6 +3586,7 @@ class StudioTools(Toolkit):
             reasoning_model_id=reasoning_model_id,
             memory_manager_id=memory_manager_id,
             enable_agentic_memory=enable_agentic_memory,
+            learning_name=learning_name,
             metadata=metadata,
             expected_version=expected_version,
             publish=publish,
@@ -3535,6 +3610,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        learning_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[int] = None,
         publish: bool = False,
@@ -3558,6 +3634,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            learning_name=learning_name,
             metadata=metadata,
             expected_version=expected_version,
             publish=publish,
@@ -4361,6 +4438,7 @@ class StudioTools(Toolkit):
         "output_schema",
         "knowledge",
         "memory_manager",
+        "learning",
         "reasoning_model",
         "parser_model",
         "output_model",
@@ -4851,6 +4929,58 @@ def _component_type(component: Component) -> Any:
 # declaration it never touched -- and quietly lift the dispatch refusal that
 # declaration causes -- so edits carry them forward verbatim.
 _UNRECONSTRUCTED_KEYS = ("reasoning_model", "parser_model", "output_model")
+
+
+def _learning_rows(machines: List[Any]) -> List[Dict[str, Any]]:
+    """One list_learning row per registered machine, read from its declared
+    fields. The machine's ``stores`` property is never touched: it lazily
+    builds and caches the store objects, and a store built before the machine
+    has a db keeps db=None for the life of the process."""
+    import dataclasses
+
+    from agno.learn.machine import LearningMachine
+
+    rows: List[Dict[str, Any]] = []
+    for machine in machines:
+        name = getattr(machine, "name", None)
+        if not name:
+            continue
+        machine_namespace = getattr(machine, "namespace", "global")
+        stores: Dict[str, Dict[str, Any]] = {}
+        for store_name, config_cls in LearningMachine._STORE_CONFIG_CLASSES.items():
+            value = getattr(machine, store_name, False)
+            # learned_knowledge is auto-enabled when the machine binds a knowledge.
+            if store_name == "learned_knowledge" and not value and getattr(machine, "knowledge", None) is not None:
+                value = True
+            if not value:
+                continue
+            # bool -> the config class defaults; Store instance -> its config;
+            # Config instance -> itself.
+            config = getattr(value, "config", None)
+            if config is None and dataclasses.is_dataclass(value) and not isinstance(value, type):
+                config = value
+            mode = getattr(config, "mode", None) if config is not None else getattr(config_cls, "mode", None)
+            row: Dict[str, Any] = {"mode": getattr(mode, "value", mode)}
+            if store_name in ("entity_memory", "learned_knowledge"):
+                # An explicit store namespace wins; a store left on the class
+                # default inherits the machine namespace.
+                store_namespace = getattr(config, "namespace", None) if config is not None else None
+                row["namespace"] = (
+                    store_namespace if store_namespace and store_namespace != "global" else machine_namespace
+                )
+            stores[store_name] = row
+        model = getattr(machine, "model", None)
+        rows.append(
+            {
+                "name": name,
+                "namespace": machine_namespace,
+                "stores": stores,
+                "model_id": getattr(model, "id", None) if model is not None else None,
+                "db": getattr(machine, "db", None) is not None,
+                "knowledge": getattr(machine, "knowledge", None) is not None,
+            }
+        )
+    return rows
 
 
 def _component_to_dict(component: Component, carry: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

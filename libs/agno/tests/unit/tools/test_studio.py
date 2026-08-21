@@ -13,6 +13,7 @@ import time
 from datetime import datetime
 from importlib.util import find_spec
 from typing import Any, Dict
+from unittest.mock import patch
 
 import pytest
 
@@ -98,6 +99,7 @@ DISCOVERY_TOOLS = {
     "list_functions",
     "list_knowledge",
     "list_schemas",
+    "list_learning",
     "list_components",
     "get_component",
 }
@@ -1573,6 +1575,250 @@ class TestCoverageFields:
             studio_refs.create_agent(name="x", instructions="i", model_id="gpt-5.4", reasoning_model_id="ghost")
         )
         assert error["code"] == "model_not_found"
+
+
+class TestLearningSurface:
+    """learning_name wires a component to a LearningMachine the deployer
+    declared on the Registry. The stored config carries a reference by name,
+    never the machine's config, so the Registry stays the only place learning
+    is authored; list_learning shows what is declared, namespace first."""
+
+    @pytest.fixture
+    def brain(self):
+        from agno.learn import LearningMachine
+        from agno.learn.config import LearningMode, UserMemoryConfig
+
+        return LearningMachine(
+            name="shared-brain",
+            namespace="team_west",
+            user_memory=UserMemoryConfig(mode=LearningMode.PROPOSE),
+            entity_memory=True,
+        )
+
+    @pytest.fixture
+    def studio_learning(self, registry, db, brain):
+        registry.add_learning(brain)
+        return StudioTools(registry=registry, db=db)
+
+    # -- discovery ---------------------------------------------------------
+
+    def test_list_learning_reads_declared_fields_without_binding_stores(self, studio_learning, brain):
+        data = _data(studio_learning.list_learning())
+        assert data["count"] == 1
+        row = data["learning"][0]
+        assert row["name"] == "shared-brain"
+        assert row["namespace"] == "team_west"
+        assert row["stores"] == {
+            "user_memory": {"mode": "propose"},
+            "entity_memory": {"mode": "agentic", "namespace": "team_west"},
+        }
+        assert row["model_id"] is None
+        assert row["db"] is False
+        assert row["knowledge"] is False
+        # Listing must not build the machine's stores: a store built before the
+        # machine has a db keeps db=None for the life of the process.
+        assert brain._stores is None
+
+    def test_list_learning_shows_store_namespace_bound_model_and_auto_learned_knowledge(self, registry, db):
+        from agno.learn import LearningMachine
+        from agno.learn.config import LearnedKnowledgeConfig
+
+        class FakeKnowledge:
+            name = "handbook"
+
+        registry.add_learning(
+            LearningMachine(
+                name="kb-brain",
+                namespace="team_west",
+                knowledge=FakeKnowledge(),
+                learned_knowledge=LearnedKnowledgeConfig(namespace="ops"),
+                model=OpenAIResponses(id="gpt-5.5"),
+            )
+        )
+        registry.add_learning(LearningMachine(name="auto-kb", knowledge=FakeKnowledge()))
+        registry.add_learning(LearningMachine(user_memory=True))  # unnamed: not a registry resource
+        studio = StudioTools(registry=registry, db=db)
+
+        rows = {row["name"]: row for row in _data(studio.list_learning())["learning"]}
+        assert set(rows) == {"kb-brain", "auto-kb"}
+        # An explicit store namespace wins over the machine's.
+        assert rows["kb-brain"]["stores"] == {"learned_knowledge": {"mode": "agentic", "namespace": "ops"}}
+        assert rows["kb-brain"]["model_id"] == "gpt-5.5"
+        assert rows["kb-brain"]["knowledge"] is True
+        # learned_knowledge is auto-enabled by a bound knowledge and inherits the machine namespace.
+        assert rows["auto-kb"]["stores"] == {"learned_knowledge": {"mode": "agentic", "namespace": "global"}}
+
+    @pytest.mark.asyncio
+    async def test_alist_learning_matches_sync(self, studio_learning):
+        assert _loads(await studio_learning.alist_learning()) == _loads(studio_learning.list_learning())
+
+    # -- create / edit -----------------------------------------------------
+
+    def test_create_agent_stores_a_reference_not_the_machine(self, studio_learning, db):
+        _data(
+            studio_learning.create_agent(
+                name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain", publish=True
+            )
+        )
+        assert db.get_config(component_id="learner", version=1)["config"]["learning"] == {"name": "shared-brain"}
+        view = _data(studio_learning.get_component("learner"))
+        assert view["learning_name"] == "shared-brain"
+        assert view.get("enable_agentic_memory") is None
+
+    def test_edit_agent_empty_string_detaches(self, studio_learning, db):
+        _data(studio_learning.create_agent(name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain"))
+        out = _loads(studio_learning.edit_agent("learner", learning_name=""))
+        assert "learning" not in db.get_config(component_id="learner", version=_edit_version(out))["config"]
+        assert "learning_name" not in _data(studio_learning.get_component("learner"))
+
+    def test_unknown_learning_returns_learning_not_found(self, studio_learning):
+        error = _error(studio_learning.create_agent(name="x", instructions="i", model_id="gpt-5.4", learning_name="ghost"))
+        assert error["code"] == "learning_not_found"
+        assert error["details"]["name"] == "ghost"
+
+        _data(studio_learning.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True))
+        error = _error(studio_learning.create_team(name="crew", instructions="i", member_ids=["member"], learning_name="ghost"))
+        assert error["code"] == "learning_not_found"
+        error = _error(studio_learning.edit_agent("member", learning_name="ghost"))
+        assert error["code"] == "learning_not_found"
+
+    def test_team_forms_take_learning_name(self, studio_learning, db):
+        _data(studio_learning.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True))
+        _data(
+            studio_learning.create_team(
+                name="crew", instructions="i", member_ids=["member"], learning_name="shared-brain", publish=True
+            )
+        )
+        assert db.get_config(component_id="crew", version=1)["config"]["learning"] == {"name": "shared-brain"}
+        assert _data(studio_learning.get_component("crew"))["learning_name"] == "shared-brain"
+
+        out = _loads(studio_learning.edit_team("crew", learning_name=""))
+        assert "learning" not in db.get_config(component_id="crew", version=_edit_version(out))["config"]
+
+    @pytest.mark.asyncio
+    async def test_async_forms_take_learning_name(self, studio_learning, db):
+        _data(
+            await studio_learning.acreate_agent(
+                name="alearner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain", publish=True
+            )
+        )
+        assert db.get_config(component_id="alearner", version=1)["config"]["learning"] == {"name": "shared-brain"}
+        _data(
+            await studio_learning.acreate_team(
+                name="acrew", instructions="i", member_ids=["alearner"], learning_name="shared-brain", publish=True
+            )
+        )
+        assert db.get_config(component_id="acrew", version=1)["config"]["learning"] == {"name": "shared-brain"}
+
+        out = _loads(await studio_learning.aedit_agent("alearner", learning_name=""))
+        assert "learning" not in db.get_config(component_id="alearner", version=_edit_version(out))["config"]
+        out = _loads(await studio_learning.aedit_team("acrew", learning_name=""))
+        assert "learning" not in db.get_config(component_id="acrew", version=_edit_version(out))["config"]
+
+    def test_wiring_a_machine_without_a_model_warns(self, studio_learning):
+        with patch("agno.tools.studio.log_warning") as mock_warn:
+            _data(studio_learning.create_agent(name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain"))
+        assert any("declares no model" in str(call) for call in mock_warn.call_args_list)
+
+    # -- learning only -----------------------------------------------------
+
+    def test_wiring_learning_clears_the_legacy_memory_pair(self, registry, db, brain):
+        """A pre-a3 component can carry enable_agentic_memory and a memory
+        manager. Wiring learning drops both - registered or not - so the two
+        update_user_memory tools can never coexist on a Studio-edited
+        component, and the lenient-edit preserve step must not bring the
+        unresolvable manager back."""
+        from agno.memory.manager import MemoryManager
+
+        registry.add_learning(brain)
+        registered = MemoryManager(id="mm-stable")
+        registry.memory_managers.append(registered)
+        Agent(
+            id="legacy",
+            name="Legacy",
+            model=OpenAIResponses(id="gpt-5.5"),
+            memory_manager=registered,
+            enable_agentic_memory=True,
+        ).save(db=db)
+        Agent(
+            id="legacy-unresolvable",
+            name="Legacy 2",
+            model=OpenAIResponses(id="gpt-5.5"),
+            memory_manager=MemoryManager(id="mm-gone"),
+            enable_agentic_memory=True,
+        ).save(db=db)
+        before = db.get_config(component_id="legacy", version=1)["config"]
+        assert before["enable_agentic_memory"] is True
+        assert before["memory_manager"] == {"registry_id": "mm-stable"}
+
+        studio = StudioTools(registry=registry, db=db)
+        for component_id in ("legacy", "legacy-unresolvable"):
+            out = _loads(studio.edit_agent(component_id, learning_name="shared-brain"))
+            after = db.get_config(component_id=component_id, version=_edit_version(out))["config"]
+            assert after["learning"] == {"name": "shared-brain"}, component_id
+            assert "enable_agentic_memory" not in after, component_id
+            assert "memory_manager" not in after, component_id
+
+    # -- edit preservation -------------------------------------------------
+
+    def _saved_with_unregistered_machine(self, tmp_path, kind: str, component_id: str):
+        from agno.learn import LearningMachine
+        from agno.team.team import Team
+
+        db = SqliteDb(db_file=str(tmp_path / f"preserve_{component_id}.db"))
+        machine = LearningMachine(name="shared-brain", user_memory=True)
+        if kind == "agent":
+            Agent(id=component_id, name="L", model=OpenAIResponses(id="gpt-5.5"), learning=machine).save(db=db)
+        else:
+            Team(
+                id=component_id, name="L", members=[Agent(id=f"{component_id}-m", name="M")], learning=machine
+            ).save(db=db)
+        # Empty registry: the reference does not resolve, so the lenient edit base drops it.
+        return db, StudioTools(registry=Registry(), db=db)
+
+    def test_description_edit_preserves_unresolved_learning(self, tmp_path):
+        db, studio = self._saved_with_unregistered_machine(tmp_path, "agent", "learn-agent")
+        out = _loads(studio.edit_agent("learn-agent", description="edited"))
+        assert out.get("status") == "edited"
+        row = db.get_config(component_id="learn-agent", version=_edit_version(out))
+        assert row["config"]["learning"] == {"name": "shared-brain"}
+        assert row["config"]["description"] == "edited"
+
+    @pytest.mark.asyncio
+    async def test_async_description_edit_preserves_unresolved_learning(self, tmp_path):
+        db, studio = self._saved_with_unregistered_machine(tmp_path, "agent", "learn-agent-async")
+        out = _loads(await studio.aedit_agent("learn-agent-async", description="edited"))
+        row = db.get_config(component_id="learn-agent-async", version=_edit_version(out))
+        assert row["config"]["learning"] == {"name": "shared-brain"}
+
+    def test_team_description_edit_preserves_unresolved_learning(self, tmp_path):
+        db, studio = self._saved_with_unregistered_machine(tmp_path, "team", "learn-team")
+        out = _loads(studio.edit_team("learn-team", description="edited"))
+        row = db.get_config(component_id="learn-team", version=_edit_version(out))
+        assert row["config"]["learning"] == {"name": "shared-brain"}
+
+    @pytest.mark.asyncio
+    async def test_async_team_description_edit_preserves_unresolved_learning(self, tmp_path):
+        db, studio = self._saved_with_unregistered_machine(tmp_path, "team", "learn-team-async")
+        out = _loads(await studio.aedit_team("learn-team-async", description="edited"))
+        row = db.get_config(component_id="learn-team-async", version=_edit_version(out))
+        assert row["config"]["learning"] == {"name": "shared-brain"}
+
+    # -- visibility --------------------------------------------------------
+
+    def test_inline_and_default_learning_stay_visible_in_the_view(self, registry, db):
+        """Components stored before learning was authored by reference carry
+        an inlined machine or the framework default; the preview must not hide
+        that they learn, even though Studio cannot author either shape."""
+        from agno.learn import LearningMachine
+
+        Agent(id="inline-learn", name="I", model=OpenAIResponses(id="gpt-5.5"), learning=LearningMachine(user_memory=True)).save(db=db)
+        Agent(id="default-learn", name="D", model=OpenAIResponses(id="gpt-5.5"), learning=True).save(db=db)
+        studio = StudioTools(registry=registry, db=db)
+
+        assert _data(studio.get_component("inline-learn"))["learning"] == "inline"
+        assert _data(studio.get_component("default-learn"))["learning"] is True
+        assert "learning_name" not in _data(studio.get_component("inline-learn"))
 
 
 # ----------------------------------------------------------------------
