@@ -295,7 +295,11 @@ class InMemoryDb(BaseDb):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         try:
-            session_dict = session.to_dict()
+            # Serialize without runs: the runs list on the stored row is
+            # maintained incrementally by upsert_run, and re-serializing every
+            # run here would make each save cost grow with session length
+            # (the SQL adapters already serialize with include_runs=False).
+            session_dict = session.to_dict(include_runs=False)
 
             # Add session_type based on session instance type
             if isinstance(session, AgentSession):
@@ -315,13 +319,29 @@ class InMemoryDb(BaseDb):
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                     return None
                 session_dict["updated_at"] = int(time.time())
+                # A session-row update must never drop runs written by
+                # upsert_run: carry the stored list forward. The list is
+                # already owned by the store, so it needs no copy.
+                runs_for_store = existing_session.get("runs")
             else:
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
+                # First insert: serialize whatever runs the incoming session
+                # carries, once (bulk import and restore callers never call
+                # upsert_run). to_dict output is freshly built, so it needs
+                # no defensive copy.
+                incoming_runs = session.runs
+                runs_for_store = (
+                    [run.to_dict() if hasattr(run, "to_dict") else deepcopy(run) for run in incoming_runs]
+                    if incoming_runs
+                    else None
+                )
 
-            self._sessions[session_id] = deepcopy(session_dict)
+            stored_session = deepcopy(session_dict)
+            stored_session["runs"] = runs_for_store
+            self._sessions[session_id] = stored_session
 
-            session_dict_copy = deepcopy(session_dict)
+            session_dict_copy = deepcopy(stored_session)
             if not deserialize:
                 return session_dict_copy
 
@@ -477,7 +497,9 @@ class InMemoryDb(BaseDb):
                 log_debug(f"upsert_run: session {session_id} not found; skipping")
                 return
 
-            runs = session.setdefault("runs", [])
+            # The stored row holds "runs": None until the first run lands
+            runs = session.get("runs") or []
+            session["runs"] = runs
             for i, existing in enumerate(runs):
                 existing_id = (
                     existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)

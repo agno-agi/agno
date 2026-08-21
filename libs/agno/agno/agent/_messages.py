@@ -40,7 +40,7 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.knowledge import get_user_id_kwarg
 from agno.utils.log import log_debug, log_warning
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
@@ -1193,7 +1193,6 @@ def get_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        from copy import deepcopy
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1210,12 +1209,7 @@ def get_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
-
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1406,7 +1400,6 @@ async def aget_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        from copy import deepcopy
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1423,12 +1416,7 @@ async def aget_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
-
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1585,7 +1573,6 @@ def _build_continue_run_messages(
 
     # 2. Add history messages if not already present in input
     if add_history_to_context and session is not None and not input_has_history:
-        from copy import deepcopy
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1602,12 +1589,7 @@ def _build_continue_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
-
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:

@@ -50,6 +50,7 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
+from agno.utils.message import copy_history_message
 from agno.utils.team import (
     get_member_id,
     get_team_member_interactions_str,
@@ -539,14 +540,7 @@ def _get_history_for_member_agent(
     )
 
     if len(history) > 0:
-        # Create a deep copy of the history messages to avoid modifying the original messages
-        history_copy = [deepcopy(msg) for msg in history]
-
-        # Tag each message as coming from history
-        for _msg in history_copy:
-            _msg.from_history = True
-
-        return history_copy
+        return [copy_history_message(msg) for msg in history]
     return []
 
 

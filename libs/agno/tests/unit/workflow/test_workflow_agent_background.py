@@ -27,22 +27,22 @@ class TestWorkflowAgentBackgroundSingleRun:
 
         async def fake_execute(user_input=None, execution_input=None, run_context=None, stream=False, **kw):
             observed["run_id"] = run_context.run_id
-            # The real path persists the run under the caller's id (9258)
+            # The real path persists the run under the caller's id (9258),
+            # pairing the session-row save with a per-run write
             from agno.run.workflow import WorkflowRunOutput
 
             session, _ = await wf._aload_or_create_session(
                 session_id=run_context.session_id, user_id=None, session_state=None
             )
-            session.upsert_run(
-                run=WorkflowRunOutput(
-                    run_id=run_context.run_id,
-                    session_id=run_context.session_id,
-                    workflow_id=wf.id,
-                    status=RunStatus.completed,
-                    content="done",
-                )
+            run = WorkflowRunOutput(
+                run_id=run_context.run_id,
+                session_id=run_context.session_id,
+                workflow_id=wf.id,
+                status=RunStatus.completed,
+                content="done",
             )
-            wf.save_session(session=session)
+            session.upsert_run(run=run)
+            await wf._apersist_session_and_run(session=session, run=run)
             from types import SimpleNamespace
 
             return SimpleNamespace(run_id=run_context.run_id, status=RunStatus.completed)
