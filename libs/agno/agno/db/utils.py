@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import UUID
 
+from agno.exceptions import MigrationRequiredError, SchemaMismatchError
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
@@ -514,15 +515,16 @@ MIGRATABLE_TABLE_TYPES = frozenset(
 )
 
 
-def table_schema_mismatch_error(table_ref: str, table_type: Optional[str] = None) -> ValueError:
+def table_schema_mismatch_error(table_ref: str, table_type: Optional[str] = None) -> SchemaMismatchError:
     """Build the error raised when an existing table fails schema validation.
 
     For table types MigrationManager can handle, the most common cause is an
     upgrade across Agno versions whose migrations have not been applied yet
-    (e.g. v2.x data with a v3.x install), so the message points the user at
-    the migration path instead of dead-ending. Other table types have no
-    pending migrations, so migration advice would send the user in a circle;
-    they get repair guidance instead.
+    (e.g. v2.x data with a v3.x install), so the result is a
+    ``MigrationRequiredError`` whose message points the user at the migration
+    path instead of dead-ending. Other table types have no pending migrations,
+    so migration advice would send the user in a circle; they get a plain
+    ``SchemaMismatchError`` with repair guidance instead.
     """
     message = (
         f"Table {table_ref} has an invalid schema: it does not match what this version of Agno "
@@ -535,13 +537,13 @@ def table_schema_mismatch_error(table_ref: str, table_type: Optional[str] = None
             "`agno.db.migrations.manager`; await the call directly in async code), or via the "
             "AgentOS endpoint `POST /databases/all/migrate`."
         )
-    else:
-        message += (
-            "No Agno migration covers this table, so it was likely created or modified outside "
-            "Agno. Compare it against the expected schema and repair it, or move Agno to a new "
-            "table name so the table is recreated."
-        )
-    return ValueError(message)
+        return MigrationRequiredError(table_name=table_ref, message=message)
+    message += (
+        "No Agno migration covers this table, so it was likely created or modified outside "
+        "Agno. Compare it against the expected schema and repair it, or move Agno to a new "
+        "table name so the table is recreated."
+    )
+    return SchemaMismatchError(table_name=table_ref, message=message)
 
 
 def metric_record_day(record: Dict[str, Any]) -> Optional[date]:

@@ -11,7 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import ComponentRehydrationError
+from agno.exceptions import AgnoError, ComponentRehydrationError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -33,6 +33,23 @@ from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
+
+
+class AgnoHTTPException(HTTPException):
+    """HTTPException raised from an ``AgnoError`` that keeps the error's identity.
+
+    Routers that wrap database and model calls in a blanket ``except Exception`` use this
+    to re-raise an ``AgnoError`` with its own status code. The owned-app exception handler
+    copies ``error_id`` and ``error_type`` into the JSON body so clients can branch on them
+    (``migration_required_error``, ``model_provider_error``, ...) instead of parsing
+    ``detail``. On a caller-supplied app FastAPI's default handler still answers with the
+    right status code and ``detail``.
+    """
+
+    def __init__(self, error: AgnoError, detail: Optional[str] = None):
+        super().__init__(status_code=error.status_code, detail=detail if detail is not None else str(error))
+        self.error_id: Optional[str] = getattr(error, "error_id", None)
+        self.error_type: Optional[str] = getattr(error, "type", None)
 
 
 def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> Optional[datetime]:

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.exceptions import AgnoError
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import apply_scope_to_kwargs, get_scoped_user_id
@@ -33,7 +34,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
+from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_db, get_team_by_id
 from agno.remote.base import RemoteDb
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_warning
@@ -283,6 +284,8 @@ def attach_routes(
                 db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -350,6 +353,8 @@ def attach_routes(
                 eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope)
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
