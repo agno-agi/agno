@@ -206,7 +206,7 @@ def resolve_learning_reference(
     loading without it would silently run the component with no learning.
     """
     reference = config.get("learning")
-    if not is_learning_reference(reference):
+    if not isinstance(reference, dict) or not is_learning_reference(reference):
         return
     name = reference["name"]
 
@@ -221,9 +221,7 @@ def resolve_learning_reference(
                     "machines are registered under that name, so the reference could bind the "
                     "wrong machine. Give the machines distinct names."
                 )
-            log_warning(
-                f"Learning machine name '{name}' matches more than one registered machine; binding the first."
-            )
+            log_warning(f"Learning machine name '{name}' matches more than one registered machine; binding the first.")
         machine = registry.get_learning(name)
         if machine is not None:
             config["learning"] = machine

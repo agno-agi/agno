@@ -1656,18 +1656,26 @@ class TestLearningSurface:
         assert view.get("enable_agentic_memory") is None
 
     def test_edit_agent_empty_string_detaches(self, studio_learning, db):
-        _data(studio_learning.create_agent(name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain"))
+        _data(
+            studio_learning.create_agent(
+                name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain"
+            )
+        )
         out = _loads(studio_learning.edit_agent("learner", learning_name=""))
         assert "learning" not in db.get_config(component_id="learner", version=_edit_version(out))["config"]
         assert "learning_name" not in _data(studio_learning.get_component("learner"))
 
     def test_unknown_learning_returns_learning_not_found(self, studio_learning):
-        error = _error(studio_learning.create_agent(name="x", instructions="i", model_id="gpt-5.4", learning_name="ghost"))
+        error = _error(
+            studio_learning.create_agent(name="x", instructions="i", model_id="gpt-5.4", learning_name="ghost")
+        )
         assert error["code"] == "learning_not_found"
         assert error["details"]["name"] == "ghost"
 
         _data(studio_learning.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True))
-        error = _error(studio_learning.create_team(name="crew", instructions="i", member_ids=["member"], learning_name="ghost"))
+        error = _error(
+            studio_learning.create_team(name="crew", instructions="i", member_ids=["member"], learning_name="ghost")
+        )
         assert error["code"] == "learning_not_found"
         error = _error(studio_learning.edit_agent("member", learning_name="ghost"))
         assert error["code"] == "learning_not_found"
@@ -1707,7 +1715,11 @@ class TestLearningSurface:
 
     def test_wiring_a_machine_without_a_model_warns(self, studio_learning):
         with patch("agno.tools.studio.log_warning") as mock_warn:
-            _data(studio_learning.create_agent(name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain"))
+            _data(
+                studio_learning.create_agent(
+                    name="learner", instructions="i", model_id="gpt-5.4", learning_name="shared-brain"
+                )
+            )
         assert any("declares no model" in str(call) for call in mock_warn.call_args_list)
 
     # -- learning only -----------------------------------------------------
@@ -1760,9 +1772,9 @@ class TestLearningSurface:
         if kind == "agent":
             Agent(id=component_id, name="L", model=OpenAIResponses(id="gpt-5.5"), learning=machine).save(db=db)
         else:
-            Team(
-                id=component_id, name="L", members=[Agent(id=f"{component_id}-m", name="M")], learning=machine
-            ).save(db=db)
+            Team(id=component_id, name="L", members=[Agent(id=f"{component_id}-m", name="M")], learning=machine).save(
+                db=db
+            )
         # Empty registry: the reference does not resolve, so the lenient edit base drops it.
         return db, StudioTools(registry=Registry(), db=db)
 
@@ -1802,7 +1814,9 @@ class TestLearningSurface:
         that they learn, even though Studio cannot author either shape."""
         from agno.learn import LearningMachine
 
-        Agent(id="inline-learn", name="I", model=OpenAIResponses(id="gpt-5.5"), learning=LearningMachine(user_memory=True)).save(db=db)
+        Agent(
+            id="inline-learn", name="I", model=OpenAIResponses(id="gpt-5.5"), learning=LearningMachine(user_memory=True)
+        ).save(db=db)
         Agent(id="default-learn", name="D", model=OpenAIResponses(id="gpt-5.5"), learning=True).save(db=db)
         studio = StudioTools(registry=registry, db=db)
 
