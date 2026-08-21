@@ -17,6 +17,7 @@ list_components long after it was gone.
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict
 
 import pytest
@@ -250,3 +251,331 @@ class TestClearedFieldsReachTheCatalogRow:
         _data(asyncio.run(studio.apublish_component(component_id)))
 
         assert not db.get_component(component_id)["description"]
+
+
+# ----------------------------------------------------------------------
+# Row-only fields survive the toolkit's pointer moves
+# ----------------------------------------------------------------------
+
+
+def _operator_patch(db, component_id: str) -> None:
+    """The write PATCH /components performs: row columns only, no config."""
+    from agno.db.base import ComponentType
+
+    row = db.get_component(component_id)
+    merged = dict(row.get("metadata") or {})
+    merged["team"] = "ops"
+    db.upsert_component(
+        component_id=component_id,
+        component_type=ComponentType(row["component_type"]),
+        name=row["name"],
+        description="operator note",
+        metadata=merged,
+    )
+
+
+def _create_bare(studio, component_type: str, name: str, ctx=None) -> str:
+    """A published component whose configs never carry description/metadata.
+
+    With ``ctx`` the component is owned by that caller, which is what a scoped
+    actor needs before it may edit the component at all.
+    """
+    scope = {"_agno_run_context": ctx} if ctx is not None else {}
+    if component_type == "agent":
+        out = studio.create_agent(name=name, instructions="i", publish=True, **scope)
+    elif component_type == "team":
+        studio.create_agent(name=f"{name}-member", instructions="i", publish=True, **scope)
+        out = studio.create_team(name=name, instructions="i", member_ids=[f"{name}-member"], publish=True, **scope)
+    else:
+        studio.create_agent(name=f"{name}-step", instructions="i", publish=True, **scope)
+        out = studio.create_workflow(
+            name=name, steps=[{"type": "step", "name": "s1", "agent_id": f"{name}-step"}], publish=True, **scope
+        )
+    return _data(out)["id"]
+
+
+class TestRowOnlyFieldsSurviveTheToolkit:
+    """description/metadata set only on the row (PATCH /components) exist in
+    no config version, so no publish or rollback may clear them - there is no
+    version to restore them from."""
+
+    _EDITORS = {"agent": "edit_agent", "team": "edit_team", "workflow": "edit_workflow"}
+
+    def _assert_survived(self, db, component_id):
+        row = db.get_component(component_id)
+        assert row["description"] == "operator note"
+        assert row["metadata"]["team"] == "ops"
+
+    @pytest.mark.parametrize("component_type", ["agent", "team", "workflow"])
+    def test_publish_leaves_row_only_fields_alone(self, studio, db, component_type):
+        component_id = _create_bare(studio, component_type, f"rowonly-{component_type}")
+        _operator_patch(db, component_id)
+
+        edit_kwargs = {"name": f"renamed-{component_type}"} if component_type == "workflow" else {"instructions": "i2"}
+        _data(getattr(studio, self._EDITORS[component_type])(component_id, **edit_kwargs))
+        _data(studio.publish_component(component_id))
+
+        self._assert_survived(db, component_id)
+
+    def test_inline_publish_leaves_row_only_fields_alone(self, studio, db):
+        component_id = _create_bare(studio, "agent", "rowonly-inline")
+        _operator_patch(db, component_id)
+
+        _data(studio.edit_agent(component_id, instructions="i2", publish=True))
+
+        self._assert_survived(db, component_id)
+
+    def test_rollback_leaves_row_only_fields_alone(self, studio, db):
+        component_id = _create_bare(studio, "agent", "rowonly-rollback")
+        _data(studio.edit_agent(component_id, instructions="i2", publish=True))
+        _operator_patch(db, component_id)
+
+        _data(studio.set_current_version(component_id, 1))
+
+        self._assert_survived(db, component_id)
+
+    def test_async_publish_leaves_row_only_fields_alone(self, studio, db):
+        component_id = _create_bare(studio, "agent", "rowonly-async")
+        _operator_patch(db, component_id)
+        _data(studio.edit_agent(component_id, instructions="i2"))
+
+        _data(asyncio.run(studio.apublish_component(component_id)))
+
+        self._assert_survived(db, component_id)
+
+    def test_an_explicit_edit_still_overrides_the_operator(self, studio, db):
+        component_id = _create_bare(studio, "agent", "rowonly-override")
+        _operator_patch(db, component_id)
+
+        _data(studio.edit_agent(component_id, description="authored", metadata={"tier": "two"}, publish=True))
+
+        row = db.get_component(component_id)
+        assert row["description"] == "authored"
+        assert row["metadata"]["tier"] == "two"
+        assert "team" not in row["metadata"]
+
+
+class TestScopedFlowsAndTheProvenanceStamp:
+    """A scoped actor's provenance stamp rides in every config's metadata, so
+    stamp-only metadata must not read as "this version owns the column" - but
+    a scoped caller's explicit clear still must."""
+
+    @staticmethod
+    def _ctx(user_id: str = "builder-1"):
+        from agno.run import RunContext
+
+        return RunContext(run_id="r1", session_id="s1", user_id=user_id)
+
+    def _scoped_fixture(self, studio, db) -> str:
+        ctx = self._ctx()
+        created = _data(studio.create_agent(name="Scoped Bot", instructions="i", publish=True, _agno_run_context=ctx))
+        component_id = created["id"]
+        _operator_patch(db, component_id)
+        return component_id
+
+    def test_scoped_publish_keeps_operator_fields_beside_the_stamp(self, studio, db):
+        component_id = self._scoped_fixture(studio, db)
+        ctx = self._ctx()
+
+        _data(studio.edit_agent(component_id, instructions="i2", _agno_run_context=ctx))
+        _data(studio.publish_component(component_id, _agno_run_context=ctx))
+
+        row = db.get_component(component_id)
+        assert row["description"] == "operator note"
+        assert row["metadata"]["team"] == "ops"
+
+    def test_scoped_metadata_clear_still_clears(self, studio, db):
+        component_id = self._scoped_fixture(studio, db)
+        ctx = self._ctx()
+
+        _data(studio.edit_agent(component_id, metadata={}, _agno_run_context=ctx, publish=True))
+
+        metadata = db.get_component(component_id)["metadata"] or {}
+        assert "team" not in metadata
+
+    def test_scoped_description_clear_still_clears(self, studio, db):
+        component_id = self._scoped_fixture(studio, db)
+        ctx = self._ctx()
+
+        _data(studio.edit_agent(component_id, description="", _agno_run_context=ctx, publish=True))
+
+        assert not db.get_component(component_id)["description"]
+
+    @pytest.mark.parametrize("component_type", ["agent", "team", "workflow"])
+    def test_a_later_edit_does_not_revive_metadata_an_earlier_edit_cleared(self, studio, db, component_type):
+        """The clear and the publish need not be the same call.
+
+        An authored clear leaves the config carrying nothing but the
+        provenance stamp, so only the marker distinguishes it from a version
+        that never touched metadata. The marker lives on the config, not on
+        the component, so it does not survive the rehydrate-and-reserialize an
+        edit round-trips through -- and an edit of an unrelated field would
+        otherwise hand the column back to the row and undo the clear.
+        """
+        ctx = self._ctx()
+        component_id = _create_bare(studio, component_type, f"Clear {component_type}", ctx=ctx)
+        _operator_patch(db, component_id)
+        editor = TestRowOnlyFieldsSurviveTheToolkit._EDITORS[component_type]
+
+        _data(getattr(studio, editor)(component_id, metadata={}, _agno_run_context=ctx))
+        _data(getattr(studio, editor)(component_id, description="unrelated change", _agno_run_context=ctx))
+        _data(studio.publish_component(component_id, _agno_run_context=ctx))
+
+        metadata = db.get_component(component_id)["metadata"] or {}
+        assert "team" not in metadata, "an edit after the clear handed the metadata column back to the row"
+
+    def test_a_scoped_rollback_onto_an_authored_clear_re_clears(self, studio, db):
+        component_id = self._scoped_fixture(studio, db)
+        ctx = self._ctx()
+        _data(studio.edit_agent(component_id, metadata={}, _agno_run_context=ctx, publish=True))
+        # v1's stamp-only metadata owns nothing, so this rollback leaves the
+        # row alone and the operator can re-add fields.
+        _data(studio.set_current_version(component_id, 1, _agno_run_context=ctx))
+        _operator_patch(db, component_id)
+
+        # v2 carries the authored marker: rolling onto it re-clears.
+        _data(studio.set_current_version(component_id, 2, _agno_run_context=ctx))
+
+        metadata = db.get_component(component_id)["metadata"] or {}
+        assert "team" not in metadata
+
+
+# ----------------------------------------------------------------------
+# The row sync runs after the move commits, so it cannot fail the move
+# ----------------------------------------------------------------------
+
+
+class TestAProjectionFailureDoesNotFailACommittedMove:
+    """The catalog row is re-projected after the publish or re-point is
+    durable. A projection that blows up leaves the row stale, which the next
+    publish fixes; answering a hard error for a move that actually happened
+    does not -- the caller retries or reports a failure that never was."""
+
+    @staticmethod
+    def _explode_projection(monkeypatch):
+        """Break the projection only once the fixture is in place: the setup
+        publishes too, and it must land normally."""
+        import agno.db.base as db_base
+
+        def boom(config):
+            raise TypeError("projection exploded")
+
+        monkeypatch.setattr(db_base, "project_config_identity", boom)
+
+    @staticmethod
+    def _draft(studio, db, name: str) -> str:
+        component_id = _data(studio.create_agent(name=name, instructions="be", publish=True))["id"]
+        _data(studio.edit_agent(agent_id=component_id, name=f"{name} Two", instructions="be two"))
+        return component_id
+
+    def test_set_current_version_reports_the_move_it_made(self, studio, db, monkeypatch):
+        component_id = _rollback_fixture(studio, db)
+        self._explode_projection(monkeypatch)
+
+        out = _loads(studio.set_current_version(component_id, 2))
+
+        assert out["ok"] is True, out
+        assert out["status"] == "set_current"
+        assert db.get_component(component_id)["current_version"] == 2
+        assert any("could not be re-projected" in w for w in out["warnings"]), out
+
+    def test_the_warning_does_not_quote_the_driver(self, studio, db, monkeypatch):
+        """Warnings ride in a success envelope, so they land in the model's
+        context. A raw adapter exception carries the statement, its bound
+        parameters and -- on a connection error -- the URL with its
+        credentials, so the warning names the failure and leaves the text in
+        the log."""
+        import agno.db.base as db_base
+
+        secret = "postgresql://svc_user:hunter2@db.internal:5432/prod"
+
+        def boom(config):
+            raise RuntimeError(f"could not connect to server: {secret}")
+
+        component_id = _rollback_fixture(studio, db)
+        monkeypatch.setattr(db_base, "project_config_identity", boom)
+
+        out = _loads(studio.set_current_version(component_id, 2))
+
+        assert out["ok"] is True, out
+        warnings = " ".join(out["warnings"])
+        assert "could not be re-projected" in warnings, out
+        assert "RuntimeError" in warnings, out
+        assert secret not in warnings, out
+        assert "hunter2" not in warnings, out
+
+    def test_publish_component_reports_the_publish_it_made(self, studio, db, monkeypatch):
+        component_id = self._draft(studio, db, "Publisher")
+        self._explode_projection(monkeypatch)
+
+        out = _loads(studio.publish_component(component_id))
+
+        assert out["ok"] is True, out
+        assert out["status"] == "published"
+        assert db.get_component(component_id)["current_version"] == out["data"]["version"]
+        assert any("could not be re-projected" in w for w in out["warnings"]), out
+
+    def test_async_set_current_version_inherits_the_same_answer(self, studio, db, monkeypatch):
+        component_id = _rollback_fixture(studio, db)
+        self._explode_projection(monkeypatch)
+
+        out = _loads(asyncio.run(studio.aset_current_version(component_id, 2)))
+
+        assert out["ok"] is True, out
+        assert db.get_component(component_id)["current_version"] == 2
+
+    def test_async_publish_inherits_the_same_answer(self, studio, db, monkeypatch):
+        component_id = self._draft(studio, db, "Async Publisher")
+        self._explode_projection(monkeypatch)
+
+        out = _loads(asyncio.run(studio.apublish_component(component_id)))
+
+        assert out["ok"] is True, out
+        assert db.get_component(component_id)["current_version"] == out["data"]["version"]
+
+    def test_a_move_that_itself_fails_is_still_an_error(self, studio, db, monkeypatch):
+        """Only the projection is best-effort. The write that moves the pointer
+        is the operation itself, and its failure is still reported."""
+        component_id = _rollback_fixture(studio, db)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("pointer write exploded")
+
+        monkeypatch.setattr(db, "set_current_version", boom)
+        assert _error(studio.set_current_version(component_id, 2))["code"] == "internal_error"
+
+    def test_a_publish_that_itself_fails_is_still_an_error(self, studio, db, monkeypatch):
+        component_id = self._draft(studio, db, "Failing Publisher")
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("config write exploded")
+
+        monkeypatch.setattr(db, "upsert_config", boom)
+        assert _error(studio.publish_component(component_id))["code"] == "internal_error"
+
+    def test_an_inline_publishing_edit_reports_the_version_it_wrote(self, studio, db, monkeypatch, caplog):
+        """The publishing edit projects the row after its own config write
+        commits, so the same rule holds: the version exists and is live, and an
+        error here would have the caller retry and append yet another one."""
+        component_id = _data(studio.create_agent(name="Inline", instructions="be", publish=True))["id"]
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("row write exploded")
+
+        monkeypatch.setattr(db, "upsert_component", boom)
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            out = _loads(studio.edit_agent(agent_id=component_id, name="Inline Two", publish=True))
+
+        assert out["ok"] is True, out
+        assert out["data"]["version"] == 2
+        assert db.get_component(component_id)["current_version"] == 2
+        assert any("could not re-project" in record.message for record in caplog.records)
+
+    def test_the_config_write_of_a_publishing_edit_is_still_an_error(self, studio, db, monkeypatch):
+        component_id = _data(studio.create_agent(name="Inline Failing", instructions="be", publish=True))["id"]
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("config write exploded")
+
+        monkeypatch.setattr(db, "upsert_config", boom)
+        assert _error(studio.edit_agent(agent_id=component_id, name="Nope", publish=True))["code"] == "internal_error"

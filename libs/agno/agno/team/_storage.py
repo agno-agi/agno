@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.mode import TeamMode
     from agno.team.team import Team
+    from agno.offload.store import ResultStore
 
 from typing import (
     Any,
@@ -57,6 +58,30 @@ from agno.utils.string import generate_id_from_name
 # ---------------------------------------------------------------------------
 # Run output accessors
 # ---------------------------------------------------------------------------
+
+
+def _offload_to_config(value: Any) -> Union[bool, Dict[str, Any]]:
+    """The offload_tool_results setting as it is stored: True, False, or the ResultStore settings."""
+    from agno.offload.store import ResultStore
+
+    if value is True or value is False:
+        return value
+    if isinstance(value, ResultStore):
+        return value.to_dict()
+    raise TypeError(
+        "offload_tool_results must be True, False, None or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
+    )
+
+
+def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
+    """The offload_tool_results setting from a stored config: unset, True, False, or a ResultStore."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        from agno.offload.store import ResultStore
+
+        return ResultStore.from_dict(value)
+    return bool(value)
 
 
 def get_run_output(
@@ -774,6 +799,10 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- Compression settings ---
     if team.compress_tool_results:
         config["compress_tool_results"] = team.compress_tool_results
+
+    # --- Result offloading settings ---
+    if team.offload_tool_results is not None:
+        config["offload_tool_results"] = _offload_to_config(team.offload_tool_results)
     # TODO: implement compression manager serialization
     # if team.compression_manager is not None:
     #     config["compression_manager"] = team.compression_manager.to_dict()
@@ -1344,6 +1373,8 @@ def from_dict(
             # --- Compression settings ---
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Result offloading settings ---
+            offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
             # --- Reasoning settings ---
             reasoning_model=config.get("reasoning_model"),
             # --- Streaming settings ---

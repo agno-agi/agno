@@ -180,3 +180,52 @@ class TestTheClassDocstringMatchesTheConstructor:
         doc = StudioTools.__doc__ or ""
         documented = {name for name in inspect.signature(StudioTools.__init__).parameters if f"{name}:" in doc}
         assert {"allowed_tools", "denied_tools"} <= documented
+
+
+class TestAStaleCatalogSchemaKeepsItsRemedy:
+    """A stale catalog table is an operational condition with a fix the caller
+    can apply, and the exception's message carries the command that applies it.
+
+    These are deliberately not ValueErrors -- several routers map ValueError to
+    400, which would report a stale database as a client error -- so the error
+    mapper has to recognise them by type. Without that they fall through to
+    `internal_error`, whose message is a fixed fallback string, and both the
+    identity of the failure and its remedy are lost before the caller sees it.
+    """
+
+    @staticmethod
+    def _studio():
+        return StudioTools(registry=Registry(name="R", models=[OpenAIResponses(id="gpt-5.5")]))
+
+    def test_the_envelope_names_the_condition_and_keeps_the_message(self):
+        from agno.exceptions import MigrationRequiredError
+
+        exc = MigrationRequiredError("agno_components is on an older schema; run: agno db migrate")
+
+        out = json.loads(self._studio()._error_from_exception(exc, "Failed to create agent"))
+
+        assert out["error"]["code"] == "db_schema_stale", out
+        assert "agno db migrate" in out["error"]["message"], out
+
+    def test_a_subclass_is_recognised_by_type_not_by_class_name(self):
+        # MigrationRequiredError subclasses SchemaMismatchError; the mapper's
+        # by-name table would miss any subclass, so this must match on type.
+        from agno.exceptions import SchemaMismatchError
+
+        class NarrowerSchemaProblem(SchemaMismatchError):
+            pass
+
+        out = json.loads(self._studio()._error_from_exception(NarrowerSchemaProblem("stale"), "Failed"))
+
+        assert out["error"]["code"] == "db_schema_stale", out
+
+    def test_the_warning_channel_keeps_it_too(self):
+        # A best-effort warning rides in a SUCCESS envelope. A schema error is
+        # ours and safe to name there, unlike a raw driver exception.
+        from agno.exceptions import MigrationRequiredError
+
+        warning = self._studio()._warning_from_exception(
+            MigrationRequiredError("run: agno db migrate"), "row lags the live version"
+        )
+
+        assert "agno db migrate" in warning, warning

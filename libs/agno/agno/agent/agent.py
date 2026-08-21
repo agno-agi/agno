@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -21,7 +22,6 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import (
-    _cli,
     _default_tools,
     _init,
     _managers,
@@ -38,13 +38,20 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.learn.machine import LearningMachine
+
+if TYPE_CHECKING:
+    from agno.learn.machine import LearningMachine
+
 from agno.media import Audio, File, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
+
+if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -213,6 +220,8 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If set (and store_media is True), media is uploaded here and only references are stored
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output.
@@ -305,7 +314,7 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
-    # Intead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
+    # Instead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
@@ -346,6 +355,14 @@ class Agent:
     compress_tool_results: bool = False
     # Compression manager for compressing tool call results
     compression_manager: Optional[CompressionManager] = None
+
+    # --- Result Offloading ---
+    # Store tool results longer than a threshold as files and leave a short
+    # envelope with a result id in the message. True uses the defaults
+    # (16000 characters, one read_result page); a ResultStore sets the
+    # threshold, preview, lifetime and payload location. Unset, an agent
+    # inherits a team's store as a member; False keeps offloading off there too.
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -396,11 +413,13 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
+        offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,
@@ -523,6 +542,14 @@ class Agent:
         self.compress_tool_results = compress_tool_results
         self.compression_manager = compression_manager
 
+        # Result offloading settings
+        self.offload_tool_results = offload_tool_results
+        self._result_store: Optional["ResultStore"] = None
+        # The store a team handed down, so a later team can replace or clear it
+        self._inherited_result_store: Optional["ResultStore"] = None
+        # The setting the store was built from, so a changed setting rebuilds it
+        self._result_store_setting: Union[bool, "ResultStore", None] = None
+
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
         self.num_history_messages = num_history_messages
@@ -537,6 +564,7 @@ class Agent:
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
         self.store_media = store_media
+        self.media_storage = media_storage
         self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
 
@@ -685,6 +713,15 @@ class Agent:
     @property
     def cached_session(self) -> Optional[AgentSession]:
         return self._cached_session
+
+    @property
+    def result_store(self) -> Optional["ResultStore"]:
+        """The store offloaded tool results go to, or None when offloading is off."""
+        if self._result_store is None and self.offload_tool_results:
+            from agno.agent import _init
+
+            _init.set_result_store(self)
+        return self._result_store
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:
@@ -1038,11 +1075,11 @@ class Agent:
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
-    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
-        return _session.delete_session(self, session_id=session_id, user_id=user_id)
+    def delete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False) -> None:
+        return _session.delete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
-    async def adelete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
-        return await _session.adelete_session(self, session_id=session_id, user_id=user_id)
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False) -> None:
+        return await _session.adelete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
     def get_session_messages(
         self,
@@ -1152,6 +1189,8 @@ class Agent:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return _cli.agent_print_response(
             self,
             input=input,
@@ -1208,6 +1247,8 @@ class Agent:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return await _cli.agent_aprint_response(
             self,
             input=input,
@@ -1248,6 +1289,8 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return _cli.cli_app(
             self,
             input=input,
@@ -1273,6 +1316,8 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return await _cli.acli_app(
             self,
             input=input,
@@ -1711,7 +1756,7 @@ def get_agent_by_id(
         id: Agent entity_id.
         label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
-        user_id: If set, only resolve the agent when owned by this user or shared.
+        user_id: If set, only resolve the agent when owned by this user, unowned (shared), or published.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
 
@@ -1725,7 +1770,7 @@ def get_agent_by_id(
     from agno.utils.log import log_error
 
     try:
-        # Only resolve the agent if owned by this user or shared.
+        # Only resolve the agent if owned by this user, unowned (shared), or published.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 
@@ -1769,6 +1814,16 @@ def get_agent_by_id(
         return None
 
 
+# Rows fetched per list_components call while collecting the full catalog.
+_COMPONENT_LIST_PAGE = 100
+
+# Ceiling on rows collected per listing. Every listed row costs a get_config
+# read plus a full rehydration, and other users' published components share
+# the catalog, so an unbounded scan could turn one listing into thousands of
+# DB reads.
+_COMPONENT_LIST_CAP = 1000
+
+
 def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
@@ -1784,15 +1839,46 @@ def get_agents(
         db: Database to load agents from
         registry: Optional registry for rehydrating tools
         exclude_component_ids: Component IDs to exclude from results.
-        user_id: If set, only load agents owned by this user or shared.
+        user_id: If set, only load agents owned by this user, unowned (shared), or published.
     """
     from agno.utils.log import log_error
 
     agents: List[Agent] = []
     try:
-        components, _ = db.list_components(
-            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids, user_id=user_id
-        )
+        # The DB default page is one small page and the catalog can exceed it
+        # (other users' published components compete for the same slots), so
+        # page until the filtered total is exhausted or the cap is hit.
+        components: List[Dict[str, Any]] = []
+        seen_component_ids: Set[str] = set()
+        scanned = 0
+        while True:
+            page, total = db.list_components(
+                component_type=ComponentType.AGENT,
+                exclude_component_ids=exclude_component_ids,
+                user_id=user_id,
+                limit=_COMPONENT_LIST_PAGE,
+                offset=scanned,
+            )
+            scanned += len(page)
+            for row in page:
+                # Each page is its own read, so a row created between two of
+                # them shifts the window and hands back something an earlier
+                # page already carried.
+                row_id = row.get("component_id")
+                if row_id is None or row_id in seen_component_ids:
+                    continue
+                seen_component_ids.add(row_id)
+                components.append(row)
+            # A total that is not a count says nothing about what is left, so
+            # this page is all there is to read. BaseDb documents an int, but
+            # the baseline discarded the total entirely and an adapter that
+            # returns None was fine; comparing against it would raise here and
+            # the caller would get an empty listing instead of a short one.
+            if not page or not isinstance(total, int) or scanned >= total:
+                break
+            if scanned >= _COMPONENT_LIST_CAP:
+                log_warning(f"Agent listing truncated by safety cap: returning {len(components)} of {total} components")
+                break
         for component in components:
             try:
                 config = db.get_config(component_id=component["component_id"])

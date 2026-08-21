@@ -364,6 +364,97 @@ class TestPublishProjection:
         assert row["name"] == "Flipped"
 
 
+class TestPublishProjectionOwnership:
+    """The projection writes only the fields the published config owns.
+
+    description and metadata are also first-class row columns, set through
+    the component routes and present in no config version, so publishing a
+    config that does not carry them must leave the columns alone. A scoped
+    actor's provenance stamp rides in every config's metadata, so stamp-only
+    metadata does not count as carried unless the version says so with the
+    metadata_authored marker.
+    """
+
+    STAMP = {"studio": {"last_actor": "builder-1", "last_action": "edit"}}
+
+    def _operator_row(self, db):
+        _mk(db)
+        db.upsert_component(
+            component_id="comp-a",
+            component_type=ComponentType.AGENT,
+            name="comp-a",
+            description="operator note",
+            metadata={"team": "ops"},
+        )
+
+    def test_a_config_without_the_fields_leaves_the_row_alone(self, db):
+        self._operator_row(db)
+        db.upsert_config("comp-a", config={"name": "comp-a", "instructions": "v2"}, stage="published")
+        row = db.get_component("comp-a")
+        assert row["description"] == "operator note"
+        assert row["metadata"] == {"team": "ops"}
+
+    def test_stamp_only_metadata_leaves_the_row_alone(self, db):
+        self._operator_row(db)
+        db.upsert_config("comp-a", config={"name": "comp-a", "metadata": dict(self.STAMP)}, stage="published")
+        assert db.get_component("comp-a")["metadata"] == {"team": "ops"}
+
+    def test_the_authored_marker_makes_stamp_only_metadata_win(self, db):
+        self._operator_row(db)
+        db.upsert_config(
+            "comp-a",
+            config={"name": "comp-a", "metadata": dict(self.STAMP), "metadata_authored": True},
+            stage="published",
+        )
+        assert db.get_component("comp-a")["metadata"] == self.STAMP
+
+    def test_an_explicit_empty_description_still_clears(self, db):
+        self._operator_row(db)
+        db.upsert_config("comp-a", config={"name": "comp-a", "description": ""}, stage="published")
+        assert not db.get_component("comp-a")["description"]
+
+    def test_an_explicit_empty_metadata_still_clears(self, db):
+        self._operator_row(db)
+        db.upsert_config("comp-a", config={"name": "comp-a", "metadata": {}}, stage="published")
+        assert not db.get_component("comp-a")["metadata"]
+
+    def test_a_publish_flip_of_a_bare_draft_leaves_the_row_alone(self, db):
+        self._operator_row(db)
+        db.upsert_config("comp-a", config={"name": "comp-a", "instructions": "v2"})
+        db.upsert_config("comp-a", version=2, stage="published")
+        row = db.get_component("comp-a")
+        assert row["description"] == "operator note"
+        assert row["metadata"] == {"team": "ops"}
+
+
+class TestPublishProjectionOfNonMappingMetadata:
+    """Probing an arbitrary metadata value for keys must not turn a write into
+    an error, and a value that cannot be stored must not reach the column.
+
+    The stamp-only test asks metadata for its keys, which only a mapping has.
+    Anything else cannot be a row's metadata either, so the projection skips
+    it: the publish goes through as it did before this projection existed, the
+    config keeps what the caller sent, and the column is left alone the way it
+    is for every other key the projection does not own.
+    """
+
+    def _operator_row(self, db):
+        _mk(db)
+        db.upsert_component(
+            component_id="comp-a",
+            component_type=ComponentType.AGENT,
+            name="comp-a",
+            metadata={"team": "ops"},
+        )
+
+    @pytest.mark.parametrize("metadata", [5, "hello", ["a", "b"], ["studio"], 0.5, True])
+    def test_a_non_mapping_metadata_publishes_and_leaves_the_row_column_alone(self, db, metadata):
+        self._operator_row(db)
+        config = db.upsert_config("comp-a", config={"name": "comp-a", "metadata": metadata}, stage="published")
+        assert config["config"]["metadata"] == metadata
+        assert db.get_component("comp-a")["metadata"] == {"team": "ops"}
+
+
 # ----------------------------------------------------------------------
 # Cycles
 # ----------------------------------------------------------------------

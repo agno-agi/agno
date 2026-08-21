@@ -74,3 +74,54 @@ class TestTheBridgeHelper:
 
         manager = ScheduleManager(db=NoProvenance())
         assert manager.stamp_provenance("whatever", updated_by_run_id="r") is False
+
+
+class TestAStampFailureDoesNotFailACommittedUpdate:
+    """The stamp is written after manager.update has committed, so it cannot
+    decide whether the update happened. A stamp that blows up loses only the
+    record of who made the change; answering a hard error for a cadence the
+    caller can see take effect does not -- the caller retries or reports a
+    failure that never was.
+    """
+
+    @pytest.fixture
+    def studio(self, async_db):
+        return StudioTools(registry=Registry(name="r"), db=async_db, schedules=True)
+
+    @pytest.fixture
+    def exploding_stamp(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("stamp write exploded")
+
+        monkeypatch.setattr(ScheduleManager, "stamp_provenance", boom)
+
+    def test_the_update_is_still_reported_as_made(self, armed, studio, exploding_stamp):
+        manager, schedule_id = armed
+
+        out = json.loads(studio.update_schedule(schedule_id, cron="0 14 * * *", _agno_run_context=ACTOR))
+
+        assert out.get("ok") is True, out
+        assert manager.get(schedule_id).cron_expr == "0 14 * * *"
+        assert any("could not stamp provenance" in w for w in out["warnings"]), out
+
+    def test_the_async_twin_inherits_the_same_answer(self, armed, studio, exploding_stamp):
+        """aupdate_schedule delegates to update_schedule, so the rule holds for
+        it without a second implementation."""
+        manager, schedule_id = armed
+
+        out = json.loads(asyncio.run(studio.aupdate_schedule(schedule_id, cron="0 15 * * *", _agno_run_context=ACTOR)))
+
+        assert out.get("ok") is True, out
+        assert manager.get(schedule_id).cron_expr == "0 15 * * *"
+
+    def test_an_update_that_itself_fails_is_still_an_error(self, armed, studio, monkeypatch):
+        """Only the stamp is best-effort. The write that changes the schedule
+        is the operation itself, and its failure is still reported."""
+        _, schedule_id = armed
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("update write exploded")
+
+        monkeypatch.setattr(ScheduleManager, "update", boom)
+        out = json.loads(studio.update_schedule(schedule_id, cron="0 16 * * *", _agno_run_context=ACTOR))
+        assert out.get("ok") is False, out

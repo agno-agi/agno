@@ -99,7 +99,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.run import RunContext
@@ -260,9 +260,12 @@ class StudioRunnerTools(Toolkit):
         **kwargs: Any,
     ):
         self.registry = registry
-        self.db: Optional["BaseDb"] = (
-            db if db is not None else (registry.dbs[0] if registry is not None and registry.dbs else None)
-        )
+        # The explicit db wins; otherwise the registry's is adopted lazily on
+        # first access (see the db property). An __init__ snapshot would be
+        # wrong for the zero-config wiring: these toolkits are constructed
+        # before AgentOS, and AgentOS fills registry.dbs only afterwards, so
+        # snapshotting leaves every db-backed tool dark forever.
+        self._db: Optional["BaseDb"] = db
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
@@ -319,6 +322,19 @@ class StudioRunnerTools(Toolkit):
     # builder and the runner resolve components one way.
     # ------------------------------------------------------------------
 
+    @property
+    def db(self) -> Optional["BaseDb"]:
+        if self._db is not None or self.registry is None:
+            return self._db
+        # Resolved on every access, never memoized - see the twin on
+        # StudioTools: a read taken before AgentOS declares its catalog db
+        # would otherwise pin this toolkit to the wrong db permanently.
+        return self.registry.resolve_component_db()
+
+    @db.setter
+    def db(self, value: Optional["BaseDb"]) -> None:
+        self._db = value
+
     def _iter_agents(self, for_dispatch: bool = False) -> List["Agent"]:
         """Code-defined agents: passed-in list, else registry.
 
@@ -345,8 +361,12 @@ class StudioRunnerTools(Toolkit):
         return list(self.registry.teams) if self.registry is not None else []
 
     def _iter_workflows(self, for_dispatch: bool = False) -> List["Workflow"]:
-        """Code-defined workflows. Always an explicit list, so never gated."""
-        return list(self.include_workflows) if self.include_workflows is not None else []
+        """Code-defined workflows: passed-in list, else registry (see _iter_agents)."""
+        if self.include_workflows is not None:
+            return list(self.include_workflows)
+        if for_dispatch and not self.include_all_components:
+            return []
+        return list(self.registry.workflows) if self.registry is not None else []
 
     def _find_agent(self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None) -> Optional["Agent"]:
         """Lookup order: code-defined exact id, DB exact id, code-defined display
@@ -1676,15 +1696,20 @@ class StudioRunnerTools(Toolkit):
             "declares."
         )
 
-    @staticmethod
-    def _require_reconstructable_steps(config: Dict[str, Any], workflow_id: str) -> None:
-        """Refuse to dispatch a stored workflow whose step targets another workflow.
+    def _require_reconstructable_steps(self, config: Dict[str, Any], workflow_id: str) -> None:
+        """Refuse to dispatch a stored workflow whose step targets a workflow this
+        runner cannot supply.
 
-        A nested workflow serializes as ``workflow_id`` alone, and Step.from_dict
-        cannot rebuild one: it installs a placeholder that returns an unsuccessful
-        StepOutput. A failed step does not fail its workflow, so the parent run
-        would report COMPLETED while the child never executed. Reads and edits
-        load the same workflow without this check, so the step stays
+        A nested workflow serializes as ``workflow_id`` alone and resolves from
+        the registry only: there is no db-load tier, because loading a stored
+        workflow from inside a step would recurse through from_dict and needs its
+        own cycle guard before it can be safe. An id the registry cannot supply
+        has nothing to rebuild from, so the strict load a dispatch performs
+        refuses it anyway. This guard answers that case first, and answers it
+        about the workflow the caller actually dispatched, with the remedy that
+        applies; the rebuild error it pre-empts names only the step that failed
+        and offers a strict=False flag no caller of this toolkit can set. Reads
+        and edits load the same workflow without this check, so the step stays
         inspectable."""
         nested: List[str] = []
 
@@ -1704,12 +1729,20 @@ class StudioRunnerTools(Toolkit):
                 walk(value.get(branch))
 
         walk(config.get("steps"))
+        # Only the ids the registry cannot supply are a refusal. The check
+        # deliberately asks the registry directly rather than the dispatch
+        # lookup: include_all_components gates DIRECT dispatch by id, not nested
+        # references, and a stored parent already dispatches a registry-only
+        # agent under that flag. Routing this through the dispatch lookup would
+        # split the two apart.
+        nested = [wid for wid in nested if self.registry is None or self.registry.get_workflow(wid) is None]
         if nested:
             raise ComponentNotDispatchableError(
-                f"Workflow '{workflow_id}' has a step targeting workflow "
-                f"'{', '.join(sorted(set(nested)))}', which the runner cannot reconstruct; it would report "
-                "success without running that step. Inline the nested workflow's steps into this one, or "
-                "dispatch it separately."
+                f"Workflow '{workflow_id}' has a step targeting workflow '{', '.join(sorted(set(nested)))}', "
+                "which is not in this runner's registry, so the step cannot be reconstructed and the "
+                "dispatch load refuses it. Add that workflow to the registry (Registry(workflows=[...])) "
+                "-- storing it in the database is not enough, a nested step resolves from the registry "
+                "only -- or inline its steps into this one and dispatch it separately."
             )
 
     @staticmethod
@@ -1743,7 +1776,7 @@ class StudioRunnerTools(Toolkit):
         """The shared singletons a rebuild can hand back instead of a copy."""
         if self.registry is None:
             return []
-        return list(self.registry.agents or []) + list(self.registry.teams or [])
+        return list(self.registry.agents or []) + list(self.registry.teams or []) + list(self.registry.workflows or [])
 
     @staticmethod
     def _shared_registry_instance(node: Any, shared: List[Any], depth: int = 0) -> Optional[Any]:
@@ -1802,8 +1835,10 @@ class StudioRunnerTools(Toolkit):
 
         Step.from_dict keeps the shared registry agent/team when its deep_copy
         raises; dispatching that instance would let per-run mutation cross
-        callers. Reads and edits load the same workflow without this check, so
-        the offending step stays inspectable and editable."""
+        callers. Each step node is judged both as an executor holder and as an
+        executor itself, because a step list accepts a bare component. Reads and
+        edits load the same workflow without this check, so the offending step
+        stays inspectable and editable."""
         shared = self._registry_instances()
         if not shared:
             return
@@ -1811,8 +1846,42 @@ class StudioRunnerTools(Toolkit):
         def shared_within(node: Any, depth: int = 0) -> Optional[Any]:
             return StudioRunnerTools._shared_registry_instance(node, shared, depth)
 
+        seen: Set[int] = set()
+
+        def child_steps(value: Any) -> List[Any]:
+            """A step list, however it is spelled.
+
+            A steps= value may be a plain list or a single container object
+            (Steps, Loop, Parallel, Condition, Router) holding one. Reading
+            only the list spelling would walk past a whole subtree, which is
+            the same leak this check exists to refuse."""
+            if isinstance(value, (list, tuple)):
+                return list(value)
+            inner = getattr(value, "steps", None) if value is not None else None
+            return list(inner) if isinstance(inner, (list, tuple)) else []
+
         def walk(item: Any) -> None:
-            for attr in ("agent", "team"):
+            if id(item) in seen:
+                return
+            seen.add(id(item))
+            # A step list may hold a bare agent, team or workflow instead of a
+            # Step wrapper. Then the node IS the executor, and reading only
+            # .agent/.team/.workflow finds nothing to judge. Judging at depth 0
+            # is what makes this bite: the "no deep_copy means shared by design"
+            # exemption applies to members found below a node, not to the node
+            # the search starts from.
+            leaked_item = shared_within(item)
+            if leaked_item is not None:
+                label = getattr(leaked_item, "id", None) or getattr(leaked_item, "name", None) or "?"
+                # The walk descends through members only, so a leak found below
+                # the node is a member of it however deep the nesting goes.
+                where = f"'{label}'" if leaked_item is item else f"a member below it, '{label}'"
+                raise DispatchCopyError(
+                    f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
+                    f"registry instance of {where}; the runner dispatches only isolated copies. Give the "
+                    "class a deep_copy that rebuilds it, or store the component in the database."
+                )
+            for attr in ("agent", "team", "workflow"):
                 executor = getattr(item, attr, None)
                 leaked = shared_within(executor)
                 if leaked is not None:
@@ -1820,7 +1889,7 @@ class StudioRunnerTools(Toolkit):
                         f"{attr} '{getattr(executor, 'id', None)}'"
                         if leaked is executor
                         else f"a member of {attr} '{getattr(executor, 'id', None)}', "
-                        f"'{getattr(leaked, 'id', None) or getattr(leaked, 'name', None)}'"
+                        f"'{getattr(leaked, 'id', None) or getattr(leaked, 'name', None) or '?'}'"
                     )
                     raise DispatchCopyError(
                         f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
@@ -1828,15 +1897,20 @@ class StudioRunnerTools(Toolkit):
                         "class a deep_copy that rebuilds it, or store the component in the database."
                     )
             for child_attr in ("steps", "else_steps", "choices"):
-                children = getattr(item, child_attr, None)
-                if isinstance(children, (list, tuple)):
-                    for child in children:
-                        walk(child)
+                for child in child_steps(getattr(item, child_attr, None)):
+                    walk(child)
+            # A nested workflow is walked as a node, not just as a step list:
+            # its own executors are one level further down, and a Workflow also
+            # carries a workflow-level agent. Without this the check stops at
+            # the nested workflow itself -- its copy is fresh, so nothing is
+            # reported, while the components inside it can still be the
+            # registry singletons the whole check exists to refuse.
+            nested = getattr(item, "workflow", None)
+            if nested is not None:
+                walk(nested)
 
-        steps = getattr(wf, "steps", None)
-        if isinstance(steps, (list, tuple)):
-            for step in steps:
-                walk(step)
+        for step in child_steps(getattr(wf, "steps", None)):
+            walk(step)
 
     def _load_agent_from_db(
         self, agent_id: str, version: Optional[int] = None, for_dispatch: bool = False, actor: Optional[str] = None

@@ -4,6 +4,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.exceptions import RunCancelledException
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -473,6 +474,7 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -562,6 +564,7 @@ class Condition:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -659,6 +662,7 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -810,6 +814,7 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
@@ -924,6 +929,7 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -1013,6 +1019,7 @@ class Condition:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -1108,6 +1115,7 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -1260,6 +1268,7 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=conditional_step_id,

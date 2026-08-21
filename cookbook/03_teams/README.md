@@ -32,3 +32,9 @@ Cookbooks for building multi-agent teams in Agno.
 - `20_human_in_the_loop/` - Confirmation, external execution, and user-input-required flows.
 - `21_state/` - Shared session state across members and nested teams.
 - `22_metrics/` - Team/session/member metrics inspection.
+- `23_checkpointing/` - Checkpointing and crash recovery for team runs.
+- `23_remote_agents/` - Remote agents as team members.
+- `24_regenerate/` - Redo the last response of a team run.
+- `25_time_travel/` - Rewind a team run and resume from an earlier point.
+- `26_fork_session/` - Fork a whole team session into a new one.
+- `27_result_offloading/` - Member answers and large tool results stored as files, envelopes in the leader's transcript.

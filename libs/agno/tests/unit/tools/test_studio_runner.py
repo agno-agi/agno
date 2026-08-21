@@ -940,6 +940,31 @@ class TestDiscovery:
         assert out == {"agents": [], "count": 0, "total": 0}
 
 
+def _nested_child_step(step_input):
+    from agno.workflow.step import StepOutput
+
+    return StepOutput(content="CHILD RAN", success=True)
+
+
+def _nested_child_workflow():
+    from agno.workflow.step import Step
+    from agno.workflow.workflow import Workflow
+
+    return Workflow(id="child", name="Child", steps=[Step(name="c", executor=_nested_child_step)])
+
+
+def _save_nested_parent(db) -> None:
+    """Store a parent whose only step targets a nested workflow.
+
+    Going through Workflow.save is the point: it is the public API that produces
+    the nested shape, and it cascades the child into the same catalog."""
+    from agno.workflow.step import Step
+    from agno.workflow.workflow import Workflow
+
+    parent = Workflow(id="parent", name="Parent", steps=[Step(name="call", workflow=_nested_child_workflow())])
+    parent.save(db=db, stage="published")
+
+
 # ----------------------------------------------------------------------
 # StudioTools embedding
 # ----------------------------------------------------------------------
@@ -1238,11 +1263,11 @@ class TestStudioEmbedding:
             wf = Workflow(id="w", name="W", steps=[nested])
             assert StudioRunnerTools._unresolved_below(wf) is not None, depth
 
-    def test_nested_workflow_step_is_refused_rather_than_reported_complete(self, db, registry):
-        """A nested workflow serializes as workflow_id alone and Step.from_dict
-        installs a placeholder that returns an unsuccessful StepOutput. A failed
-        step does not fail its workflow, so dispatching would report COMPLETED
-        while the child never ran."""
+    def test_nested_workflow_step_is_refused_with_an_actionable_message(self, db, registry):
+        """A nested workflow serializes as workflow_id alone, so an id the
+        registry cannot supply has nothing to rebuild from. The strict load
+        refuses it either way; what this pins is that the caller is told which
+        workflow they dispatched and which one is missing."""
         for component_id, config in (
             ("child", {"id": "child", "name": "Child", "steps": [{"name": "c", "agent_id": "worker"}]}),
             ("parent", {"id": "parent", "name": "Parent", "steps": [{"name": "call", "workflow_id": "child"}]}),
@@ -1251,7 +1276,86 @@ class TestStudioEmbedding:
             db.upsert_config(component_id=component_id, config=config, stage="published")
 
         result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
-        assert "cannot reconstruct" in result["error"]
+        assert "cannot be reconstructed" in result["error"]
+        assert "child" in result["error"]
+
+    def test_a_saved_nested_workflow_dispatches_when_the_child_is_registered(self, db, registry):
+        """A registered child rebuilds and runs for real, so the parent is
+        dispatchable. Asserting the child's own content is what separates a real
+        run from a parent that merely loads without raising."""
+        registry.functions = [_nested_child_step]
+        registry.workflows = [_nested_child_workflow()]
+        _save_nested_parent(db)
+
+        result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+
+        assert "error" not in result
+        assert result["status"] == "COMPLETED"
+        assert "CHILD RAN" in result["content"]
+
+    def test_the_ignored_child_version_pin_is_said_out_loud(self, db, registry, caplog):
+        """A save records the version its child was bound at, and the agent and
+        team tiers load exactly that version. This tier resolves from the
+        registry instead, so what runs is whatever the process defines under
+        that id today -- which may be neither the pinned version nor the latest
+        stored one. The pin is right there in the row, so the divergence must
+        not be silent.
+
+        A refusal is not the alternative it looks like: a save always writes
+        this pin, so refusing on its presence refuses every stored nested
+        workflow and takes the feature back to where it started.
+        """
+        import logging
+
+        registry.functions = [_nested_child_step]
+        registry.workflows = [_nested_child_workflow()]
+        _save_nested_parent(db)
+
+        with caplog.at_level(logging.WARNING):
+            result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+
+        assert result["status"] == "COMPLETED"
+        messages = " ".join(r.getMessage() for r in caplog.records)
+        assert "pins workflow" in messages, messages
+        assert "resolves from the registry only" in messages, messages
+
+    @pytest.mark.asyncio
+    async def test_a_saved_nested_workflow_dispatches_on_the_async_path(self, db, registry):
+        registry.functions = [_nested_child_step]
+        registry.workflows = [_nested_child_workflow()]
+        _save_nested_parent(db)
+
+        result = _loads(await StudioRunnerTools(registry=registry, db=db).arun_workflow("parent", "hi"))
+
+        assert "error" not in result
+        assert result["status"] == "COMPLETED"
+        assert "CHILD RAN" in result["content"]
+
+    def test_an_unregistered_nested_workflow_is_still_refused(self, db, registry):
+        """The registry cannot supply the child, so there is nothing to rebuild
+        the step from. The refusal has to name the remedy that applies."""
+        registry.functions = [_nested_child_step]
+        _save_nested_parent(db)
+
+        result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+
+        assert "cannot be reconstructed" in result["error"]
+        assert "Registry(workflows=[...])" in result["error"]
+
+    def test_a_nested_workflow_only_in_the_db_is_still_refused(self, db, registry):
+        """parent.save cascades the child into the same catalog, but a nested
+        step resolves from the registry only -- there is no db-load tier. A
+        stored-but-unregistered child is the boundary the registry tier does not
+        cross, so it stays a refusal."""
+        registry.functions = [_nested_child_step]
+        _save_nested_parent(db)
+
+        child_config = db.get_config(component_id="child")
+        assert child_config is not None
+
+        result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+
+        assert "cannot be reconstructed" in result["error"]
         assert "child" in result["error"]
 
     def test_bare_executor_step_that_copies_to_itself_is_refused(self, db):
@@ -1482,7 +1586,7 @@ class TestStudioEmbedding:
         )
 
         runner = StudioRunnerTools(registry=registry, db=db)
-        assert "cannot reconstruct" not in _loads(runner.run_workflow("fy", "hi")).get("error", "")
+        assert "cannot be reconstructed" not in _loads(runner.run_workflow("fy", "hi")).get("error", "")
 
     def test_a_failed_reference_read_refuses_rather_than_passes(self, db, registry):
         """A db read that fails is not evidence of fidelity. Swallowing it would
@@ -3198,3 +3302,286 @@ def test_dispatch_never_mixes_config_and_links_from_different_versions(tmp_path)
 
     assert team_obj is not None
     assert team_obj.members[0].description == "v1"
+
+
+class TestNestedWorkflowIsolation:
+    """The isolation check must descend into a nested workflow's own steps.
+
+    Step.from_dict keeps the shared registry agent when its deep_copy raises
+    or returns itself. The nested workflow above it copies fine, so nothing
+    looks wrong at that level -- the singleton is one level further down,
+    exactly where the walk used to stop.
+    """
+
+    def _registry_with_sticky_nested(self):
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        sticky = StickyAgent(id="a_shared", name="A")
+        nested = Workflow(id="nested_wf", name="N", steps=[Step(name="inner", agent=sticky)])
+        registry = Registry(name="R")
+        registry.agents.append(sticky)
+        registry.workflows.append(nested)
+        return registry, sticky, nested
+
+    def test_a_singleton_inside_a_nested_workflow_is_refused(self):
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        registry, sticky, nested = self._registry_with_sticky_nested()
+        parent = Workflow(id="p1", name="P", steps=[Step(name="callnested", workflow=nested)])
+        rebuilt = Workflow.from_dict(parent.to_dict(), registry=registry, strict=True)
+
+        # The rebuild really does hand back the singleton one level down.
+        assert rebuilt.steps[0].workflow.steps[0].agent is sticky
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError, match="a_shared"):
+            runner._require_isolated_steps(rebuilt, "p1")
+
+    def test_an_isolated_nested_workflow_still_dispatches(self):
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.studio_runner import StudioRunnerTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        clean = Agent(id="clean", name="C")
+        nested = Workflow(id="clean_wf", name="CN", steps=[Step(name="i", agent=clean)])
+        registry = Registry(name="R2")
+        registry.agents.append(clean)
+        registry.workflows.append(nested)
+        parent = Workflow(id="p2", name="P2", steps=[Step(name="c", workflow=nested)])
+        rebuilt = Workflow.from_dict(parent.to_dict(), registry=registry, strict=True)
+
+        StudioRunnerTools(registry=registry, include_all_components=True)._require_isolated_steps(rebuilt, "p2")
+
+    def test_a_self_referencing_nested_workflow_terminates(self):
+        from agno.tools.studio_runner import StudioRunnerTools
+        from agno.workflow.step import Step
+
+        registry, _sticky, _nested = self._registry_with_sticky_nested()
+        step = Step(name="loop", executor=lambda step_input: None)
+        step.workflow = type("W", (), {"steps": [step]})()  # type: ignore[assignment]
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+
+        runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+
+    def _nested_with_bare_agent_step(self, agent):
+        """A nested registry workflow whose step IS the agent, with no Step
+        wrapper around it."""
+        from agno.registry import Registry
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        nested = Workflow(id="nested_wf", name="N", steps=[agent])
+        registry = Registry(name="R")
+        registry.agents.append(agent)
+        registry.workflows.append(nested)
+        parent = Workflow(id="p3", name="P3", steps=[Step(name="call", workflow=nested)])
+        return registry, parent, nested
+
+    def test_a_bare_agent_step_inside_a_nested_workflow_is_refused(self):
+        """A step list accepts a bare component, and then the node IS the
+        executor. Reading only .agent/.team/.workflow finds nothing to judge and
+        the singleton reaches dispatch."""
+        from agno.agent import Agent
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        sticky = StickyAgent(id="a_shared", name="A")
+        registry, parent, nested = self._nested_with_bare_agent_step(sticky)
+        rebuilt = nested.deep_copy()
+        parent.steps[0].workflow = rebuilt
+
+        # The copy of the nested workflow really does hand back the singleton.
+        assert rebuilt.steps[0] is sticky
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError, match="a_shared"):
+            runner._require_isolated_steps(parent, "p3")
+
+    def test_a_copyable_bare_agent_step_in_the_same_shape_still_dispatches(self):
+        """The identical shape with an agent that copies normally must not be
+        refused: a false refusal here breaks dispatch for working workflows."""
+        from agno.agent import Agent
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        clean = Agent(id="a_clean", name="A")
+        registry, parent, nested = self._nested_with_bare_agent_step(clean)
+        rebuilt = nested.deep_copy()
+        parent.steps[0].workflow = rebuilt
+
+        assert rebuilt.steps[0] is not clean
+
+        StudioRunnerTools(registry=registry, include_all_components=True)._require_isolated_steps(parent, "p3")
+
+    def test_a_bare_step_with_no_deep_copy_is_judged_without_the_proxy_exemption(self):
+        """A bare component step is judged at depth 0, where "no deep_copy means
+        shared by design" does not apply. That exemption exists for members a
+        rebuilt parent holds -- a remote proxy carries no per-run state. The step
+        itself is not a member: nothing above it was rebuilt, so the singleton
+        reaches dispatch exactly as the registry holds it."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.workflow import Workflow
+
+        class ProxyAgent(Agent):
+            deep_copy = None  # type: ignore[assignment]
+
+        proxy = ProxyAgent(id="a_proxy", name="A")
+        registry = Registry(name="R")
+        registry.agents.append(proxy)
+        wf = Workflow(id="p4", name="P4", steps=[proxy])
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError, match="a_proxy"):
+            runner._require_isolated_steps(wf, "p4")
+
+    def test_an_unnamed_shared_step_reads_as_unknown_not_as_none(self):
+        """Neither id nor name is required, and "instance of 'None'" reads like
+        the check found a null rather than a component it cannot name. The
+        sibling member guard spells the same gap '?'."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.workflow import Workflow
+
+        class AnonymousAgent(Agent):
+            deep_copy = None  # type: ignore[assignment]
+
+        anonymous = AnonymousAgent(id=None, name=None)
+        registry = Registry(name="R")
+        registry.agents.append(anonymous)
+        wf = Workflow(id="p5", name="P5", steps=[anonymous])
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError, match=r"instance of '\?'"):
+            runner._require_isolated_steps(wf, "p5")
+
+    def test_a_leak_below_a_bare_step_names_the_leak_as_a_member_of_it(self):
+        """When the leak sits below the step rather than being the step, the
+        message has to say so. "instance of 'a_shared' below it" reads as if the
+        step itself were the singleton and something else were below it; the
+        step is fine and one of its members is not."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.workflow import Workflow
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        sticky = StickyAgent(id="a_shared", name="A")
+        registry = Registry(name="R")
+        registry.agents.append(sticky)
+        wf = Workflow(id="p6", name="P6", steps=[Team(id="t6", name="T6", members=[sticky])])
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError) as excinfo:
+            runner._require_isolated_steps(wf, "p6")
+
+        assert "instance of a member below it, 'a_shared'" in str(excinfo.value)
+
+    def test_an_unnamed_leaked_member_of_a_step_executor_reads_as_unknown(self):
+        """The executor branch spells the leaked member the same way the step
+        branch does: a component with neither id nor name is '?', not 'None'."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        class AnonymousStickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        anonymous = AnonymousStickyAgent(id=None, name=None)
+        registry = Registry(name="R")
+        registry.agents.append(anonymous)
+        team = Team(id="t7", name="T7", members=[anonymous])
+        wf = Workflow(id="p7", name="P7", steps=[Step(name="s", team=team)])
+
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        with pytest.raises(DispatchCopyError) as excinfo:
+            runner._require_isolated_steps(wf, "p7")
+
+        message = str(excinfo.value)
+        assert "a member of team 't7', '?'" in message
+        assert "'None'" not in message
+
+
+class TestNestedWorkflowIsolationSpellings:
+    """A steps= value may be a list or a single container, and the check has to
+    reach the leak either way -- reading only the list spelling walks past a
+    whole subtree, which is the leak this refusal exists for."""
+
+    def _leaks(self, nested_steps, workflow_agent=None):
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.studio_runner import DispatchCopyError, StudioRunnerTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        sticky = StickyAgent(id="a_shared", name="A")
+        nested = Workflow(id="nested_wf", name="N", steps=nested_steps(Step(name="inner", agent=sticky)))
+        registry = Registry(name="R")
+        registry.agents.append(sticky)
+        registry.workflows.append(nested)
+        if workflow_agent is not None:
+            nested.agent = workflow_agent
+            registry.agents.append(workflow_agent)
+        parent = Workflow(id="p", name="P", steps=[Step(name="call", workflow=nested)])
+        rebuilt = Workflow.from_dict(parent.to_dict(), registry=registry, strict=True)
+        runner = StudioRunnerTools(registry=registry, include_all_components=True)
+        try:
+            runner._require_isolated_steps(rebuilt, "p")
+            return False
+        except DispatchCopyError:
+            return True
+
+    def test_a_steps_container_as_the_steps_value_is_reached(self):
+        from agno.workflow.steps import Steps
+
+        assert self._leaks(lambda step: Steps(name="grp", steps=[step]))
+
+    def test_a_loop_container_as_the_steps_value_is_reached(self):
+        from agno.workflow.loop import Loop
+
+        assert self._leaks(lambda step: Loop(name="lp", steps=[step], max_iterations=1))
+
+    def test_a_container_inside_the_list_is_still_reached(self):
+        from agno.workflow.steps import Steps
+
+        assert self._leaks(lambda step: [Steps(name="grp", steps=[step])])
+
+    def test_the_nested_workflows_own_agent_is_checked(self):
+        from agno.agent import Agent
+        from agno.workflow.step import Step
+
+        class StickyAgent(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        assert self._leaks(
+            lambda step: [Step(name="x", executor=lambda step_input: None)],
+            workflow_agent=StickyAgent(id="wf_agent", name="WA"),
+        )

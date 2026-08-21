@@ -57,7 +57,9 @@ def harness(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "agno.workflow.workflow.get_workflows",
-        lambda db, registry=None, user_id=None: [Workflow(id="db-wf", name="DB WF", steps=[])],
+        lambda db, registry=None, exclude_component_ids=None, user_id=None: [
+            Workflow(id="db-wf", name="DB WF", steps=[])
+        ],
     )
     return SimpleNamespace(client=TestClient(app, raise_server_exceptions=False))
 

@@ -792,7 +792,10 @@ def build_mcp_server(
             registry = os.registry
             # Owner scope for the DB-backed components, matching the REST list routes.
             scoped_user_id = _scoped_caller_user_id()
-            agent_exclude = (registry.get_agent_ids() if registry else None) or None
+            # Exclude the ids this OS serves - what the code half above
+            # renders - not the registry's, which is a superset carrying
+            # rehydration context this listing never shows.
+            agent_exclude = {aid for a in os.agents or [] if (aid := getattr(a, "id", None)) is not None} or None
             for a in _accessible(
                 get_agents(db=os.db, registry=registry, exclude_component_ids=agent_exclude, user_id=scoped_user_id),
                 "agents",
@@ -801,7 +804,7 @@ def build_mcp_server(
                     agents_out.append(AgentSummaryResponse.from_agent(a).model_dump())
                 except Exception:
                     logger.exception("Error summarizing DB agent for get_agentos_config")
-            team_exclude = (registry.get_team_ids() if registry else None) or None
+            team_exclude = {tid for t in os.teams or [] if (tid := getattr(t, "id", None)) is not None} or None
             for t in _accessible(
                 get_teams(db=os.db, registry=registry, exclude_component_ids=team_exclude, user_id=scoped_user_id),
                 "teams",
@@ -810,7 +813,13 @@ def build_mcp_server(
                     teams_out.append(TeamSummaryResponse.from_team(t).model_dump())
                 except Exception:
                     logger.exception("Error summarizing DB team for get_agentos_config")
-            for w in _accessible(get_workflows(db=os.db, registry=registry, user_id=scoped_user_id), "workflows"):
+            workflow_exclude = {wid for w in os.workflows or [] if (wid := getattr(w, "id", None)) is not None} or None
+            for w in _accessible(
+                get_workflows(
+                    db=os.db, registry=registry, exclude_component_ids=workflow_exclude, user_id=scoped_user_id
+                ),
+                "workflows",
+            ):
                 try:
                     workflows_out.append(WorkflowSummaryResponse.from_workflow(w, is_component=True).model_dump())
                 except Exception:

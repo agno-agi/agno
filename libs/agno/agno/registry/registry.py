@@ -18,6 +18,7 @@ from agno.vectordb.base import VectorDb
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.team import Team
+    from agno.workflow import Workflow
 
 # A flat function name, or a (toolkit name, function name) qualified pair.
 EntrypointKey = Union[str, Tuple[str, str]]
@@ -74,7 +75,7 @@ def _tool_resource_name(tool: Any) -> Optional[str]:
 class Registry:
     """
     Registry is used to manage non serializable objects like tools, models, databases, vector databases,
-    agents, and teams.
+    agents, teams, and workflows.
     """
 
     name: Optional[str] = None
@@ -105,9 +106,15 @@ class Registry:
     _mirrored_knowledge: List[Any] = field(default_factory=list, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
-    # Code-defined agents and teams (for workflow rehydration)
+    # Code-defined agents, teams, and workflows (for rehydration)
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
+    workflows: List[Workflow] = field(default_factory=list)
+    # The db behind the component catalog, named by the AgentOS holding this
+    # registry (see declare_component_db). None once declared means this OS
+    # has no db that can serve the catalog.
+    component_db: Optional[BaseDb] = field(default=None, init=False, repr=False)
+    component_db_declared: bool = field(default=False, init=False, repr=False)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
@@ -516,6 +523,32 @@ class Registry:
                 continue
         return False
 
+    def declare_component_db(self, db: Any) -> None:
+        """State which database backs the component catalog.
+
+        AgentOS calls this with its own db. A db that is not a synchronous
+        ``BaseDb`` -- async, or remote -- cannot serve the catalog, and is
+        declared as None rather than left undeclared: an undeclared registry
+        falls back to ``dbs[0]``, and that list holds whatever the component
+        tree carried, so the fallback can bind a Studio toolkit to an
+        agent-private session db and write the catalog where no OS surface
+        reads it.
+
+        """
+        self.component_db = db if isinstance(db, BaseDb) else None
+        self.component_db_declared = True
+
+    def resolve_component_db(self) -> Optional[BaseDb]:
+        """The database a component-catalog toolkit should use when given none.
+
+        A declaration wins outright, including a declared None. Without one --
+        no AgentOS in the picture, a toolkit driven straight from Python --
+        the head of ``dbs`` is the long-standing fallback.
+        """
+        if self.component_db_declared:
+            return self.component_db
+        return self.dbs[0] if self.dbs else None
+
     def add_db(self, db: Any) -> None:
         """Add a database unless one with the same id (or the same instance) is already present.
 
@@ -710,6 +743,12 @@ class Registry:
             return next((t for t in self.teams if getattr(t, "id", None) == team_id), None)
         return None
 
+    def get_workflow(self, workflow_id: str) -> Optional[Workflow]:
+        """Get a workflow by id from the registry."""
+        if self.workflows:
+            return next((w for w in self.workflows if getattr(w, "id", None) == workflow_id), None)
+        return None
+
     def get_agent_ids(self) -> Set[str]:
         """Get the set of all agent IDs in this registry."""
         if self.agents:
@@ -720,6 +759,12 @@ class Registry:
         """Get the set of all team IDs in this registry."""
         if self.teams:
             return {tid for t in self.teams if (tid := getattr(t, "id", None)) is not None}
+        return set()
+
+    def get_workflow_ids(self) -> Set[str]:
+        """Get the set of all workflow IDs in this registry."""
+        if self.workflows:
+            return {wid for w in self.workflows if (wid := getattr(w, "id", None)) is not None}
         return set()
 
     def get_knowledge_names(self) -> Set[str]:
@@ -790,5 +835,9 @@ class Registry:
         return set()
 
     def get_all_component_ids(self) -> Set[str]:
-        """Get the set of all agent and team IDs in this registry."""
-        return self.get_agent_ids() | self.get_team_ids()
+        """Get the set of all agent, team, and workflow IDs in this registry.
+
+        The union is untyped: a consumer excluding "registry-owned" ids from a
+        listing excludes them across component types. Per-type consumers should
+        use the typed getters instead."""
+        return self.get_agent_ids() | self.get_team_ids() | self.get_workflow_ids()
