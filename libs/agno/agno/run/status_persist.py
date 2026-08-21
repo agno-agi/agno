@@ -175,7 +175,7 @@ async def apersist_run_transition(
         # state of a run whose only write is this error transition
         workflow_session = await component.aget_session(session_id=session_id)
         if workflow_session is None:
-            workflow_session, _ = await component._aload_or_create_session(
+            workflow_session, _, _ = await component._aload_or_create_session(
                 session_id=session_id, user_id=user_id, session_state=None
             )
         workflow_session.upsert_run(run=run_response)

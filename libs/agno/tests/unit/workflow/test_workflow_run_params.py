@@ -133,12 +133,12 @@ class TestResolveRunParamsMetadata:
         resolved = wf._resolve_run_params(metadata={"campaign": "launch"})
         assert resolved["metadata"] == {"campaign": "launch"}
 
-    def test_merge_class_wins_on_conflict(self, workflow_with_metadata):
-        """Class-level metadata wins on key conflicts (opposite of dependencies)."""
+    def test_merge_callsite_wins_on_conflict(self, workflow_with_metadata):
+        """Call-site metadata wins on key conflicts (matching agent/team precedence)."""
         resolved = workflow_with_metadata._resolve_run_params(
             metadata={"project": "docs", "campaign": "launch"},
         )
-        assert resolved["metadata"]["project"] == "blog"  # class-level wins
+        assert resolved["metadata"]["project"] == "docs"  # call-site wins
         assert resolved["metadata"]["version"] == "1.0"  # class-level preserved
         assert resolved["metadata"]["campaign"] == "launch"  # call-site added
 
@@ -155,28 +155,29 @@ class TestResolveRunParamsMetadata:
 
 
 class TestResolveRunParamsSessionMetadata:
-    """Session-stored metadata sits between call-site values and self.metadata
-    (call-site < session < self, unlike agent/team where call-site wins)."""
+    """Session-stored metadata sits between workflow defaults and call-site values
+    (workflow < session < call-site, matching agent/team precedence)."""
 
     def test_session_only(self):
         wf = Workflow(id="wf", name="WF")
         resolved = wf._resolve_run_params(session_metadata={"tenant": "acme"})
         assert resolved["metadata"] == {"tenant": "acme"}
 
-    def test_class_beats_session(self, workflow_with_metadata):
+    def test_session_beats_class(self, workflow_with_metadata):
         resolved = workflow_with_metadata._resolve_run_params(
             session_metadata={"project": "docs", "tenant": "acme"},
         )
-        assert resolved["metadata"]["project"] == "blog"  # class-level wins
+        assert resolved["metadata"]["project"] == "docs"  # session wins over class
         assert resolved["metadata"]["tenant"] == "acme"  # session added
+        assert resolved["metadata"]["version"] == "1.0"  # class-level preserved
 
-    def test_session_beats_callsite(self):
+    def test_callsite_beats_session(self):
         wf = Workflow(id="wf", name="WF")
         resolved = wf._resolve_run_params(
             metadata={"shared": "call_value", "run_only": "r"},
             session_metadata={"shared": "session_value", "session_only": "s"},
         )
-        assert resolved["metadata"]["shared"] == "session_value"
+        assert resolved["metadata"]["shared"] == "call_value"  # call-site wins
         assert resolved["metadata"]["run_only"] == "r"
         assert resolved["metadata"]["session_only"] == "s"
 
@@ -186,8 +187,8 @@ class TestResolveRunParamsSessionMetadata:
             session_metadata={"project": "wiki", "session_only": "s"},
         )
         assert resolved["metadata"] == {
-            "project": "blog",  # class-level wins over session and call-site
-            "version": "1.0",
+            "project": "docs",  # call-site wins over session and class
+            "version": "1.0",  # class-level preserved
             "session_only": "s",
             "run_only": "r",
         }
@@ -897,23 +898,23 @@ class TestRunSessionMetadataPrecedence:
         workflow.run(input="hi", session_id="s1")
         assert captured["metadata"] == {"tenant": "acme"}
 
-    def test_workflow_beats_session_on_run(self):
+    def test_session_beats_workflow_on_run(self):
         db = InMemoryDb()
         _seed_workflow_session(db, "s1", {"shared": "session_value", "session_only": "s"})
         captured: Dict[str, Any] = {}
         workflow = _make_capture_workflow(db, captured, metadata={"shared": "wf_value", "wf_only": "w"})
         workflow.run(input="hi", session_id="s1")
-        assert captured["metadata"]["shared"] == "wf_value"
+        assert captured["metadata"]["shared"] == "session_value"  # session wins
         assert captured["metadata"]["session_only"] == "s"
         assert captured["metadata"]["wf_only"] == "w"
 
-    def test_session_beats_callsite_on_run(self):
+    def test_callsite_beats_session_on_run(self):
         db = InMemoryDb()
         _seed_workflow_session(db, "s1", {"shared": "session_value"})
         captured: Dict[str, Any] = {}
         workflow = _make_capture_workflow(db, captured)
         workflow.run(input="hi", session_id="s1", metadata={"shared": "call_value", "run_only": "r"})
-        assert captured["metadata"]["shared"] == "session_value"
+        assert captured["metadata"]["shared"] == "call_value"  # call-site wins
         assert captured["metadata"]["run_only"] == "r"
 
     def test_run_does_not_mutate_workflow_metadata(self):
@@ -933,7 +934,7 @@ class TestRunSessionMetadataPrecedence:
         captured: Dict[str, Any] = {}
         workflow = _make_capture_workflow(db, captured, metadata={"shared": "wf_value"})
         await workflow.arun(input="hi", session_id="s1", metadata={"run_only": "r"})
-        assert captured["metadata"]["shared"] == "wf_value"
+        assert captured["metadata"]["shared"] == "session_value"  # session beats workflow
         assert captured["metadata"]["session_only"] == "s"
         assert captured["metadata"]["run_only"] == "r"
 

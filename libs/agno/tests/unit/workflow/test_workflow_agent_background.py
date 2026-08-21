@@ -30,7 +30,7 @@ class TestWorkflowAgentBackgroundSingleRun:
             # The real path persists the run under the caller's id (9258)
             from agno.run.workflow import WorkflowRunOutput
 
-            session, _ = await wf._aload_or_create_session(
+            session, _, _ = await wf._aload_or_create_session(
                 session_id=run_context.session_id, user_id=None, session_state=None
             )
             session.upsert_run(
