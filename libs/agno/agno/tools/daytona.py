@@ -123,7 +123,7 @@ class DaytonaTools(Toolkit):
         sandbox_language: Optional[CodeLanguage] = None,
         sandbox_target: Optional[str] = None,
         sandbox_os: Optional[str] = None,
-        auto_stop_interval: Optional[int] = 60,
+        auto_stop_interval: Optional[int] = 60,  # Stop after 1 hour
         sandbox_os_user: Optional[str] = None,
         sandbox_env_vars: Optional[Dict[str, str]] = None,
         sandbox_labels: Optional[Dict[str, str]] = None,
