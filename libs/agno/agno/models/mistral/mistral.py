@@ -183,12 +183,12 @@ class MistralChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Mistral model.
         """
-        mistral_messages = format_messages(messages, compress_tool_results)
+        mistral_messages = format_messages(messages, compact_tool_results)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
             if (
@@ -233,12 +233,12 @@ class MistralChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Stream the response from the Mistral model.
         """
-        mistral_messages = format_messages(messages, compress_tool_results)
+        mistral_messages = format_messages(messages, compact_tool_results)
 
         assistant_message.metrics.start_timer()
 
@@ -267,12 +267,12 @@ class MistralChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send an asynchronous chat completion request to the Mistral API.
         """
-        mistral_messages = format_messages(messages, compress_tool_results)
+        mistral_messages = format_messages(messages, compact_tool_results)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
             if (
@@ -315,12 +315,12 @@ class MistralChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compress_tool_results: bool = False,
+        compact_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Mistral API.
         """
-        mistral_messages = format_messages(messages, compress_tool_results)
+        mistral_messages = format_messages(messages, compact_tool_results)
         try:
             assistant_message.metrics.start_timer()
 

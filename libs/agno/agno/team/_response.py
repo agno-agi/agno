@@ -1011,7 +1011,21 @@ def _handle_model_response_stream(
         stream_model_response = False
 
     # Lazy import — _run imports _response, so we can't import at module top.
-    from agno.team._run import build_team_after_tool_results_callback
+    from agno.team._run import build_team_after_tool_results_callback, build_team_compaction_callback
+
+    # Pre-loop compaction: compress history BEFORE first model call
+    if team.compaction_manager is not None:
+        log_debug(f"[TEAM-STREAM-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+        compaction_result = team.compaction_manager.compact(
+            run_messages.messages,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if compaction_result.summary:
+            log_debug(
+                f"[TEAM-STREAM-SYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
+            )
+            run_messages.compacted_messages = compaction_result.compacted_messages
 
     full_model_response = ModelResponse()
     for model_response_event in call_model_stream_with_fallback(
@@ -1025,10 +1039,12 @@ def _handle_model_response_stream(
         stream_model_response=stream_model_response,
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
+        compaction_manager=team.compaction_manager if team.compact_tools else None,
         after_tool_results=build_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
         ),
+        compaction_callback=build_team_compaction_callback(team, run_messages, run_response),
+        compacted_messages=run_messages.compacted_messages,
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1171,7 +1187,21 @@ async def _ahandle_model_response_stream(
         stream_model_response = False
 
     # Lazy import — _run imports _response, so we can't import at module top.
-    from agno.team._run import abuild_team_after_tool_results_callback
+    from agno.team._run import abuild_team_after_tool_results_callback, abuild_team_compaction_callback
+
+    # Pre-loop compaction: compress history BEFORE first model call
+    if team.compaction_manager is not None:
+        log_debug(f"[TEAM-STREAM-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+        compaction_result = await team.compaction_manager.acompact(
+            run_messages.messages,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if compaction_result.summary:
+            log_debug(
+                f"[TEAM-STREAM-ASYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
+            )
+            run_messages.compacted_messages = compaction_result.compacted_messages
 
     full_model_response = ModelResponse()
     model_stream = acall_model_stream_with_fallback(
@@ -1185,10 +1215,12 @@ async def _ahandle_model_response_stream(
         stream_model_response=stream_model_response,
         send_media_to_model=team.send_media_to_model,
         run_response=run_response,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
+        compaction_manager=team.compaction_manager if team.compact_tools else None,
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
         ),
+        compaction_callback=await abuild_team_compaction_callback(team, run_messages, run_response),
+        compacted_messages=run_messages.compacted_messages,
     )  # type: ignore
     async for model_response_event in model_stream:
         # Handle LLM request events and compression events from ModelResponse

@@ -245,7 +245,7 @@ class MoonShot(OpenAILike):
         video.id = f"ms://{file_id}"
         return video.id
 
-    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compact_tool_results: bool = False) -> Dict[str, Any]:
         """Adapt an OpenAI-formatted message to what Moonshot accepts.
 
         - Round-trips ``reasoning_content`` so models that carry reasoning across turns
@@ -268,7 +268,7 @@ class MoonShot(OpenAILike):
         if videos:
             message.videos = None
         try:
-            message_dict = super()._format_message(message, compress_tool_results)
+            message_dict = super()._format_message(message, compact_tool_results)
         finally:
             if files:
                 message.files = files

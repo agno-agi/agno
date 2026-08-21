@@ -1058,11 +1058,11 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["metadata"] = agent.metadata
 
     # --- Context compression settings ---
-    if agent.compress_tool_results:
-        config["compress_tool_results"] = agent.compress_tool_results
-    # TODO: implement compression manager serialization
-    # if agent.compression_manager is not None:
-    #     config["compression_manager"] = agent.compression_manager.to_dict()
+    if agent.compact_tools:
+        config["compact_tools"] = agent.compact_tools
+    # TODO: implement compaction manager serialization
+    # if agent.compaction_manager is not None:
+    #     config["compaction_manager"] = agent.compaction_manager.to_dict()
 
     # --- Callable factory settings ---
     if not agent.cache_callables:
@@ -1245,11 +1245,11 @@ def from_dict(
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
             del config["knowledge"]
 
-    # --- Handle CompressionManager reconstruction ---
-    # TODO: implement compression manager deserialization
-    # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
-    #     from agno.compression.manager import CompressionManager
-    #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+    # --- Handle CompactionManager reconstruction ---
+    # TODO: implement compaction manager deserialization
+    # if "compaction_manager" in config and isinstance(config["compaction_manager"], dict):
+    #     from agno.compression.manager import CompactionManager
+    #     config["compaction_manager"] = CompactionManager.from_dict(config["compaction_manager"])
 
     # --- Handle Learning reconstruction ---
     if "learning" in config and isinstance(config["learning"], dict):
@@ -1364,8 +1364,8 @@ def from_dict(
         # --- Metadata ---
         metadata=strip_reserved_run_metadata(config.get("metadata")),
         # --- Compression settings ---
-        compress_tool_results=config.get("compress_tool_results", False),
-        # compression_manager=config.get("compression_manager"),  # TODO
+        compact_tools=config.get("compact_tools", False),
+        # compaction_manager=config.get("compaction_manager"),  # TODO
         # --- Debug and telemetry settings ---
         debug_mode=config.get("debug_mode", False),
         debug_level=config.get("debug_level", 1),

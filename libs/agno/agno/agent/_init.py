@@ -18,7 +18,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
@@ -177,18 +177,30 @@ def set_session_summary_manager(agent: Agent) -> None:
         )
 
 
-def set_compression_manager(agent: Agent) -> None:
-    if agent.compress_tool_results and agent.compression_manager is None:
-        agent.compression_manager = CompressionManager(
+def set_compaction_manager(agent: Agent) -> None:
+    """Initialize compaction_manager for tool and/or history compaction."""
+    # Auto-create if either compaction flag is set
+    if (agent.compact_tools or agent.compact_context) and agent.compaction_manager is None:
+        agent.compaction_manager = CompactionManager(
             model=agent.model,
+            compact_tools=agent.compact_tools,
+            compact_context=agent.compact_context,
         )
 
-    if agent.compression_manager is not None and agent.compression_manager.model is None:
-        agent.compression_manager.model = agent.model
+    # If manager exists, sync the compact_context flag to compact_history
+    if agent.compaction_manager is not None and agent.compact_context:
+        agent.compaction_manager.compact_context = True
 
-    # Check compression flag on the compression manager
-    if agent.compression_manager is not None and agent.compression_manager.compress_tool_results:
-        agent.compress_tool_results = True
+    # Ensure model is set
+    if agent.compaction_manager is not None and agent.compaction_manager.model is None:
+        agent.compaction_manager.model = agent.model
+
+    # Sync flags from manager back to agent
+    if agent.compaction_manager is not None:
+        if agent.compaction_manager.compact_tools:
+            agent.compact_tools = True
+        if agent.compaction_manager.compact_context:
+            agent.compact_context = True
 
 
 def _initialize_session_state(
@@ -240,8 +252,8 @@ def get_models(agent: Agent) -> None:
     if agent.fallback_config is not None:
         agent.fallback_config.resolve_models()
 
-    if agent.compression_manager is not None and agent.compression_manager.model is None:
-        agent.compression_manager.model = agent.model
+    if agent.compaction_manager is not None and agent.compaction_manager.model is None:
+        agent.compaction_manager.model = agent.model
 
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
@@ -254,8 +266,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_memory_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
-    if agent.compress_tool_results or agent.compression_manager is not None:
-        set_compression_manager(agent)
+    if agent.compact_tools or agent.compact_context or agent.compaction_manager is not None:
+        set_compaction_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 

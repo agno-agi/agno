@@ -11,6 +11,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -358,6 +360,20 @@ def _run_tasks(
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
 
+        # Pre-loop compaction: compress history BEFORE first iteration
+        if team.compaction_manager is not None and team.compaction_manager.compact_context:
+            log_debug(f"[TEAM-TASKS-SYNC] Pre-loop compaction check: {len(accumulated_messages)} messages")
+            compaction_result = team.compaction_manager.compact(
+                accumulated_messages,
+                run_response=run_response,
+                run_metrics=run_response.metrics,
+            )
+            if compaction_result.summary:
+                log_debug(
+                    f"[TEAM-TASKS-SYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
+                )
+                run_messages.compacted_messages = compaction_result.compacted_messages
+
         model_response: Optional[ModelResponse] = None
 
         # === Iterative task loop ===
@@ -375,6 +391,9 @@ def _run_tasks(
                     "When all tasks are done, call `mark_all_complete` with a summary.",
                 )
                 accumulated_messages.append(state_message)
+                # Dual-append: also add to compacted working set so model sees it
+                if run_messages.compacted_messages is not None:
+                    run_messages.compacted_messages.append(state_message)
 
             # Get model response
             model_response = call_model_with_fallback(
@@ -387,10 +406,12 @@ def _run_tasks(
                 tool_call_limit=team.tool_call_limit,
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compression_manager if team.compress_tool_results else None,
+                compaction_manager=team.compaction_manager if team.compact_tools else None,
                 after_tool_results=build_team_after_tool_results_callback(
                     team, run_response, session, run_messages, run_context
                 ),
+                compaction_callback=build_team_compaction_callback(team, run_messages, run_response),
+                compacted_messages=run_messages.compacted_messages,
             )
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -734,6 +755,9 @@ def _run_tasks_stream(
                     "When all tasks are done, call `mark_all_complete` with a summary.",
                 )
                 accumulated_messages.append(state_message)
+                # Dual-append: also add to compacted working set so model sees it
+                if run_messages.compacted_messages is not None:
+                    run_messages.compacted_messages.append(state_message)
 
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
@@ -1212,6 +1236,22 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # Pre-loop compaction: compress history BEFORE first model call
+                if team.compaction_manager is not None and team.compaction_manager.compact_context:
+                    log_debug(f"[TEAM-RUN-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    compaction_result = team.compaction_manager.compact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        log_debug(
+                            f"[TEAM-RUN-SYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
+                        )
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                    else:
+                        log_debug("[TEAM-RUN-SYNC] Pre-loop compaction: no compaction needed")
+
                 # 6. Get the model response for the team leader
                 team.model = cast(Model, team.model)
                 model_response: ModelResponse = call_model_with_fallback(
@@ -1224,10 +1264,12 @@ def _run(
                     tool_call_limit=team.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    compaction_manager=team.compaction_manager if team.compact_tools else None,
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
+                    compaction_callback=build_team_compaction_callback(team, run_messages, run_response),
+                    compacted_messages=run_messages.compacted_messages,
                 )
 
                 # Check for cancellation after model call
@@ -2210,6 +2252,20 @@ async def _arun_tasks(
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
 
+        # Pre-loop compaction: compress history BEFORE first iteration
+        if team.compaction_manager is not None and team.compaction_manager.compact_context:
+            log_debug(f"[TEAM-TASKS-ASYNC] Pre-loop compaction check: {len(accumulated_messages)} messages")
+            compaction_result = await team.compaction_manager.acompact(
+                accumulated_messages,
+                run_response=run_response,
+                run_metrics=run_response.metrics,
+            )
+            if compaction_result.summary:
+                log_debug(
+                    f"[TEAM-TASKS-ASYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
+                )
+                run_messages.compacted_messages = compaction_result.compacted_messages
+
         model_response: Optional[ModelResponse] = None
 
         # === Iterative task loop ===
@@ -2227,6 +2283,9 @@ async def _arun_tasks(
                     "When all tasks are done, call `mark_all_complete` with a summary.",
                 )
                 accumulated_messages.append(state_message)
+                # Dual-append: also add to compacted working set so model sees it
+                if run_messages.compacted_messages is not None:
+                    run_messages.compacted_messages.append(state_message)
 
             # Get model response
             model_response = await acall_model_with_fallback(
@@ -2239,10 +2298,12 @@ async def _arun_tasks(
                 tool_call_limit=team.tool_call_limit,
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compression_manager if team.compress_tool_results else None,
+                compaction_manager=team.compaction_manager if team.compact_tools else None,
                 after_tool_results=abuild_team_after_tool_results_callback(
                     team, run_response, team_session, run_messages, run_context
                 ),
+                compaction_callback=await abuild_team_compaction_callback(team, run_messages, run_response),
+                compacted_messages=run_messages.compacted_messages,
             )  # type: ignore
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2621,6 +2682,9 @@ async def _arun_tasks_stream(
                     "When all tasks are done, call `mark_all_complete` with a summary.",
                 )
                 accumulated_messages.append(state_message)
+                # Dual-append: also add to compacted working set so model sees it
+                if run_messages.compacted_messages is not None:
+                    run_messages.compacted_messages.append(state_message)
 
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
@@ -3155,6 +3219,22 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # Pre-loop compaction: compress history BEFORE first model call
+                if team.compaction_manager is not None and team.compaction_manager.compact_context:
+                    log_debug(f"[TEAM-RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    compaction_result = await team.compaction_manager.acompact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        log_debug(
+                            f"[TEAM-RUN-ASYNC] Pre-loop compaction triggered, compacted to {len(compaction_result.compacted_messages)} messages"
+                        )
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                    else:
+                        log_debug("[TEAM-RUN-ASYNC] Pre-loop compaction: no compaction needed")
+
                 # 6. Get the model response for the team leader
                 model_response = await acall_model_with_fallback(
                     team.model,
@@ -3166,10 +3246,12 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    compaction_manager=team.compaction_manager if team.compact_tools else None,
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
                     ),
+                    compaction_callback=await abuild_team_compaction_callback(team, run_messages, run_response),
+                    compacted_messages=run_messages.compacted_messages,
                 )  # type: ignore
 
                 # Check for cancellation after model call
@@ -4941,6 +5023,78 @@ async def acheckpoint_team_run(
     await _apersist_team_run_in_session(team, run_response, session, run_context)
 
 
+def build_team_compaction_callback(
+    team: "Team",
+    run_messages: "RunMessages",  # noqa: F821
+    run_response: TeamRunOutput,
+) -> Optional[Callable[[], Optional[List[Message]]]]:
+    """Build the sync mid-loop compaction callback for Team.
+
+    Returns ``None`` when context compaction is not enabled.
+
+    Called by the model loop after each tool batch to check if context exceeds
+    the threshold. If compaction triggers, returns the new shorter message list;
+    the model loop rebinds its local variable from the return value.
+    """
+    compaction_manager = team.compaction_manager
+    if compaction_manager is None:
+        return None
+
+    def _callback() -> Optional[List[Message]]:
+        # Compact the smaller list if pre-loop compaction already ran
+        messages_to_compact = (
+            run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+        )
+        log_debug(
+            f"[TEAM-COMPACTION-SYNC] Check: {len(messages_to_compact)} messages (compacted={run_messages.compacted_messages is not None})"
+        )
+        result = compaction_manager.compact(
+            messages_to_compact,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if result.summary:
+            log_debug(f"[TEAM-COMPACTION-SYNC] Triggered, result: {len(result.compacted_messages)} messages")
+            run_messages.compacted_messages = result.compacted_messages
+            return result.compacted_messages
+        log_debug("[TEAM-COMPACTION-SYNC] No compaction needed")
+        return None
+
+    return _callback
+
+
+async def abuild_team_compaction_callback(
+    team: "Team",
+    run_messages: "RunMessages",  # noqa: F821
+    run_response: TeamRunOutput,
+) -> Optional[Callable[[], Awaitable[Optional[List[Message]]]]]:
+    """Async variant of :func:`build_team_compaction_callback`."""
+    compaction_manager = team.compaction_manager
+    if compaction_manager is None:
+        return None
+
+    async def _callback() -> Optional[List[Message]]:
+        messages_to_compact = (
+            run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+        )
+        log_debug(
+            f"[TEAM-COMPACTION-ASYNC] Check: {len(messages_to_compact)} messages (compacted={run_messages.compacted_messages is not None})"
+        )
+        result = await compaction_manager.acompact(
+            messages_to_compact,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if result.summary:
+            log_debug(f"[TEAM-COMPACTION-ASYNC] Triggered, result: {len(result.compacted_messages)} messages")
+            run_messages.compacted_messages = result.compacted_messages
+            return result.compacted_messages
+        log_debug("[TEAM-COMPACTION-ASYNC] No compaction needed")
+        return None
+
+    return _callback
+
+
 def build_team_after_tool_results_callback(
     team: "Team",
     run_response: TeamRunOutput,
@@ -5128,6 +5282,7 @@ def _get_continue_run_messages(
     team: "Team",
     input: List[Message],
     session: Optional[TeamSession] = None,
+    run_response: Optional[TeamRunOutput] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
 ) -> RunMessages:
@@ -5171,6 +5326,21 @@ def _get_continue_run_messages(
 
         from agno.utils.message import filter_tool_calls
 
+        # Get compaction state for point-in-time filtering (time-travel for continue_run)
+        compaction_state = None
+        if run_response is not None:
+            compaction_state = run_response.compaction_state
+            if compaction_state is None:
+                lookup_id = run_response.forked_from_run_id or run_response.run_id
+                compaction_state = session.get_compaction_state(run_id=lookup_id)
+                # Seed run_response so mid-loop compaction can merge with prior state
+                if compaction_state is not None:
+                    run_response.compaction_state = deepcopy(compaction_state)
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if compaction_state is not None:
+            run_messages.messages.append(compaction_state.get_summary_message())
+
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
         history: List[Message] = session.get_messages(
@@ -5178,6 +5348,7 @@ def _get_continue_run_messages(
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
+            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
         )
 
         if len(history) > 0:
@@ -6634,10 +6805,12 @@ async def _ahandle_model_response_for_continue(
         tool_call_limit=team.tool_call_limit,
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
+        compaction_manager=team.compaction_manager if team.compact_tools else None,
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, team_session, run_messages, run_context
         ),
+        compaction_callback=await abuild_team_compaction_callback(team, run_messages, run_response),
+        compacted_messages=run_messages.compacted_messages,
     )
 
     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -7320,6 +7493,7 @@ def continue_run_dispatch(
             team,
             input=input_messages,
             session=team_session,
+            run_response=run_response,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
         )
@@ -7564,6 +7738,7 @@ def continue_run_dispatch(
             team,
             input=input_messages,
             session=team_session,
+            run_response=run_response,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
         )
@@ -7636,6 +7811,7 @@ def continue_run_dispatch(
             team,
             input=input_messages,
             session=team_session,
+            run_response=run_response,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
         )
@@ -7798,6 +7974,7 @@ def _continue_run_dispatch_stream_with_member_events(
             team,
             input=input_messages,
             session=team_session,
+            run_response=run_response,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
         )
@@ -7849,6 +8026,7 @@ def _continue_run_dispatch_stream_with_member_events(
             team,
             input=input_messages,
             session=team_session,
+            run_response=run_response,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
         )
@@ -7944,10 +8122,12 @@ def _continue_run(
                     tool_call_limit=team.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    compaction_manager=team.compaction_manager if team.compact_tools else None,
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
+                    compaction_callback=build_team_compaction_callback(team, run_messages, run_response),
+                    compacted_messages=run_messages.compacted_messages,
                 )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -9289,6 +9469,7 @@ async def _acontinue_run(
                         team,
                         input=input_messages,
                         session=team_session,
+                        run_response=run_response,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
                     )
@@ -9337,6 +9518,7 @@ async def _acontinue_run(
                         team,
                         input=input_messages,
                         session=team_session,
+                        run_response=run_response,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
                     )
@@ -9767,6 +9949,7 @@ async def _acontinue_run_stream(
                         team,
                         input=input_messages,
                         session=team_session,
+                        run_response=run_response,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
                     )
@@ -9895,6 +10078,7 @@ async def _acontinue_run_stream(
                         team,
                         input=input_messages,
                         session=team_session,
+                        run_response=run_response,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
                     )

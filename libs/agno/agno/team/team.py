@@ -22,7 +22,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -324,10 +324,12 @@ class Team:
     add_learnings_to_context: bool = True
 
     # --- Context Compression ---
-    # If True, compress tool call results to save context
-    compress_tool_results: bool = False
-    # Compression manager for compressing tool call results
-    compression_manager: Optional["CompressionManager"] = None
+    # If True, compact tool call results to save context
+    compact_tools: bool = False
+    # If True, compact conversation history to save context
+    compact_context: bool = False
+    # Compaction manager for tool results and/or conversation history
+    compaction_manager: Optional["CompactionManager"] = None
 
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -524,8 +526,13 @@ class Team:
         add_session_summary_to_context: Optional[bool] = None,
         learning: Optional[Union[bool, LearningMachine]] = None,
         add_learnings_to_context: bool = True,
-        compress_tool_results: bool = False,
-        compression_manager: Optional["CompressionManager"] = None,
+        compact_tools: bool = False,
+        compact_context: bool = False,
+        compaction_manager: Optional["CompactionManager"] = None,
+        # Deprecated aliases (use compact_tools and compaction_manager)
+        compact_tool_results: Optional[bool] = None,
+        compress_tool_results: Optional[bool] = None,
+        compression_manager: Optional["CompactionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -641,6 +648,10 @@ class Team:
             add_session_summary_to_context=add_session_summary_to_context,
             learning=learning,
             add_learnings_to_context=add_learnings_to_context,
+            compact_tools=compact_tools,
+            compact_context=compact_context,
+            compaction_manager=compaction_manager,
+            compact_tool_results=compact_tool_results,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             metadata=metadata,

@@ -138,18 +138,18 @@ class DeepSeek(OpenAILike):
             client_params.update(self.client_params)
         return client_params
 
-    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compact_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
 
         Args:
             message (Message): The message to format.
-            compress_tool_results: Whether to compress tool results.
+            compact_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        tool_result = message.get_content(use_compressed_content=compress_tool_results)
+        tool_result = message.get_content(use_compressed_content=compact_tool_results)
 
         message_dict: Dict[str, Any] = {
             "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],

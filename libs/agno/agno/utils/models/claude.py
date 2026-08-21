@@ -450,7 +450,7 @@ def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
 
 def format_messages(
     messages: List[Message],
-    compress_tool_results: bool = False,
+    compact_tool_results: bool = False,
     append_trailing_user_message: Optional[bool] = False,
     trailing_user_message_content: str = "continue",
     enable_citations: bool = True,
@@ -460,7 +460,7 @@ def format_messages(
 
     Args:
         messages (List[Message]): The list of messages to process.
-        compress_tool_results: Whether to compress tool results.
+        compact_tool_results: Whether to compress tool results.
         append_trailing_user_message: If True, append a dummy user message when the conversation
             ends with an assistant turn. Required for models that do not support assistant prefill.
         trailing_user_message_content: The text content of the injected trailing user message.
@@ -575,7 +575,7 @@ def format_messages(
             content = []
 
             # Use compressed content for tool messages if compression is active
-            tool_result = message.get_content(use_compressed_content=compress_tool_results)
+            tool_result = message.get_content(use_compressed_content=compact_tool_results)
             if isinstance(tool_result, list):
                 normalized_blocks: List[Any] = []
                 for item in tool_result:

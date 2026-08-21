@@ -32,7 +32,7 @@ from agno.agent import (
     _tools,
     _utils,
 )
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -58,7 +58,7 @@ from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.utils.safe_formatter import SafeFormatter
 
 
@@ -341,11 +341,13 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
-    # --- Context Compression ---
-    # If True, compress tool call results to save context
-    compress_tool_results: bool = False
-    # Compression manager for compressing tool call results
-    compression_manager: Optional[CompressionManager] = None
+    # --- Context Compaction ---
+    # If True, compact tool call results to save context
+    compact_tools: bool = False
+    # If True, compact conversation history to save context
+    compact_context: bool = False
+    # Compaction manager for tool results and/or conversation history
+    compaction_manager: Optional[CompactionManager] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -394,8 +396,13 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        compress_tool_results: bool = False,
-        compression_manager: Optional[CompressionManager] = None,
+        compact_tools: bool = False,
+        compact_context: bool = False,
+        compaction_manager: Optional[CompactionManager] = None,
+        # Deprecated aliases (use compact_tools and compaction_manager)
+        compact_tool_results: Optional[bool] = None,
+        compress_tool_results: Optional[bool] = None,
+        compression_manager: Optional[CompactionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -519,9 +526,23 @@ class Agent:
 
         self.add_session_summary_to_context = add_session_summary_to_context
 
-        # Context compression settings
-        self.compress_tool_results = compress_tool_results
-        self.compression_manager = compression_manager
+        # Context compaction settings (with backward compat for old names)
+        if compact_tool_results is not None:
+            log_debug("compact_tool_results is deprecated, use compact_tools")
+            self.compact_tools = compact_tool_results
+        elif compress_tool_results is not None:
+            log_debug("compress_tool_results is deprecated, use compact_tools")
+            self.compact_tools = compress_tool_results
+        else:
+            self.compact_tools = compact_tools
+
+        self.compact_context = compact_context
+
+        if compression_manager is not None:
+            log_debug("compression_manager is deprecated, use compaction_manager")
+            self.compaction_manager = compression_manager
+        else:
+            self.compaction_manager = compaction_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs

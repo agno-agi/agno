@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import HISTORY_SKIP_STATUSES, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
+
+if TYPE_CHECKING:
+    from agno.compression.context import CompactionState
 from agno.utils.log import log_debug, log_warning
 
 
@@ -127,6 +130,33 @@ class AgentSession:
                 return run
         return None
 
+    def get_compaction_state(self, run_id: Optional[str] = None) -> Optional["CompactionState"]:
+        """Get compaction state, optionally at a specific run's point in time.
+
+        Args:
+            run_id: If provided, get compaction as of this run. If None, get latest.
+
+        Returns:
+            CompactionState if found, None otherwise.
+        """
+        runs = self.runs or []
+        if not runs:
+            return None
+
+        if run_id:
+            target_idx = next((i for i, r in enumerate(runs) if r.run_id == run_id), None)
+            if target_idx is None:
+                return None
+            start_idx = target_idx
+        else:
+            start_idx = len(runs) - 1
+
+        for i in range(start_idx, -1, -1):
+            compaction_state = getattr(runs[i], "compaction_state", None)
+            if compaction_state is not None:
+                return compaction_state
+        return None
+
     def get_messages(
         self,
         agent_id: Optional[str] = None,
@@ -136,6 +166,7 @@ class AgentSession:
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
+        compacted_message_ids: Optional[set] = None,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -147,13 +178,18 @@ class AgentSession:
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
+            compacted_message_ids: Set of message IDs to skip (already in compaction summary).
 
         Returns:
             A list of Messages belonging to the session.
         """
+        # Use compacted IDs directly if provided
+        compacted_ids: set = compacted_message_ids or set()
 
         def _should_skip_message(
-            message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
+            message: Message,
+            skip_roles: Optional[List[str]] = None,
+            skip_history_messages: bool = True,
         ) -> bool:
             """Logic to determine if a message should be skipped"""
             # Skip messages that were tagged as history in previous runs
@@ -162,6 +198,10 @@ class AgentSession:
 
             # Skip messages with specified role
             if skip_roles and message.role in skip_roles:
+                return True
+
+            # Skip compacted messages (their content is in the summary)
+            if compacted_ids and message.id and message.id in compacted_ids:
                 return True
 
             return False

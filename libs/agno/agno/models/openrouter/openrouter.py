@@ -91,8 +91,8 @@ class OpenRouter(OpenAILike):
 
         return request_params
 
-    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
-        message_dict = super()._format_message(message, compress_tool_results)
+    def _format_message(self, message: Message, compact_tool_results: bool = False) -> Dict[str, Any]:
+        message_dict = super()._format_message(message, compact_tool_results)
 
         if message.role == "assistant" and message.provider_data:
             if message.provider_data.get("reasoning_details"):
