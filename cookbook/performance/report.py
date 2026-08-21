@@ -177,8 +177,7 @@ def comparison_groups(versions: dict) -> list:
                 "cache enabled over an in-memory database, LangGraph's "
                 "InMemorySaver per thread, PydanticAI passing message_history, "
                 "CrewAI chaining five tasks through task context. Each variant "
-                "asserts the history actually accumulated; the durable "
-                "benchmark below measures the persisted configuration."
+                "asserts the history actually accumulated."
             ),
             "rows": [
                 ("multi_turn_compare_agno", agno, "sync"),
@@ -209,27 +208,12 @@ def comparison_groups(versions: dict) -> list:
                 ("long_conversation_compare_crewai", crewai, "other"),
             ],
         },
-        {
-            "key": "cmp_durable_conversation",
-            "metric": "25-turn conversation, durable (SQLite)",
-            "title": "Durable twenty-five-turn conversation vs other frameworks",
-            "unit": "ms",
-            "measure": "time",
-            "ratio_to": "durable_conversation_compare_agno",
-            "blurb": (
-                "The twenty-five-turn conversation persisted to a SQLite "
-                "database every turn: Agno with SqliteDb, LangGraph with "
-                "SqliteSaver, both paying real serialization and database "
-                "writes. Agno does not currently win this one either; the "
-                "write path is a known optimization target. PydanticAI ships "
-                "no persistence layer and CrewAI has no conversation "
-                "primitive, so neither appears here."
-            ),
-            "rows": [
-                ("durable_conversation_compare_agno", agno, "sync"),
-                ("durable_conversation_compare_langgraph", langgraph, "other"),
-            ],
-        },
+        # The durable SQLite configuration is excluded from the report while
+        # the two adapters run different SQLite journal configurations
+        # (SqliteSaver self-configures WAL; SqliteDb uses the DELETE
+        # default), which makes the row compare journal modes as well as
+        # frameworks. The benchmark still runs and records raw results;
+        # comparison/README.md documents the exclusion.
         {
             "key": "cmp_import",
             "metric": "Cold import",
@@ -272,7 +256,6 @@ COMPARISON_TABLE_ORDER = [
     "cmp_tool_run",
     "cmp_multi_turn",
     "cmp_long_conversation",
-    "cmp_durable_conversation",
     "cmp_construction",
     "cmp_memory",
     "cmp_import",

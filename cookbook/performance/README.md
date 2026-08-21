@@ -27,7 +27,6 @@ LangGraph 1.2.11, PydanticAI 2.31.1 (slim install), CrewAI 1.15.17.
 | Tool-call run (mocked model) | 323 us | 770 us (2.4x) | 2,368 us (7.3x) | excluded |
 | 5-turn conversation, in-memory | 1.0 ms | 3.1 ms (3.1x) | 7.6 ms (7.5x) | 19.0 ms (19x) |
 | 25-turn conversation, in-memory | 12.0 ms | 22.0 ms (1.8x) | 39.3 ms (3.3x) | 93.7 ms (7.8x) |
-| 25-turn conversation, durable (SQLite) | 52.2 ms | 37.3 ms (0.7x) | excluded | excluded |
 | Agent construction (1 tool) | 4.7 us | 1,106 us (235x) | 9,448 us (2,007x) | 19,094 us (4,055x) |
 | Construction memory peak | 7.1 KiB | 146 KiB (21x) | 40 KiB (5.7x) | 24 KiB (3.4x) |
 | Cold import | 155 ms | 333 ms (2.1x) | 222 ms (1.4x) | 1,030 ms (6.6x) |
@@ -51,11 +50,13 @@ paths were rewritten — history messages are copied on write, and the
 in-memory store persists runs incrementally — and the row now measures
 a 1.8x win under the same matched configuration, against LangGraph's
 reference-holding checkpointer with Agno's session cache enabled. Third,
-the durable 25-turn row is the benchmark Agno still loses. Both sides
-serialize every turn to SQLite; Agno's SQL adapter write path spends more
-per turn on serializing session state that grows with length. It is the
-remaining known optimization target, and the row will be re-measured when
-that work lands.
+a durable 25-turn configuration (SqliteDb versus LangGraph's SqliteSaver)
+exists in the suite but is excluded from this table: an instrumented
+probe showed the two adapters run different SQLite journal configurations
+(SqliteSaver self-configures WAL; SqliteDb currently uses the DELETE
+default), so the row as previously measured compared journal modes as
+well as frameworks. `comparison/README.md` documents the exclusion, the
+probe, and the conditions under which the row returns.
 
 ## 1. Environment setup
 
