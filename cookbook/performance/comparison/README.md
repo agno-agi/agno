@@ -37,36 +37,37 @@ is excluded: with a custom model its tool use goes through a text-based
 action protocol whose format is internal to the framework version, so a
 mock would be testing the mock rather than the framework.
 
-## Fairness notes (long conversation)
+## Fairness notes (conversations: in-memory and durable)
 
-The twenty-five-turn benchmark uses the same mechanisms and guards as the
-five-turn one; only the length changes, so history-proportional costs
-dominate. Agno does not currently win it: its per-turn session persistence
-re-serializes the conversation each turn (cost quadratic in conversation
-length), while LangGraph's in-memory checkpointer stores state by
-reference. The result is published as measured. Agno is benchmarked in its
-default configuration; enabling its session cache (`cache_session=True`,
-which skips the per-turn session re-read and is the closer analogue of
-LangGraph's always-cached saver) measures about 19 percent faster at this
-length and still does not close the gap - the remainder is the per-turn
-write-path serialization.
+The conversation benchmarks come in matched configurations in both
+directions, so neither side's persistence philosophy is silently
+advantaged:
 
-## Fairness notes (multi-turn conversation)
+- **In-memory** (5-turn and 25-turn): Agno runs with `cache_session=True`
+  over an in-memory database — the closest analogue of LangGraph's
+  always-cached `InMemorySaver`; PydanticAI passes `message_history`;
+  CrewAI chains tasks through `Task.context`. Nothing is durably
+  persisted by anyone.
+- **Durable** (25-turn): Agno with `SqliteDb`, LangGraph with
+  `SqliteSaver`; both serialize and write to a SQLite file every turn,
+  with a fresh database file per conversation. LangGraph's figure
+  includes one graph compile (the checkpointer binds at compile).
+  PydanticAI ships no persistence layer and CrewAI has no conversation
+  primitive, so neither appears in this row.
 
-The five-turn benchmark carries history through each framework's native
-mechanism: Agno persists the session to a fresh in-memory database per
-conversation with `add_history_to_context` (its default history cap of
-three runs is raised so the full conversation stays in context, matching
-the others); LangGraph uses an `InMemorySaver` checkpointer with one thread
-per conversation; PydanticAI passes `message_history` explicitly; CrewAI
-chains five tasks through `Task.context` in one crew, its native
-sequential-context pattern — it has no lightweight conversation primitive,
-and its memory feature requires an embedding provider, which would violate
-the no-network constraint. Note the mechanisms differ in what they do per
-turn: Agno's number includes reading and persisting the session every turn,
-PydanticAI's includes no persistence at all. Every variant asserts after
-the final turn that history actually accumulated, so a silently stateless
+Agno does not currently win the 25-turn benchmark in either
+configuration: its per-turn write path re-serializes conversation state
+that grows with length. The results are published as measured; the growth
+term is a known optimization target. Every variant asserts after the
+final turn that history actually accumulated, so a silently stateless
 conversation fails instead of producing a flattering number.
+
+All conversation variants raise Agno's default history cap
+(`num_history_runs=3`) so the full conversation stays in context, matching
+the other frameworks, which carry uncapped history. CrewAI's conversation
+rows use task-context chaining because it has no lightweight conversation
+primitive, and its memory feature requires an embedding provider, which
+would violate the no-network constraint.
 
 ## Fairness notes (run overhead)
 

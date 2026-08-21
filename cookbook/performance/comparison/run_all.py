@@ -35,6 +35,7 @@ BENCHMARK_FILES = [
     "tool_run_comparison.py",
     "multi_turn_comparison.py",
     "long_conversation_comparison.py",
+    "durable_conversation_comparison.py",
 ]
 
 FRAMEWORK_PACKAGES = ["agno", "langgraph", "langchain-openai", "pydantic-ai", "crewai"]

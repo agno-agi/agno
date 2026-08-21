@@ -143,6 +143,27 @@ roadmap's serialize-once and history copy-on-write items.
 
 ---
 
+### Matched-configuration conversations + durable benchmark (2026-08-21)
+
+**Status:** PASS
+
+**Description:** After the 25-turn loss surfaced, three control experiments decomposed it:
+cache_session=True recovers ~19% (31.1 vs 38.6 ms) and still loses; durable-vs-durable
+(Agno SqliteDb vs LangGraph SqliteSaver) also loses (60-64 vs 39-42 ms) - refuting the
+"we lose because we persist" hypothesis. The conversation benchmarks were therefore
+restructured into matched configurations: in-memory rows run Agno with cache_session=True
+(the analogue of LangGraph's always-cached saver, using unique session ids per conversation
+to avoid the cache/db-swap bug found during probing and filed separately), and a new
+durable row runs SqliteDb vs SqliteSaver with fresh database files per conversation.
+
+**Result:** Clean run: 5-turn in-memory agno 1.9 ms (wins 2.0x over LangGraph); 25-turn
+in-memory agno 32.4 vs LangGraph 23.7 ms (0.7x, loss); 25-turn durable agno 60.3 vs
+LangGraph 38.8 ms (0.6x, loss). Conclusion recorded in the README results discussion: the
+long-conversation loss is Agno's per-turn write-path serialization growing with history,
+not a durability capability difference; short conversations widen Agno's win.
+
+---
+
 ## Review round (2026-08-21)
 
 A 34-agent adversarial review (methodology, mock fidelity, house rules, report, runner

@@ -16,6 +16,7 @@ measured; the growth term is a known optimization target.
 """
 
 import itertools
+from uuid import uuid4
 
 from _compare import MockModel, ensure_completed, iterations, run_benchmarks
 from agno.agent import Agent as AgnoAgent
@@ -29,8 +30,12 @@ SYSTEM_PROMPT = "Be concise, reply with one sentence."
 # ---------------------------------------------------------------------------
 # Agno
 # ---------------------------------------------------------------------------
+# cache_session matches the in-memory semantics of the other frameworks'
+# history stores (LangGraph's saver holds state in process); the durable
+# benchmark measures the uncached, persisted configuration instead.
 agno_agent = AgnoAgent(
     model=MockModel(),
+    cache_session=True,
     add_history_to_context=True,
     num_history_runs=30,
     system_message=SYSTEM_PROMPT,
@@ -40,10 +45,11 @@ agno_agent = AgnoAgent(
 
 def long_conversation_compare_agno():
     agno_agent.db = InMemoryDb()
+    conversation_id = str(uuid4())
     last = None
     for turn in TURNS:
         last = ensure_completed(
-            agno_agent.run(turn, session_id="conversation"), expected_content="ok"
+            agno_agent.run(turn, session_id=conversation_id), expected_content="ok"
         )
     if last is None or len(last.messages) < 2 * len(TURNS):
         raise RuntimeError(

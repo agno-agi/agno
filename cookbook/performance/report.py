@@ -166,18 +166,19 @@ def comparison_groups(versions: dict) -> list:
         },
         {
             "key": "cmp_multi_turn",
-            "metric": "5-turn conversation (mocked model)",
+            "metric": "5-turn conversation, in-memory",
             "title": "Five-turn conversation vs other frameworks",
             "unit": "ms",
             "measure": "time",
             "ratio_to": "multi_turn_compare_agno",
             "blurb": (
                 "One five-turn conversation with history carried by each "
-                "framework's native mechanism: Agno persists the session to an "
-                "in-memory database each turn, LangGraph checkpoints graph state "
-                "per thread, PydanticAI passes message_history explicitly, and "
-                "CrewAI chains five tasks through task context. Each variant "
-                "asserts the history actually accumulated."
+                "framework's native in-memory mechanism: Agno with its session "
+                "cache enabled over an in-memory database, LangGraph's "
+                "InMemorySaver per thread, PydanticAI passing message_history, "
+                "CrewAI chaining five tasks through task context. Each variant "
+                "asserts the history actually accumulated; the durable "
+                "benchmark below measures the persisted configuration."
             ),
             "rows": [
                 ("multi_turn_compare_agno", agno, "sync"),
@@ -188,7 +189,7 @@ def comparison_groups(versions: dict) -> list:
         },
         {
             "key": "cmp_long_conversation",
-            "metric": "25-turn conversation (mocked model)",
+            "metric": "25-turn conversation, in-memory",
             "title": "Twenty-five-turn conversation vs other frameworks",
             "unit": "ms",
             "measure": "time",
@@ -196,16 +197,37 @@ def comparison_groups(versions: dict) -> list:
             "blurb": (
                 "The five-turn benchmark extended to twenty-five turns, so costs "
                 "that grow with history length dominate. Agno does not currently "
-                "win this one: its per-turn session persistence re-serializes "
-                "the conversation each turn, while LangGraph's in-memory "
-                "checkpointer stores state by reference. Published as measured; "
-                "the growth term is a known optimization target."
+                "win this one: even with its session cache enabled, its per-turn "
+                "write path re-serializes conversation state that LangGraph's "
+                "in-memory checkpointer stores by reference. Published as "
+                "measured; the growth term is a known optimization target."
             ),
             "rows": [
                 ("long_conversation_compare_agno", agno, "sync"),
                 ("long_conversation_compare_langgraph", langgraph, "other"),
                 ("long_conversation_compare_pydantic_ai", pydantic_ai, "other"),
                 ("long_conversation_compare_crewai", crewai, "other"),
+            ],
+        },
+        {
+            "key": "cmp_durable_conversation",
+            "metric": "25-turn conversation, durable (SQLite)",
+            "title": "Durable twenty-five-turn conversation vs other frameworks",
+            "unit": "ms",
+            "measure": "time",
+            "ratio_to": "durable_conversation_compare_agno",
+            "blurb": (
+                "The twenty-five-turn conversation persisted to a SQLite "
+                "database every turn: Agno with SqliteDb, LangGraph with "
+                "SqliteSaver, both paying real serialization and database "
+                "writes. Agno does not currently win this one either; the "
+                "write path is a known optimization target. PydanticAI ships "
+                "no persistence layer and CrewAI has no conversation "
+                "primitive, so neither appears here."
+            ),
+            "rows": [
+                ("durable_conversation_compare_agno", agno, "sync"),
+                ("durable_conversation_compare_langgraph", langgraph, "other"),
             ],
         },
         {
@@ -250,6 +272,7 @@ COMPARISON_TABLE_ORDER = [
     "cmp_tool_run",
     "cmp_multi_turn",
     "cmp_long_conversation",
+    "cmp_durable_conversation",
     "cmp_construction",
     "cmp_memory",
     "cmp_import",

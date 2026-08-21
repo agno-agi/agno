@@ -21,32 +21,36 @@ Agno at the feat/v3.0 tip.
 
 | Metric | Agno | LangGraph | PydanticAI | CrewAI |
 |---|---|---|---|---|
-| Single-turn run (mocked model) | 63 us | 302 us (4.8x) | 1,533 us (24x) | 4,907 us (78x) |
-| Tool-call run (mocked model) | 318 us | 813 us (2.6x) | 2,389 us (7.5x) | excluded |
-| 5-turn conversation (mocked model) | 2.1 ms | 3.2 ms (1.5x) | 7.7 ms (3.6x) | 18.7 ms (8.8x) |
-| 25-turn conversation (mocked model) | 37.8 ms | 22.3 ms (0.6x) | 38.9 ms (1.0x) | 91.7 ms (2.4x) |
-| Agent construction (1 tool) | 4.5 us | 1,132 us (249x) | 9,911 us (2,182x) | 19,099 us (4,205x) |
-| Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.6x) | 24 KiB (3.4x) |
-| Cold import | 264 ms | 400 ms (1.5x) | 562 ms (2.1x) | 1,073 ms (4.1x) |
+| Single-turn run (mocked model) | 66 us | 319 us (4.8x) | 1,536 us (23x) | 4,682 us (71x) |
+| Tool-call run (mocked model) | 325 us | 910 us (2.8x) | 2,490 us (7.7x) | excluded |
+| 5-turn conversation, in-memory | 1.9 ms | 3.8 ms (2.0x) | 8.5 ms (4.4x) | 20.6 ms (11x) |
+| 25-turn conversation, in-memory | 32.4 ms | 23.7 ms (0.7x) | 48.5 ms (1.5x) | 102.8 ms (3.2x) |
+| 25-turn conversation, durable (SQLite) | 60.3 ms | 38.8 ms (0.6x) | excluded | excluded |
+| Agent construction (1 tool) | 4.6 us | 1,113 us (241x) | 10,083 us (2,180x) | 19,732 us (4,266x) |
+| Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.5x) | 24 KiB (3.3x) |
+| Cold import | 251 ms | 384 ms (1.5x) | 540 ms (2.2x) | 1,158 ms (4.6x) |
 
 Multipliers are relative to Agno. The committed reference runs, including
 per-benchmark distributions, are under `baselines/`; the definition of each
 metric is below, and `comparison/README.md` documents exactly where each
-framework's mock intervenes and why CrewAI is excluded from the tool-call
-benchmark.
+framework's mock intervenes, the matched in-memory and durable
+conversation configurations, and every exclusion.
 
-Two results deserve explicit discussion. First, the tool-call run: Agno
-defers tool-schema extraction from construction to run time, so this is the
-benchmark where that deferred cost is paid — it still measures fastest, but
-the 2.6x margin over LangGraph is far narrower than the 249x construction
-margin, and reading those two rows together is the honest picture. Second,
-the 25-turn conversation, which Agno does not win: its per-turn session
-persistence re-serializes the conversation each turn, so cost grows
-quadratically with conversation length, and LangGraph's
-in-memory checkpointer — which stores state by reference and persists
-nothing — is 1.7x faster at that length. The growth term is a known
-optimization target; the number is published as measured and will be
-re-measured when that work lands.
+Three results deserve explicit discussion. First, the tool-call run: Agno
+defers tool-schema extraction from construction to run time, so this is
+the benchmark where that deferred cost is paid — it still measures
+fastest, but at a far narrower margin than construction, and reading those
+two rows together is the honest picture. Second, the 25-turn conversation,
+which Agno loses in both matched configurations: in-memory against
+LangGraph's reference-holding checkpointer with Agno's own session cache
+enabled, and durable against LangGraph's SQLite checkpointer with both
+sides serializing every turn. The cause is Agno's per-turn write path,
+which re-serializes conversation state that grows with length; it is a
+known optimization target, and both rows will be re-measured when that
+work lands. Third, the same mechanism is visible in reverse at short
+lengths — the 5-turn row — where per-turn fixed overhead dominates and
+Agno's margin widens; where the crossover falls on a given machine is
+exactly what these two rows bracket.
 
 ## 1. Environment setup
 

@@ -63,8 +63,8 @@ uv venv "${VENV_DIR}" --python 3.12 --quiet
 # cookbook/performance/comparison and cookbook/09_evals/performance/comparison.
 echo ""
 echo -e "    ${DIM}Installing agno[os] (editable) and the comparison frameworks...${NC}"
-echo -e "    ${DIM}> uv pip install -e libs/agno[os] langgraph langchain_openai crewai pydantic_ai openai-agents smolagents autogen-agentchat autogen-ext[openai]${NC}"
-VIRTUAL_ENV="${VENV_DIR}" uv pip install -e "${AGNO_DIR}[os]" langgraph langchain_openai openai-agents crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]" --quiet
+echo -e "    ${DIM}> uv pip install -e libs/agno[os] langgraph langgraph-checkpoint-sqlite langchain_openai crewai pydantic_ai openai-agents smolagents autogen-agentchat autogen-ext[openai]${NC}"
+VIRTUAL_ENV="${VENV_DIR}" uv pip install -e "${AGNO_DIR}[os]" langgraph langgraph-checkpoint-sqlite langchain_openai openai-agents crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]" --quiet
 
 # Copy activation command to clipboard
 ACTIVATE_CMD="source .venvs/perfenv/bin/activate"
