@@ -20,7 +20,11 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.agent._storage import is_auto_generated_memory_manager_id, resolve_memory_manager_reference
+from agno.agent._storage import (
+    is_auto_generated_memory_manager_id,
+    resolve_learning_reference,
+    resolve_memory_manager_reference,
+)
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -733,11 +737,19 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     #     config["session_summary_manager"] = team.session_summary_manager.to_dict()
 
     # --- Learning settings ---
+    # A named machine is a registry resource: stored as a reference by name,
+    # like knowledge, and resolved from the registry on load. Its config is
+    # never inlined, so a stored component cannot carry learning the deployer
+    # did not declare. An unnamed machine belongs to this component and is
+    # inlined in full.
     if team.learning is not None:
+        learning_name = getattr(team.learning, "name", None)
         if team.learning is True:
             config["learning"] = True
         elif team.learning is False:
             config["learning"] = False
+        elif isinstance(learning_name, str) and learning_name:
+            config["learning"] = {"name": learning_name}
         elif hasattr(team.learning, "to_dict"):
             config["learning"] = team.learning.to_dict()
         else:
@@ -1239,6 +1251,12 @@ def from_dict(
     # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+
+    # --- Handle Learning reconstruction ---
+    # A named machine is stored as a reference and resolved from the registry
+    # here; an inline machine config is rebuilt by _deserialize_learning in
+    # the constructor call below.
+    resolve_learning_reference(config, registry, strict, component_label)
 
     team = cast(
         "Team",

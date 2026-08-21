@@ -1789,3 +1789,67 @@ class TestTeamMemoryManagerReferenceShapes:
         warnings = " ".join(str(c) for c in mock_warn.call_args_list)
         assert "mm-1" in warnings
         assert "mm-2" in warnings
+
+
+# =============================================================================
+# Learning machine reference round-trip
+# =============================================================================
+
+
+class TestTeamLearningReferenceRoundTrip:
+    """Mirror of the agent learning round-trip. The team reads the reference
+    through the shared resolver BEFORE its constructor-time
+    _deserialize_learning, so a reference never reaches LearningMachine.from_dict
+    and an inline config never reaches the registry."""
+
+    def test_named_machine_serializes_as_reference_and_resolves_to_same_instance(self):
+        from agno.learn import LearningMachine
+
+        machine = LearningMachine(name="shared-brain", user_memory=True)
+        team = Team(id="learn-team", name="Learn Team", members=[], learning=machine)
+
+        config = team.to_dict()
+        assert config["learning"] == {"name": "shared-brain"}
+
+        loaded = Team.from_dict(config, registry=Registry(learning=[machine]), strict=True)
+        assert loaded.learning is machine
+
+    def test_unnamed_machine_still_inlines(self):
+        from agno.learn import LearningMachine
+
+        team = Team(id="learn-team", name="Learn Team", members=[], learning=LearningMachine(user_memory=True))
+        config = team.to_dict()
+        assert "name" not in config["learning"]
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert isinstance(loaded.learning, LearningMachine)
+        assert loaded.learning.name is None
+        assert loaded.learning.user_memory is True
+
+    def test_missing_reference_raises_strict_and_drops_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {"id": "learn-team", "name": "Learn Team", "members": [], "learning": {"name": "ghost"}}
+
+        with pytest.raises(ComponentRehydrationError, match="learning machine 'ghost'"):
+            Team.from_dict(config, registry=Registry(), strict=True)
+
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Team.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.learning is None
+        assert any("ghost" in str(call) for call in mock_warn.call_args_list)
+
+    def test_ambiguous_name_raises_strict_and_binds_first_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.learn import LearningMachine
+
+        first = LearningMachine(name="shared-brain", user_memory=True)
+        second = LearningMachine(name="shared-brain", entity_memory=True)
+        registry = Registry(learning=[first, second])
+        config = {"id": "learn-team", "name": "Learn Team", "members": [], "learning": {"name": "shared-brain"}}
+
+        with pytest.raises(ComponentRehydrationError, match="two distinct"):
+            Team.from_dict(config, registry=registry, strict=True)
+
+        loaded = Team.from_dict(config, registry=registry, strict=False)
+        assert loaded.learning is first
