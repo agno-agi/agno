@@ -473,7 +473,9 @@ class TeamSessionDetailSchema(BaseModel):
     metrics: Optional[dict] = Field(None, description="Session metrics")
     team_data: Optional[dict] = Field(None, description="Team-specific data")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
-    chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
+    chat_history: Optional[List[dict]] = Field(
+        None, description="Complete chat history, including member-agent messages"
+    )
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
     total_tokens: Optional[int] = Field(None, description="Total tokens used in this session")
@@ -497,7 +499,19 @@ class TeamSessionDetailSchema(BaseModel):
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
-            chat_history=[message.to_dict() for message in session.get_chat_history()],
+            # Include member-agent messages so the REST payload matches the runs endpoint.
+            # Messages follow stored run order: on the default checkpoint path member runs
+            # are upserted before the parent team run, so member messages may appear before
+            # the leader's preceding turn. Conversational reordering is intentionally not
+            # done here — this endpoint mirrors GET /sessions/{id}/runs storage order.
+            chat_history=[
+                message.to_dict()
+                for message in session.get_messages(
+                    skip_roles=["system", "tool"],
+                    skip_member_messages=False,
+                    skip_statuses=[],
+                )
+            ],
             created_at=to_utc_datetime(created_at),
             updated_at=to_utc_datetime(updated_at),
         )
