@@ -60,7 +60,7 @@ def test_list_tables_error(bq_tools_instance, mock_bq_client):
     mock_bq_client.list_tables.side_effect = Exception("Network Error")
 
     result = bq_tools_instance.list_bigquery_tables()
-    assert "Error getting tables: Network Error" == result
+    assert json.loads(result) == {"error": "Error getting tables: Network Error"}
 
 
 def test_describe_table_success(bq_tools_instance, mock_bq_client):
@@ -93,7 +93,7 @@ def test_describe_table_error(bq_tools_instance, mock_bq_client):
     mock_bq_client.get_table.side_effect = Exception("Table Not Found")
 
     result = bq_tools_instance.describe_bigquery_table(table_id="non_existent_table")
-    assert "Error getting table schema: Table Not Found" == result
+    assert json.loads(result) == {"error": "Error getting table schema: Table Not Found"}
 
 
 def test_run_sql_query_empty_result(bq_tools_instance, mock_bq_client):

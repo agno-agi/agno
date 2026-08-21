@@ -194,22 +194,22 @@ def test_error_handling(exa_tools, mock_exa_client):
     # Test search error
     mock_exa_client.search_and_contents.side_effect = Exception("Search API Error")
     result = exa_tools.search_exa("test query")
-    assert "Error: Search API Error" in result
+    assert json.loads(result)["error"] == "Search API Error"
 
     # Test get_contents error
     mock_exa_client.get_contents.side_effect = Exception("Contents API Error")
     result = exa_tools.get_contents(["https://example.com"])
-    assert "Error: Contents API Error" in result
+    assert json.loads(result)["error"] == "Contents API Error"
 
     # Test find_similar error
     mock_exa_client.find_similar_and_contents.side_effect = Exception("Similar API Error")
     result = exa_tools.find_similar("https://example.com")
-    assert "Error: Similar API Error" in result
+    assert json.loads(result)["error"] == "Similar API Error"
 
     # Test answer error
     mock_exa_client.answer.side_effect = Exception("Answer API Error")
     result = exa_tools.exa_answer("test question")
-    assert "Error: Answer API Error" in result
+    assert json.loads(result)["error"] == "Answer API Error"
 
 
 def test_parse_results_with_missing_fields(exa_tools):
